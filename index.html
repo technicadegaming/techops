@@ -61,7 +61,8 @@
       service:'wow-technicade-service-v2',
       tasks:'wow-technicade-tasks-v2',
       handoff:'wow-technicade-handoff-v2',
-      contacts:'wow-technicade-contacts-v2'
+      contacts:'wow-technicade-contacts-v2',
+      assets:'wow-technicade-assets-v1'
     };
     const TABS = ['dashboard','inventory','operations','tasks','manuals','contacts','calendar','reports','catchup','admin'];
     const TECHNICIANS = ['Unassigned','Alex','Jordan','Sam','Riley','Manager'];
@@ -69,7 +70,7 @@
     const TASK_STATUS_OPTIONS = ['Open','Scheduled','In Progress','Waiting Parts','Blocked','Complete'];
     const SEVERITY_OPTIONS = ['Low','Medium','High','Critical'];
 
-const games = [
+const seedGames = [
       {title:'StepManiaX',manufacturer:'Step Revolution',category:'Dance / Rhythm',qty:1,status:'Manual linked',manual:'https://www.stepmaniax.com/docs/Software%20-%20Manual.pdf',support:'https://stepmaniax.com/support/',pm:'Pads, bar hardware, fan vents, stage sensors'},
       {title:'Over The Edge',manufacturer:'UNIS',category:'Prize / Redemption',qty:1,status:'Manual linked',manual:'https://www.betson.com/wp-content/uploads/2023/10/O119_Over_The_Edge_Plus_GMP_Manual__F645652E8DAEE.pdf',support:'https://www.unispartsandservice.com/games/manuals',pm:'Prize channels, sensors, marble feed, motors'},
       {title:'Fast & Furious - 2 Player',manufacturer:'Raw Thrills',category:'Driving',qty:1,status:'Family manual',manual:'https://rawthrills.com/wp-content/uploads/2023/07/040-00086-01_FF_Motion_REV7.pdf',support:'https://www.betson.com/amusement-games-all/?wpv_view_count=10409',pm:'Steering centering, pedals, seats, force feedback, monitor vents'},
@@ -117,6 +118,7 @@ const games = [
       {title:'Whack N Win',manufacturer:'ICE',category:'Carnival / Skill Wall',qty:1,status:'Manual linked',manual:'https://support.icegame.com/hc/en-us/articles/22696692840980-Whack-N-Win-Manual',support:'https://www.icegame.com/games/whack-n-win/',pm:'Hit pads, bonus sensors, score displays, cabinet fasteners'},
       {title:'HyperShoot - 2 Player',manufacturer:'LAI Games',category:'Basketball / Redemption',qty:1,status:'Manual linked',manual:'https://primetimeamusements.com/wp-content/uploads/2016/12/HYPERshootManual10.pdf',support:'https://www.laigames.com/games',pm:'Rims, balls, shot sensors, return ramp, score display'}
     ];
+    let games = safeLoad(STORAGE_KEYS.assets, seedGames);
 
 const issueGuides = {
       'Quick Shot - 2 Player': {issue:'Air compressor sounds rough / clanky.',severity:'Medium',steps:['Confirm the sound is from the compressor head/tank area and not from the gun valves or another pneumatic device.','Inspect compressor mounts, rubber isolators, and base hardware; tighten loose hardware and replace split isolators.','Check intake filter condition and drain any tank or line moisture before retesting.','Listen for check-valve chatter or startup kickback that would indicate a leaking check valve or pressure issue.','If the clank persists, inspect for worn piston/rod bearing, reed valve damage, or internal compressor wear and replace the compressor if metal-on-metal noise remains.']},
@@ -257,7 +259,9 @@ const pmCadence = [
     function ensureMigrations(){
       if(!workers.length) workers=TECHNICIANS.filter(t=>t&&t!=='Unassigned').map(n=>({name:n,role:n==='Manager'?'Manager':'Staff'}));
       workers = normalizeWorkers(workers);
-      games.forEach(g=>{g.id=g.id||toId('asset',g.title); g.website=g.website||''; g.documentationStatus=g.status; g.manualUrl=g.manual||''; g.supportUrl=g.support||''; g.vendorContactId=g.vendorContactId||''; g.currentIssues=Array.isArray(g.currentIssues)?g.currentIssues:[];});
+      const existingById=new Map((Array.isArray(games)?games:[]).map(g=>[g.id||toId('asset',g.title),g]));
+      seedGames.forEach(seed=>{const sid=seed.id||toId('asset',seed.title); if(!existingById.has(sid) && ![...existingById.values()].some(g=>norm(g.title)===norm(seed.title))){games.push({...seed,id:sid});}});
+      games=games.map(g=>{g.id=g.id||toId('asset',g.title); g.website=g.website||''; g.documentationStatus=g.documentationStatus||g.status||''; g.status=g.status||g.documentationStatus||'Needs exact manual'; g.manual=g.manual||g.manualUrl||''; g.support=g.support||g.supportUrl||''; g.manualUrl=g.manual||''; g.supportUrl=g.support||''; g.vendorContactId=g.vendorContactId||''; g.currentIssues=Array.isArray(g.currentIssues)?g.currentIssues:[]; return g;});
       contacts=contacts.map(c=>({...c,id:inferContactId(c)}));
       serviceRecords=serviceRecords.map(r=>({...r,id:r.id||toId('op',r.title),assetId:r.assetId||getAssetIdByTitle(r.title),assignedWorkers:Array.isArray(r.assignedWorkers)?r.assignedWorkers:(r.technician&&r.technician!=='Unassigned'?[r.technician]:[]),photos:Array.isArray(r.photos)?r.photos:[],issueHistory:Array.isArray(r.issueHistory)?r.issueHistory:[],history:Array.isArray(r.history)?r.history:[]}));
       oneOffTasks=oneOffTasks.map(t=>({...t,id:t.id||('task-'+Date.now()+Math.random()),assetId:t.assetId||(t.machine&&t.machine!=='General / Floor-wide'?getAssetIdByTitle(t.machine):''),assignedWorkers:Array.isArray(t.assignedWorkers)?t.assignedWorkers:(t.technician&&t.technician!=='Unassigned'?[t.technician]:[]),photos:Array.isArray(t.photos)?t.photos:[],checklist:Array.isArray(t.checklist)?t.checklist:[],research:t.research||'',researchMeta:t.researchMeta||null}));
@@ -274,6 +278,7 @@ const pmCadence = [
       safeSave(STORAGE_KEYS.tasks, oneOffTasks);
       safeSave(STORAGE_KEYS.handoff, handoffLog);
       safeSave(STORAGE_KEYS.contacts, contacts);
+      safeSave(STORAGE_KEYS.assets, games);
       safeSave(EXTRA_KEYS.workers, workers);
       safeSave(EXTRA_KEYS.admin, adminConfig);
       safeSave(EXTRA_KEYS.assetHistory, assetHistory);
@@ -354,7 +359,7 @@ const pmCadence = [
               <div class="subtle"><strong>Evidence</strong><div class="tiny mt">Photo uploads on machine records and one-off tasks for proof, serials, and damage notes.</div></div>
               <div class="subtle"><strong>Backups</strong><div class="tiny mt">Export CSVs plus full JSON backup/restore for browser-local data.</div></div>
             </div>
-            <div class="callout mt">Some earlier uploaded files in this project are no longer available in the workspace, so this enhanced version is based on the current AI FEC project chat context and the included HTML file.</div>
+            <div class="callout mt">This portal preserves browser-local workflows while linking operations, tasks, assets, contacts, and documentation into one connected workflow.</div>
           </div>
           <div class="card">
             <h2>Documentation status</h2>
@@ -518,9 +523,6 @@ const pmCadence = [
       if(uiState.route.tab==='operations'){if(uiState.route.filter?.assetId){const g=getAssetById(uiState.route.filter.assetId); if(g){q.value=g.title; filterLabel.textContent=`Filtered to asset: ${g.title}`;}} if(uiState.route.filter?.owner){owner.value=uiState.route.filter.owner; filterLabel.textContent=`Filtered to worker: ${owner.value}`;} if(uiState.route.filter?.operationId){const op=serviceRecords.find(r=>r.id===uiState.route.filter.operationId); if(op){q.value=op.title; filterLabel.textContent=`Focused operation: ${op.title}`;}} if(uiState.route.filter?.status) st.value=uiState.route.filter.status; if(uiState.route.filter?.severity) sev.value=uiState.route.filter.severity; if(uiState.route.filter?.overdue) overdue.value=uiState.route.filter.overdue;}
       el.querySelector('#ops-clear-filters').onclick=()=>{q.value='';cat.value='All';st.value='All';owner.value='All owners';sev.value='All severities';overdue.value='All dates';uiState.route.filter={};filterLabel.textContent='';draw();};
       draw(); bindContextBanner(el);
-      el.querySelector('#add-asset').onclick=()=>el.querySelector('#new-asset-box').classList.toggle('hide');
-      el.querySelector('#asset-lookup').onclick=()=>{const asset={title:el.querySelector('#new-asset-title').value.trim(),manufacturer:el.querySelector('#new-asset-maker').value.trim(),name:el.querySelector('#new-asset-title').value.trim()}; const lookup=buildAssetLookup(asset); const list=el.querySelector('#asset-lookup-results'); list.innerHTML=`<div class="history-item"><strong>Suggested documentation status:</strong> ${lookup.statusSuggestion}</div>${lookup.candidates.map(c=>`<div class="history-item"><a href="${c.url}" target="_blank">${c.label}</a></div>`).join('')}<div class="tiny">Fallback mode: guided lookup links and placeholders are used when no AI/search service is configured.</div>`;};
-      el.querySelector('#asset-create').onclick=()=>{const title=el.querySelector('#new-asset-title').value.trim(); if(!title) return; const manufacturer=el.querySelector('#new-asset-maker').value.trim()||'Unknown'; const category=el.querySelector('#new-asset-category').value.trim()||'General'; const id=toId('asset',title); games.unshift({id,title,manufacturer,category,qty:1,status:'Needs exact manual',manual:'',support:'',website:'',pm:'Initial PM definition pending'}); serviceRecords.unshift({id:toId('op',title),title,assetId:id,technician:'Unassigned',status:'Open',priority:priorityForCategory(category),severity:severityForCategory(category),lastService:TODAY,nextPm:addDays(TODAY,14),issue:'New asset onboarding',notes:'',partsNeeded:'',photos:[],verifiedBy:'',accountability:'',lastUpdated:TODAY,issueHistory:[],history:[],assignedWorkers:[]}); assetHistory[title]=assetHistory[title]||[]; saveAll(); renderAll();};
     }
 
     function bindOperationActions(root){
@@ -546,9 +548,6 @@ const pmCadence = [
         bindTaskActions(list);
       };
       [q,st,cat,owner,dateFilter].forEach(i=>i.oninput=draw); st.onchange=cat.onchange=owner.onchange=dateFilter.onchange=draw; if(uiState.route.tab==='tasks'&&uiState.route.filter?.taskId){const t=oneOffTasks.find(x=>x.id===uiState.route.filter.taskId); if(t) q.value=t.title;} draw(); bindContextBanner(el);
-      el.querySelector('#add-asset').onclick=()=>el.querySelector('#new-asset-box').classList.toggle('hide');
-      el.querySelector('#asset-lookup').onclick=()=>{const asset={title:el.querySelector('#new-asset-title').value.trim(),manufacturer:el.querySelector('#new-asset-maker').value.trim(),name:el.querySelector('#new-asset-title').value.trim()}; const lookup=buildAssetLookup(asset); const list=el.querySelector('#asset-lookup-results'); list.innerHTML=`<div class="history-item"><strong>Suggested documentation status:</strong> ${lookup.statusSuggestion}</div>${lookup.candidates.map(c=>`<div class="history-item"><a href="${c.url}" target="_blank">${c.label}</a></div>`).join('')}<div class="tiny">Fallback mode: guided lookup links and placeholders are used when no AI/search service is configured.</div>`;};
-      el.querySelector('#asset-create').onclick=()=>{const title=el.querySelector('#new-asset-title').value.trim(); if(!title) return; const manufacturer=el.querySelector('#new-asset-maker').value.trim()||'Unknown'; const category=el.querySelector('#new-asset-category').value.trim()||'General'; const id=toId('asset',title); games.unshift({id,title,manufacturer,category,qty:1,status:'Needs exact manual',manual:'',support:'',website:'',pm:'Initial PM definition pending'}); serviceRecords.unshift({id:toId('op',title),title,assetId:id,technician:'Unassigned',status:'Open',priority:priorityForCategory(category),severity:severityForCategory(category),lastService:TODAY,nextPm:addDays(TODAY,14),issue:'New asset onboarding',notes:'',partsNeeded:'',photos:[],verifiedBy:'',accountability:'',lastUpdated:TODAY,issueHistory:[],history:[],assignedWorkers:[]}); assetHistory[title]=assetHistory[title]||[]; saveAll(); renderAll();};
     }
 
     function bindTaskActions(root){
@@ -587,13 +586,19 @@ const pmCadence = [
 
     function renderCalendar(){
       const el=document.getElementById('calendar');
-      const rows=buildCalendarRows().filter(x=>x.date>=TODAY && x.date<=addDays(TODAY,30));
+      const allRows=buildCalendarRows();
+      const rows=allRows.filter(x=>x.date>=TODAY && x.date<=addDays(TODAY,30));
       const type=(uiState.route.tab==='calendar'&&uiState.route.filter?.kind)||'All';
-      const rowsFiltered=rows.filter(r=>type==='All'?true:r.kind===type||(type==='Due Today'&&r.date===TODAY)||(type==='Overdue'&&r.date<TODAY)||(type==='Assigned'&&r.owner===uiState.route.filter?.owner));
+      const ownerFilter=uiState.route.filter?.owner||'All';
+      const rowsFiltered=rows.filter(r=>(type==='All'?true:r.kind===type||(type==='Due Today'&&r.date===TODAY)) && (ownerFilter==='All'||r.owner===ownerFilter));
+      const overdueRows=allRows.filter(r=>r.date<TODAY && (type==='All'||type==='Overdue') && (ownerFilter==='All'||r.owner===ownerFilter));
       const grouped={}; rowsFiltered.forEach(r=>{(grouped[r.date]=grouped[r.date]||[]).push(r)});
-      el.innerHTML=`${contextBanner()}<div class="grid grid-2"><div class="card"><h2>Next 30 days</h2><div class="row mt"><button class="secondary small" data-cal-filter="All">All</button><button class="secondary small" data-cal-filter="PM">PM</button><button class="secondary small" data-cal-filter="One-Off Task">One-Off Task</button><button class="secondary small" data-cal-filter="Due Today">Due Today</button><button class="secondary small" data-cal-filter="Overdue">Overdue</button></div><div class="stack mt">${Object.keys(grouped).sort(sortByDateAsc).map(date=>`<div class="calendar-day"><h3>${date}</h3><div class="stack">${grouped[date].map(r=>`<div class="history-item clickable" data-cal-open="${r.entityType}:${r.entityId}:${r.assetId||''}"><div class="row"><span class="badge ${badgeClass(r.severity)}">${r.severity}</span><span class="badge">${r.kind}</span><strong>${r.title}</strong></div><div class="tiny mt">Owner: ${r.owner} · Status: ${r.status}</div><div class="tiny">${escapeHtml(r.detail)}</div></div>`).join('')}</div></div>`).join('') || '<div class="subtle tiny">Nothing scheduled in the next 30 days.</div>'}</div></div><div class="card"><h2>Recurring PM cadence</h2><div class="grid grid-2">${pmCadence.map(b=>`<div class="subtle"><strong>${b.frequency}</strong><ul>${b.items.map(i=>`<li>${i}</li>`).join('')}</ul></div>`).join('')}</div></div></div>`;
-      el.querySelectorAll('[data-cal-filter]').forEach(btn=>btn.onclick=()=>{uiState.route={...uiState.route,tab:'calendar',filter:{kind:btn.dataset.calFilter}}; renderCalendar();});
-      el.querySelectorAll('[data-cal-open]').forEach(btn=>btn.onclick=()=>{const [type,id,assetId]=btn.dataset.calOpen.split(':'); if(type==='operation') routeTo('operations',{entityType:'operation',entityId:id,filter:{operationId:id,assetId},source:'Calendar'}); if(type==='task') routeTo('tasks',{entityType:'task',entityId:id,filter:{taskId:id},source:'Calendar'});});
+      const workerOptionsUi=['All',...new Set(allRows.map(r=>r.owner).filter(Boolean))];
+      const rowHtml=r=>`<div class="history-item clickable" data-cal-open="${r.entityType}:${r.entityId}:${r.assetId||''}"><div class="row"><span class="badge ${badgeClass(r.severity)}">${r.severity}</span><span class="badge">${r.kind==='One-Off Task'?'Task':r.kind}</span>${r.date<TODAY?'<span class="badge bad">Overdue</span>':''}${r.date===TODAY?'<span class="badge warn">Due Today</span>':''}${r.status==='Waiting Parts'?'<span class="badge warn">Waiting Parts</span>':''}<strong>${r.title}</strong></div><div class="tiny mt">Owner: ${r.owner} · Status: ${r.status} · Date: ${r.date}</div><div class="tiny">${escapeHtml(r.detail)}</div></div>`;
+      el.innerHTML=`${contextBanner()}<div class="grid grid-2"><div class="card"><h2>Calendar (next 30 days + overdue)</h2><div class="row mt"><button class="secondary small" data-cal-filter="All">All</button><button class="secondary small" data-cal-filter="PM">PM</button><button class="secondary small" data-cal-filter="One-Off Task">One-Off Task</button><button class="secondary small" data-cal-filter="Due Today">Due Today</button><button class="secondary small" data-cal-filter="Overdue">Overdue</button><select id="cal-owner-filter">${workerOptionsUi.map(w=>`<option ${w===ownerFilter?'selected':''}>${w}</option>`).join('')}</select></div><div class="stack mt">${Object.keys(grouped).sort(sortByDateAsc).map(date=>`<div class="calendar-day"><h3>${date}</h3><div class="stack">${grouped[date].map(rowHtml).join('')}</div></div>`).join('') || '<div class="subtle tiny">Nothing scheduled in the next 30 days.</div>'}</div><div class="subtle mt"><h3>Overdue</h3><div class="stack">${overdueRows.map(rowHtml).join('')||'<div class="tiny">No overdue calendar items.</div>'}</div></div></div><div class="card"><h2>Recurring PM cadence</h2><div class="grid grid-2">${pmCadence.map(b=>`<div class="subtle"><strong>${b.frequency}</strong><ul>${b.items.map(i=>`<li>${i}</li>`).join('')}</ul></div>`).join('')}</div></div></div>`;
+      el.querySelectorAll('[data-cal-filter]').forEach(btn=>btn.onclick=()=>{uiState.route={...uiState.route,tab:'calendar',filter:{...uiState.route.filter,kind:btn.dataset.calFilter}}; renderCalendar();});
+      el.querySelector('#cal-owner-filter').onchange=(e)=>{uiState.route={...uiState.route,tab:'calendar',filter:{...uiState.route.filter,owner:e.target.value}}; renderCalendar();};
+      el.querySelectorAll('[data-cal-open]').forEach(btn=>btn.onclick=()=>{const [type,id,assetId]=btn.dataset.calOpen.split(':'); if(type==='operation') routeTo('operations',{entityType:'operation',entityId:id,filter:{operationId:id,assetId},source:'Calendar'}); if(type==='task') routeTo('tasks',{entityType:'task',entityId:id,filter:{taskId:id,assetId},source:'Calendar'});});
       bindContextBanner(el);
     }
 
@@ -685,11 +690,11 @@ const pmCadence = [
       const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url);
     }
     function exportJsonBackup(){
-      const payload={exportedAt:new Date().toISOString(), serviceRecords, oneOffTasks, handoffLog, contacts, workers, adminConfig, assetHistory, linkMap};
+      const payload={exportedAt:new Date().toISOString(), games, serviceRecords, oneOffTasks, handoffLog, contacts, workers, adminConfig, assetHistory, linkMap};
       const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='play-wow-maintenance-backup.json'; a.click(); URL.revokeObjectURL(url);
     }
     function importJsonBackup(e){
-      const file=e.target.files?.[0]; if(!file) return; const reader=new FileReader(); reader.onload=()=>{try{const data=JSON.parse(reader.result); if(data.serviceRecords) serviceRecords=data.serviceRecords; if(data.oneOffTasks||data.tasks) oneOffTasks=data.oneOffTasks||data.tasks; if(data.handoffLog) handoffLog=data.handoffLog; if(data.contacts) contacts=data.contacts; if(data.workers) workers=normalizeWorkers(data.workers); if(data.adminConfig) adminConfig=data.adminConfig; if(data.assetHistory) assetHistory=data.assetHistory; if(data.linkMap) linkMap=data.linkMap; ensureMigrations(); saveAll(); renderAll();}catch(err){alert('Could not import JSON backup.')}}; reader.readAsText(file);
+      const file=e.target.files?.[0]; if(!file) return; const reader=new FileReader(); reader.onload=()=>{try{const data=JSON.parse(reader.result); if(data.games||data.assets||data.inventory) games=data.games||data.assets||data.inventory; if(data.serviceRecords) serviceRecords=data.serviceRecords; if(data.oneOffTasks||data.tasks) oneOffTasks=data.oneOffTasks||data.tasks; if(data.handoffLog) handoffLog=data.handoffLog; if(data.contacts) contacts=data.contacts; if(data.workers) workers=normalizeWorkers(data.workers); if(data.adminConfig) adminConfig=data.adminConfig; if(data.assetHistory) assetHistory=data.assetHistory; if(data.linkMap) linkMap=data.linkMap; ensureMigrations(); saveAll(); renderAll();}catch(err){alert('Could not import JSON backup.')}}; reader.readAsText(file);
     }
 
     function renderAll(){
