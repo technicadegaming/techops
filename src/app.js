@@ -9,13 +9,14 @@ import { renderAdmin } from './admin.js';
 import { canDelete } from './roles.js';
 import { previewLegacyImport, importLegacyData } from './migration.js';
 import { dryRunBackup, exportBackupJson, restoreBackup, validateBackup } from './backup.js';
+import { analyzeTaskTroubleshooting, answerTaskFollowup, regenerateTaskTroubleshooting, saveTaskFixToTroubleshootingLibrary } from './aiAdapter.js';
 
 const authView = document.getElementById('authView');
 const appView = document.getElementById('appView');
 const authMessage = document.getElementById('authMessage');
 
 const sections = ['dashboard', 'operations', 'assets', 'calendar', 'reports', 'admin'];
-const state = { user: null, profile: null, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], auditLogs: [], settings: {}, restorePayload: null };
+const state = { user: null, profile: null, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], settings: {}, restorePayload: null };
 
 function tabVisible(tab) {
   if (tab === 'admin') return state.profile?.role === 'admin';
@@ -44,6 +45,8 @@ async function refreshData() {
   state.users = await listEntities('users').catch(() => []);
   state.settings = await getAppSettings().catch(() => ({}));
   state.auditLogs = await listAudit().catch(() => []);
+  state.taskAiRuns = await listEntities('taskAiRuns').catch(() => []);
+  state.taskAiFollowups = await listEntities('taskAiFollowups').catch(() => []);
 }
 
 function downloadJson(filename, payload) {
@@ -74,6 +77,15 @@ async function render() {
     deleteTask: async (id) => {
       if (!canDelete(state.profile)) return;
       await deleteEntity('tasks', id, state.user); await refreshData(); render();
+    },
+    runAi: async (taskId) => { await analyzeTaskTroubleshooting(taskId); await refreshData(); render(); },
+    rerunAi: async (taskId) => { await regenerateTaskTroubleshooting(taskId); await refreshData(); render(); },
+    submitFollowup: async (taskId, runId, answers) => { await answerTaskFollowup(taskId, runId, answers); await refreshData(); render(); },
+    saveFix: async (taskId) => {
+      const successfulFix = prompt('Summarize the successful fix for the troubleshooting library:');
+      if (!successfulFix) return;
+      await saveTaskFixToTroubleshootingLibrary({ taskId, successfulFix });
+      await refreshData(); render();
     }
   });
   renderAssets(document.getElementById('assets'), state, {
