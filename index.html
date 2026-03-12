@@ -3,556 +3,229 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>WOW Technicade Maintenance Portal — Enhanced</title>
+  <title>WOW Technicade Maintenance Portal — Assets & Operations</title>
   <style>
-    :root{--bg:#f4f6fb;--card:#ffffff;--line:#d8dee8;--text:#14202b;--muted:#607080;--accent:#0f172a;--accent-2:#1d4ed8;--soft:#eef3fb;--good:#0f766e;--warn:#b45309;--bad:#b91c1c;--critical:#7f1d1d}
+    :root{--bg:#f4f6fb;--card:#ffffff;--line:#d8dee8;--text:#14202b;--muted:#607080;--accent:#0f172a;--accent-2:#1d4ed8;--soft:#eef3fb;--good:#0f766e;--warn:#b45309;--bad:#b91c1c}
     *{box-sizing:border-box} html,body{margin:0;padding:0} body{font-family:Inter,Arial,sans-serif;background:linear-gradient(180deg,#f7f9fc,#eef3fa);color:var(--text)}
-    a{color:inherit;text-decoration:none} .wrap{max-width:1440px;margin:0 auto;padding:22px}
-    .hero,.card,.item{background:var(--card);border:1px solid var(--line);border-radius:24px;box-shadow:0 8px 24px rgba(15,23,42,.05)}
-    .hero{padding:26px;margin-bottom:18px} .hero h1{margin:8px 0 10px;font-size:clamp(28px,3.5vw,44px)} .hero p{margin:0;color:var(--muted)}
-    .pill{display:inline-flex;gap:8px;align-items:center;border:1px solid var(--line);background:var(--soft);padding:8px 12px;border-radius:999px;font-size:12px;font-weight:600}
-    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:18px} .metric{background:var(--soft);border:1px solid var(--line);padding:14px;border-radius:18px} .metric .v{font-size:28px;font-weight:800;line-height:1.1}
-    .tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:18px} .tab{padding:13px 14px;border-radius:16px;border:1px solid var(--line);background:#fff;cursor:pointer;font-weight:700} .tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
-    .section{display:none} .section.active{display:block} .grid{display:grid;gap:16px} .grid-2{grid-template-columns:1.1fr .9fr} .grid-3{grid-template-columns:repeat(3,1fr)} .grid-4{grid-template-columns:repeat(4,1fr)} @media(max-width:1100px){.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}}
-    .card{padding:18px} .item{padding:16px} .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap} .space{justify-content:space-between} .stack{display:grid;gap:10px}
-    .subtle{background:var(--soft);border:1px solid var(--line);border-radius:18px;padding:14px} .tiny{font-size:12px;color:var(--muted)} .muted{color:var(--muted)} .mb{margin-bottom:10px} .mt{margin-top:12px}
-    .badge{display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;border:1px solid var(--line);font-size:12px;background:var(--soft);font-weight:700} .good{background:#ecfeff;border-color:#a5f3fc;color:var(--good)} .warn{background:#fff7ed;border-color:#fed7aa;color:var(--warn)} .bad{background:#fef2f2;border-color:#fecaca;color:var(--bad)}
-    .controls{display:grid;grid-template-columns:1.3fr repeat(4,minmax(140px,1fr));gap:12px;margin-bottom:16px} @media(max-width:1200px){.controls{grid-template-columns:1fr 1fr}} @media(max-width:720px){.controls{grid-template-columns:1fr}}
-    input,select,textarea,button{font:inherit} input,select,textarea{width:100%;padding:12px 14px;border-radius:16px;border:1px solid var(--line);background:#fff;color:var(--text)} textarea{min-height:92px;resize:vertical}
-    button.primary,.upload-label{background:var(--accent);color:#fff;border:1px solid var(--accent);padding:12px 14px;border-radius:16px;cursor:pointer} button.secondary{background:#fff;border:1px solid var(--line);padding:12px 14px;border-radius:16px;cursor:pointer} button.small{padding:8px 10px;border-radius:12px}
-    .kv{display:grid;grid-template-columns:repeat(4,1fr);gap:10px} @media(max-width:900px){.kv{grid-template-columns:1fr 1fr}} @media(max-width:640px){.kv{grid-template-columns:1fr}}
-    .history-item{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px} .photos{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px} .photo{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#fff} .photo img{width:100%;height:140px;object-fit:cover;display:block} .photo .meta{padding:10px}
-    .hide{display:none} .table{width:100%;border-collapse:separate;border-spacing:0 8px} .table th{text-align:left;font-size:12px;color:var(--muted);padding:0 10px} .table td{background:#fff;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:12px 10px} .table td:first-child{border-left:1px solid var(--line);border-radius:14px 0 0 14px} .table td:last-child{border-right:1px solid var(--line);border-radius:0 14px 14px 0}
-    .calendar-day{border:1px solid var(--line);border-radius:18px;padding:14px;background:#fff} .calendar-day h3{margin:0 0 10px} .callout{border-left:4px solid var(--accent-2);padding:10px 12px;background:#eff6ff;border-radius:0 14px 14px 0}
-    ol,ul{padding-left:20px} .mini{font-size:11px;color:var(--muted)}
+    .wrap{max-width:1440px;margin:0 auto;padding:22px} .hero,.card,.item{background:var(--card);border:1px solid var(--line);border-radius:24px;box-shadow:0 8px 24px rgba(15,23,42,.05)}
+    .hero{padding:26px;margin-bottom:18px} .hero h1{margin:8px 0 10px;font-size:clamp(28px,3.5vw,44px)} .hero p{margin:0;color:var(--muted)} .pill{display:inline-flex;gap:8px;align-items:center;border:1px solid var(--line);background:var(--soft);padding:8px 12px;border-radius:999px;font-size:12px;font-weight:600}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-top:18px} .metric{background:var(--soft);border:1px solid var(--line);padding:14px;border-radius:18px}.metric .v{font-size:26px;font-weight:800}
+    .tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:18px} .tab{padding:13px 14px;border-radius:16px;border:1px solid var(--line);background:#fff;cursor:pointer;font-weight:700}.tab.active{background:var(--accent);color:#fff}
+    .section{display:none}.section.active{display:block}.grid{display:grid;gap:16px}.grid-2{grid-template-columns:1.2fr .8fr}.grid-3{grid-template-columns:repeat(3,1fr)}.grid-4{grid-template-columns:repeat(4,1fr)}@media(max-width:1100px){.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}}
+    .card{padding:18px}.item{padding:16px}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.space{justify-content:space-between}.stack{display:grid;gap:10px}
+    .subtle{background:var(--soft);border:1px solid var(--line);border-radius:18px;padding:14px}.tiny{font-size:12px;color:var(--muted)}.mt{margin-top:12px}
+    .badge{display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;border:1px solid var(--line);font-size:12px;background:var(--soft);font-weight:700}.good{background:#ecfeff;border-color:#a5f3fc;color:var(--good)}.warn{background:#fff7ed;border-color:#fed7aa;color:var(--warn)}.bad{background:#fef2f2;border-color:#fecaca;color:var(--bad)}
+    input,select,textarea,button{font:inherit}input,select,textarea{width:100%;padding:10px 12px;border-radius:14px;border:1px solid var(--line)}textarea{min-height:90px}
+    button.primary,.upload-label{background:var(--accent);color:#fff;border:1px solid var(--accent);padding:10px 12px;border-radius:14px;cursor:pointer}button.secondary{background:#fff;border:1px solid var(--line);padding:10px 12px;border-radius:14px;cursor:pointer}button.small{padding:7px 10px;border-radius:10px}
+    .controls{display:grid;grid-template-columns:1.4fr repeat(5,minmax(120px,1fr));gap:10px}@media(max-width:1200px){.controls{grid-template-columns:1fr 1fr}}@media(max-width:700px){.controls{grid-template-columns:1fr}}
+    .clickable{cursor:pointer;transition:all .15s}.clickable:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(15,23,42,.12)}
+    .history-item{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px}.hide{display:none}
+    .modal{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;padding:18px;z-index:10}.modal.show{display:flex}.modal-card{width:min(980px,100%);max-height:92vh;overflow:auto;background:#fff;border-radius:22px;border:1px solid var(--line);padding:18px}
+    .chip{display:inline-flex;align-items:center;padding:5px 8px;border-radius:999px;background:var(--soft);border:1px solid var(--line);font-size:11px}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="hero">
-      <div class="pill">WOW Technicade · Enhanced browser-local maintenance portal</div>
-      <h1>Arcade PM, issues, manuals, accountability, and service evidence</h1>
-      <p>This revised build keeps the existing inventory and troubleshooting base, and adds stronger accountability, PM scheduling, manual/contact organization, handoff notes, evidence uploads on tasks, JSON backup/restore, and reporting views for daily arcade maintenance.</p>
+      <div class="pill">WOW Technicade · browser-local app (single HTML file)</div>
+      <h1>Arcade assets, operations, docs, and accountability</h1>
+      <p>Inventory + manuals are merged into Assets. Admin controls are password-gated locally in this browser only.</p>
       <div class="metrics" id="metrics"></div>
     </div>
-
     <div class="tabs" id="tabs"></div>
-
     <section id="dashboard" class="section active"></section>
     <section id="assets" class="section"></section>
     <section id="operations" class="section"></section>
-    <section id="tasks" class="section"></section>
-    <section id="manuals" class="section"></section>
     <section id="contacts" class="section"></section>
-    <section id="calendar" class="section"></section>
     <section id="reports" class="section"></section>
-    <section id="catchup" class="section"></section>
     <section id="admin" class="section"></section>
-
-    <div id="asset-modal" class="hide" style="position:fixed;inset:0;background:rgba(15,23,42,.45);padding:20px;z-index:30;overflow:auto"><div id="asset-modal-body" class="card" style="max-width:980px;margin:0 auto"></div></div>
   </div>
 
+  <div id="asset-modal" class="modal"><div class="modal-card" id="asset-modal-body"></div></div>
+
   <script>
-    const TODAY = '2026-03-11';
-    const STORAGE_KEYS = {
-      service:'wow-technicade-service-v2',
-      tasks:'wow-technicade-tasks-v2',
-      handoff:'wow-technicade-handoff-v2',
-      contacts:'wow-technicade-contacts-v2'
-    };
-    const TABS = ['dashboard','assets','operations','tasks','manuals','contacts','calendar','reports','catchup','admin'];
-    const TECHNICIANS = ['Unassigned','Alex','Jordan','Sam','Riley','Manager'];
-    const ROLE_OPTIONS=['Manager','Assistant','Lead','Staff'];
-    const STATUS_OPTIONS = ['Open','Scheduled','In Progress','Waiting Parts','Blocked','Complete'];
-    const TASK_STATUS_OPTIONS = ['Open','Scheduled','In Progress','Waiting Parts','Blocked','Complete'];
-    const SEVERITY_OPTIONS = ['Low','Medium','High','Critical'];
+    const TODAY = new Date().toISOString().slice(0,10);
+    const STORAGE_KEYS = { assets:'wow_maintenance_assets', service:'wow_maintenance_serviceRecords', tasks:'wow_maintenance_oneOffTasks', handoff:'wow_maintenance_handoff', contacts:'wow_maintenance_contacts', workers:'wow_maintenance_workers', admin:'wow_maintenance_admin'};
+    const TABS = ['dashboard','assets','operations','contacts','reports','admin'];
+    const ROLES = ['Manager','Assistant','Lead','Staff'];
+    const DOC_STATUSES = ['Manual linked','Family manual','Support linked','Missing'];
+    const SEVERITY = ['Critical','High','Medium','Low'];
+    const STATUS = ['Open','Scheduled','In Progress','Waiting Parts','Complete'];
+    const defaultAssets = [{id:'asset-1',name:'StepManiaX',manufacturer:'Step Revolution',category:'Dance / Rhythm',quantity:1,documentation:{status:'Manual linked',manualUrl:'https://www.stepmaniax.com/docs/Software%20-%20Manual.pdf',supportUrl:'https://stepmaniax.com/support/',notes:'',lastUpdated:TODAY,statusNotes:''},pmFocus:'Pads, bar hardware, fan vents, stage sensors',notes:'',issues:[{id:'iss-1',text:'Pad sensor drift on player 2 corner',severity:'High',status:'Open',createdAt:TODAY}],urgency:'High',assignedWorkers:[],status:'Active',serviceHistory:[],operationHistory:[],photos:[]},{id:'asset-2',name:'Air Hockey Table',manufacturer:'ICE',category:'Sports',quantity:1,documentation:{status:'Family manual',manualUrl:'',supportUrl:'https://www.icegame.com/',notes:'Need exact revision PDF',lastUpdated:TODAY,statusNotes:'Family manual only'},pmFocus:'Blower output, puck wear, score sensors',notes:'',issues:[],urgency:'Medium',assignedWorkers:[],status:'Active',serviceHistory:[],operationHistory:[],photos:[]}];
+    const defaultWorkers = [{id:'w1',name:'Alex',role:'Lead'},{id:'w2',name:'Jordan',role:'Staff'},{id:'w3',name:'Sam',role:'Assistant'},{id:'w4',name:'Manager',role:'Manager'}];
+    const defaultContacts = [{manufacturer:'ICE',contact:'Support',phone:'',email:'',notes:'',website:'https://www.icegame.com/'}];
 
-const games = [
-      {title:'StepManiaX',manufacturer:'Step Revolution',category:'Dance / Rhythm',qty:1,status:'Manual linked',manual:'https://www.stepmaniax.com/docs/Software%20-%20Manual.pdf',support:'https://stepmaniax.com/support/',pm:'Pads, bar hardware, fan vents, stage sensors'},
-      {title:'Over The Edge',manufacturer:'UNIS',category:'Prize / Redemption',qty:1,status:'Manual linked',manual:'https://www.betson.com/wp-content/uploads/2023/10/O119_Over_The_Edge_Plus_GMP_Manual__F645652E8DAEE.pdf',support:'https://www.unispartsandservice.com/games/manuals',pm:'Prize channels, sensors, marble feed, motors'},
-      {title:'Fast & Furious - 2 Player',manufacturer:'Raw Thrills',category:'Driving',qty:1,status:'Family manual',manual:'https://rawthrills.com/wp-content/uploads/2023/07/040-00086-01_FF_Motion_REV7.pdf',support:'https://www.betson.com/amusement-games-all/?wpv_view_count=10409',pm:'Steering centering, pedals, seats, force feedback, monitor vents'},
-      {title:'Break the Plate - 2 Player',manufacturer:'Coastal Amusements',category:'Carnival / Video Redemption',qty:1,status:'Manual linked',manual:'https://www.shafferdistributing.com/wp-content/uploads/2025/01/MS0831_BREAK-THE-PLATE.pdf',support:'https://coastalamusements.com/game/break-the-plate/',pm:'Ball return, impact sensors, monitor glass, cabinet hardware'},
-      {title:'Wizard of Oz - 1 Player',manufacturer:'Elaut',category:'Coin Pusher',qty:1,status:'Family manual',manual:'https://www.manualslib.com/manual/1785430/Elaut-Mistral.html',support:'https://primetimeamusements.com/product/the-wizard-of-oz-3-player/',pm:'Card dispenser, token path, pusher timing, optics'},
-      {title:'Duck Derby - 2 Player',manufacturer:'Adrenaline Amusements',category:'Water / Skill',qty:1,status:'Support linked',support:'https://primetimeamusements.com/product/duck-derby-pump-n-race/',pm:'Pump handles, water lines, seals, splash management'},
-      {title:'Marvel Avengers - 2 Player',manufacturer:'Andamiro',category:'Coin Pusher',qty:1,status:'Support linked',support:'https://primetimeamusements.com/product/marvel-avengers-coin-card-pusher/',pm:'Token launcher, card dispenser, stone sensors, pusher bed'},
-      {title:'Quick Shot - 2 Player',manufacturer:'JET Games',category:'Target / Redemption',qty:1,status:'Support linked',support:'https://www.gameroomshop.com/products/jet-games-quick-shot-arcade-game',pm:'Gun calibration, trigger switches, target sensors, screen cleaning'},
-      {title:'Fantastic Prize',manufacturer:'UNIS',category:'Merchandiser / Cutter',qty:2,status:'Support linked',support:'https://primetimeamusements.com/product/fantastic-prize/',pm:'String cutter travel, string alignment, prize hang points, door locks'},
-      {title:'Mini Taj Mahel Ticket Crane',manufacturer:'Smart Industries',category:'Ticket Crane',qty:1,status:'Family manual',manual:'https://www.betson.com/wp-content/uploads/2017/09/Crane-Manual-201703.pdf',support:'https://www.smartind.com/oversized-cranes/pid27/the-giant-taj-mahal/',pm:'Claw alignment, ticket ring stock, joystick, payout door, timer'},
-      {title:'Angry Birds Coin Crash - 3 Player',manufacturer:'LAI Games',category:'Coin Pusher',qty:1,status:'Manual linked',manual:'https://www.mossdistributing.com/userdocs/documents/MS0571_ANGRY%20BIRD%20COIN%20CRASH.pdf',support:'https://www.laigames.com/games',pm:'Coin tower, pusher decks, optics, hopper level, ticket settings'},
-      {title:'Skee-Ball Machines',manufacturer:'Bay Tek / Skee-Ball',category:'Alley Roller',qty:3,status:'Manual linked',manual:'https://costleyentertainment.net/faq/manuals/Skee-Ball%20Modern%20Service%20Manual%20.pdf',support:'https://parts.baytekent.com/skee-ball-modern/',pm:'Balls, lane surfaces, scoring optics, ball return, ticket feed'},
-      {title:'Down the Clown',manufacturer:'ICE',category:'Carnival / Skill Wall',qty:2,status:'Manual linked',manual:'https://support.icegame.com/hc/en-us/articles/19140105030036-Down-the-Clown-manual',support:'https://www.icegame.com/games/down-the-clown/',pm:'Targets, ball count, netting, score sensors, hardware'},
-      {title:'Spin It and Win It',manufacturer:'Bay Tek',category:'Wheel / Redemption',qty:1,status:'Manual linked',manual:'https://www.betson.com/wp-content/uploads/wpallimport/files/redemption-service-manuals/spin-n-win-redemption-service-manual-baytek-games.pdf',support:'https://parts.baytekent.com/spin-n-win-bay-tek-version/',pm:'Handle linkage, wheel indexing, lights, ticket dispense'},
-      {title:'Arcade Crossyroad',manufacturer:'Adrenaline Amusements',category:'Video Redemption',qty:1,status:'Support linked',support:'https://www.betson.com/amusement-products/crossy-road/',pm:'Button inputs, ticket dispenser, monitor cleanliness, fans'},
-      {title:'Jurassic Park - 2 Person',manufacturer:'Raw Thrills',category:'Shooter',qty:1,status:'Manual linked',manual:'https://rawthrills.com/wp-content/uploads/2020/01/JP-Manual-r09.pdf',support:'https://rawthrills.com/games/jurassic-park-arcade/',pm:'Gun sensors, recoil, monitor vents, fans, seat/footwell cleanout'},
-      {title:'The Giant Ball Crane',manufacturer:'Smart Industries',category:'Crane',qty:1,status:'Family manual',manual:'https://primetimeamusements.com/wp-content/uploads/2015/05/the-giant-crane-manual-smart-industries.pdf',support:'https://primetimeamusements.com/product/the-giant-crane/',pm:'Claw strength, rail travel, motor belts, prize door, glass'},
-      {title:'Pearl Fishery Coin Pushers',manufacturer:'LAI Games',category:'Coin Pusher',qty:3,status:'Manual linked',manual:'https://www.betson.com/wp-content/uploads/2023/10/Pearl-fishery.pdf',support:'https://www.laigames.com/games/pearl-fishery',pm:'Pearl supply, optics, push decks, header sync, ticket logic'},
-      {title:'SpongeBob Pineapple Arcade - 2 Player',manufacturer:'Andamiro',category:'Coin / Card Pusher',qty:1,status:'Manual linked',manual:'https://andamirousa.com/manuals/spongebob-pineapple-arcade-iinstallation-user-guide/',support:'https://andamirousa.com/technical-manuals/',pm:'Card path, token feed, pineapple targets, pusher bed'},
-      {title:'Tower of Tickets - 4 Player',manufacturer:'Bay Tek / Elaut',category:'Ticket Redemption',qty:1,status:'Manual linked',manual:'https://www.mossdistributing.com/userdocs/documents/MS0086_TOWER%20OF%20TICKETS.pdf',support:'https://www.baytekent.com/tower-of-tickets',pm:'Sweeper arm, tower reset, ticket bundles, sensors, guards'},
-      {title:'Black Hole',manufacturer:'Coastal Amusements',category:'Skill Redemption',qty:1,status:'Manual linked',manual:'https://www.betson.com/wp-content/uploads/wpallimport/files/redemption-service-manuals/black-hole-redemption-service-manual-coastal-amusements.pdf',support:'https://coastalamusements.com/game/black-hole/',pm:'Plunger, ball path, LED ring, score display, ticket timing'},
-      {title:'Fishbowl Frenzy',manufacturer:'Team Play',category:'Video Redemption',qty:1,status:'Support linked',support:'https://primetimeamusements.com/product/fishbowl-frenzy/',pm:'Toss area, monitor acrylic, ticket settings, cabinet fans'},
-      {title:'Pop It & Win',manufacturer:'Benchmark Games',category:'Electromechanical Redemption',qty:1,status:'Manual linked',manual:'https://techsupporttool.com/knowledgebase/Manuals/Games/Pop%20It%20%26%20Win/Pop%20It%20%26%20Win.pdf',support:'https://primetimeamusements.com/product/pop-it-win/',pm:'Balloon chamber, pop mechanism, target lights, air system'},
-      {title:'Prize Time Deluxe Claw Game',manufacturer:'Smart Industries',category:'Crane',qty:1,status:'Manual linked',manual:'https://www.betson.com/wp-content/uploads/2017/09/Crane-Manual-201703.pdf',support:'https://www.smartind.com/claw-cranes/pt-deluxe/pid43/pt-deluxe-45-/',pm:'Claw coil, carriage wheels, joystick, power supply, locks'},
-      {title:'Ticket Time Claw Game',manufacturer:'Smart Industries',category:'Ticket Crane',qty:1,status:'Manual linked',manual:'https://www.betson.com/wp-content/uploads/2017/09/Crane-Manual-201703.pdf',support:'https://primetimeamusements.com/product/ticket-time-31-crane/',pm:'Ticket rings, bowl/scan area, claw travel, timer, sensors'},
-      {title:'Grand Piano Keys - 2 Player',manufacturer:'Bay Tek',category:'Music / Redemption',qty:1,status:'Manual linked',manual:'https://primetimeamusements.com/wp-content/uploads/2017/01/grand-piano-keys-manual-baytek.pdf',support:'https://parts.baytekent.com/grand-piano-keys/',pm:'Key switches, monitor, speakers, song timing inputs, ticket settings'},
-      {title:'Giant Ticket Pusher',manufacturer:'Smart Industries',category:'Ticket / Pusher',qty:1,status:'Support linked',support:'https://www.smartind.com/',pm:'Confirm hopper, sweep, sensor, and ticket path configuration before stocking parts'},
-      {title:'Ticket Monsters',manufacturer:'Bay Tek',category:'Wheel / Redemption',qty:2,status:'Manual linked',manual:'https://www.betson.com/wp-content/uploads/wpallimport/files/redemption-service-manuals/ticket-monster-game-service-manual-baytek-games.pdf',support:'https://www.baytekent.com/ticket-monster',pm:'Handle return, spinner, arrow alignment, ticket storage'},
-      {title:'Air Hockey Table',manufacturer:'ICE',category:'Sports',qty:1,status:'Family manual',manual:'https://support.icegame.com/hc/en-us/articles/19571980173460-Air-FX-Manual',support:'https://www.icegame.com/games/air-fx/',pm:'Blower, puck wear, goal sensors, side rails, surface polish'},
-      {title:'Quick Drop',manufacturer:'Bay Tek',category:'Redemption',qty:1,status:'Manual linked',manual:'https://www.mossdistributing.com/userdocs/documents/MS0075_QUICK%20DROP.pdf',support:'https://parts.baytekent.com/quik-drop/',pm:'Ball paths, release gate, display lights, ticket payout'},
-      {title:'Full Tilt',manufacturer:'Bay Tek',category:'Skill Redemption',qty:1,status:'Manual linked',manual:'https://www.betson.com/wp-content/uploads/wpallimport/files/redemption-service-manuals/full-tilt-game-baytek-games.pdf',support:'https://parts.baytekent.com/full-tilt/',pm:'Gear wheel, ball guides, target pockets, display lights'},
-      {title:'Lane Master Bowling - 2 Player',manufacturer:'UNIS',category:'Bowling',qty:1,status:'Manual linked',manual:'https://www.unispartsandservice.com/moduledocuments/embed/96/L110_Lane_Master_DB_Manual_2017_10__80439583C4BFE.pdf',support:'https://www.unispartsandservice.com/games/manuals',pm:'Balls, lane sensors, pinset area, ticket dispenser, overhead display'},
-      {title:'Connect 4 Hoops - 2 Player',manufacturer:'Bay Tek',category:'Basketball / Redemption',qty:1,status:'Manual linked',manual:'https://www.betson.com/wp-content/uploads/2020/01/Connect-4-Hoops-Service-Manual-2.pdf',support:'https://www.baytekent.com/connect4-hoops-hd',pm:'Rims, nets, ball gate, scoring logic, playfield optics'},
-      {title:'Wizard of Oz Coin Pusher - 3 Player',manufacturer:'Elaut',category:'Coin Pusher',qty:1,status:'Family manual',manual:'https://www.manualslib.com/manual/1785430/Elaut-Mistral.html',support:'https://primetimeamusements.com/product/the-wizard-of-oz-3-player/',pm:'Card sets, pusher bed, coin launcher, ticket system'},
-      {title:'Bean Bag Toss',manufacturer:'ICE',category:'Carnival / Skill Wall',qty:1,status:'Manual linked',manual:'https://www.betson.com/wp-content/uploads/2023/07/bean-bag-toss-Rev-O-10-5-2018_o.pdf',support:'https://support.icegame.com/hc/en-us/articles/19252653443220-Bean-Bag-Toss-Manual',pm:'Bag inventory, target motion, sensors, netting, bolts'},
-      {title:'Walking Dead - 2 Player',manufacturer:'Raw Thrills / Play Mechanix',category:'Shooter',qty:1,status:'Manual linked',manual:'https://www.betson.com/wp-content/uploads/2017/07/Walking-Dead-v1.1.pdf',support:'https://rawthrills.com/games/walking-dead/',pm:'Crossbow controls, strings/feel, monitor, fans, footwell cleanout'},
-      {title:'Ice Man Water Shooter - 2 Player',manufacturer:'Coastal Amusements',category:'Water / Video Redemption',qty:1,status:'Support linked',support:'https://primetimeamusements.com/product/ice-man/',pm:'Water gun seals, hose routing, splash guard, pump/filter'},
-      {title:'Sink It - 2 Player',manufacturer:'Bay Tek',category:'Toss / Redemption',qty:1,status:'Manual linked',manual:'https://www.betson.com/wp-content/uploads/wpallimport/files/redemption-service-manuals/sink-it-shootout-redemption-service-manual-baytek-games.pdf',support:'https://primetimeamusements.com/product/sink-it-shootout/',pm:'Cup sensors, ball supply, scoring logic, cabinet lighting'},
-      {title:'Willy Wonka Coin Pushers',manufacturer:'Elaut',category:'Coin Pusher',qty:2,status:'Manual linked',manual:'https://www.manualslib.com/manual/2336666/Elaut-9992-1616-Willy-Wonka-G2-6pl.html',support:'https://www.elaut.com/amusement-games/pusher-willy-wonka',pm:'Coin launcher, Wonka bars, card set, bonus wheel, optics'},
-      {title:'Minecraft - 4 Player',manufacturer:'Raw Thrills / Play Mechanix',category:'Video Redemption',qty:1,status:'Manual linked',manual:'https://rawthrills.com/wp-content/uploads/2021/05/Minecraft-v1.10.pdf',support:'https://rawthrills.com/games/minecraft-dungeons-arcade/',pm:'Card dispenser, controls, fans, monitor, audio'},
-      {title:'King Kong Virtual Reality - 2 Person',manufacturer:'Raw Thrills / Play Mechanix',category:'VR',qty:1,status:'Manual linked',manual:'https://rawthrills.com/wp-content/uploads/2021/03/040-00078-01_King_Kong_of_Skull_Island_Manual_REV6.pdf',support:'https://rawthrills.com/games/king-kong-of-skull-island/',pm:'Headsets, seat motion, harness points, fans, sanitization'},
-      {title:'Power Roll',manufacturer:'Sega / Komuse',category:'Skill Redemption',qty:1,status:'Manual linked',manual:'https://store.playitamusements.com/assets/site/docs/manuals/power%20roll%20manual%20ver.6.2%20%282%29.pdf',support:'https://www.betson.com/amusement-products/power-roll/',pm:'Ball launcher, return track, target gates, lever wear'},
-      {title:'Virtual Rabbids VR - 2 Person',manufacturer:'LAI Games',category:'VR',qty:1,status:'Manual linked',manual:'https://primetimeamusements.com/wp-content/uploads/2017/12/VirtualRabbidsTheBigRideManual16.pdf',support:'https://parts.laigames.com/virtual-rabbids-the-big-ride/',pm:'Headsets, seat motion, harnesses, PC/UPS, ventilation'},
-      {title:'Willy Crash',manufacturer:'Bay Tek',category:'Cannon / Redemption',qty:1,status:'Manual linked',manual:'https://www.betson.com/wp-content/uploads/2020/01/Willy-Crash-Manual-11_21_18.pdf',support:'https://parts.baytekent.com/willy-crash-mini/',pm:'Cannon launch path, ticket values, target sensor, cabinet hardware'},
-      {title:'Whack N Win',manufacturer:'ICE',category:'Carnival / Skill Wall',qty:1,status:'Manual linked',manual:'https://support.icegame.com/hc/en-us/articles/22696692840980-Whack-N-Win-Manual',support:'https://www.icegame.com/games/whack-n-win/',pm:'Hit pads, bonus sensors, score displays, cabinet fasteners'},
-      {title:'HyperShoot - 2 Player',manufacturer:'LAI Games',category:'Basketball / Redemption',qty:1,status:'Manual linked',manual:'https://primetimeamusements.com/wp-content/uploads/2016/12/HYPERshootManual10.pdf',support:'https://www.laigames.com/games',pm:'Rims, balls, shot sensors, return ramp, score display'}
-    ];
+    const safeLoad=(k,f)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):f}catch{return f}};
+    const safeSave=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}};
+    const addDays=(d,n)=>{const x=new Date(d+'T12:00:00');x.setDate(x.getDate()+n);return x.toISOString().slice(0,10)};
+    const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+    const bClass=v=>['Critical','High'].includes(v)?'bad':['Medium','Scheduled','Waiting Parts','Family manual','Support linked'].includes(v)?'warn':'good';
+    const byName=n=>assets.find(a=>a.name===n);
 
-const issueGuides = {
-      'Quick Shot - 2 Player': {issue:'Air compressor sounds rough / clanky.',severity:'Medium',steps:['Confirm the sound is from the compressor head/tank area and not from the gun valves or another pneumatic device.','Inspect compressor mounts, rubber isolators, and base hardware; tighten loose hardware and replace split isolators.','Check intake filter condition and drain any tank or line moisture before retesting.','Listen for check-valve chatter or startup kickback that would indicate a leaking check valve or pressure issue.','If the clank persists, inspect for worn piston/rod bearing, reed valve damage, or internal compressor wear and replace the compressor if metal-on-metal noise remains.']},
-      'Skee-Ball Machines': {issue:'5000 score sensor false-detects and toggles when the lane or harness is lightly bumped.',severity:'High',steps:['Enter diagnostics and watch the 5000 target input while gently flexing the sensor board, connector, and harness.','Clean the opto windows and confirm the transmitter/receiver brackets are square and not vibration-sensitive.','Reseat the sensor connector and inspect for pushed-back pins, cracked solder joints, or a taut harness that changes state when moved.','Measure the sensor supply voltage under play conditions to rule out a marginal 5V feed or noisy ground.','Swap the suspect 5000 sensor or harness with a known-good position to confirm whether the fault follows the board or stays with the wiring.']},
-      'Willy Crash': {issue:'Playfield / plunger area LEDs are flickering.',severity:'High',steps:['Confirm whether the flicker happens only during actions like plunger movement, coil fire, or ticket payout; if so, suspect a voltage dip.','Measure the 12V feed at the LED strip input while the game is active and look for sag or ripple.','Reseat the harness path from PSU to power distribution to LED strip and inspect for heat damage or loose grounds.','Inspect the wiring near hinges and moving playfield sections for intermittent shorts or broken conductors.','If only one strip flickers, swap or isolate that strip to determine whether the strip itself or the driver/output path is failing.']},
-      'Virtual Rabbids VR - 2 Person': {issue:'Both headsets work initially, then one headset randomly goes black during operation.',severity:'High',steps:['Determine whether the same player side always fails and swap the left/right headsets to see whether the blackout follows the headset or stays on the cabinet side.','Reseat the video and USB path at the headset, any link box, the PC, and any intermediate couplers or extension hardware.','Inspect the headset cable at flex points around the seat and harness route for strain damage or intermittent contact.','Disable USB power-saving on the relevant USB hubs and remove any unnecessary hubs/extenders for testing.','If the issue appears after warm-up, review GPU and PC thermals, power stability, and Windows display-driver logs for resets.']},
-      'Sink It - 2 Player': {issue:'Right side will not boot unless the PSU and strip are power-cycled in a specific order.',severity:'High',steps:['Verify whether the failure is only on cold start or any restart and temporarily remove the internal power strip from the equation with a known-good direct feed.','Follow a load-isolation test: disconnect all PSU outputs except the motherboard and monitor, then reconnect one branch at a time until the failure returns.','Meter the 5V or 12V rail during boot and watch for a dip that would indicate a marginal PSU or overload.','Inspect PSU output connectors, grounds, and any heat-discolored housings for poor contact or excessive draw.','If the issue follows the PSU when loads are swapped, replace the suspect power supply or the failing downstream load causing the shutdown.']},
-      'Marvel Avengers - 2 Player': {issue:'Right side is showing constant E.62.',severity:'Critical',steps:['Open the rear elevator / hopper path and clear any jammed medals, bent guides, or foreign objects from the right-side mechanism.','Use the built-in test mode to run the rear hopper / elevator test and verify whether the mechanism spins freely and the related sensor changes state.','Measure voltage at the motor during the commanded test; voltage present with no movement points to a motor or gearbox issue.','If the sensor is involved, clean the opto or reflective sensor and reseat the connector on both sensor and board ends.','If the left side is healthy and parts are mirrored, swap the identical sensor or motor path components to prove whether the fault follows the component or stays with the channel.']},
-      'StepManiaX': {issue:'Top-right speaker crackles randomly.',severity:'Medium',steps:['Swap the top-right speaker or amp channel with a known-good channel to see whether the crackle follows the speaker or stays with the amplifier output.','Reseat all speaker spade connectors and inspect the harness for partially broken strands or pinched cable sections.','Perform a gentle tap and wiggle test on the speaker frame and connector while audio is active to provoke an intermittent connection.','Check the amplifier power rail for sag or thermal instability if the crackle appears after extended play.','If the problem only follows the speaker under bass load, replace the speaker and inspect the tinsel leads or cone assembly.']},
-      'Black Hole': {issue:'Game accumulates credits, never releases a ball, and repeatedly shows owed tickets.',severity:'High',steps:['Inspect the trough / ball-ready sensor and verify in test mode that the machine correctly sees a ball present and a ball removed.','Run the ball release or coil test to confirm the ball-release solenoid or motor fires; if it does not, check voltage and driver output.','Clear any ball jam in the loading path and inspect the loading motor, rotary assembly, and related microswitches for intermittent state changes.','Open the ticket dispenser, clear jams, clean the ticket sensor, and verify in test mode that ticket pulses are being seen correctly.','Check that no credit input is stuck closed, including coin, Intercard pulse, or service-credit wiring, because that can create runaway credits.']},
-      'Angry Birds Coin Crash - 3 Player': {issue:'E2 sensor fault on Coin Crash / tower-building Angry Birds.',severity:'Medium',steps:['Record the exact E2-x code so the failing sensor position can be mapped to the correct target or coin-path sensor.','Enter sensor or switch test mode and verify whether the referenced sensor changes state when coins or targets move through it.','Clean the sensor face and remove coin dust or debris from the optical path and surrounding bracket.','Reseat the sensor harness at both ends and inspect for broken conductors that react when the door or harness moves.','If the same sensor design is used elsewhere, swap with a known-good sensor to confirm the fault follows the component rather than the channel.']},
-      'HyperShoot - 2 Player': {issue:'Right side accepts Intercard credit, but Solo / Versus will not enable.',severity:'High',steps:['Verify in input test whether the Solo and Versus buttons register every press during the failure state.','If the input test does not change, inspect the button microswitch, lamp harness, and I/O wiring for the right cabinet.','If the buttons register but gameplay still will not enable, temporarily unlink the cabinets and test the right side in standalone mode.','Reseat or replace the link cable if unlinking resolves the problem, and verify link settings match on both cabinets.','Confirm the Intercard pulse and any inhibit or common-ground wiring are correct so the cabinet reaches the ready state after credit is applied.']},
-      'SpongeBob Pineapple Arcade - 2 Player': {issue:'Card dispenser is constantly jamming.',severity:'High',steps:['Empty the dispenser completely and inspect for bent, delaminated, or sticky cards in the path.','Clean the card feed rollers and path, and check whether humidity or warped stock is contributing to repeated jams.','Verify in test mode that the dispense sensor changes state when a card passes through the mechanism.','Inspect path guides and retention fingers to make sure the cards are not being pinched or skewed during feed.','If jams continue with known-good cards, replace the worn rollers, belt, or the dispenser motor / gearbox assembly as needed.']}
-    };
-
-const catchUpPlan = [
-      {day:'Day 1',title:'Baseline safety sweep',scope:'All 54 listed units',detail:'Power cords, plugs, levelers, door locks, obvious damage, missing guards.'},
-      {day:'Day 1',title:'Exterior clean and customer-touchpoint reset',scope:'All cabinets',detail:'Glass, acrylic, controls, seats, gun grips, pedals, wheels, and buttons.'},
-      {day:'Day 1',title:'Cooling and dust pass',scope:'Video, VR, driving, shooters',detail:'Fans, intake vents, rear grills, monitor housings, PC bays.'},
-      {day:'Day 2',title:'Control test by game family',scope:'Driving, shooters, sports, rhythm',detail:'Steering, pedals, guns, pumps, keyboards, joysticks, plungers, launchers.'},
-      {day:'Day 2',title:'Ticket / card / pusher audit',scope:'Pushers, ticket cranes, redemption',detail:'Ticket dispensers, card dispensers, token paths, push decks, jackpot settings.'},
-      {day:'Day 2',title:'Ball / puck / bag / projectile count',scope:'Skill wall and sports games',detail:'Skee-Ball balls, Connect 4 balls, HyperShoot balls, Bean Bag bags, air hockey puck.'},
-      {day:'Day 3',title:'Mechanical fastener and motion check',scope:'Cranes, wheels, bowling, launch games',detail:'Rails, belts, claws, gate motors, sweeper arms, motion seats, moving targets.'},
-      {day:'Day 3',title:'Manual-to-machine verification',scope:'Family-manual matches',detail:'Photograph serial plates and revisions on crane widths, pushers, and air hockey so the exact service revision stays tied to the machine.'},
-      {day:'Day 3',title:'Open-issues log and recurring PM schedule',scope:'All games',detail:'Record faults, parts needed, next PM date, and machine owner notes.'}
-    ];
-
-const pmCadence = [
-      {frequency:'Daily',items:['Boot test and attract mode confirmation','Clean touch points and play surfaces','Check ticket/card payout behavior','Walk floor for leaks, jams, and broken plastics']},
-      {frequency:'Weekly',items:['Test every control and player position','Inspect fans, vents, filters, and monitor glass','Confirm ticket stocks, card stock, and redemption settings','Check crane claws, string cutters, and prize doors']},
-      {frequency:'Monthly',items:['Open cabinets for dust removal where appropriate','Inspect power supplies, harnesses, and connectors','Verify moving assemblies: rails, belts, wheels, and launchers','Audit software/settings backups where supported']},
-      {frequency:'Quarterly',items:['Recalibrate guns, steering, pumps, and sensors','Review repeated faults and top-down earners','Replace worn balls, bags, pucks, rubber feet, and control overlays','Deep-clean pusher beds, hopper areas, and redemption internals']},
-      {frequency:'Annual',items:['Full fleet review against manuals and serials','Refresh labels, manuals, and training notes','Plan rebuilds, retirements, and capital replacements','Re-score every machine for PM priority and support coverage']}
-    ];
-
-    const defaultContacts = [
-      {manufacturer:'UNIS',contact:'General parts / service',phone:'',email:'',notes:'Use linked support/manual pages first.',website:'https://www.unispartsandservice.com/games/manuals'},
-      {manufacturer:'Bay Tek / Skee-Ball',contact:'Parts / tech support',phone:'',email:'',notes:'Use Bay Tek parts portal for modern Skee-Ball references.',website:'https://parts.baytekent.com/'},
-      {manufacturer:'ICE',contact:'Tech support',phone:'',email:'',notes:'Useful for redemption, ticketing, and sensor troubleshooting.',website:'https://support.icegame.com/'},
-      {manufacturer:'Raw Thrills',contact:'Service resources',phone:'',email:'',notes:'Driving and shooter family support.',website:'https://rawthrills.com/'},
-      {manufacturer:'Andamiro',contact:'General support',phone:'',email:'',notes:'Card/pusher support notes and parts tracking.',website:'https://www.andamirousa.com/'},
-      {manufacturer:'Adrenaline Amusements',contact:'Support resources',phone:'',email:'',notes:'Water, video redemption, and Crossy Road family support.',website:'https://adrenalineamp.com/'},
-      {manufacturer:'Smart Industries',contact:'Cranes support',phone:'',email:'',notes:'Serial/model verification matters before ordering.',website:'https://www.smartind.com/'},
-      {manufacturer:'LAI Games',contact:'Service resources',phone:'',email:'',notes:'Use for pushers and modern redemption.',website:'https://www.laigames.com/'},
-      {manufacturer:'Step Revolution',contact:'SMX support',phone:'',email:'',notes:'Pads, sensors, and software resources.',website:'https://stepmaniax.com/support/'}
-    ];
-
-    function addDays(date, days){const d=new Date(date+'T12:00:00'); d.setDate(d.getDate()+days); return d.toISOString().slice(0,10)}
-    function diffDays(a,b){const A=new Date(a+'T12:00:00'), B=new Date(b+'T12:00:00'); return Math.round((B-A)/86400000)}
-    function priorityForCategory(c){if(['VR','Driving','Shooter','Dance / Rhythm'].includes(c)) return 'High'; if(['Coin Pusher','Coin / Card Pusher','Ticket / Pusher','Crane','Ticket Crane','Sports','Basketball / Redemption'].includes(c)) return 'Medium'; return 'Routine';}
-    function severityForCategory(c){if(['VR','Driving','Shooter'].includes(c)) return 'High'; if(['Coin Pusher','Coin / Card Pusher','Ticket / Pusher','Crane','Ticket Crane','Sports'].includes(c)) return 'Medium'; return 'Low';}
-    function severityOffsetDays(s){return s==='Critical'?0:s==='High'?1:s==='Medium'?2:4}
-    function safeLoad(key, fallback){try{const v=localStorage.getItem(key); return v?JSON.parse(v):fallback}catch{return fallback}}
-    function safeSave(key, value){try{localStorage.setItem(key, JSON.stringify(value))}catch{}}
-    function issueTaskId(title){return 'import-'+title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')}
-    function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-    function escapeAttr(s){return escapeHtml(s)}
-    function sortByDateAsc(a,b){return String(a).localeCompare(String(b))}
-
-    function buildServiceSeed(){
-      return games.map((g,i)=>{
-        const guide=issueGuides[g.title];
-        const lastService=addDays(TODAY,-((i%5)*6+2));
-        const severity=guide?.severity||severityForCategory(g.category);
-        const nextPm=addDays(lastService,14);
-        return {
-          title:g.title,
-          technician:TECHNICIANS[i%TECHNICIANS.length],
-          status:guide?'Open':['Open','Scheduled','In Progress','Scheduled','Open'][i%5],
-          priority:priorityForCategory(g.category),
-          severity,
-          lastService,
-          nextPm,
-          issue:guide?.issue||'Needs first verified PM pass after portal sync.',
-          notes:guide?guide.steps[0]:g.pm,
-          partsNeeded:'',
-          photos:[],
-          verifiedBy:'',
-          accountability:'',
-          lastUpdated:TODAY,
-          issueHistory:[{id:'seed-'+i,date:TODAY,status:guide?'Open':'Scheduled',severity,tech:TECHNICIANS[i%TECHNICIANS.length],note:guide?`Imported current issue: ${guide.issue}`:`Baseline issue log seeded from PM focus: ${g.pm}`}],
-          history:[{date:lastService,action:g.pm,tech:TECHNICIANS[i%TECHNICIANS.length]}]
-        }
-      })
-    }
-
-    function buildOneOffSeed(){
-      const manual=[
-        {id:'task-1',title:'Photograph serial plates on family-manual machines',machine:'Mini Taj Mahel Ticket Crane',technician:'Alex',dueDate:'2026-03-12',severity:'Medium',status:'Open',notes:'Capture model tag, width, and any revision sticker for the crane file.',source:'Manual task',photos:[],checklist:['Photo of serial plate','Revision sticker','Upload to notes'],createdDate:TODAY},
-        {id:'task-2',title:'Verify pusher card stock and bonus settings',machine:'Willy Wonka Coin Pushers',technician:'Jordan',dueDate:'2026-03-11',severity:'High',status:'Scheduled',notes:'Check card count, settings menu, and hopper behavior after opening.',source:'Manual task',photos:[],checklist:['Count stock','Test payout','Record settings'],createdDate:TODAY},
-        {id:'task-3',title:'Inspect blower noise and puck wear',machine:'Air Hockey Table',technician:'Sam',dueDate:'2026-03-13',severity:'Medium',status:'Open',notes:'Confirm blower output is even and replace puck if cracked or rough.',source:'Manual task',photos:[],checklist:['Listen to blower','Check puck','Document result'],createdDate:TODAY}
-      ];
-      const imported=Object.entries(issueGuides).map(([title,guide])=>({id:issueTaskId(title),title:'Troubleshoot current issue',machine:title,technician:'Unassigned',dueDate:addDays(TODAY,severityOffsetDays(guide.severity)),severity:guide.severity,status:'Open',notes:`${guide.issue} First steps: ${guide.steps.slice(0,2).join(' ')}`,source:'Imported issue',photos:[],checklist:['Verify symptom','Do first two steps','Add result note'],createdDate:TODAY}));
-      return [...imported, ...manual]
-    }
-
-    function buildHandoffSeed(){
-      return [
-        {id:'handoff-1',date:TODAY,shift:'Open',author:'Manager',note:'Start with top severity redemptions and any games affecting payouts. Use photos for before/after proof.'},
-        {id:'handoff-2',date:TODAY,shift:'Close',author:'Manager',note:'Log all parts needed before leaving so ordering can happen the next morning.'}
-      ]
-    }
-
-    let serviceRecords = safeLoad(STORAGE_KEYS.service, buildServiceSeed());
-    let oneOffTasks = safeLoad(STORAGE_KEYS.tasks, buildOneOffSeed());
-    let handoffLog = safeLoad(STORAGE_KEYS.handoff, buildHandoffSeed());
-    let contacts = safeLoad(STORAGE_KEYS.contacts, defaultContacts);
-    let workers = safeLoad(STORAGE_KEYS.workers, TECHNICIANS.filter(t=>t!=='Unassigned').map((name,i)=>({id:'w-'+(i+1),name,role:name==='Manager'?'Manager':'Staff'})));
+    let assets = safeLoad(STORAGE_KEYS.assets, null);
+    let serviceRecords = safeLoad(STORAGE_KEYS.service, []);
+    let oneOffTasks = safeLoad(STORAGE_KEYS.tasks, []);
+    let handoffLog = safeLoad(STORAGE_KEYS.handoff, []);
+    let contactsList = safeLoad(STORAGE_KEYS.contacts, defaultContacts);
+    let workers = safeLoad(STORAGE_KEYS.workers, defaultWorkers);
     let adminState = safeLoad(STORAGE_KEYS.admin, {password:'',unlocked:false});
 
-    function saveAll(){
-      safeSave(STORAGE_KEYS.service, serviceRecords);
-      safeSave(STORAGE_KEYS.tasks, oneOffTasks);
-      safeSave(STORAGE_KEYS.handoff, handoffLog);
-      safeSave(STORAGE_KEYS.contacts, contacts);
-      safeSave(STORAGE_KEYS.workers, workers);
-      safeSave(STORAGE_KEYS.admin, adminState);
-    }
-
-    function badgeClass(v){return v==='Critical'||v==='High'?'bad':v==='Medium'||v==='Family manual'||v==='Support linked'||v==='Scheduled'||v==='Waiting Parts'?'warn':'good'}
-    function gameByTitle(t){return games.find(g=>g.title===t)}
-    function getSlaDays(severity){return severity==='Critical'?0:severity==='High'?2:severity==='Medium'?5:10}
-    function isOverdueRecord(r){return r.status!=='Complete' && r.nextPm < TODAY}
-    function isOverdueTask(t){return t.status!=='Complete' && t.dueDate < TODAY}
-    function dueSoon(date, days=3){return date >= TODAY && date <= addDays(TODAY,days)}
-
-    function buildCalendarRows(){
-      const pmRows = serviceRecords.map(r=>({kind:'PM', title:r.title, owner:r.technician, date:r.nextPm, severity:r.severity, status:r.status, detail:r.issue}));
-      const taskRows = oneOffTasks.map(t=>({kind:'Task', title:t.title, owner:t.technician, date:t.dueDate, severity:t.severity, status:t.status, detail:t.machine}));
-      return [...pmRows,...taskRows].filter(x=>x.date).sort((a,b)=>a.date.localeCompare(b.date)||a.title.localeCompare(b.title));
-    }
-
-    function technicianSummary(name){
-      const records = serviceRecords.filter(r=>r.technician===name && r.status!=='Complete');
-      const tasks = oneOffTasks.filter(t=>t.technician===name && t.status!=='Complete');
-      return {name, openPm:records.length, openTasks:tasks.length, critical:records.filter(r=>r.severity==='Critical').length + tasks.filter(t=>t.severity==='Critical').length, overdue:records.filter(isOverdueRecord).length + tasks.filter(isOverdueTask).length};
-    }
-
-    function renderTabs(){
-      const el=document.getElementById('tabs');
-      el.innerHTML=TABS.map(t=>`<button class="tab ${t==='dashboard'?'active':''}" data-tab="${t}">${t}</button>`).join('');
-      el.querySelectorAll('.tab').forEach(btn=>btn.onclick=()=>showTab(btn.dataset.tab));
-    }
-    function showTab(tab){
-      document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active', b.dataset.tab===tab));
-      document.querySelectorAll('.section').forEach(s=>s.classList.toggle('active', s.id===tab));
-    }
-
-    function renderMetrics(){
-      const totalUnits=games.reduce((n,g)=>n+g.qty,0);
-      const overduePm=serviceRecords.filter(isOverdueRecord).length;
-      const overdueTasks=oneOffTasks.filter(isOverdueTask).length;
-      const photos=serviceRecords.reduce((n,r)=>n+r.photos.length,0)+oneOffTasks.reduce((n,t)=>n+(t.photos?.length||0),0);
-      const openCritical=serviceRecords.filter(r=>r.severity==='Critical' && r.status!=='Complete').length + oneOffTasks.filter(t=>t.severity==='Critical' && t.status!=='Complete').length;
-      const docs=games.filter(g=>g.manual).length;
-      document.getElementById('metrics').innerHTML=[
-        ['Listings',games.length,'Distinct game lines'],
-        ['Units',totalUnits,'Approx. floor pieces'],
-        ['Overdue PM',overduePm,'Past next-PM date'],
-        ['Overdue tasks',overdueTasks,'Past due date'],
-        ['Critical open',openCritical,'Immediate attention'],
-        ['Photos',photos,'Saved evidence'],
-        ['Manual links',docs,'Direct manual entries'],
-        ['Workers',workers.length,'Roster size'],
-        ['Handoff notes',handoffLog.length,'Shift continuity']
-      ].map(m=>`<div class="metric"><div class="tiny">${m[0]}</div><div class="v">${m[1]}</div><div class="tiny">${m[2]}</div></div>`).join('')
-    }
-
-    function renderDashboard(){
-      const el=document.getElementById('dashboard');
-      const manualLinked=games.filter(g=>g.manual).length;
-      const family=games.filter(g=>g.status==='Family manual').length;
-      const supportOnly=games.filter(g=>!g.manual && g.support).length;
-      const techCards=workers.map(w=>({...technicianSummary(w.name),role:w.role}));
-      const topIssues=serviceRecords.filter(r=>r.status!=='Complete').sort((a,b)=>SEVERITY_OPTIONS.indexOf(a.severity)-SEVERITY_OPTIONS.indexOf(b.severity)).slice(0,6);
-      el.innerHTML=`
-        <div class="grid grid-2">
-          <div class="card">
-            <h2>Operations command view</h2>
-            <div class="grid grid-2">
-              <div class="subtle"><strong>Assets + docs</strong><div class="tiny mt">Searchable machine library with PM focus, manual links, and support pages.</div></div>
-              <div class="subtle"><strong>Accountability</strong><div class="tiny mt">PM owner, verification field, overdue views, and technician workload summary.</div></div>
-              <div class="subtle"><strong>Evidence</strong><div class="tiny mt">Photo uploads on machine records and one-off tasks for proof, serials, and damage notes.</div></div>
-              <div class="subtle"><strong>Backups</strong><div class="tiny mt">Export CSVs plus full JSON backup/restore for browser-local data.</div></div>
-            </div>
-            <div class="callout mt">Some earlier uploaded files in this project are no longer available in the workspace, so this enhanced version is based on the current AI FEC project chat context and the included HTML file.</div>
-          </div>
-          <div class="card">
-            <h2>Documentation status</h2>
-            <div class="stack">
-              <div class="subtle clickable" data-doc-filter="Manual linked"><strong>Direct manuals:</strong> ${manualLinked}</div>
-              <div class="subtle clickable" data-doc-filter="Family manual"><strong>Family manuals:</strong> ${family}</div>
-              <div class="subtle clickable" data-doc-filter="Support linked"><strong>Support only:</strong> ${supportOnly}</div>
-              <div class="subtle"><strong>Next 3 days scheduled items:</strong> ${buildCalendarRows().filter(x=>dueSoon(x.date,3) && x.status!=='Complete').length}</div>
-            </div>
-          </div>
-        </div>
-        <div class="grid grid-2 mt">
-          <div class="card">
-            <div class="row space"><h2>Worker accountability</h2><span class="tiny">Open PM + task load</span></div>
-            <div class="grid grid-4">${techCards.map(t=>`<div class="subtle"><strong>${t.name}</strong><div class="tiny">${t.role||'Staff'}</div><div class="tiny mt">Open PM: ${t.openPm}</div><div class="tiny">Open tasks: ${t.openTasks}</div><div class="tiny">Critical: ${t.critical}</div><div class="tiny">Overdue: ${t.overdue}</div></div>`).join('')}</div>
-          </div>
-          <div class="card">
-            <div class="row space"><h2>Priority queue</h2><span class="tiny">Top open machine records</span></div>
-            <div class="stack">${topIssues.map(r=>`<div class="history-item clickable" data-open-asset="${encodeURIComponent(r.title)}"><div class="row"><strong>${r.title}</strong><span class="badge ${badgeClass(r.severity)}">${r.severity}</span><span class="badge ${badgeClass(r.status)}">${r.status}</span></div><div class="tiny mt">Owner: ${r.technician} · Next PM ${r.nextPm}</div><div class="tiny mt">${escapeHtml(r.issue)}</div></div>`).join('') || '<div class="subtle tiny">No open issues.</div>'}</div>
-          </div>
-        </div>
-        <div class="grid grid-2 mt">
-          <div class="card">
-            <div class="row space"><h2>Shift handoff log</h2><button id="add-handoff" class="primary small">Add handoff note</button></div>
-            <div class="grid grid-3 mt">
-              <input id="handoff-author" placeholder="Author / lead">
-              <select id="handoff-shift"><option>Open</option><option>Mid</option><option>Close</option></select>
-              <input id="handoff-note" placeholder="Handoff summary or blocker">
-            </div>
-            <div class="stack mt">${handoffLog.sort((a,b)=>b.date.localeCompare(a.date)).map(h=>`<div class="history-item"><div class="row"><strong>${h.shift}</strong><span class="tiny">${h.date} · ${h.author}</span></div><div class="tiny mt">${escapeHtml(h.note)}</div></div>`).join('')}</div>
-          </div>
-          <div class="card">
-            <div class="row space"><h2>Backup / restore moved to Admin</h2><div class="tiny">Admin tab</div></div>
-            <div class="stack">
-              <div class="tiny">Backup/restore controls are in Admin.</div>
-            </div>
-          </div>
-        </div>`;
-      el.querySelectorAll('[data-open-asset]').forEach(n=>n.onclick=()=>openAssetDetail(decodeURIComponent(n.dataset.openAsset)));
-      el.querySelectorAll('[data-doc-filter]').forEach(n=>n.onclick=()=>{showTab('manuals'); const sel=document.getElementById('manual-status-filter'); if(sel){sel.value=n.dataset.docFilter; sel.dispatchEvent(new Event('change'));}});
-      el.querySelector('#add-handoff').onclick=()=>{
-        const author=el.querySelector('#handoff-author').value.trim()||'Unknown';
-        const shift=el.querySelector('#handoff-shift').value;
-        const note=el.querySelector('#handoff-note').value.trim();
-        if(!note) return;
-        handoffLog.unshift({id:'handoff-'+Date.now(),date:TODAY,shift,author,note}); saveAll(); renderMetrics(); renderDashboard();
-      };
-    }
-
-    function renderAssets(){
-      const el=document.getElementById('assets');
-      el.innerHTML=`<div class="card"><h2>Assets</h2><div class="controls"><input id="inv-q" placeholder="Search title, manufacturer, or PM focus"><select id="inv-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].sort().map(c=>`<option>${c}</option>`).join('')}</select><select id="inv-doc"><option>All</option>${[...new Set(games.map(g=>g.status))].map(s=>`<option>${s}</option>`).join('')}</select><select id="inv-owner"><option>All owners</option>${workerNames().map(t=>`<option>${t}</option>`).join('')}</select><select id="inv-sev"><option>All severities</option>${SEVERITY_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select></div><div id="inv-list" class="stack"></div></div>`;
-      const q=el.querySelector('#inv-q'), cat=el.querySelector('#inv-cat'), doc=el.querySelector('#inv-doc'), owner=el.querySelector('#inv-owner'), sev=el.querySelector('#inv-sev'), list=el.querySelector('#inv-list');
-      const draw=()=>{
-        const term=q.value.toLowerCase();
-        list.innerHTML=games.filter(g=>{
-          const record=serviceRecords.find(r=>r.title===g.title);
-          return (!term||`${g.title} ${g.manufacturer} ${g.pm}`.toLowerCase().includes(term)) &&
-            (cat.value==='All'||g.category===cat.value) &&
-            (doc.value==='All'||g.status===doc.value) &&
-            (owner.value==='All owners'||record?.technician===owner.value) &&
-            (sev.value==='All severities'||record?.severity===sev.value)
-        }).map(g=>{
-          const record=serviceRecords.find(r=>r.title===g.title);
-          return `<div class="item clickable" data-asset-open="${encodeURIComponent(g.title)}"><div class="row space"><div><div class="row"><h3>${g.title}</h3><span class="badge ${badgeClass(g.status)}">${g.status}</span><span class="badge">Qty ${g.qty}</span><span class="badge ${badgeClass(record?.severity||'Low')}">${record?.severity||'Low'}</span></div><div class="tiny">${g.manufacturer} · ${g.category}</div><div class="tiny mt"><strong>PM focus:</strong> ${g.pm}</div><div class="tiny">Owner: ${record?.technician||'Unassigned'} · Next PM: ${record?.nextPm||'n/a'}</div></div><div class="stack">${g.manual?`<a href="${g.manual}" target="_blank"><button class="secondary small">Open manual</button></a>`:''}${g.support?`<a href="${g.support}" target="_blank"><button class="secondary small">Support page</button></a>`:''}</div></div></div>`
-        }).join('')||'<div class="subtle">No matches.</div>'
-        list.querySelectorAll('[data-asset-open]').forEach(c=>c.onclick=()=>openAssetDetail(decodeURIComponent(c.dataset.assetOpen)));
-      };
-      [q,cat,doc,owner,sev].forEach(i=>i.oninput=draw); cat.onchange=doc.onchange=owner.onchange=sev.onchange=draw; draw();
-      el.querySelectorAll('[data-asset-open]').forEach(c=>c.onclick=()=>openAssetDetail(decodeURIComponent(c.dataset.assetOpen)));
-    }
-
-    function renderOperations(){
-      const el=document.getElementById('operations');
-      el.innerHTML=`<div class="card"><div class="row space"><div><h2>Operations</h2><div class="tiny">Edit notes, parts, accountability, verification, issue history, and attach photos.</div></div><button id="exp-maint" class="secondary">Export maintenance CSV</button></div><div class="controls"><input id="ops-q" placeholder="Search machine, issue, notes, parts, or history"><select id="ops-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].sort().map(c=>`<option>${c}</option>`).join('')}</select><select id="ops-status"><option>All</option>${STATUS_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select><select id="ops-owner"><option>All owners</option>${workerNames().map(t=>`<option>${t}</option>`).join('')}</select><select id="ops-overdue"><option>All dates</option><option>Overdue PM only</option><option>Due in 3 days</option></select></div><div id="ops-list" class="stack"></div></div>`;
-      el.querySelector('#exp-maint').onclick=exportMaintenanceCsv;
-      const q=el.querySelector('#ops-q'), cat=el.querySelector('#ops-cat'), st=el.querySelector('#ops-status'), owner=el.querySelector('#ops-owner'), overdue=el.querySelector('#ops-overdue'), list=el.querySelector('#ops-list');
-      const draw=()=>{
-        const term=q.value.toLowerCase();
-        const filtered=serviceRecords.filter(r=>r.status!=='Complete').filter(r=>{
-          const g=gameByTitle(r.title); const guide=issueGuides[r.title]; const guideText=guide?guide.issue+' '+guide.steps.join(' '):'';
-          const overdueMatch = overdue.value==='All dates' ? true : overdue.value==='Overdue PM only' ? isOverdueRecord(r) : dueSoon(r.nextPm,3);
-          return (!term||`${r.title} ${r.issue} ${r.notes} ${r.partsNeeded} ${guideText} ${r.accountability} ${r.verifiedBy} ${g?.manufacturer||''}`.toLowerCase().includes(term)) &&
-            (cat.value==='All'||g.category===cat.value) && (st.value==='All'||r.status===st.value) &&
-            (owner.value==='All owners'||r.technician===owner.value) && overdueMatch
-        });
-        list.innerHTML=filtered.map(r=>{
-          const g=gameByTitle(r.title), guide=issueGuides[r.title], sla=getSlaDays(r.severity), age=diffDays(r.issueHistory[0]?.date||TODAY,TODAY);
-          return `<div class="item clickable" data-asset-open="${encodeURIComponent(g.title)}"><div class="row space"><div><div class="row"><h3>${r.title}</h3><span class="badge ${badgeClass(r.priority)}">${r.priority}</span><span class="badge ${badgeClass(r.severity)}">${r.severity}</span><span class="badge ${badgeClass(r.status)}">${r.status}</span>${isOverdueRecord(r)?'<span class="badge bad">PM overdue</span>':''}</div><div class="tiny">${g.manufacturer} · ${g.category}</div></div><div class="row"><select data-field="technician" data-title="${encodeURIComponent(r.title)}">${workerNames().map(t=>`<option ${t===r.technician?'selected':''}>${t}</option>`).join('')}</select><select data-field="severity" data-title="${encodeURIComponent(r.title)}">${SEVERITY_OPTIONS.map(s=>`<option ${s===r.severity?'selected':''}>${s}</option>`).join('')}</select><select data-field="status" data-title="${encodeURIComponent(r.title)}">${STATUS_OPTIONS.map(s=>`<option ${s===r.status?'selected':''}>${s}</option>`).join('')}</select><button class="primary small" data-complete="${encodeURIComponent(r.title)}">Mark PM complete</button></div></div>
-          <div class="kv mt"><div class="metric"><div class="tiny">Last service</div><div>${r.lastService}</div></div><div class="metric"><div class="tiny">Next PM</div><div>${r.nextPm}</div></div><div class="metric"><div class="tiny">Issue age / SLA</div><div>${age}d / ${sla}d</div></div><div class="metric"><div class="tiny">Documentation</div><div>${g.status}</div></div></div>
-          <div class="grid grid-2 mt"><div class="subtle"><div class="tiny mb">Issue / focus</div><textarea data-area="issue" data-title="${encodeURIComponent(r.title)}">${escapeHtml(r.issue)}</textarea></div><div class="subtle"><div class="tiny mb">Notes</div><textarea data-area="notes" data-title="${encodeURIComponent(r.title)}">${escapeHtml(r.notes)}</textarea></div></div>
-          <div class="grid grid-3 mt"><div class="subtle"><div class="tiny mb">Parts needed</div><input data-area="partsNeeded" data-title="${encodeURIComponent(r.title)}" value="${escapeAttr(r.partsNeeded)}" placeholder="blower motor, microswitch, ticket stock"></div><div class="subtle"><div class="tiny mb">Accountability / next action</div><input data-area="accountability" data-title="${encodeURIComponent(r.title)}" value="${escapeAttr(r.accountability)}" placeholder="Order part, verify tomorrow, escalate to vendor"></div><div class="subtle"><div class="tiny mb">Verified by</div><input data-area="verifiedBy" data-title="${encodeURIComponent(r.title)}" value="${escapeAttr(r.verifiedBy)}" placeholder="Lead / manager initials"></div></div>
-          ${guide?`<div class="subtle mt"><h3>Current troubleshooting guide</h3><div class="history-item"><strong>Current issue:</strong> ${guide.issue}</div><ol class="mt">${guide.steps.map(s=>`<li>${s}</li>`).join('')}</ol></div>`:''}
-          <div class="subtle mt"><div class="row space"><h3>Issue history</h3><button class="secondary small" data-add-issue="${encodeURIComponent(r.title)}">Add history note</button></div><textarea data-draft="${encodeURIComponent(r.title)}" placeholder="Add a dated issue note, inspection finding, or repair outcome"></textarea><div class="stack mt">${r.issueHistory.map(h=>`<div class="history-item"><div class="row"><span class="badge ${badgeClass(h.severity)}">${h.severity}</span><span class="badge ${badgeClass(h.status)}">${h.status}</span><span class="tiny">${h.date} · ${h.tech}</span></div><div class="mt tiny">${escapeHtml(h.note)}</div></div>`).join('')}</div></div>
-          <div class="subtle mt"><h3>Photo attachments</h3><div class="row"><input data-caption="${encodeURIComponent(r.title)}" placeholder="Caption, serial, damage angle, or repaired result"><label class="upload-label">Choose photo<input class="hide" type="file" accept="image/*" data-upload="${encodeURIComponent(r.title)}"></label></div><div class="photos mt">${r.photos.length?r.photos.map(p=>`<div class="photo"><img src="${p.src}" alt=""><div class="meta"><div>${escapeHtml(p.caption)}</div><div class="tiny">${p.date}</div><button class="secondary small mt" data-remove-photo="${encodeURIComponent(r.title)}" data-photo-id="${p.id}">Remove</button></div></div>`).join(''):'<div class="history-item tiny">No photos attached yet.</div>'}</div></div>
-          </div>`
-        }).join('')||'<div class="subtle">No matches.</div>';
-        bindOperationActions(list);
-      };
-      [q,cat,st,owner,overdue].forEach(i=>i.oninput=draw); cat.onchange=st.onchange=owner.onchange=overdue.onchange=draw; draw();
-      list.querySelectorAll('[data-asset-open]').forEach(n=>n.onclick=()=>openAssetDetail(decodeURIComponent(n.dataset.assetOpen)));
-    }
-
-    function bindOperationActions(root){
-      root.querySelectorAll('select[data-field]').forEach(el=>el.onchange=()=>{const r=serviceRecords.find(x=>x.title===decodeURIComponent(el.dataset.title)); r[el.dataset.field]=el.value; r.lastUpdated=TODAY; saveAll(); renderMetrics(); renderDashboard();});
-      root.querySelectorAll('textarea[data-area],input[data-area]').forEach(el=>el.onchange=()=>{const r=serviceRecords.find(x=>x.title===decodeURIComponent(el.dataset.title)); r[el.dataset.area]=el.value; r.lastUpdated=TODAY; saveAll();});
-      root.querySelectorAll('[data-complete]').forEach(btn=>btn.onclick=()=>{const t=decodeURIComponent(btn.dataset.complete); const r=serviceRecords.find(x=>x.title===t); r.status='Complete'; r.lastService=TODAY; r.nextPm=addDays(TODAY,14); r.lastUpdated=TODAY; r.issueHistory.unshift({id:'issue-'+Date.now(),date:TODAY,status:'Complete',severity:r.severity,tech:r.technician,note:'Preventive maintenance cycle marked complete.'}); r.history.unshift({date:TODAY,action:'Operation completed',tech:r.technician}); saveAll(); renderMetrics(); renderDashboard(); renderOperations(); renderCalendar(); renderReports();});
-      root.querySelectorAll('[data-add-issue]').forEach(btn=>btn.onclick=()=>{const t=decodeURIComponent(btn.dataset.addIssue); const draft=root.querySelector(`[data-draft="${encodeURIComponent(t)}"]`).value.trim(); if(!draft) return; const r=serviceRecords.find(x=>x.title===t); r.issueHistory.unshift({id:'issue-'+Date.now(),date:TODAY,status:r.status,severity:r.severity,tech:r.technician,note:draft}); r.lastUpdated=TODAY; saveAll(); renderMetrics(); renderOperations(); renderReports();});
-      root.querySelectorAll('[data-upload]').forEach(input=>input.onchange=(e)=>{const t=decodeURIComponent(input.dataset.upload); const file=e.target.files[0]; if(!file) return; const cap=root.querySelector(`[data-caption="${encodeURIComponent(t)}"]`).value.trim()||`Photo added ${TODAY}`; const reader=new FileReader(); reader.onload=()=>{const r=serviceRecords.find(x=>x.title===t); r.photos.unshift({id:'photo-'+Date.now(),src:reader.result,caption:cap,date:TODAY}); r.lastUpdated=TODAY; saveAll(); renderMetrics(); renderOperations();}; reader.readAsDataURL(file);});
-      root.querySelectorAll('[data-remove-photo]').forEach(btn=>btn.onclick=()=>{const t=decodeURIComponent(btn.dataset.removePhoto), id=btn.dataset.photoId; const r=serviceRecords.find(x=>x.title===t); r.photos=r.photos.filter(p=>p.id!==id); saveAll(); renderMetrics(); renderOperations();});
-    }
-
-    function renderTasks(){
-      const el=document.getElementById('tasks');
-      el.innerHTML=`<div class="grid grid-2"><div class="card"><div class="row space"><div><h2>Add one-off task</h2><div class="tiny">Use this for urgent fixes, parts runs, photos, vendor follow-up, or non-recurring jobs.</div></div><button id="exp-task" class="secondary">Export tasks CSV</button></div><div class="stack mt"><label class="tiny">Task title</label><input id="new-title" placeholder="Task title"><label class="tiny">Linked asset</label><select id="new-machine"><option>General / Floor-wide</option>${games.map(g=>`<option>${g.title}</option>`).join('')}</select><div class="row"><div><label class="tiny">Assigned worker</label><select id="new-tech">${workerNames().map(t=>`<option>${t}</option>`).join('')}</select></div><div><label class="tiny">Severity</label><select id="new-sev">${SEVERITY_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select></div></div><label class="tiny">Due date</label><input id="new-date" type="date" value="${TODAY}"><label class="tiny">Checklist (comma separated)</label><input id="new-checklist" placeholder="Checklist items separated by commas"><label class="tiny">Notes</label><textarea id="new-notes" placeholder="Notes, context, or parts pickup details"></textarea><button id="add-task" class="primary">Add one-off task</button></div></div><div class="card"><h2>Task board</h2><div class="controls"><input id="task-q" placeholder="Search task, machine, notes, or tech"><select id="task-status"><option>All</option>${TASK_STATUS_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select><select id="task-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].sort().map(c=>`<option>${c}</option>`).join('')}</select><select id="task-owner"><option>All owners</option>${workerNames().map(t=>`<option>${t}</option>`).join('')}</select><select id="task-date"><option>All dates</option><option>Overdue only</option><option>Due in 3 days</option></select></div><div id="task-list" class="stack"></div></div></div>`;
-      el.querySelector('#exp-task').onclick=exportTaskCsv;
-      el.querySelector('#add-task').onclick=()=>{const title=el.querySelector('#new-title').value.trim(); if(!title) return; oneOffTasks.unshift({id:'task-'+Date.now(),title,machine:el.querySelector('#new-machine').value,technician:el.querySelector('#new-tech').value,dueDate:el.querySelector('#new-date').value,severity:el.querySelector('#new-sev').value,status:'Open',notes:el.querySelector('#new-notes').value.trim(),source:'Manual task',photos:[],checklist:el.querySelector('#new-checklist').value.split(',').map(s=>s.trim()).filter(Boolean),createdDate:TODAY}); saveAll(); renderMetrics(); renderDashboard(); renderTasks(); renderCalendar();};
-      const q=el.querySelector('#task-q'), st=el.querySelector('#task-status'), cat=el.querySelector('#task-cat'), owner=el.querySelector('#task-owner'), dateFilter=el.querySelector('#task-date'), list=el.querySelector('#task-list');
-      const draw=()=>{
-        const term=q.value.toLowerCase();
-        list.innerHTML=oneOffTasks.filter(t=>{const g=gameByTitle(t.machine); const dateMatch=dateFilter.value==='All dates'?true:dateFilter.value==='Overdue only'?isOverdueTask(t):dueSoon(t.dueDate,3); return (!term||`${t.title} ${t.machine} ${t.notes} ${t.technician}`.toLowerCase().includes(term)) && (st.value==='All'||t.status===st.value) && (cat.value==='All'||t.machine==='General / Floor-wide'||g?.category===cat.value) && (owner.value==='All owners'||t.technician===owner.value) && dateMatch}).map(t=>`<div class="item"><div class="row space"><div><div class="row"><h3>${t.title}</h3><span class="badge ${badgeClass(t.severity)}">${t.severity}</span><span class="badge ${badgeClass(t.status)}">${t.status}</span>${isOverdueTask(t)?'<span class="badge bad">Overdue</span>':''}</div><div class="tiny">${t.machine} · Due ${t.dueDate} · ${t.technician} · ${t.source||'Manual task'}</div></div><div class="row"><select data-task-field="technician" data-id="${t.id}">${workerNames().map(v=>`<option ${v===t.technician?'selected':''}>${v}</option>`).join('')}</select><select data-task-field="status" data-id="${t.id}">${TASK_STATUS_OPTIONS.map(v=>`<option ${v===t.status?'selected':''}>${v}</option>`).join('')}</select><button class="primary small" data-task-complete="${t.id}">Complete</button></div></div><div class="subtle mt"><div class="tiny mb">Checklist</div>${(t.checklist?.length?t.checklist:['No checklist']).map(i=>`<div class="tiny">• ${escapeHtml(i)}</div>`).join('')}</div><textarea data-task-notes="${t.id}" class="mt">${escapeHtml(t.notes)}</textarea><div class="subtle mt"><div class="row"><input data-task-caption="${t.id}" placeholder="Task photo caption / receipt / serial"><label class="upload-label">Choose photo<input class="hide" type="file" accept="image/*" data-task-upload="${t.id}"></label></div><div class="photos mt">${(t.photos?.length)?t.photos.map(p=>`<div class="photo"><img src="${p.src}" alt=""><div class="meta"><div>${escapeHtml(p.caption)}</div><div class="tiny">${p.date}</div><button class="secondary small mt" data-task-remove-photo="${t.id}" data-photo-id="${p.id}">Remove</button></div></div>`).join(''):'<div class="history-item tiny">No task photos yet.</div>'}</div></div></div>`).join('')||'<div class="subtle">No matches.</div>';
-        bindTaskActions(list);
-      };
-      [q,st,cat,owner,dateFilter].forEach(i=>i.oninput=draw); st.onchange=cat.onchange=owner.onchange=dateFilter.onchange=draw; draw();
-    }
-
-    function bindTaskActions(root){
-      root.querySelectorAll('select[data-task-field]').forEach(s=>s.onchange=()=>{const t=oneOffTasks.find(x=>x.id===s.dataset.id); t[s.dataset.taskField]=s.value; saveAll(); renderMetrics(); renderDashboard();});
-      root.querySelectorAll('[data-task-complete]').forEach(b=>b.onclick=()=>{const t=oneOffTasks.find(x=>x.id===b.dataset.taskComplete); t.status='Complete'; t.completedAt=TODAY; const r=serviceRecords.find(x=>x.title===t.machine); if(r){r.history.unshift({date:TODAY,action:`Task complete: ${t.title}`,tech:t.technician}); r.issueHistory.unshift({id:'task-'+Date.now(),date:TODAY,status:'Complete',severity:t.severity,tech:t.technician,note:`Linked task completed: ${t.title}`});} saveAll(); renderMetrics(); renderDashboard(); renderTasks(); renderCalendar(); renderReports();});
-      root.querySelectorAll('[data-task-notes]').forEach(a=>a.onchange=()=>{const t=oneOffTasks.find(x=>x.id===a.dataset.taskNotes); t.notes=a.value; saveAll();});
-      root.querySelectorAll('[data-task-upload]').forEach(input=>input.onchange=(e)=>{const id=input.dataset.taskUpload; const task=oneOffTasks.find(x=>x.id===id); const file=e.target.files[0]; if(!file) return; const cap=root.querySelector(`[data-task-caption="${id}"]`).value.trim()||`Task photo added ${TODAY}`; const reader=new FileReader(); reader.onload=()=>{task.photos=task.photos||[]; task.photos.unshift({id:'photo-'+Date.now(),src:reader.result,caption:cap,date:TODAY}); saveAll(); renderMetrics(); renderTasks();}; reader.readAsDataURL(file);});
-      root.querySelectorAll('[data-task-remove-photo]').forEach(btn=>btn.onclick=()=>{const task=oneOffTasks.find(x=>x.id===btn.dataset.taskRemovePhoto); task.photos=(task.photos||[]).filter(p=>p.id!==btn.dataset.photoId); saveAll(); renderMetrics(); renderTasks();});
-    }
-
-    function renderManuals(){
-      const el=document.getElementById('manuals');
-      const manufacturers=[...new Set(games.map(g=>g.manufacturer))].sort();
-      el.innerHTML=`<div class="card"><div class="row space"><div><h2>Manual and support hub</h2><div class="tiny">Central lookup for manuals, support pages, and documentation gaps.</div></div></div><div class="controls"><input id="man-q" placeholder="Search game, manufacturer, or PM focus"><select id="man-maker"><option>All manufacturers</option>${manufacturers.map(m=>`<option>${m}</option>`).join('')}</select><select id="manual-status-filter"><option>All statuses</option>${[...new Set(games.map(g=>g.status))].map(s=>`<option>${s}</option>`).join('')}</select><select id="man-direct"><option>All docs</option><option>Direct manual only</option><option>Needs follow-up</option></select><select disabled><option>Manuals tab</option></select></div><div id="man-list" class="stack"></div></div>`;
-      const q=el.querySelector('#man-q'), maker=el.querySelector('#man-maker'), doc=el.querySelector('#manual-status-filter'), direct=el.querySelector('#man-direct'), list=el.querySelector('#man-list');
-      const draw=()=>{const term=q.value.toLowerCase(); list.innerHTML=games.filter(g=>{const needsFollow = !g.manual; return (!term||`${g.title} ${g.manufacturer} ${g.pm}`.toLowerCase().includes(term)) && (maker.value==='All manufacturers'||g.manufacturer===maker.value) && (doc.value==='All statuses'||g.status===doc.value) && (direct.value==='All docs'||(direct.value==='Direct manual only'?!!g.manual:needsFollow))}).map(g=>`<div class="item clickable" data-man-open="${encodeURIComponent(g.title)}"><div class="row space"><div><div class="row"><h3>${g.title}</h3><span class="badge ${badgeClass(g.status)}">${g.status}</span></div><div class="tiny">${g.manufacturer} · ${g.category}</div><div class="tiny mt">${g.pm}</div></div><div class="row">${g.manual?`<a href="${g.manual}" target="_blank"><button class="secondary small">Manual</button></a>`:'<span class="badge warn">Needs exact manual</span>'}${g.support?`<a href="${g.support}" target="_blank"><button class="secondary small">Support</button></a>`:''}</div></div></div>`).join('') || '<div class="subtle">No matches.</div>'};
-      [q,maker,doc,direct].forEach(i=>i.oninput=draw); maker.onchange=doc.onchange=direct.onchange=draw; draw();
-      el.querySelectorAll('[data-man-open]').forEach(c=>c.onclick=()=>openAssetDetail(decodeURIComponent(c.dataset.manOpen))); 
-    }
-
-    function renderContacts(){
-      const el=document.getElementById('contacts');
-      el.innerHTML=`<div class="grid grid-2"><div class="card"><div class="row space"><div><h2>Vendor / support contacts</h2><div class="tiny">Edit phone, email, parts notes, and preferred contact path.</div></div><button id="add-contact" class="primary small">Add contact</button></div><div id="contact-list" class="stack mt"></div></div><div class="card"><h2>Severity and response guide</h2><table class="table"><thead><tr><th>Severity</th><th>Target response</th><th>Examples</th></tr></thead><tbody><tr><td>Critical</td><td>Same day</td><td>Unsafe condition, payout failure across key game, power issue</td></tr><tr><td>High</td><td>Within 2 days</td><td>Major earning game down, repeated game stoppage</td></tr><tr><td>Medium</td><td>Within 5 days</td><td>Single station degraded, weak sensor, intermittent issue</td></tr><tr><td>Low</td><td>Within 10 days</td><td>Cosmetic, non-gameplay note, labeling, minor hardware</td></tr></tbody></table><div class="subtle mt"><strong>Accountability rule:</strong><div class="tiny mt">Every open item should have an owner, a next action, and either a due date or next PM date.</div></div></div></div>`;
-      const list=el.querySelector('#contact-list');
-      const draw=()=>{list.innerHTML=contacts.map((c,idx)=>`<div class="item"><div class="row space"><div><h3>${c.manufacturer}</h3><div class="tiny">${c.contact||'Contact name not set'}</div></div><button class="secondary small" data-del-contact="${idx}">Remove</button></div><div class="grid grid-2 mt"><div><label class="tiny">Manufacturer</label><input data-contact-field="manufacturer" data-idx="${idx}" value="${escapeAttr(c.manufacturer)}" placeholder="Manufacturer"><div><label class="tiny">Contact / department</label><input data-contact-field="contact" data-idx="${idx}" value="${escapeAttr(c.contact)}" placeholder="Contact / department"></div></div><div class="grid grid-3 mt"><div><label class="tiny">Phone</label><input data-contact-field="phone" data-idx="${idx}" value="${escapeAttr(c.phone)}" placeholder="Phone"></div><div><label class="tiny">Email</label><input data-contact-field="email" data-idx="${idx}" value="${escapeAttr(c.email)}" placeholder="Email"></div><div><label class="tiny">Website</label><input data-contact-field="website" data-idx="${idx}" value="${escapeAttr(c.website)}" placeholder="Website"></div></div><label class="tiny mt">Notes</label><textarea data-contact-field="notes" data-idx="${idx}" class="mt">${escapeHtml(c.notes)}</textarea></div>`).join('')};
-      draw();
-      el.querySelector('#add-contact').onclick=()=>{contacts.unshift({manufacturer:'New vendor',contact:'',phone:'',email:'',notes:'',website:''}); saveAll(); renderContacts();};
-      list.addEventListener('change',e=>{const f=e.target.dataset.contactField; if(!f) return; const idx=Number(e.target.dataset.idx); contacts[idx][f]=e.target.value; saveAll();});
-      list.addEventListener('click',e=>{const idx=e.target.dataset.delContact; if(idx===undefined) return; contacts.splice(Number(idx),1); saveAll(); renderContacts();});
-    }
-
-    function renderCalendar(){
-      const el=document.getElementById('calendar');
-      const rows=buildCalendarRows().filter(x=>x.date>=TODAY && x.date<=addDays(TODAY,30));
-      const grouped={}; rows.forEach(r=>{(grouped[r.date]=grouped[r.date]||[]).push(r)});
-      el.innerHTML=`<div class="grid grid-2"><div class="card"><h2>Next 30 days</h2><div class="stack">${Object.keys(grouped).sort(sortByDateAsc).map(date=>`<div class="calendar-day"><h3>${date}</h3><div class="stack">${grouped[date].map(r=>`<div class="history-item"><div class="row"><span class="badge ${badgeClass(r.severity)}">${r.severity}</span><span class="badge">${r.kind}</span><strong>${r.title}</strong></div><div class="tiny mt">Owner: ${r.owner} · Status: ${r.status}</div><div class="tiny">${escapeHtml(r.detail)}</div></div>`).join('')}</div></div>`).join('') || '<div class="subtle tiny">Nothing scheduled in the next 30 days.</div>'}</div></div><div class="card"><h2>Recurring PM cadence</h2><div class="grid grid-2">${pmCadence.map(b=>`<div class="subtle"><strong>${b.frequency}</strong><ul>${b.items.map(i=>`<li>${i}</li>`).join('')}</ul></div>`).join('')}</div></div></div>`;
-    }
-
-    function renderReports(){
-      const el=document.getElementById('reports');
-      const bySeverity=SEVERITY_OPTIONS.map(s=>({severity:s,count:serviceRecords.filter(r=>r.severity===s && r.status!=='Complete').length + oneOffTasks.filter(t=>t.severity===s && t.status!=='Complete').length}));
-      const overduePm=serviceRecords.filter(isOverdueRecord);
-      const overdueTasks=oneOffTasks.filter(isOverdueTask);
-      const noOwner=serviceRecords.filter(r=>r.technician==='Unassigned').length + oneOffTasks.filter(t=>t.technician==='Unassigned').length;
-      el.innerHTML=`<div class="grid grid-3"><div class="card"><h2>Open by severity</h2><div class="stack">${bySeverity.map(x=>`<div class="subtle"><strong>${x.severity}</strong><div class="tiny mt">${x.count} open items</div></div>`).join('')}</div></div><div class="card"><h2>Overdue PM list</h2><div class="stack">${overduePm.slice(0,12).map(r=>`<div class="history-item"><strong>${r.title}</strong><div class="tiny mt">Owner: ${r.technician} · Next PM: ${r.nextPm}</div></div>`).join('') || '<div class="subtle tiny">No overdue PM items.</div>'}</div></div><div class="card"><h2>Overdue task list</h2><div class="stack">${overdueTasks.slice(0,12).map(t=>`<div class="history-item"><strong>${t.title}</strong><div class="tiny mt">${t.machine} · Owner: ${t.technician} · Due: ${t.dueDate}</div></div>`).join('') || '<div class="subtle tiny">No overdue tasks.</div>'}</div></div></div>
-      <div class="grid grid-2 mt"><div class="card"><h2>Management flags</h2><div class="stack"><div class="subtle"><strong>Unassigned items</strong><div class="tiny mt">${noOwner}</div></div><div class="subtle"><strong>Records waiting parts</strong><div class="tiny mt">${serviceRecords.filter(r=>r.status==='Waiting Parts').length + oneOffTasks.filter(t=>t.status==='Waiting Parts').length}</div></div><div class="subtle"><strong>Games without exact manual link</strong><div class="tiny mt">${games.filter(g=>!g.manual).length}</div></div></div></div><div class="card"><div class="row space"><h2>Exports</h2><div class="row"><button id="rep-maint" class="secondary small">Maintenance CSV</button><button id="rep-task" class="secondary small">Tasks CSV</button></div></div><div class="tiny">Use the exports for accountability reviews, parts ordering, or a printed service packet.</div></div></div>`;
-      el.querySelector('#rep-maint').onclick=exportMaintenanceCsv;
-      el.querySelector('#rep-task').onclick=exportTaskCsv;
-    }
-
-    function renderCatchup(){
-      const el=document.getElementById('catchup');
-      el.innerHTML=`<div class="grid grid-3">${['Day 1','Day 2','Day 3'].map(day=>`<div class="card"><h2>${day}</h2><div class="stack">${catchUpPlan.filter(x=>x.day===day).map(i=>`<div class="subtle"><strong>${i.title}</strong><div class="tiny mt">${i.scope}</div><div class="tiny mt">${i.detail}</div></div>`).join('')}</div></div>`).join('')}</div>`
-    }
-
-    function exportMaintenanceCsv(){
-      const headers=['Title','Manufacturer','Category','Qty','Documentation Status','Priority','Severity','Technician','Service Status','Last Service','Next PM','Issue','Parts Needed','Notes','Accountability','Verified By','Issue History Count','Photo Count','Manual URL','Support URL'];
-      const rows=serviceRecords.map(r=>{const g=gameByTitle(r.title); return [r.title,g?.manufacturer||'',g?.category||'',g?.qty||'',g?.status||'',r.priority,r.severity,r.technician,r.status,r.lastService,r.nextPm,r.issue,r.partsNeeded,r.notes,r.accountability,r.verifiedBy,r.issueHistory.length,r.photos.length,g?.manual||'',g?.support||'']});
-      downloadCsv('play-wow-maintenance-report-enhanced.csv',headers,rows)
-    }
-    function exportTaskCsv(){
-      const headers=['Task','Machine','Source','Technician','Severity','Status','Due Date','Checklist','Notes','Photo Count'];
-      const rows=oneOffTasks.map(t=>[t.title,t.machine,t.source||'Manual task',t.technician,t.severity,t.status,t.dueDate,(t.checklist||[]).join(' | '),t.notes,(t.photos||[]).length]);
-      downloadCsv('play-wow-one-off-tasks-enhanced.csv',headers,rows)
-    }
-    function downloadCsv(filename, headers, rows){
-      const esc=v=>`"${String(v??'').replace(/"/g,'""')}"`;
-      const csv=[headers,...rows].map(r=>r.map(esc).join(',')).join('\n');
-      const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url);
-    }
-    function exportJsonBackup(){
-      const payload={exportedAt:new Date().toISOString(), games, serviceRecords, oneOffTasks, handoffLog, contacts, workers, adminState};
-      const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='play-wow-maintenance-backup.json'; a.click(); URL.revokeObjectURL(url);
-    }
-    function importJsonBackup(e){
-      const file=e.target.files?.[0]; if(!file) return; const reader=new FileReader(); reader.onload=()=>{try{const data=JSON.parse(reader.result); if(data.games){for(const g of data.games){if(!games.find(x=>x.title.toLowerCase()===g.title.toLowerCase())) games.push(g)}} if(data.serviceRecords) serviceRecords=data.serviceRecords; if(data.oneOffTasks) oneOffTasks=data.oneOffTasks; if(data.handoffLog) handoffLog=data.handoffLog; if(data.contacts) contacts=data.contacts; if(data.workers) workers=data.workers; if(data.adminState) adminState=data.adminState; saveAll(); 
-    function normalizeName(v){return String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()}
-    function mergeSeedData(){
-      const recBy=new Map(serviceRecords.map(r=>[normalizeName(r.title),r]));
-      games.forEach(g=>{
-        const key=normalizeName(g.title);
-        if(!recBy.has(key)){
-          serviceRecords.push({title:g.title,technician:'Unassigned',assignedWorkers:[],status:'Scheduled',priority:priorityForCategory(g.category),severity:severityForCategory(g.category),lastService:TODAY,nextPm:addDays(TODAY,14),issue:'Needs first verified PM pass after portal sync.',notes:g.pm,partsNeeded:'',photos:[],verifiedBy:'',accountability:'',lastUpdated:TODAY,issueHistory:[],history:[]});
-        }
+    function migrateData(){
+      if(!Array.isArray(assets) || !assets.length){
+        const oldGames=safeLoad('wow_maintenance_games', []);
+        const source = oldGames.length?oldGames.map(g=>({name:g.title,manufacturer:g.manufacturer,category:g.category,quantity:g.qty,status:g.status,manual:g.manual,support:g.support,pm:g.pm,notes:g.notes||''})):defaultAssets;
+        assets = source.map((g,i)=>({id:'asset-'+Date.now()+'-'+i,name:g.name,manufacturer:g.manufacturer||'',category:g.category||'',quantity:g.quantity||1,documentation:{status:g.status||'Missing',manualUrl:g.manual||'',supportUrl:g.support||'',notes:'',lastUpdated:TODAY,statusNotes:''},pmFocus:g.pm||'',notes:g.notes||'',issues:[],urgency:'Medium',assignedWorkers:[],status:'Active',serviceHistory:[],operationHistory:[],photos:[]}));
+      }
+      if(!workers.length){workers=defaultWorkers}
+      const ensureWorker = n=>{if(!n||n==='Unassigned')return; if(!workers.find(w=>w.name===n)){workers.push({id:'w-'+Date.now()+Math.random(),name:n,role:'Staff'})}};
+      serviceRecords = serviceRecords.map(r=>{ensureWorker(r.technician); const a=byName(r.title)||assets.find(x=>x.name===r.title); if(a){if(!a.assignedWorkers?.length&&r.technician&&r.technician!=='Unassigned') a.assignedWorkers=[r.technician]; if(r.issue&&(!a.issues||!a.issues.length)) a.issues=[{id:'mig-'+Date.now()+Math.random(),text:r.issue,severity:r.severity||'Medium',status:r.status||'Open',createdAt:r.lastUpdated||TODAY}]; a.operationHistory=[...(a.operationHistory||[]),...((r.history||[]).map(h=>({date:h.date||TODAY,summary:h.action||'Service update',status:r.status||'Open',workers:r.assignedWorkers||[r.technician].filter(Boolean)})))]; a.serviceHistory=[...(a.serviceHistory||[]),...(r.issueHistory||[]).map(h=>({date:h.date||TODAY,note:h.note||'',status:h.status||'',severity:h.severity||r.severity||'Medium'}))]; a.photos=[...(a.photos||[]),...(r.photos||[])]; }
+        return {...r,assignedWorkers:r.assignedWorkers&&r.assignedWorkers.length?r.assignedWorkers:(r.technician&&r.technician!=='Unassigned'?[r.technician]:[])};
       });
-      serviceRecords.forEach(r=>{if(!Array.isArray(r.assignedWorkers)) r.assignedWorkers=r.technician&&r.technician!=='Unassigned'?[r.technician]:[]; if(r.technician&&r.technician!=='Unassigned'&&!workers.find(w=>w.name===r.technician)) workers.push({id:'w-'+Date.now()+Math.random(),name:r.technician,role:'Staff'});});
-      oneOffTasks.forEach(t=>{if(!Array.isArray(t.assignedWorkers)) t.assignedWorkers=t.technician&&t.technician!=='Unassigned'?[t.technician]:[]; if(t.technician&&t.technician!=='Unassigned'&&!workers.find(w=>w.name===t.technician)) workers.push({id:'w-'+Date.now()+Math.random(),name:t.technician,role:'Staff'});});
+      oneOffTasks = oneOffTasks.map(t=>{ensureWorker(t.technician); return {...t,assignedWorkers:t.assignedWorkers&&t.assignedWorkers.length?t.assignedWorkers:(t.technician&&t.technician!=='Unassigned'?[t.technician]:[])};});
+      assets=assets.map(a=>({id:a.id||('asset-'+Date.now()+Math.random()),name:a.name||a.title||'Untitled Asset',manufacturer:a.manufacturer||'',category:a.category||'General',quantity:Number(a.quantity||a.qty||1),documentation:{status:a.documentation?.status||a.status||'Missing',manualUrl:a.documentation?.manualUrl||a.manual||'',supportUrl:a.documentation?.supportUrl||a.support||'',notes:a.documentation?.notes||'',lastUpdated:a.documentation?.lastUpdated||TODAY,statusNotes:a.documentation?.statusNotes||''},pmFocus:a.pmFocus||a.pm||'',notes:a.notes||'',issues:Array.isArray(a.issues)?a.issues:[],urgency:a.urgency||'Medium',assignedWorkers:Array.isArray(a.assignedWorkers)?a.assignedWorkers:[],status:a.status||'Active',serviceHistory:Array.isArray(a.serviceHistory)?a.serviceHistory:[],operationHistory:Array.isArray(a.operationHistory)?a.operationHistory:[],photos:Array.isArray(a.photos)?a.photos:[]}));
       saveAll();
     }
 
-    mergeSeedData();
-    renderAll();}catch(err){alert('Could not import JSON backup.')}}; reader.readAsText(file);
+    function saveAll(){safeSave(STORAGE_KEYS.assets,assets);safeSave(STORAGE_KEYS.service,serviceRecords);safeSave(STORAGE_KEYS.tasks,oneOffTasks);safeSave(STORAGE_KEYS.handoff,handoffLog);safeSave(STORAGE_KEYS.contacts,contactsList);safeSave(STORAGE_KEYS.workers,workers);safeSave(STORAGE_KEYS.admin,adminState)}
+
+    function activeOps(){return serviceRecords.filter(r=>r.status!=='Complete')}
+    function recentCompleted(){return [...serviceRecords.filter(r=>r.status==='Complete').map(r=>({date:r.lastUpdated||TODAY,text:`${r.title}: PM complete`})),...oneOffTasks.filter(t=>t.status==='Complete').map(t=>({date:t.completedAt||t.dueDate||TODAY,text:`${t.machine||t.title}: ${t.title}`}))].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8)}
+
+    function renderTabs(){const el=tabs;el.innerHTML=TABS.map(t=>`<button class="tab ${t==='dashboard'?'active':''}" data-tab="${t}">${t}</button>`).join('');el.querySelectorAll('.tab').forEach(b=>b.onclick=()=>showTab(b.dataset.tab))}
+    function showTab(tab){document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));document.querySelectorAll('.section').forEach(s=>s.classList.toggle('active',s.id===tab));}
+
+    function renderMetrics(){
+      const units=assets.reduce((n,a)=>n+a.quantity,0), open=activeOps().length, overdue=serviceRecords.filter(r=>r.status!=='Complete'&&r.nextPm&&r.nextPm<TODAY).length;
+      metrics.innerHTML=[['Assets',assets.length,'Tracked records'],['Units',units,'Floor count'],['Open operations',open,'Active queue'],['Overdue PM',overdue,'Past next PM'],['Waiting Parts',serviceRecords.filter(r=>r.status==='Waiting Parts').length,'Blocked'],['Docs gaps',assets.filter(a=>!a.documentation.manualUrl||a.documentation.status==='Missing').length,'Action needed']].map(m=>`<div class="metric"><div class="tiny">${m[0]}</div><div class="v">${m[1]}</div><div class="tiny">${m[2]}</div></div>`).join('');
     }
 
-    
-    function workerNames(){return ['Unassigned',...workers.map(w=>w.name)]}
-    function openAssetDetail(title,highlight=''){
-      const g=gameByTitle(title); const r=serviceRecords.find(x=>x.title===title); if(!g||!r) return;
-      const body=document.getElementById('asset-modal-body');
-      body.innerHTML=`<div class="row space"><h2>Asset Detail: ${escapeHtml(g.title)}</h2><button id="close-asset" class="secondary small">Close</button></div>
-      <div class="grid grid-2">
-      <div class="card"><label class="tiny">Asset name</label><input id="ad-title" value="${escapeHtml(g.title)}"><label class="tiny mt">Manufacturer</label><input id="ad-man" value="${escapeHtml(g.manufacturer)}"><label class="tiny mt">Category</label><input id="ad-cat" value="${escapeHtml(g.category)}"><label class="tiny mt">Quantity</label><input id="ad-qty" type="number" min="1" value="${g.qty}"><label class="tiny mt">Documentation status</label><select id="ad-doc">${['Manual linked','Family manual','Support linked','Missing'].map(v=>`<option ${g.status===v?'selected':''}>${v}</option>`).join('')}</select><label class="tiny mt">Manual URL</label><input id="ad-manual" value="${escapeHtml(g.manual||'')}"><label class="tiny mt">Support URL</label><input id="ad-support" value="${escapeHtml(g.support||'')}"><label class="tiny mt">PM focus</label><textarea id="ad-pm">${escapeHtml(g.pm||'')}</textarea><label class="tiny mt">Assigned workers</label><div>${workers.map(w=>`<label class="row tiny"><input style="width:auto" type="checkbox" value="${escapeHtml(w.name)}" ${(r.assignedWorkers||[r.technician]).includes(w.name)?'checked':''}>${escapeHtml(w.name)} (${w.role})</label>`).join('')}</div><button id="save-asset" class="primary mt">Save asset</button></div>
-      <div class="card"><h3>Issues / history</h3><div class="stack">${r.issueHistory.map(h=>`<div class="history-item ${highlight&&h.id===highlight?'bad':''}"><div><strong>${h.status}</strong> · ${h.date}</div><div class="tiny">${escapeHtml(h.note||'')}</div></div>`).join('')||'<div class="subtle tiny">No issue history.</div>'}</div><label class="tiny mt">Add issue update</label><textarea id="ad-issue"></textarea><label class="tiny mt">Severity</label><select id="ad-sev">${SEVERITY_OPTIONS.map(v=>`<option ${v===r.severity?'selected':''}>${v}</option>`).join('')}</select><button id="add-issue-note" class="secondary mt">Add issue note</button></div></div>`;
-      document.getElementById('asset-modal').classList.remove('hide');
-      document.getElementById('close-asset').onclick=()=>document.getElementById('asset-modal').classList.add('hide');
-      document.getElementById('save-asset').onclick=()=>{const old=g.title; g.title=body.querySelector('#ad-title').value.trim()||g.title; g.manufacturer=body.querySelector('#ad-man').value.trim(); g.category=body.querySelector('#ad-cat').value.trim(); g.qty=Number(body.querySelector('#ad-qty').value||1); g.status=body.querySelector('#ad-doc').value; g.manual=body.querySelector('#ad-manual').value.trim(); g.support=body.querySelector('#ad-support').value.trim(); g.pm=body.querySelector('#ad-pm').value.trim(); r.title=g.title; r.severity=body.querySelector('#ad-sev').value; r.assignedWorkers=[...body.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value); r.technician=r.assignedWorkers[0]||'Unassigned'; oneOffTasks.filter(t=>t.machine===old).forEach(t=>t.machine=g.title); saveAll(); renderAll(); document.getElementById('asset-modal').classList.add('hide');};
-      document.getElementById('add-issue-note').onclick=()=>{const note=body.querySelector('#ad-issue').value.trim(); if(!note) return; r.issueHistory.unshift({id:'issue-'+Date.now(),date:TODAY,status:r.status,severity:body.querySelector('#ad-sev').value,tech:r.technician,note}); r.issue=note; saveAll(); openAssetDetail(r.title); renderAll();};
+    function dashboardCard(title,count,action,kind=''){return `<div class="subtle clickable" data-action="${action}" data-kind="${kind}"><strong>${title}</strong><div class="v" style="font-size:26px;margin-top:8px">${count}</div></div>`}
+    function renderDashboard(){
+      const open=activeOps(), overdue=open.filter(r=>r.nextPm&&r.nextPm<TODAY), waiting=open.filter(r=>r.status==='Waiting Parts'), unassigned=open.filter(r=>!r.assignedWorkers?.length), hi=open.filter(r=>['High','Critical'].includes(r.severity));
+      const docs={manual:assets.filter(a=>a.documentation.status==='Manual linked').length,family:assets.filter(a=>a.documentation.status==='Family manual').length,support:assets.filter(a=>a.documentation.status==='Support linked').length,missing:assets.filter(a=>a.documentation.status==='Missing'||!a.documentation.manualUrl).length};
+      const priority=[...open].sort((a,b)=>SEVERITY.indexOf(a.severity)-SEVERITY.indexOf(b.severity)).slice(0,8);
+      const workerSummary=workers.map(w=>({w,ops:open.filter(o=>o.assignedWorkers?.includes(w.name)).length,tasks:oneOffTasks.filter(t=>t.status!=='Complete'&&t.assignedWorkers?.includes(w.name)).length}));
+      dashboard.innerHTML=`
+        <div class="grid grid-3">
+          ${dashboardCard('Open operations',open.length,'operations')}
+          ${dashboardCard('Overdue PM',overdue.length,'assets','overdue')}
+          ${dashboardCard('Waiting Parts',waiting.length,'operations','waiting')}
+          ${dashboardCard('Unassigned work',unassigned.length,'operations','unassigned')}
+          ${dashboardCard('High/Critical urgency',hi.length,'assets','urgent')}
+          ${dashboardCard('Recently completed',recentCompleted().length,'reports','recent')}
+        </div>
+        <div class="grid grid-2 mt">
+          <div class="card"><div class="row space"><h2>Priority queue</h2><span class="tiny">Click to open asset detail</span></div>
+            <div class="stack">${priority.map(r=>`<div class="history-item clickable" data-open-asset="${esc(r.title)}" data-highlight-op="${esc(r.id||r.title)}"><div class="row"><strong>${esc(r.title)}</strong><span class="badge ${bClass(r.severity)}">${r.severity}</span><span class="badge ${bClass(r.status)}">${r.status}</span></div><div class="tiny mt">Workers: ${(r.assignedWorkers||[]).join(', ')||'Unassigned'} · Next PM: ${r.nextPm||'—'}</div><div class="tiny mt">${esc(r.issue||'')}</div></div>`).join('')||'<div class="subtle tiny">No open operations.</div>'}</div>
+          </div>
+          <div class="card"><h2>Documentation status (clickable)</h2><div class="grid grid-2">
+              <div class="subtle clickable" data-doc="Manual linked"><strong>Manual linked</strong><div class="tiny mt">${docs.manual}</div></div>
+              <div class="subtle clickable" data-doc="Family manual"><strong>Family manual</strong><div class="tiny mt">${docs.family}</div></div>
+              <div class="subtle clickable" data-doc="Support linked"><strong>Support linked</strong><div class="tiny mt">${docs.support}</div></div>
+              <div class="subtle clickable" data-doc="Missing"><strong>Missing / gaps</strong><div class="tiny mt">${docs.missing}</div></div>
+          </div></div>
+        </div>
+        <div class="grid grid-2 mt">
+          <div class="card"><h2>Operations command view (live)</h2><div class="stack">${open.slice(0,10).map(o=>`<div class="history-item clickable" data-open-asset="${esc(o.title)}"><div class="row"><strong>${esc(o.title)}</strong><span class="badge ${bClass(o.severity)}">${o.severity}</span><span class="badge ${bClass(o.status)}">${o.status}</span></div><div class="tiny mt">Issue: ${esc(o.issue||'—')} · PM due ${o.nextPm||'—'} · Workers ${(o.assignedWorkers||[]).join(', ')||'Unassigned'}</div></div>`).join('')||'<div class="subtle tiny">No active operations.</div>'}</div></div>
+          <div class="card"><h2>Worker workload summary</h2><div class="stack">${workerSummary.map(x=>`<div class="subtle"><div class="row space"><strong>${esc(x.w.name)}</strong><span class="chip">${x.w.role}</span></div><div class="tiny mt">Open operations: ${x.ops} · Open tasks: ${x.tasks}</div></div>`).join('')}</div></div>
+        </div>`;
+      dashboard.querySelectorAll('[data-action="operations"]').forEach(c=>c.onclick=()=>showTab('operations'));
+      dashboard.querySelector('[data-kind="overdue"]')?.addEventListener('click',()=>{showTab('assets');setAssetFilter('overdue')});
+      dashboard.querySelector('[data-kind="urgent"]')?.addEventListener('click',()=>{showTab('assets');setAssetFilter('urgent')});
+      dashboard.querySelectorAll('[data-doc]').forEach(d=>d.onclick=()=>{showTab('assets');assetFilter.doc=d.dataset.doc;renderAssets()});
+      dashboard.querySelectorAll('[data-open-asset]').forEach(n=>n.onclick=()=>openAssetDetail(n.dataset.openAsset,n.dataset.highlightOp));
     }
+
+    const assetFilter={text:'',doc:'',urgency:'',worker:'',category:'',issue:''};
+    function setAssetFilter(kind){if(kind==='overdue'){assetFilter.issue='overdue'}if(kind==='urgent'){assetFilter.urgency='High'}renderAssets()}
+    function filteredAssets(){return assets.filter(a=>{
+      const rec=serviceRecords.find(r=>r.title===a.name)||{};
+      const hasOpenIssue=(a.issues||[]).some(i=>i.status!=='Resolved') || (rec.status && rec.status!=='Complete');
+      const overdue=rec.nextPm&&rec.status!=='Complete'&&rec.nextPm<TODAY;
+      return (!assetFilter.text || (a.name+a.manufacturer+a.category).toLowerCase().includes(assetFilter.text.toLowerCase())) && (!assetFilter.doc || a.documentation.status===assetFilter.doc || (assetFilter.doc==='Missing' && (!a.documentation.manualUrl||a.documentation.status==='Missing'))) && (!assetFilter.urgency || a.urgency===assetFilter.urgency || (assetFilter.urgency==='High'&&['High','Critical'].includes(a.urgency))) && (!assetFilter.worker || a.assignedWorkers.includes(assetFilter.worker)) && (!assetFilter.category || a.category===assetFilter.category) && (!assetFilter.issue || (assetFilter.issue==='open'?hasOpenIssue:assetFilter.issue==='overdue'?overdue:true));
+    })}
+
+    function renderAssets(){
+      const cats=[...new Set(assets.map(a=>a.category))].sort();
+      const list=filteredAssets();
+      assetsSec.innerHTML=`<div class="card"><div class="row space"><h2>Assets</h2><div class="tiny">All asset cards are clickable</div></div>
+        <div class="controls"><input id="f-text" placeholder="Search assets" value="${esc(assetFilter.text)}"><select id="f-doc"><option value="">Documentation status</option>${DOC_STATUSES.map(s=>`<option ${assetFilter.doc===s?'selected':''}>${s}</option>`).join('')}</select><select id="f-urg"><option value="">Urgency</option>${SEVERITY.map(s=>`<option ${assetFilter.urgency===s?'selected':''}>${s}</option>`).join('')}</select><select id="f-worker"><option value="">Assigned worker</option>${workers.map(w=>`<option ${assetFilter.worker===w.name?'selected':''}>${esc(w.name)}</option>`).join('')}</select><select id="f-cat"><option value="">Category</option>${cats.map(c=>`<option ${assetFilter.category===c?'selected':''}>${esc(c)}</option>`).join('')}</select><select id="f-issue"><option value="">Issue status</option><option value="open" ${assetFilter.issue==='open'?'selected':''}>Has active issue</option><option value="overdue" ${assetFilter.issue==='overdue'?'selected':''}>Overdue PM</option></select></div>
+        <div class="stack mt">${list.map(a=>`<div class="item clickable" data-asset="${esc(a.name)}"><div class="row space"><strong>${esc(a.name)}</strong><div class="row"><span class="badge ${bClass(a.urgency)}">${a.urgency}</span><span class="badge ${bClass(a.documentation.status)}">${a.documentation.status}</span></div></div><div class="tiny mt">${esc(a.manufacturer)} · ${esc(a.category)} · Qty ${a.quantity}</div><div class="tiny mt">Workers: ${(a.assignedWorkers||[]).join(', ')||'Unassigned'}</div></div>`).join('')||'<div class="subtle tiny">No matching assets.</div>'}</div></div>`;
+      [['f-text','text'],['f-doc','doc'],['f-urg','urgency'],['f-worker','worker'],['f-cat','category'],['f-issue','issue']].forEach(([id,key])=>assetsSec.querySelector('#'+id).oninput=e=>{assetFilter[key]=e.target.value;renderAssets()});
+      assetsSec.querySelectorAll('[data-asset]').forEach(c=>c.onclick=()=>openAssetDetail(c.dataset.asset));
+    }
+
+    function renderOperations(){
+      const active=serviceRecords.filter(r=>r.status!=='Complete');
+      operations.innerHTML=`<div class="card"><div class="row space"><h2>Operations (active by default)</h2><button class="secondary small" id="show-complete">Toggle completed (${serviceRecords.filter(r=>r.status==='Complete').length})</button></div><div class="stack" id="op-list">${active.map(r=>`<div class="history-item"><div class="row space"><div><strong>${esc(r.title)}</strong><div class="tiny mt">${esc(r.issue||'')}</div></div><div class="row"><span class="badge ${bClass(r.severity)}">${r.severity}</span><select data-op-status="${esc(r.title)}">${STATUS.map(s=>`<option ${r.status===s?'selected':''}>${s}</option>`).join('')}</select></div></div><div class="tiny mt">Workers: ${(r.assignedWorkers||[]).join(', ')||'Unassigned'} · Next PM: ${r.nextPm||'—'}</div><button class="primary small mt" data-op-open="${esc(r.title)}">Open asset detail</button></div>`).join('')||'<div class="subtle tiny">No active operations.</div>'}</div></div>`;
+      operations.querySelectorAll('[data-op-open]').forEach(b=>b.onclick=()=>openAssetDetail(b.dataset.opOpen,b.dataset.opOpen));
+      operations.querySelectorAll('[data-op-status]').forEach(s=>s.onchange=()=>{
+        const r=serviceRecords.find(x=>x.title===s.dataset.opStatus); if(!r) return; r.status=s.value; r.lastUpdated=TODAY;
+        const a=byName(r.title); if(a){a.operationHistory.unshift({date:TODAY,summary:`Operation status set to ${r.status}`,status:r.status,workers:r.assignedWorkers||[]}); if(r.status==='Complete'){a.serviceHistory.unshift({date:TODAY,note:'Operation completed and logged from Operations tab.',status:'Complete',severity:r.severity});}}
+        if(r.status==='Complete'){r.lastService=TODAY; r.nextPm=addDays(TODAY,14)}
+        saveAll(); renderAll();
+      });
+      operations.querySelector('#show-complete').onclick=()=>{const done=serviceRecords.filter(r=>r.status==='Complete').map(r=>`<div class='history-item'><strong>${esc(r.title)}</strong><div class='tiny mt'>Completed ${r.lastUpdated||'—'}</div></div>`).join('')||'<div class="subtle tiny">No completed operations.</div>'; operations.querySelector('#op-list').innerHTML+=`<h3>Completed operations</h3>${done}`};
+    }
+
+    function workerChecks(selected=[]){return workers.map(w=>`<label class='row'><input type='checkbox' value='${esc(w.name)}' ${selected.includes(w.name)?'checked':''} style='width:auto'>${esc(w.name)} <span class='chip'>${w.role}</span></label>`).join('')}
+    function openAssetDetail(name,highlight=''){
+      const a=assets.find(x=>x.name===name); if(!a) return;
+      const rec=serviceRecords.find(r=>r.title===a.name);
+      assetModalBody.innerHTML=`<div class='row space'><h2>${esc(a.name)}</h2><button class='secondary small' id='close-asset'>Close</button></div>
+      <div class='grid grid-2'>
+        <div class='card'><h3>Asset details</h3><div class='stack'>
+          <input id='d-name' value='${esc(a.name)}'><input id='d-man' value='${esc(a.manufacturer)}'><input id='d-cat' value='${esc(a.category)}'><input id='d-qty' type='number' min='1' value='${a.quantity}'>
+          <select id='d-doc'>${DOC_STATUSES.map(s=>`<option ${a.documentation.status===s?'selected':''}>${s}</option>`).join('')}</select><input id='d-manual' placeholder='Manual URL' value='${esc(a.documentation.manualUrl)}'><input id='d-support' placeholder='Support URL' value='${esc(a.documentation.supportUrl)}'>
+          <input id='d-pm' value='${esc(a.pmFocus)}' placeholder='PM focus'><select id='d-urg'>${SEVERITY.map(s=>`<option ${a.urgency===s?'selected':''}>${s}</option>`).join('')}</select><input id='d-status' value='${esc(a.status)}'><textarea id='d-notes'>${esc(a.notes)}</textarea>
+          <textarea id='d-doc-notes' placeholder='Missing docs notes / status notes'>${esc(a.documentation.notes||a.documentation.statusNotes||'')}</textarea>
+          <div><strong>Assigned workers</strong>${workerChecks(a.assignedWorkers)}</div>
+          <button class='primary' id='save-asset'>Save asset changes</button>
+        </div></div>
+        <div class='card'><h3>Issues & history</h3>
+          <div class='stack'>${(a.issues||[]).map(i=>`<div class='history-item ${highlight&&highlight.includes(i.id)?'bad':''}'><strong>${esc(i.text)}</strong><div class='tiny mt'>${i.severity} · ${i.status}</div></div>`).join('')||'<div class="subtle tiny">No issues yet.</div>'}
+          <textarea id='new-issue' placeholder='Add/update issue'></textarea><select id='new-issue-sev'>${SEVERITY.map(s=>`<option>${s}</option>`).join('')}</select><button class='secondary small' id='add-issue'>Add issue</button>
+          <textarea id='new-note' placeholder='Add service note'></textarea><button class='secondary small' id='add-note'>Add note</button>
+          <div class='subtle tiny'>Documentation update: ${a.documentation.lastUpdated||'—'}<br>Manual: ${a.documentation.manualUrl?`<a href='${esc(a.documentation.manualUrl)}' target='_blank'>link</a>`:'None'} · Support: ${a.documentation.supportUrl?`<a href='${esc(a.documentation.supportUrl)}' target='_blank'>link</a>`:'None'}</div>
+          <div class='tiny'>Operation history</div>${(a.operationHistory||[]).slice(0,8).map(h=>`<div class='history-item'><div>${esc(h.summary||h.status||'Update')}</div><div class='tiny'>${h.date}</div></div>`).join('')||'<div class="subtle tiny">No operation history.</div>'}
+          <div class='tiny'>Service history</div>${(a.serviceHistory||[]).slice(0,8).map(h=>`<div class='history-item'><div>${esc(h.note||h.action||'Service')}</div><div class='tiny'>${h.date}</div></div>`).join('')||'<div class="subtle tiny">No service history.</div>'}
+          </div>
+        </div>
+      </div>`;
+      document.getElementById('close-asset').onclick=()=>assetModal.classList.remove('show');
+      document.getElementById('save-asset').onclick=()=>{
+        const old=a.name; a.name=dName.value.trim(); a.manufacturer=dMan.value.trim(); a.category=dCat.value.trim(); a.quantity=Number(dQty.value||1); a.documentation.status=dDoc.value; a.documentation.manualUrl=dManual.value.trim(); a.documentation.supportUrl=dSupport.value.trim(); a.documentation.notes=dDocNotes.value.trim(); a.documentation.lastUpdated=TODAY; a.pmFocus=dPm.value.trim(); a.urgency=dUrg.value; a.status=dStatus.value.trim(); a.notes=dNotes.value.trim();
+        a.assignedWorkers=[...assetModalBody.querySelectorAll('input[type="checkbox"]:checked')].map(c=>c.value);
+        const rec=serviceRecords.find(r=>r.title===old); if(rec){rec.title=a.name; rec.assignedWorkers=[...a.assignedWorkers]; rec.technician=a.assignedWorkers[0]||'Unassigned'; rec.severity=a.urgency; rec.issue=(a.issues[0]?.text||rec.issue);} 
+        oneOffTasks.filter(t=>t.machine===old).forEach(t=>t.machine=a.name); saveAll(); renderAll(); assetModal.classList.remove('show');
+      };
+      document.getElementById('add-issue').onclick=()=>{const text=document.getElementById('new-issue').value.trim(); if(!text) return; a.issues.unshift({id:'iss-'+Date.now(),text,severity:document.getElementById('new-issue-sev').value,status:'Open',createdAt:TODAY}); a.urgency=document.getElementById('new-issue-sev').value; saveAll(); openAssetDetail(a.name); renderAll();};
+      document.getElementById('add-note').onclick=()=>{const note=document.getElementById('new-note').value.trim(); if(!note) return; a.serviceHistory.unshift({date:TODAY,note,status:'Note',severity:a.urgency}); saveAll(); openAssetDetail(a.name);};
+      assetModal.classList.add('show');
+      const dName=document.getElementById('d-name'),dMan=document.getElementById('d-man'),dCat=document.getElementById('d-cat'),dQty=document.getElementById('d-qty'),dDoc=document.getElementById('d-doc'),dManual=document.getElementById('d-manual'),dSupport=document.getElementById('d-support'),dPm=document.getElementById('d-pm'),dUrg=document.getElementById('d-urg'),dStatus=document.getElementById('d-status'),dNotes=document.getElementById('d-notes'),dDocNotes=document.getElementById('d-doc-notes');
+    }
+
+    function renderContacts(){contactsSec.innerHTML=`<div class='card'><h2>Contacts</h2><div class='stack'>${contactsList.map(c=>`<div class='subtle'><strong>${esc(c.manufacturer)}</strong><div class='tiny mt'>${esc(c.contact)} · ${esc(c.website||'')}</div></div>`).join('')}</div></div>`}
+
+    function exportCsv(name,headers,rows){const escv=v=>`"${String(v??'').replace(/"/g,'""')}"`;const csv=[headers,...rows].map(r=>r.map(escv).join(',')).join('\n');const blob=new Blob([csv],{type:'text/csv'});const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;a.download=name;a.click();URL.revokeObjectURL(u)}
+    function renderReports(){reports.innerHTML=`<div class='grid grid-2'><div class='card'><h2>Recent completion</h2><div class='stack'>${recentCompleted().map(x=>`<div class='history-item'><strong>${esc(x.text)}</strong><div class='tiny mt'>${x.date}</div></div>`).join('')||'<div class="subtle tiny">No completed entries.</div>'}</div></div><div class='card'><h2>Exports</h2><div class='row'><button class='secondary' id='exp-maint'>Assets maintenance CSV</button><button class='secondary' id='exp-task'>Operations task CSV</button></div><div class='tiny mt'>CSV behavior retained, wording now uses Assets.</div></div></div>`;reports.querySelector('#exp-maint').onclick=()=>exportCsv('assets-maintenance.csv',['Asset','Manufacturer','Category','Qty','Documentation Status','Urgency','Assigned Workers','Operation Status','Issue','Manual URL','Support URL'],serviceRecords.map(r=>{const a=byName(r.title)||{};return[r.title,a.manufacturer||'',a.category||'',a.quantity||'',a.documentation?.status||'',r.severity||a.urgency||'',(r.assignedWorkers||[]).join(' | '),r.status||'',r.issue||'',a.documentation?.manualUrl||'',a.documentation?.supportUrl||'']}));reports.querySelector('#exp-task').onclick=()=>exportCsv('operations-tasks.csv',['Task','Machine','Status','Severity','Workers','Due Date','Notes'],oneOffTasks.map(t=>[t.title,t.machine,t.status,t.severity,(t.assignedWorkers||[]).join(' | '),t.dueDate,t.notes]))}
 
     function renderAdmin(){
-      const el=document.getElementById('admin');
       const locked=!adminState.password||!adminState.unlocked;
-      el.innerHTML=`<div class="card"><div class="row space"><h2>Admin (browser-local protection only)</h2><span class="tiny">Client-side gate</span></div>${locked?`<label class="tiny">Password</label><input id="admin-pass" type="password" placeholder="${adminState.password?'Enter password':'Create password'}"><button id="admin-unlock" class="primary mt">${adminState.password?'Unlock':'Create & unlock'}</button>`:`<div class="grid grid-2"><div class="card"><h3>Workers</h3><div class="stack">${workers.map(w=>`<div class="row"><label class="tiny">Name</label><input data-w-name="${w.id}" value="${escapeHtml(w.name)}"><label class="tiny">Role</label><select data-w-role="${w.id}">${ROLE_OPTIONS.map(r=>`<option ${r===w.role?'selected':''}>${r}</option>`).join('')}</select><button data-w-del="${w.id}" class="secondary small">Remove</button></div>`).join('')}<button id="w-add" class="secondary">Add worker</button><button id="w-save" class="primary">Save worker roster</button></div></div><div class="card"><h3>Add Asset</h3><label class="tiny">Asset name</label><input id="a-title"><label class="tiny mt">Manufacturer</label><input id="a-man"><label class="tiny mt">Category</label><input id="a-cat"><label class="tiny mt">Quantity</label><input id="a-qty" type="number" min="1" value="1"><label class="tiny mt">Documentation status</label><select id="a-doc"><option>Manual linked</option><option>Family manual</option><option>Support linked</option><option>Missing</option></select><label class="tiny mt">Manual URL</label><input id="a-murl"><label class="tiny mt">Support URL</label><input id="a-surl"><label class="tiny mt">PM focus</label><textarea id="a-pm"></textarea><button id="a-add" class="primary mt">Create asset</button></div></div><div class="card mt"><h3>Backup / restore</h3><div class="row"><button id="export-json-admin" class="secondary">Export full JSON backup</button><label class="upload-label">Import JSON backup<input id="import-json-admin" class="hide" type="file" accept="application/json"></label><button id="lock-admin" class="secondary">Lock admin</button></div></div>`}</div>`;
-      if(locked){el.querySelector('#admin-unlock').onclick=()=>{const p=el.querySelector('#admin-pass').value; if(!p) return; if(!adminState.password) adminState.password=p; if(adminState.password===p){adminState.unlocked=true; saveAll(); renderAdmin()} else alert('Wrong password');}; return;}
-      el.querySelector('#lock-admin').onclick=()=>{adminState.unlocked=false; saveAll(); renderAdmin();};
-      el.querySelectorAll('[data-w-del]').forEach(b=>b.onclick=()=>{workers=workers.filter(w=>w.id!==b.dataset.wDel); saveAll(); renderAdmin();});
-      el.querySelector('#w-add').onclick=()=>{workers.push({id:'w-'+Date.now(),name:'New Worker',role:'Staff'}); renderAdmin();};
-      el.querySelector('#w-save').onclick=()=>{workers=workers.map(w=>({id:w.id,name:el.querySelector(`[data-w-name="${w.id}"]`).value.trim()||'Unnamed',role:el.querySelector(`[data-w-role="${w.id}"]`).value})); saveAll(); renderAll();};
-      el.querySelector('#a-add').onclick=()=>{const title=el.querySelector('#a-title').value.trim(); if(!title) return; if(!games.find(g=>g.title===title)){games.push({title,manufacturer:el.querySelector('#a-man').value.trim(),category:el.querySelector('#a-cat').value.trim(),qty:Number(el.querySelector('#a-qty').value||1),status:el.querySelector('#a-doc').value,manual:el.querySelector('#a-murl').value.trim(),support:el.querySelector('#a-surl').value.trim(),pm:el.querySelector('#a-pm').value.trim()}); serviceRecords.push({title,technician:'Unassigned',assignedWorkers:[],status:'Scheduled',priority:'Routine',severity:'Low',lastService:TODAY,nextPm:addDays(TODAY,14),issue:'New asset setup',notes:el.querySelector('#a-pm').value.trim(),partsNeeded:'',photos:[],verifiedBy:'',accountability:'',lastUpdated:TODAY,issueHistory:[],history:[]}); saveAll(); renderAll(); showTab('assets');}};
-      el.querySelector('#export-json-admin').onclick=exportJsonBackup;
-      el.querySelector('#import-json-admin').onchange=importJsonBackup;
+      admin.innerHTML=`<div class='card'><div class='row space'><h2>Admin (browser-local protection only)</h2><span class='tiny'>Client-side lock</span></div>${locked?`<div class='stack'><input id='admin-pass' type='password' placeholder='${adminState.password?'Enter admin password':'Create admin password on first use'}'><button class='primary' id='admin-unlock'>${adminState.password?'Unlock':'Create password & unlock'}</button></div>`:`<div class='grid grid-2'><div class='card'><h3>Worker management</h3><div class='stack' id='workers-list'>${workers.map(w=>`<div class='history-item'><div class='row space'><input data-worker-name='${w.id}' value='${esc(w.name)}'><select data-worker-role='${w.id}'>${ROLES.map(r=>`<option ${w.role===r?'selected':''}>${r}</option>`).join('')}</select><button class='secondary small' data-worker-del='${w.id}'>Remove</button></div></div>`).join('')}<button class='secondary small' id='add-worker'>Add worker</button><button class='primary small' id='save-workers'>Save workers</button></div></div><div class='card'><h3>Add Asset</h3><div class='stack'><input id='new-asset-name' placeholder='Asset name'><input id='new-asset-man' placeholder='Manufacturer'><input id='new-asset-cat' placeholder='Category'><input id='new-asset-qty' type='number' value='1' min='1'><select id='new-asset-doc'>${DOC_STATUSES.map(s=>`<option>${s}</option>`).join('')}</select><input id='new-asset-manual' placeholder='Manual URL'><input id='new-asset-support' placeholder='Support URL'><input id='new-asset-pm' placeholder='PM focus'><input id='new-asset-status' placeholder='Status' value='Active'><select id='new-asset-urg'>${SEVERITY.map(s=>`<option>${s}</option>`).join('')}</select><textarea id='new-asset-notes' placeholder='Notes'></textarea><div><strong>Assigned workers</strong>${workerChecks([])}</div><button class='primary' id='create-asset'>Create asset</button></div></div></div><div class='card mt'><h3>Backup / restore (admin only)</h3><div class='row'><button class='secondary' id='exp-json'>Export JSON backup</button><label class='upload-label'>Import JSON<input id='imp-json' class='hide' type='file' accept='application/json'></label><button class='secondary' id='lock-admin'>Lock admin</button></div></div>`}</div>`;
+      if(locked){admin.querySelector('#admin-unlock').onclick=()=>{const p=admin.querySelector('#admin-pass').value; if(!p)return; if(!adminState.password) adminState.password=p; if(p===adminState.password){adminState.unlocked=true;saveAll();renderAdmin()} else alert('Incorrect password');};return;}
+      admin.querySelector('#lock-admin').onclick=()=>{adminState.unlocked=false;saveAll();renderAdmin()};
+      admin.querySelector('#add-worker').onclick=()=>{workers.push({id:'w-'+Date.now(),name:'New Worker',role:'Staff'});renderAdmin()};
+      admin.querySelectorAll('[data-worker-del]').forEach(b=>b.onclick=()=>{workers=workers.filter(w=>w.id!==b.dataset.workerDel);renderAdmin()});
+      admin.querySelector('#save-workers').onclick=()=>{workers=workers.map(w=>({id:w.id,name:admin.querySelector(`[data-worker-name="${w.id}"]`).value.trim()||'Unnamed',role:admin.querySelector(`[data-worker-role="${w.id}"]`).value})); saveAll(); renderAll();};
+      admin.querySelector('#create-asset').onclick=()=>{const name=admin.querySelector('#new-asset-name').value.trim(); if(!name)return; const rec={id:'asset-'+Date.now(),name,manufacturer:admin.querySelector('#new-asset-man').value.trim(),category:admin.querySelector('#new-asset-cat').value.trim(),quantity:Number(admin.querySelector('#new-asset-qty').value||1),documentation:{status:admin.querySelector('#new-asset-doc').value,manualUrl:admin.querySelector('#new-asset-manual').value.trim(),supportUrl:admin.querySelector('#new-asset-support').value.trim(),notes:'',lastUpdated:TODAY,statusNotes:''},pmFocus:admin.querySelector('#new-asset-pm').value.trim(),notes:admin.querySelector('#new-asset-notes').value.trim(),issues:[],urgency:admin.querySelector('#new-asset-urg').value,assignedWorkers:[...admin.querySelectorAll('input[type="checkbox"]:checked')].map(c=>c.value),status:admin.querySelector('#new-asset-status').value.trim(),serviceHistory:[],operationHistory:[],photos:[]}; assets.unshift(rec); serviceRecords.unshift({id:'svc-'+Date.now(),title:name,technician:rec.assignedWorkers[0]||'Unassigned',assignedWorkers:[...rec.assignedWorkers],status:'Scheduled',priority:'Routine',severity:rec.urgency,lastService:'',nextPm:addDays(TODAY,14),issue:'New asset setup',notes:rec.pmFocus,partsNeeded:'',photos:[],verifiedBy:'',accountability:'',lastUpdated:TODAY,issueHistory:[],history:[]}); saveAll(); renderAll(); showTab('assets');};
+      admin.querySelector('#exp-json').onclick=()=>{const payload={assets,serviceRecords,oneOffTasks,handoffLog,contacts:contactsList,workers,adminState};const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;a.download='wow-maintenance-backup.json';a.click();URL.revokeObjectURL(u)};
+      admin.querySelector('#imp-json').onchange=(e)=>{const f=e.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);assets=d.assets||assets;serviceRecords=d.serviceRecords||serviceRecords;oneOffTasks=d.oneOffTasks||oneOffTasks;handoffLog=d.handoffLog||handoffLog;contactsList=d.contacts||contactsList;workers=d.workers||workers;saveAll();renderAll();alert('Backup imported')}catch{alert('Could not import backup')}};r.readAsText(f)};
     }
 
-    function renderAll(){
-      renderTabs(); renderMetrics(); renderDashboard(); renderAssets(); renderOperations(); renderTasks(); renderManuals(); renderContacts(); renderCalendar(); renderReports(); renderCatchup(); renderAdmin();
-    }
-
-    renderAll();
+    function renderAll(){renderTabs();renderMetrics();renderDashboard();renderAssets();renderOperations();renderContacts();renderReports();renderAdmin();}
+    const tabs=document.getElementById('tabs'), metrics=document.getElementById('metrics'), dashboard=document.getElementById('dashboard'), assetsSec=document.getElementById('assets'), operations=document.getElementById('operations'), contactsSec=document.getElementById('contacts'), reports=document.getElementById('reports'), admin=document.getElementById('admin'), assetModal=document.getElementById('asset-modal'), assetModalBody=document.getElementById('asset-modal-body');
+    migrateData();renderAll();assetModal.onclick=e=>{if(e.target===assetModal)assetModal.classList.remove('show')};
   </script>
 </body>
 </html>
