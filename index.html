@@ -39,7 +39,7 @@
     <div class="tabs" id="tabs"></div>
 
     <section id="dashboard" class="section active"></section>
-    <section id="inventory" class="section"></section>
+    <section id="assets" class="section"></section>
     <section id="operations" class="section"></section>
     <section id="tasks" class="section"></section>
     <section id="manuals" class="section"></section>
@@ -47,6 +47,9 @@
     <section id="calendar" class="section"></section>
     <section id="reports" class="section"></section>
     <section id="catchup" class="section"></section>
+    <section id="admin" class="section"></section>
+
+    <div id="asset-modal" class="hide" style="position:fixed;inset:0;background:rgba(15,23,42,.45);padding:20px;z-index:30;overflow:auto"><div id="asset-modal-body" class="card" style="max-width:980px;margin:0 auto"></div></div>
   </div>
 
   <script>
@@ -57,8 +60,9 @@
       handoff:'wow-technicade-handoff-v2',
       contacts:'wow-technicade-contacts-v2'
     };
-    const TABS = ['dashboard','inventory','operations','tasks','manuals','contacts','calendar','reports','catchup'];
+    const TABS = ['dashboard','assets','operations','tasks','manuals','contacts','calendar','reports','catchup','admin'];
     const TECHNICIANS = ['Unassigned','Alex','Jordan','Sam','Riley','Manager'];
+    const ROLE_OPTIONS=['Manager','Assistant','Lead','Staff'];
     const STATUS_OPTIONS = ['Open','Scheduled','In Progress','Waiting Parts','Blocked','Complete'];
     const TASK_STATUS_OPTIONS = ['Open','Scheduled','In Progress','Waiting Parts','Blocked','Complete'];
     const SEVERITY_OPTIONS = ['Low','Medium','High','Critical'];
@@ -218,12 +222,16 @@ const pmCadence = [
     let oneOffTasks = safeLoad(STORAGE_KEYS.tasks, buildOneOffSeed());
     let handoffLog = safeLoad(STORAGE_KEYS.handoff, buildHandoffSeed());
     let contacts = safeLoad(STORAGE_KEYS.contacts, defaultContacts);
+    let workers = safeLoad(STORAGE_KEYS.workers, TECHNICIANS.filter(t=>t!=='Unassigned').map((name,i)=>({id:'w-'+(i+1),name,role:name==='Manager'?'Manager':'Staff'})));
+    let adminState = safeLoad(STORAGE_KEYS.admin, {password:'',unlocked:false});
 
     function saveAll(){
       safeSave(STORAGE_KEYS.service, serviceRecords);
       safeSave(STORAGE_KEYS.tasks, oneOffTasks);
       safeSave(STORAGE_KEYS.handoff, handoffLog);
       safeSave(STORAGE_KEYS.contacts, contacts);
+      safeSave(STORAGE_KEYS.workers, workers);
+      safeSave(STORAGE_KEYS.admin, adminState);
     }
 
     function badgeClass(v){return v==='Critical'||v==='High'?'bad':v==='Medium'||v==='Family manual'||v==='Support linked'||v==='Scheduled'||v==='Waiting Parts'?'warn':'good'}
@@ -270,6 +278,7 @@ const pmCadence = [
         ['Critical open',openCritical,'Immediate attention'],
         ['Photos',photos,'Saved evidence'],
         ['Manual links',docs,'Direct manual entries'],
+        ['Workers',workers.length,'Roster size'],
         ['Handoff notes',handoffLog.length,'Shift continuity']
       ].map(m=>`<div class="metric"><div class="tiny">${m[0]}</div><div class="v">${m[1]}</div><div class="tiny">${m[2]}</div></div>`).join('')
     }
@@ -279,14 +288,14 @@ const pmCadence = [
       const manualLinked=games.filter(g=>g.manual).length;
       const family=games.filter(g=>g.status==='Family manual').length;
       const supportOnly=games.filter(g=>!g.manual && g.support).length;
-      const techCards=TECHNICIANS.filter(t=>t!=='Unassigned').map(technicianSummary);
+      const techCards=workers.map(w=>({...technicianSummary(w.name),role:w.role}));
       const topIssues=serviceRecords.filter(r=>r.status!=='Complete').sort((a,b)=>SEVERITY_OPTIONS.indexOf(a.severity)-SEVERITY_OPTIONS.indexOf(b.severity)).slice(0,6);
       el.innerHTML=`
         <div class="grid grid-2">
           <div class="card">
             <h2>Operations command view</h2>
             <div class="grid grid-2">
-              <div class="subtle"><strong>Inventory + manuals</strong><div class="tiny mt">Searchable machine library with PM focus, manual links, and support pages.</div></div>
+              <div class="subtle"><strong>Assets + docs</strong><div class="tiny mt">Searchable machine library with PM focus, manual links, and support pages.</div></div>
               <div class="subtle"><strong>Accountability</strong><div class="tiny mt">PM owner, verification field, overdue views, and technician workload summary.</div></div>
               <div class="subtle"><strong>Evidence</strong><div class="tiny mt">Photo uploads on machine records and one-off tasks for proof, serials, and damage notes.</div></div>
               <div class="subtle"><strong>Backups</strong><div class="tiny mt">Export CSVs plus full JSON backup/restore for browser-local data.</div></div>
@@ -296,21 +305,21 @@ const pmCadence = [
           <div class="card">
             <h2>Documentation status</h2>
             <div class="stack">
-              <div class="subtle"><strong>Direct manuals:</strong> ${manualLinked}</div>
-              <div class="subtle"><strong>Family manuals:</strong> ${family}</div>
-              <div class="subtle"><strong>Support only:</strong> ${supportOnly}</div>
+              <div class="subtle clickable" data-doc-filter="Manual linked"><strong>Direct manuals:</strong> ${manualLinked}</div>
+              <div class="subtle clickable" data-doc-filter="Family manual"><strong>Family manuals:</strong> ${family}</div>
+              <div class="subtle clickable" data-doc-filter="Support linked"><strong>Support only:</strong> ${supportOnly}</div>
               <div class="subtle"><strong>Next 3 days scheduled items:</strong> ${buildCalendarRows().filter(x=>dueSoon(x.date,3) && x.status!=='Complete').length}</div>
             </div>
           </div>
         </div>
         <div class="grid grid-2 mt">
           <div class="card">
-            <div class="row space"><h2>Technician accountability</h2><span class="tiny">Open PM + task load</span></div>
-            <div class="grid grid-4">${techCards.map(t=>`<div class="subtle"><strong>${t.name}</strong><div class="tiny mt">Open PM: ${t.openPm}</div><div class="tiny">Open tasks: ${t.openTasks}</div><div class="tiny">Critical: ${t.critical}</div><div class="tiny">Overdue: ${t.overdue}</div></div>`).join('')}</div>
+            <div class="row space"><h2>Worker accountability</h2><span class="tiny">Open PM + task load</span></div>
+            <div class="grid grid-4">${techCards.map(t=>`<div class="subtle"><strong>${t.name}</strong><div class="tiny">${t.role||'Staff'}</div><div class="tiny mt">Open PM: ${t.openPm}</div><div class="tiny">Open tasks: ${t.openTasks}</div><div class="tiny">Critical: ${t.critical}</div><div class="tiny">Overdue: ${t.overdue}</div></div>`).join('')}</div>
           </div>
           <div class="card">
             <div class="row space"><h2>Priority queue</h2><span class="tiny">Top open machine records</span></div>
-            <div class="stack">${topIssues.map(r=>`<div class="history-item"><div class="row"><strong>${r.title}</strong><span class="badge ${badgeClass(r.severity)}">${r.severity}</span><span class="badge ${badgeClass(r.status)}">${r.status}</span></div><div class="tiny mt">Owner: ${r.technician} · Next PM ${r.nextPm}</div><div class="tiny mt">${escapeHtml(r.issue)}</div></div>`).join('') || '<div class="subtle tiny">No open issues.</div>'}</div>
+            <div class="stack">${topIssues.map(r=>`<div class="history-item clickable" data-open-asset="${encodeURIComponent(r.title)}"><div class="row"><strong>${r.title}</strong><span class="badge ${badgeClass(r.severity)}">${r.severity}</span><span class="badge ${badgeClass(r.status)}">${r.status}</span></div><div class="tiny mt">Owner: ${r.technician} · Next PM ${r.nextPm}</div><div class="tiny mt">${escapeHtml(r.issue)}</div></div>`).join('') || '<div class="subtle tiny">No open issues.</div>'}</div>
           </div>
         </div>
         <div class="grid grid-2 mt">
@@ -324,14 +333,14 @@ const pmCadence = [
             <div class="stack mt">${handoffLog.sort((a,b)=>b.date.localeCompare(a.date)).map(h=>`<div class="history-item"><div class="row"><strong>${h.shift}</strong><span class="tiny">${h.date} · ${h.author}</span></div><div class="tiny mt">${escapeHtml(h.note)}</div></div>`).join('')}</div>
           </div>
           <div class="card">
-            <div class="row space"><h2>Backup / restore</h2><div class="tiny">Browser-local data only</div></div>
+            <div class="row space"><h2>Backup / restore moved to Admin</h2><div class="tiny">Admin tab</div></div>
             <div class="stack">
-              <button id="export-json" class="secondary">Export full JSON backup</button>
-              <label class="upload-label">Import JSON backup<input id="import-json" class="hide" type="file" accept="application/json"></label>
-              <div class="tiny">Use this before switching browsers or publishing updates.</div>
+              <div class="tiny">Backup/restore controls are in Admin.</div>
             </div>
           </div>
         </div>`;
+      el.querySelectorAll('[data-open-asset]').forEach(n=>n.onclick=()=>openAssetDetail(decodeURIComponent(n.dataset.openAsset)));
+      el.querySelectorAll('[data-doc-filter]').forEach(n=>n.onclick=()=>{showTab('manuals'); const sel=document.getElementById('manual-status-filter'); if(sel){sel.value=n.dataset.docFilter; sel.dispatchEvent(new Event('change'));}});
       el.querySelector('#add-handoff').onclick=()=>{
         const author=el.querySelector('#handoff-author').value.trim()||'Unknown';
         const shift=el.querySelector('#handoff-shift').value;
@@ -339,13 +348,11 @@ const pmCadence = [
         if(!note) return;
         handoffLog.unshift({id:'handoff-'+Date.now(),date:TODAY,shift,author,note}); saveAll(); renderMetrics(); renderDashboard();
       };
-      el.querySelector('#export-json').onclick=exportJsonBackup;
-      el.querySelector('#import-json').onchange=importJsonBackup;
     }
 
-    function renderInventory(){
-      const el=document.getElementById('inventory');
-      el.innerHTML=`<div class="card"><h2>Inventory</h2><div class="controls"><input id="inv-q" placeholder="Search title, manufacturer, or PM focus"><select id="inv-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].sort().map(c=>`<option>${c}</option>`).join('')}</select><select id="inv-doc"><option>All</option>${[...new Set(games.map(g=>g.status))].map(s=>`<option>${s}</option>`).join('')}</select><select id="inv-owner"><option>All owners</option>${TECHNICIANS.map(t=>`<option>${t}</option>`).join('')}</select><select id="inv-sev"><option>All severities</option>${SEVERITY_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select></div><div id="inv-list" class="stack"></div></div>`;
+    function renderAssets(){
+      const el=document.getElementById('assets');
+      el.innerHTML=`<div class="card"><h2>Assets</h2><div class="controls"><input id="inv-q" placeholder="Search title, manufacturer, or PM focus"><select id="inv-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].sort().map(c=>`<option>${c}</option>`).join('')}</select><select id="inv-doc"><option>All</option>${[...new Set(games.map(g=>g.status))].map(s=>`<option>${s}</option>`).join('')}</select><select id="inv-owner"><option>All owners</option>${workerNames().map(t=>`<option>${t}</option>`).join('')}</select><select id="inv-sev"><option>All severities</option>${SEVERITY_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select></div><div id="inv-list" class="stack"></div></div>`;
       const q=el.querySelector('#inv-q'), cat=el.querySelector('#inv-cat'), doc=el.querySelector('#inv-doc'), owner=el.querySelector('#inv-owner'), sev=el.querySelector('#inv-sev'), list=el.querySelector('#inv-list');
       const draw=()=>{
         const term=q.value.toLowerCase();
@@ -358,20 +365,22 @@ const pmCadence = [
             (sev.value==='All severities'||record?.severity===sev.value)
         }).map(g=>{
           const record=serviceRecords.find(r=>r.title===g.title);
-          return `<div class="item"><div class="row space"><div><div class="row"><h3>${g.title}</h3><span class="badge ${badgeClass(g.status)}">${g.status}</span><span class="badge">Qty ${g.qty}</span><span class="badge ${badgeClass(record?.severity||'Low')}">${record?.severity||'Low'}</span></div><div class="tiny">${g.manufacturer} · ${g.category}</div><div class="tiny mt"><strong>PM focus:</strong> ${g.pm}</div><div class="tiny">Owner: ${record?.technician||'Unassigned'} · Next PM: ${record?.nextPm||'n/a'}</div></div><div class="stack">${g.manual?`<a href="${g.manual}" target="_blank"><button class="secondary small">Open manual</button></a>`:''}${g.support?`<a href="${g.support}" target="_blank"><button class="secondary small">Support page</button></a>`:''}</div></div></div>`
+          return `<div class="item clickable" data-asset-open="${encodeURIComponent(g.title)}"><div class="row space"><div><div class="row"><h3>${g.title}</h3><span class="badge ${badgeClass(g.status)}">${g.status}</span><span class="badge">Qty ${g.qty}</span><span class="badge ${badgeClass(record?.severity||'Low')}">${record?.severity||'Low'}</span></div><div class="tiny">${g.manufacturer} · ${g.category}</div><div class="tiny mt"><strong>PM focus:</strong> ${g.pm}</div><div class="tiny">Owner: ${record?.technician||'Unassigned'} · Next PM: ${record?.nextPm||'n/a'}</div></div><div class="stack">${g.manual?`<a href="${g.manual}" target="_blank"><button class="secondary small">Open manual</button></a>`:''}${g.support?`<a href="${g.support}" target="_blank"><button class="secondary small">Support page</button></a>`:''}</div></div></div>`
         }).join('')||'<div class="subtle">No matches.</div>'
+        list.querySelectorAll('[data-asset-open]').forEach(c=>c.onclick=()=>openAssetDetail(decodeURIComponent(c.dataset.assetOpen)));
       };
       [q,cat,doc,owner,sev].forEach(i=>i.oninput=draw); cat.onchange=doc.onchange=owner.onchange=sev.onchange=draw; draw();
+      el.querySelectorAll('[data-asset-open]').forEach(c=>c.onclick=()=>openAssetDetail(decodeURIComponent(c.dataset.assetOpen)));
     }
 
     function renderOperations(){
       const el=document.getElementById('operations');
-      el.innerHTML=`<div class="card"><div class="row space"><div><h2>Operations</h2><div class="tiny">Edit notes, parts, accountability, verification, issue history, and attach photos.</div></div><button id="exp-maint" class="secondary">Export maintenance CSV</button></div><div class="controls"><input id="ops-q" placeholder="Search machine, issue, notes, parts, or history"><select id="ops-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].sort().map(c=>`<option>${c}</option>`).join('')}</select><select id="ops-status"><option>All</option>${STATUS_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select><select id="ops-owner"><option>All owners</option>${TECHNICIANS.map(t=>`<option>${t}</option>`).join('')}</select><select id="ops-overdue"><option>All dates</option><option>Overdue PM only</option><option>Due in 3 days</option></select></div><div id="ops-list" class="stack"></div></div>`;
+      el.innerHTML=`<div class="card"><div class="row space"><div><h2>Operations</h2><div class="tiny">Edit notes, parts, accountability, verification, issue history, and attach photos.</div></div><button id="exp-maint" class="secondary">Export maintenance CSV</button></div><div class="controls"><input id="ops-q" placeholder="Search machine, issue, notes, parts, or history"><select id="ops-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].sort().map(c=>`<option>${c}</option>`).join('')}</select><select id="ops-status"><option>All</option>${STATUS_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select><select id="ops-owner"><option>All owners</option>${workerNames().map(t=>`<option>${t}</option>`).join('')}</select><select id="ops-overdue"><option>All dates</option><option>Overdue PM only</option><option>Due in 3 days</option></select></div><div id="ops-list" class="stack"></div></div>`;
       el.querySelector('#exp-maint').onclick=exportMaintenanceCsv;
       const q=el.querySelector('#ops-q'), cat=el.querySelector('#ops-cat'), st=el.querySelector('#ops-status'), owner=el.querySelector('#ops-owner'), overdue=el.querySelector('#ops-overdue'), list=el.querySelector('#ops-list');
       const draw=()=>{
         const term=q.value.toLowerCase();
-        const filtered=serviceRecords.filter(r=>{
+        const filtered=serviceRecords.filter(r=>r.status!=='Complete').filter(r=>{
           const g=gameByTitle(r.title); const guide=issueGuides[r.title]; const guideText=guide?guide.issue+' '+guide.steps.join(' '):'';
           const overdueMatch = overdue.value==='All dates' ? true : overdue.value==='Overdue PM only' ? isOverdueRecord(r) : dueSoon(r.nextPm,3);
           return (!term||`${r.title} ${r.issue} ${r.notes} ${r.partsNeeded} ${guideText} ${r.accountability} ${r.verifiedBy} ${g?.manufacturer||''}`.toLowerCase().includes(term)) &&
@@ -380,7 +389,7 @@ const pmCadence = [
         });
         list.innerHTML=filtered.map(r=>{
           const g=gameByTitle(r.title), guide=issueGuides[r.title], sla=getSlaDays(r.severity), age=diffDays(r.issueHistory[0]?.date||TODAY,TODAY);
-          return `<div class="item"><div class="row space"><div><div class="row"><h3>${r.title}</h3><span class="badge ${badgeClass(r.priority)}">${r.priority}</span><span class="badge ${badgeClass(r.severity)}">${r.severity}</span><span class="badge ${badgeClass(r.status)}">${r.status}</span>${isOverdueRecord(r)?'<span class="badge bad">PM overdue</span>':''}</div><div class="tiny">${g.manufacturer} · ${g.category}</div></div><div class="row"><select data-field="technician" data-title="${encodeURIComponent(r.title)}">${TECHNICIANS.map(t=>`<option ${t===r.technician?'selected':''}>${t}</option>`).join('')}</select><select data-field="severity" data-title="${encodeURIComponent(r.title)}">${SEVERITY_OPTIONS.map(s=>`<option ${s===r.severity?'selected':''}>${s}</option>`).join('')}</select><select data-field="status" data-title="${encodeURIComponent(r.title)}">${STATUS_OPTIONS.map(s=>`<option ${s===r.status?'selected':''}>${s}</option>`).join('')}</select><button class="primary small" data-complete="${encodeURIComponent(r.title)}">Mark PM complete</button></div></div>
+          return `<div class="item clickable" data-asset-open="${encodeURIComponent(g.title)}"><div class="row space"><div><div class="row"><h3>${r.title}</h3><span class="badge ${badgeClass(r.priority)}">${r.priority}</span><span class="badge ${badgeClass(r.severity)}">${r.severity}</span><span class="badge ${badgeClass(r.status)}">${r.status}</span>${isOverdueRecord(r)?'<span class="badge bad">PM overdue</span>':''}</div><div class="tiny">${g.manufacturer} · ${g.category}</div></div><div class="row"><select data-field="technician" data-title="${encodeURIComponent(r.title)}">${workerNames().map(t=>`<option ${t===r.technician?'selected':''}>${t}</option>`).join('')}</select><select data-field="severity" data-title="${encodeURIComponent(r.title)}">${SEVERITY_OPTIONS.map(s=>`<option ${s===r.severity?'selected':''}>${s}</option>`).join('')}</select><select data-field="status" data-title="${encodeURIComponent(r.title)}">${STATUS_OPTIONS.map(s=>`<option ${s===r.status?'selected':''}>${s}</option>`).join('')}</select><button class="primary small" data-complete="${encodeURIComponent(r.title)}">Mark PM complete</button></div></div>
           <div class="kv mt"><div class="metric"><div class="tiny">Last service</div><div>${r.lastService}</div></div><div class="metric"><div class="tiny">Next PM</div><div>${r.nextPm}</div></div><div class="metric"><div class="tiny">Issue age / SLA</div><div>${age}d / ${sla}d</div></div><div class="metric"><div class="tiny">Documentation</div><div>${g.status}</div></div></div>
           <div class="grid grid-2 mt"><div class="subtle"><div class="tiny mb">Issue / focus</div><textarea data-area="issue" data-title="${encodeURIComponent(r.title)}">${escapeHtml(r.issue)}</textarea></div><div class="subtle"><div class="tiny mb">Notes</div><textarea data-area="notes" data-title="${encodeURIComponent(r.title)}">${escapeHtml(r.notes)}</textarea></div></div>
           <div class="grid grid-3 mt"><div class="subtle"><div class="tiny mb">Parts needed</div><input data-area="partsNeeded" data-title="${encodeURIComponent(r.title)}" value="${escapeAttr(r.partsNeeded)}" placeholder="blower motor, microswitch, ticket stock"></div><div class="subtle"><div class="tiny mb">Accountability / next action</div><input data-area="accountability" data-title="${encodeURIComponent(r.title)}" value="${escapeAttr(r.accountability)}" placeholder="Order part, verify tomorrow, escalate to vendor"></div><div class="subtle"><div class="tiny mb">Verified by</div><input data-area="verifiedBy" data-title="${encodeURIComponent(r.title)}" value="${escapeAttr(r.verifiedBy)}" placeholder="Lead / manager initials"></div></div>
@@ -392,12 +401,13 @@ const pmCadence = [
         bindOperationActions(list);
       };
       [q,cat,st,owner,overdue].forEach(i=>i.oninput=draw); cat.onchange=st.onchange=owner.onchange=overdue.onchange=draw; draw();
+      list.querySelectorAll('[data-asset-open]').forEach(n=>n.onclick=()=>openAssetDetail(decodeURIComponent(n.dataset.assetOpen)));
     }
 
     function bindOperationActions(root){
       root.querySelectorAll('select[data-field]').forEach(el=>el.onchange=()=>{const r=serviceRecords.find(x=>x.title===decodeURIComponent(el.dataset.title)); r[el.dataset.field]=el.value; r.lastUpdated=TODAY; saveAll(); renderMetrics(); renderDashboard();});
       root.querySelectorAll('textarea[data-area],input[data-area]').forEach(el=>el.onchange=()=>{const r=serviceRecords.find(x=>x.title===decodeURIComponent(el.dataset.title)); r[el.dataset.area]=el.value; r.lastUpdated=TODAY; saveAll();});
-      root.querySelectorAll('[data-complete]').forEach(btn=>btn.onclick=()=>{const t=decodeURIComponent(btn.dataset.complete); const r=serviceRecords.find(x=>x.title===t); r.status='Complete'; r.lastService=TODAY; r.nextPm=addDays(TODAY,14); r.lastUpdated=TODAY; r.issueHistory.unshift({id:'issue-'+Date.now(),date:TODAY,status:'Complete',severity:r.severity,tech:r.technician,note:'Preventive maintenance cycle marked complete.'}); saveAll(); renderMetrics(); renderDashboard(); renderOperations(); renderCalendar(); renderReports();});
+      root.querySelectorAll('[data-complete]').forEach(btn=>btn.onclick=()=>{const t=decodeURIComponent(btn.dataset.complete); const r=serviceRecords.find(x=>x.title===t); r.status='Complete'; r.lastService=TODAY; r.nextPm=addDays(TODAY,14); r.lastUpdated=TODAY; r.issueHistory.unshift({id:'issue-'+Date.now(),date:TODAY,status:'Complete',severity:r.severity,tech:r.technician,note:'Preventive maintenance cycle marked complete.'}); r.history.unshift({date:TODAY,action:'Operation completed',tech:r.technician}); saveAll(); renderMetrics(); renderDashboard(); renderOperations(); renderCalendar(); renderReports();});
       root.querySelectorAll('[data-add-issue]').forEach(btn=>btn.onclick=()=>{const t=decodeURIComponent(btn.dataset.addIssue); const draft=root.querySelector(`[data-draft="${encodeURIComponent(t)}"]`).value.trim(); if(!draft) return; const r=serviceRecords.find(x=>x.title===t); r.issueHistory.unshift({id:'issue-'+Date.now(),date:TODAY,status:r.status,severity:r.severity,tech:r.technician,note:draft}); r.lastUpdated=TODAY; saveAll(); renderMetrics(); renderOperations(); renderReports();});
       root.querySelectorAll('[data-upload]').forEach(input=>input.onchange=(e)=>{const t=decodeURIComponent(input.dataset.upload); const file=e.target.files[0]; if(!file) return; const cap=root.querySelector(`[data-caption="${encodeURIComponent(t)}"]`).value.trim()||`Photo added ${TODAY}`; const reader=new FileReader(); reader.onload=()=>{const r=serviceRecords.find(x=>x.title===t); r.photos.unshift({id:'photo-'+Date.now(),src:reader.result,caption:cap,date:TODAY}); r.lastUpdated=TODAY; saveAll(); renderMetrics(); renderOperations();}; reader.readAsDataURL(file);});
       root.querySelectorAll('[data-remove-photo]').forEach(btn=>btn.onclick=()=>{const t=decodeURIComponent(btn.dataset.removePhoto), id=btn.dataset.photoId; const r=serviceRecords.find(x=>x.title===t); r.photos=r.photos.filter(p=>p.id!==id); saveAll(); renderMetrics(); renderOperations();});
@@ -405,13 +415,13 @@ const pmCadence = [
 
     function renderTasks(){
       const el=document.getElementById('tasks');
-      el.innerHTML=`<div class="grid grid-2"><div class="card"><div class="row space"><div><h2>Add one-off task</h2><div class="tiny">Use this for urgent fixes, parts runs, photos, vendor follow-up, or non-recurring jobs.</div></div><button id="exp-task" class="secondary">Export tasks CSV</button></div><div class="stack mt"><input id="new-title" placeholder="Task title"><select id="new-machine"><option>General / Floor-wide</option>${games.map(g=>`<option>${g.title}</option>`).join('')}</select><div class="row"><select id="new-tech">${TECHNICIANS.map(t=>`<option>${t}</option>`).join('')}</select><select id="new-sev">${SEVERITY_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select></div><input id="new-date" type="date" value="${TODAY}"><input id="new-checklist" placeholder="Checklist items separated by commas"><textarea id="new-notes" placeholder="Notes, context, or parts pickup details"></textarea><button id="add-task" class="primary">Add one-off task</button></div></div><div class="card"><h2>Task board</h2><div class="controls"><input id="task-q" placeholder="Search task, machine, notes, or tech"><select id="task-status"><option>All</option>${TASK_STATUS_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select><select id="task-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].sort().map(c=>`<option>${c}</option>`).join('')}</select><select id="task-owner"><option>All owners</option>${TECHNICIANS.map(t=>`<option>${t}</option>`).join('')}</select><select id="task-date"><option>All dates</option><option>Overdue only</option><option>Due in 3 days</option></select></div><div id="task-list" class="stack"></div></div></div>`;
+      el.innerHTML=`<div class="grid grid-2"><div class="card"><div class="row space"><div><h2>Add one-off task</h2><div class="tiny">Use this for urgent fixes, parts runs, photos, vendor follow-up, or non-recurring jobs.</div></div><button id="exp-task" class="secondary">Export tasks CSV</button></div><div class="stack mt"><label class="tiny">Task title</label><input id="new-title" placeholder="Task title"><label class="tiny">Linked asset</label><select id="new-machine"><option>General / Floor-wide</option>${games.map(g=>`<option>${g.title}</option>`).join('')}</select><div class="row"><div><label class="tiny">Assigned worker</label><select id="new-tech">${workerNames().map(t=>`<option>${t}</option>`).join('')}</select></div><div><label class="tiny">Severity</label><select id="new-sev">${SEVERITY_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select></div></div><label class="tiny">Due date</label><input id="new-date" type="date" value="${TODAY}"><label class="tiny">Checklist (comma separated)</label><input id="new-checklist" placeholder="Checklist items separated by commas"><label class="tiny">Notes</label><textarea id="new-notes" placeholder="Notes, context, or parts pickup details"></textarea><button id="add-task" class="primary">Add one-off task</button></div></div><div class="card"><h2>Task board</h2><div class="controls"><input id="task-q" placeholder="Search task, machine, notes, or tech"><select id="task-status"><option>All</option>${TASK_STATUS_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select><select id="task-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].sort().map(c=>`<option>${c}</option>`).join('')}</select><select id="task-owner"><option>All owners</option>${workerNames().map(t=>`<option>${t}</option>`).join('')}</select><select id="task-date"><option>All dates</option><option>Overdue only</option><option>Due in 3 days</option></select></div><div id="task-list" class="stack"></div></div></div>`;
       el.querySelector('#exp-task').onclick=exportTaskCsv;
       el.querySelector('#add-task').onclick=()=>{const title=el.querySelector('#new-title').value.trim(); if(!title) return; oneOffTasks.unshift({id:'task-'+Date.now(),title,machine:el.querySelector('#new-machine').value,technician:el.querySelector('#new-tech').value,dueDate:el.querySelector('#new-date').value,severity:el.querySelector('#new-sev').value,status:'Open',notes:el.querySelector('#new-notes').value.trim(),source:'Manual task',photos:[],checklist:el.querySelector('#new-checklist').value.split(',').map(s=>s.trim()).filter(Boolean),createdDate:TODAY}); saveAll(); renderMetrics(); renderDashboard(); renderTasks(); renderCalendar();};
       const q=el.querySelector('#task-q'), st=el.querySelector('#task-status'), cat=el.querySelector('#task-cat'), owner=el.querySelector('#task-owner'), dateFilter=el.querySelector('#task-date'), list=el.querySelector('#task-list');
       const draw=()=>{
         const term=q.value.toLowerCase();
-        list.innerHTML=oneOffTasks.filter(t=>{const g=gameByTitle(t.machine); const dateMatch=dateFilter.value==='All dates'?true:dateFilter.value==='Overdue only'?isOverdueTask(t):dueSoon(t.dueDate,3); return (!term||`${t.title} ${t.machine} ${t.notes} ${t.technician}`.toLowerCase().includes(term)) && (st.value==='All'||t.status===st.value) && (cat.value==='All'||t.machine==='General / Floor-wide'||g?.category===cat.value) && (owner.value==='All owners'||t.technician===owner.value) && dateMatch}).map(t=>`<div class="item"><div class="row space"><div><div class="row"><h3>${t.title}</h3><span class="badge ${badgeClass(t.severity)}">${t.severity}</span><span class="badge ${badgeClass(t.status)}">${t.status}</span>${isOverdueTask(t)?'<span class="badge bad">Overdue</span>':''}</div><div class="tiny">${t.machine} · Due ${t.dueDate} · ${t.technician} · ${t.source||'Manual task'}</div></div><div class="row"><select data-task-field="technician" data-id="${t.id}">${TECHNICIANS.map(v=>`<option ${v===t.technician?'selected':''}>${v}</option>`).join('')}</select><select data-task-field="status" data-id="${t.id}">${TASK_STATUS_OPTIONS.map(v=>`<option ${v===t.status?'selected':''}>${v}</option>`).join('')}</select><button class="primary small" data-task-complete="${t.id}">Complete</button></div></div><div class="subtle mt"><div class="tiny mb">Checklist</div>${(t.checklist?.length?t.checklist:['No checklist']).map(i=>`<div class="tiny">• ${escapeHtml(i)}</div>`).join('')}</div><textarea data-task-notes="${t.id}" class="mt">${escapeHtml(t.notes)}</textarea><div class="subtle mt"><div class="row"><input data-task-caption="${t.id}" placeholder="Task photo caption / receipt / serial"><label class="upload-label">Choose photo<input class="hide" type="file" accept="image/*" data-task-upload="${t.id}"></label></div><div class="photos mt">${(t.photos?.length)?t.photos.map(p=>`<div class="photo"><img src="${p.src}" alt=""><div class="meta"><div>${escapeHtml(p.caption)}</div><div class="tiny">${p.date}</div><button class="secondary small mt" data-task-remove-photo="${t.id}" data-photo-id="${p.id}">Remove</button></div></div>`).join(''):'<div class="history-item tiny">No task photos yet.</div>'}</div></div></div>`).join('')||'<div class="subtle">No matches.</div>';
+        list.innerHTML=oneOffTasks.filter(t=>{const g=gameByTitle(t.machine); const dateMatch=dateFilter.value==='All dates'?true:dateFilter.value==='Overdue only'?isOverdueTask(t):dueSoon(t.dueDate,3); return (!term||`${t.title} ${t.machine} ${t.notes} ${t.technician}`.toLowerCase().includes(term)) && (st.value==='All'||t.status===st.value) && (cat.value==='All'||t.machine==='General / Floor-wide'||g?.category===cat.value) && (owner.value==='All owners'||t.technician===owner.value) && dateMatch}).map(t=>`<div class="item"><div class="row space"><div><div class="row"><h3>${t.title}</h3><span class="badge ${badgeClass(t.severity)}">${t.severity}</span><span class="badge ${badgeClass(t.status)}">${t.status}</span>${isOverdueTask(t)?'<span class="badge bad">Overdue</span>':''}</div><div class="tiny">${t.machine} · Due ${t.dueDate} · ${t.technician} · ${t.source||'Manual task'}</div></div><div class="row"><select data-task-field="technician" data-id="${t.id}">${workerNames().map(v=>`<option ${v===t.technician?'selected':''}>${v}</option>`).join('')}</select><select data-task-field="status" data-id="${t.id}">${TASK_STATUS_OPTIONS.map(v=>`<option ${v===t.status?'selected':''}>${v}</option>`).join('')}</select><button class="primary small" data-task-complete="${t.id}">Complete</button></div></div><div class="subtle mt"><div class="tiny mb">Checklist</div>${(t.checklist?.length?t.checklist:['No checklist']).map(i=>`<div class="tiny">• ${escapeHtml(i)}</div>`).join('')}</div><textarea data-task-notes="${t.id}" class="mt">${escapeHtml(t.notes)}</textarea><div class="subtle mt"><div class="row"><input data-task-caption="${t.id}" placeholder="Task photo caption / receipt / serial"><label class="upload-label">Choose photo<input class="hide" type="file" accept="image/*" data-task-upload="${t.id}"></label></div><div class="photos mt">${(t.photos?.length)?t.photos.map(p=>`<div class="photo"><img src="${p.src}" alt=""><div class="meta"><div>${escapeHtml(p.caption)}</div><div class="tiny">${p.date}</div><button class="secondary small mt" data-task-remove-photo="${t.id}" data-photo-id="${p.id}">Remove</button></div></div>`).join(''):'<div class="history-item tiny">No task photos yet.</div>'}</div></div></div>`).join('')||'<div class="subtle">No matches.</div>';
         bindTaskActions(list);
       };
       [q,st,cat,owner,dateFilter].forEach(i=>i.oninput=draw); st.onchange=cat.onchange=owner.onchange=dateFilter.onchange=draw; draw();
@@ -419,7 +429,7 @@ const pmCadence = [
 
     function bindTaskActions(root){
       root.querySelectorAll('select[data-task-field]').forEach(s=>s.onchange=()=>{const t=oneOffTasks.find(x=>x.id===s.dataset.id); t[s.dataset.taskField]=s.value; saveAll(); renderMetrics(); renderDashboard();});
-      root.querySelectorAll('[data-task-complete]').forEach(b=>b.onclick=()=>{const t=oneOffTasks.find(x=>x.id===b.dataset.taskComplete); t.status='Complete'; saveAll(); renderMetrics(); renderDashboard(); renderTasks(); renderCalendar(); renderReports();});
+      root.querySelectorAll('[data-task-complete]').forEach(b=>b.onclick=()=>{const t=oneOffTasks.find(x=>x.id===b.dataset.taskComplete); t.status='Complete'; t.completedAt=TODAY; const r=serviceRecords.find(x=>x.title===t.machine); if(r){r.history.unshift({date:TODAY,action:`Task complete: ${t.title}`,tech:t.technician}); r.issueHistory.unshift({id:'task-'+Date.now(),date:TODAY,status:'Complete',severity:t.severity,tech:t.technician,note:`Linked task completed: ${t.title}`});} saveAll(); renderMetrics(); renderDashboard(); renderTasks(); renderCalendar(); renderReports();});
       root.querySelectorAll('[data-task-notes]').forEach(a=>a.onchange=()=>{const t=oneOffTasks.find(x=>x.id===a.dataset.taskNotes); t.notes=a.value; saveAll();});
       root.querySelectorAll('[data-task-upload]').forEach(input=>input.onchange=(e)=>{const id=input.dataset.taskUpload; const task=oneOffTasks.find(x=>x.id===id); const file=e.target.files[0]; if(!file) return; const cap=root.querySelector(`[data-task-caption="${id}"]`).value.trim()||`Task photo added ${TODAY}`; const reader=new FileReader(); reader.onload=()=>{task.photos=task.photos||[]; task.photos.unshift({id:'photo-'+Date.now(),src:reader.result,caption:cap,date:TODAY}); saveAll(); renderMetrics(); renderTasks();}; reader.readAsDataURL(file);});
       root.querySelectorAll('[data-task-remove-photo]').forEach(btn=>btn.onclick=()=>{const task=oneOffTasks.find(x=>x.id===btn.dataset.taskRemovePhoto); task.photos=(task.photos||[]).filter(p=>p.id!==btn.dataset.photoId); saveAll(); renderMetrics(); renderTasks();});
@@ -428,17 +438,18 @@ const pmCadence = [
     function renderManuals(){
       const el=document.getElementById('manuals');
       const manufacturers=[...new Set(games.map(g=>g.manufacturer))].sort();
-      el.innerHTML=`<div class="card"><div class="row space"><div><h2>Manual and support hub</h2><div class="tiny">Central lookup for manuals, support pages, and documentation gaps.</div></div></div><div class="controls"><input id="man-q" placeholder="Search game, manufacturer, or PM focus"><select id="man-maker"><option>All manufacturers</option>${manufacturers.map(m=>`<option>${m}</option>`).join('')}</select><select id="man-doc"><option>All statuses</option>${[...new Set(games.map(g=>g.status))].map(s=>`<option>${s}</option>`).join('')}</select><select id="man-direct"><option>All docs</option><option>Direct manual only</option><option>Needs follow-up</option></select><select disabled><option>Manuals tab</option></select></div><div id="man-list" class="stack"></div></div>`;
-      const q=el.querySelector('#man-q'), maker=el.querySelector('#man-maker'), doc=el.querySelector('#man-doc'), direct=el.querySelector('#man-direct'), list=el.querySelector('#man-list');
-      const draw=()=>{const term=q.value.toLowerCase(); list.innerHTML=games.filter(g=>{const needsFollow = !g.manual; return (!term||`${g.title} ${g.manufacturer} ${g.pm}`.toLowerCase().includes(term)) && (maker.value==='All manufacturers'||g.manufacturer===maker.value) && (doc.value==='All statuses'||g.status===doc.value) && (direct.value==='All docs'||(direct.value==='Direct manual only'?!!g.manual:needsFollow))}).map(g=>`<div class="item"><div class="row space"><div><div class="row"><h3>${g.title}</h3><span class="badge ${badgeClass(g.status)}">${g.status}</span></div><div class="tiny">${g.manufacturer} · ${g.category}</div><div class="tiny mt">${g.pm}</div></div><div class="row">${g.manual?`<a href="${g.manual}" target="_blank"><button class="secondary small">Manual</button></a>`:'<span class="badge warn">Needs exact manual</span>'}${g.support?`<a href="${g.support}" target="_blank"><button class="secondary small">Support</button></a>`:''}</div></div></div>`).join('') || '<div class="subtle">No matches.</div>'};
+      el.innerHTML=`<div class="card"><div class="row space"><div><h2>Manual and support hub</h2><div class="tiny">Central lookup for manuals, support pages, and documentation gaps.</div></div></div><div class="controls"><input id="man-q" placeholder="Search game, manufacturer, or PM focus"><select id="man-maker"><option>All manufacturers</option>${manufacturers.map(m=>`<option>${m}</option>`).join('')}</select><select id="manual-status-filter"><option>All statuses</option>${[...new Set(games.map(g=>g.status))].map(s=>`<option>${s}</option>`).join('')}</select><select id="man-direct"><option>All docs</option><option>Direct manual only</option><option>Needs follow-up</option></select><select disabled><option>Manuals tab</option></select></div><div id="man-list" class="stack"></div></div>`;
+      const q=el.querySelector('#man-q'), maker=el.querySelector('#man-maker'), doc=el.querySelector('#manual-status-filter'), direct=el.querySelector('#man-direct'), list=el.querySelector('#man-list');
+      const draw=()=>{const term=q.value.toLowerCase(); list.innerHTML=games.filter(g=>{const needsFollow = !g.manual; return (!term||`${g.title} ${g.manufacturer} ${g.pm}`.toLowerCase().includes(term)) && (maker.value==='All manufacturers'||g.manufacturer===maker.value) && (doc.value==='All statuses'||g.status===doc.value) && (direct.value==='All docs'||(direct.value==='Direct manual only'?!!g.manual:needsFollow))}).map(g=>`<div class="item clickable" data-man-open="${encodeURIComponent(g.title)}"><div class="row space"><div><div class="row"><h3>${g.title}</h3><span class="badge ${badgeClass(g.status)}">${g.status}</span></div><div class="tiny">${g.manufacturer} · ${g.category}</div><div class="tiny mt">${g.pm}</div></div><div class="row">${g.manual?`<a href="${g.manual}" target="_blank"><button class="secondary small">Manual</button></a>`:'<span class="badge warn">Needs exact manual</span>'}${g.support?`<a href="${g.support}" target="_blank"><button class="secondary small">Support</button></a>`:''}</div></div></div>`).join('') || '<div class="subtle">No matches.</div>'};
       [q,maker,doc,direct].forEach(i=>i.oninput=draw); maker.onchange=doc.onchange=direct.onchange=draw; draw();
+      el.querySelectorAll('[data-man-open]').forEach(c=>c.onclick=()=>openAssetDetail(decodeURIComponent(c.dataset.manOpen))); 
     }
 
     function renderContacts(){
       const el=document.getElementById('contacts');
       el.innerHTML=`<div class="grid grid-2"><div class="card"><div class="row space"><div><h2>Vendor / support contacts</h2><div class="tiny">Edit phone, email, parts notes, and preferred contact path.</div></div><button id="add-contact" class="primary small">Add contact</button></div><div id="contact-list" class="stack mt"></div></div><div class="card"><h2>Severity and response guide</h2><table class="table"><thead><tr><th>Severity</th><th>Target response</th><th>Examples</th></tr></thead><tbody><tr><td>Critical</td><td>Same day</td><td>Unsafe condition, payout failure across key game, power issue</td></tr><tr><td>High</td><td>Within 2 days</td><td>Major earning game down, repeated game stoppage</td></tr><tr><td>Medium</td><td>Within 5 days</td><td>Single station degraded, weak sensor, intermittent issue</td></tr><tr><td>Low</td><td>Within 10 days</td><td>Cosmetic, non-gameplay note, labeling, minor hardware</td></tr></tbody></table><div class="subtle mt"><strong>Accountability rule:</strong><div class="tiny mt">Every open item should have an owner, a next action, and either a due date or next PM date.</div></div></div></div>`;
       const list=el.querySelector('#contact-list');
-      const draw=()=>{list.innerHTML=contacts.map((c,idx)=>`<div class="item"><div class="row space"><div><h3>${c.manufacturer}</h3><div class="tiny">${c.contact||'Contact name not set'}</div></div><button class="secondary small" data-del-contact="${idx}">Remove</button></div><div class="grid grid-2 mt"><input data-contact-field="manufacturer" data-idx="${idx}" value="${escapeAttr(c.manufacturer)}" placeholder="Manufacturer"><input data-contact-field="contact" data-idx="${idx}" value="${escapeAttr(c.contact)}" placeholder="Contact / department"></div><div class="grid grid-3 mt"><input data-contact-field="phone" data-idx="${idx}" value="${escapeAttr(c.phone)}" placeholder="Phone"><input data-contact-field="email" data-idx="${idx}" value="${escapeAttr(c.email)}" placeholder="Email"><input data-contact-field="website" data-idx="${idx}" value="${escapeAttr(c.website)}" placeholder="Website"></div><textarea data-contact-field="notes" data-idx="${idx}" class="mt">${escapeHtml(c.notes)}</textarea></div>`).join('')};
+      const draw=()=>{list.innerHTML=contacts.map((c,idx)=>`<div class="item"><div class="row space"><div><h3>${c.manufacturer}</h3><div class="tiny">${c.contact||'Contact name not set'}</div></div><button class="secondary small" data-del-contact="${idx}">Remove</button></div><div class="grid grid-2 mt"><div><label class="tiny">Manufacturer</label><input data-contact-field="manufacturer" data-idx="${idx}" value="${escapeAttr(c.manufacturer)}" placeholder="Manufacturer"><div><label class="tiny">Contact / department</label><input data-contact-field="contact" data-idx="${idx}" value="${escapeAttr(c.contact)}" placeholder="Contact / department"></div></div><div class="grid grid-3 mt"><div><label class="tiny">Phone</label><input data-contact-field="phone" data-idx="${idx}" value="${escapeAttr(c.phone)}" placeholder="Phone"></div><div><label class="tiny">Email</label><input data-contact-field="email" data-idx="${idx}" value="${escapeAttr(c.email)}" placeholder="Email"></div><div><label class="tiny">Website</label><input data-contact-field="website" data-idx="${idx}" value="${escapeAttr(c.website)}" placeholder="Website"></div></div><label class="tiny mt">Notes</label><textarea data-contact-field="notes" data-idx="${idx}" class="mt">${escapeHtml(c.notes)}</textarea></div>`).join('')};
       draw();
       el.querySelector('#add-contact').onclick=()=>{contacts.unshift({manufacturer:'New vendor',contact:'',phone:'',email:'',notes:'',website:''}); saveAll(); renderContacts();};
       list.addEventListener('change',e=>{const f=e.target.dataset.contactField; if(!f) return; const idx=Number(e.target.dataset.idx); contacts[idx][f]=e.target.value; saveAll();});
@@ -485,15 +496,60 @@ const pmCadence = [
       const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url);
     }
     function exportJsonBackup(){
-      const payload={exportedAt:new Date().toISOString(), serviceRecords, oneOffTasks, handoffLog, contacts};
+      const payload={exportedAt:new Date().toISOString(), games, serviceRecords, oneOffTasks, handoffLog, contacts, workers, adminState};
       const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='play-wow-maintenance-backup.json'; a.click(); URL.revokeObjectURL(url);
     }
     function importJsonBackup(e){
-      const file=e.target.files?.[0]; if(!file) return; const reader=new FileReader(); reader.onload=()=>{try{const data=JSON.parse(reader.result); if(data.serviceRecords) serviceRecords=data.serviceRecords; if(data.oneOffTasks) oneOffTasks=data.oneOffTasks; if(data.handoffLog) handoffLog=data.handoffLog; if(data.contacts) contacts=data.contacts; saveAll(); renderAll();}catch(err){alert('Could not import JSON backup.')}}; reader.readAsText(file);
+      const file=e.target.files?.[0]; if(!file) return; const reader=new FileReader(); reader.onload=()=>{try{const data=JSON.parse(reader.result); if(data.games){for(const g of data.games){if(!games.find(x=>x.title.toLowerCase()===g.title.toLowerCase())) games.push(g)}} if(data.serviceRecords) serviceRecords=data.serviceRecords; if(data.oneOffTasks) oneOffTasks=data.oneOffTasks; if(data.handoffLog) handoffLog=data.handoffLog; if(data.contacts) contacts=data.contacts; if(data.workers) workers=data.workers; if(data.adminState) adminState=data.adminState; saveAll(); 
+    function normalizeName(v){return String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()}
+    function mergeSeedData(){
+      const recBy=new Map(serviceRecords.map(r=>[normalizeName(r.title),r]));
+      games.forEach(g=>{
+        const key=normalizeName(g.title);
+        if(!recBy.has(key)){
+          serviceRecords.push({title:g.title,technician:'Unassigned',assignedWorkers:[],status:'Scheduled',priority:priorityForCategory(g.category),severity:severityForCategory(g.category),lastService:TODAY,nextPm:addDays(TODAY,14),issue:'Needs first verified PM pass after portal sync.',notes:g.pm,partsNeeded:'',photos:[],verifiedBy:'',accountability:'',lastUpdated:TODAY,issueHistory:[],history:[]});
+        }
+      });
+      serviceRecords.forEach(r=>{if(!Array.isArray(r.assignedWorkers)) r.assignedWorkers=r.technician&&r.technician!=='Unassigned'?[r.technician]:[]; if(r.technician&&r.technician!=='Unassigned'&&!workers.find(w=>w.name===r.technician)) workers.push({id:'w-'+Date.now()+Math.random(),name:r.technician,role:'Staff'});});
+      oneOffTasks.forEach(t=>{if(!Array.isArray(t.assignedWorkers)) t.assignedWorkers=t.technician&&t.technician!=='Unassigned'?[t.technician]:[]; if(t.technician&&t.technician!=='Unassigned'&&!workers.find(w=>w.name===t.technician)) workers.push({id:'w-'+Date.now()+Math.random(),name:t.technician,role:'Staff'});});
+      saveAll();
+    }
+
+    mergeSeedData();
+    renderAll();}catch(err){alert('Could not import JSON backup.')}}; reader.readAsText(file);
+    }
+
+    
+    function workerNames(){return ['Unassigned',...workers.map(w=>w.name)]}
+    function openAssetDetail(title,highlight=''){
+      const g=gameByTitle(title); const r=serviceRecords.find(x=>x.title===title); if(!g||!r) return;
+      const body=document.getElementById('asset-modal-body');
+      body.innerHTML=`<div class="row space"><h2>Asset Detail: ${escapeHtml(g.title)}</h2><button id="close-asset" class="secondary small">Close</button></div>
+      <div class="grid grid-2">
+      <div class="card"><label class="tiny">Asset name</label><input id="ad-title" value="${escapeHtml(g.title)}"><label class="tiny mt">Manufacturer</label><input id="ad-man" value="${escapeHtml(g.manufacturer)}"><label class="tiny mt">Category</label><input id="ad-cat" value="${escapeHtml(g.category)}"><label class="tiny mt">Quantity</label><input id="ad-qty" type="number" min="1" value="${g.qty}"><label class="tiny mt">Documentation status</label><select id="ad-doc">${['Manual linked','Family manual','Support linked','Missing'].map(v=>`<option ${g.status===v?'selected':''}>${v}</option>`).join('')}</select><label class="tiny mt">Manual URL</label><input id="ad-manual" value="${escapeHtml(g.manual||'')}"><label class="tiny mt">Support URL</label><input id="ad-support" value="${escapeHtml(g.support||'')}"><label class="tiny mt">PM focus</label><textarea id="ad-pm">${escapeHtml(g.pm||'')}</textarea><label class="tiny mt">Assigned workers</label><div>${workers.map(w=>`<label class="row tiny"><input style="width:auto" type="checkbox" value="${escapeHtml(w.name)}" ${(r.assignedWorkers||[r.technician]).includes(w.name)?'checked':''}>${escapeHtml(w.name)} (${w.role})</label>`).join('')}</div><button id="save-asset" class="primary mt">Save asset</button></div>
+      <div class="card"><h3>Issues / history</h3><div class="stack">${r.issueHistory.map(h=>`<div class="history-item ${highlight&&h.id===highlight?'bad':''}"><div><strong>${h.status}</strong> · ${h.date}</div><div class="tiny">${escapeHtml(h.note||'')}</div></div>`).join('')||'<div class="subtle tiny">No issue history.</div>'}</div><label class="tiny mt">Add issue update</label><textarea id="ad-issue"></textarea><label class="tiny mt">Severity</label><select id="ad-sev">${SEVERITY_OPTIONS.map(v=>`<option ${v===r.severity?'selected':''}>${v}</option>`).join('')}</select><button id="add-issue-note" class="secondary mt">Add issue note</button></div></div>`;
+      document.getElementById('asset-modal').classList.remove('hide');
+      document.getElementById('close-asset').onclick=()=>document.getElementById('asset-modal').classList.add('hide');
+      document.getElementById('save-asset').onclick=()=>{const old=g.title; g.title=body.querySelector('#ad-title').value.trim()||g.title; g.manufacturer=body.querySelector('#ad-man').value.trim(); g.category=body.querySelector('#ad-cat').value.trim(); g.qty=Number(body.querySelector('#ad-qty').value||1); g.status=body.querySelector('#ad-doc').value; g.manual=body.querySelector('#ad-manual').value.trim(); g.support=body.querySelector('#ad-support').value.trim(); g.pm=body.querySelector('#ad-pm').value.trim(); r.title=g.title; r.severity=body.querySelector('#ad-sev').value; r.assignedWorkers=[...body.querySelectorAll('input[type=checkbox]:checked')].map(c=>c.value); r.technician=r.assignedWorkers[0]||'Unassigned'; oneOffTasks.filter(t=>t.machine===old).forEach(t=>t.machine=g.title); saveAll(); renderAll(); document.getElementById('asset-modal').classList.add('hide');};
+      document.getElementById('add-issue-note').onclick=()=>{const note=body.querySelector('#ad-issue').value.trim(); if(!note) return; r.issueHistory.unshift({id:'issue-'+Date.now(),date:TODAY,status:r.status,severity:body.querySelector('#ad-sev').value,tech:r.technician,note}); r.issue=note; saveAll(); openAssetDetail(r.title); renderAll();};
+    }
+
+    function renderAdmin(){
+      const el=document.getElementById('admin');
+      const locked=!adminState.password||!adminState.unlocked;
+      el.innerHTML=`<div class="card"><div class="row space"><h2>Admin (browser-local protection only)</h2><span class="tiny">Client-side gate</span></div>${locked?`<label class="tiny">Password</label><input id="admin-pass" type="password" placeholder="${adminState.password?'Enter password':'Create password'}"><button id="admin-unlock" class="primary mt">${adminState.password?'Unlock':'Create & unlock'}</button>`:`<div class="grid grid-2"><div class="card"><h3>Workers</h3><div class="stack">${workers.map(w=>`<div class="row"><label class="tiny">Name</label><input data-w-name="${w.id}" value="${escapeHtml(w.name)}"><label class="tiny">Role</label><select data-w-role="${w.id}">${ROLE_OPTIONS.map(r=>`<option ${r===w.role?'selected':''}>${r}</option>`).join('')}</select><button data-w-del="${w.id}" class="secondary small">Remove</button></div>`).join('')}<button id="w-add" class="secondary">Add worker</button><button id="w-save" class="primary">Save worker roster</button></div></div><div class="card"><h3>Add Asset</h3><label class="tiny">Asset name</label><input id="a-title"><label class="tiny mt">Manufacturer</label><input id="a-man"><label class="tiny mt">Category</label><input id="a-cat"><label class="tiny mt">Quantity</label><input id="a-qty" type="number" min="1" value="1"><label class="tiny mt">Documentation status</label><select id="a-doc"><option>Manual linked</option><option>Family manual</option><option>Support linked</option><option>Missing</option></select><label class="tiny mt">Manual URL</label><input id="a-murl"><label class="tiny mt">Support URL</label><input id="a-surl"><label class="tiny mt">PM focus</label><textarea id="a-pm"></textarea><button id="a-add" class="primary mt">Create asset</button></div></div><div class="card mt"><h3>Backup / restore</h3><div class="row"><button id="export-json-admin" class="secondary">Export full JSON backup</button><label class="upload-label">Import JSON backup<input id="import-json-admin" class="hide" type="file" accept="application/json"></label><button id="lock-admin" class="secondary">Lock admin</button></div></div>`}</div>`;
+      if(locked){el.querySelector('#admin-unlock').onclick=()=>{const p=el.querySelector('#admin-pass').value; if(!p) return; if(!adminState.password) adminState.password=p; if(adminState.password===p){adminState.unlocked=true; saveAll(); renderAdmin()} else alert('Wrong password');}; return;}
+      el.querySelector('#lock-admin').onclick=()=>{adminState.unlocked=false; saveAll(); renderAdmin();};
+      el.querySelectorAll('[data-w-del]').forEach(b=>b.onclick=()=>{workers=workers.filter(w=>w.id!==b.dataset.wDel); saveAll(); renderAdmin();});
+      el.querySelector('#w-add').onclick=()=>{workers.push({id:'w-'+Date.now(),name:'New Worker',role:'Staff'}); renderAdmin();};
+      el.querySelector('#w-save').onclick=()=>{workers=workers.map(w=>({id:w.id,name:el.querySelector(`[data-w-name="${w.id}"]`).value.trim()||'Unnamed',role:el.querySelector(`[data-w-role="${w.id}"]`).value})); saveAll(); renderAll();};
+      el.querySelector('#a-add').onclick=()=>{const title=el.querySelector('#a-title').value.trim(); if(!title) return; if(!games.find(g=>g.title===title)){games.push({title,manufacturer:el.querySelector('#a-man').value.trim(),category:el.querySelector('#a-cat').value.trim(),qty:Number(el.querySelector('#a-qty').value||1),status:el.querySelector('#a-doc').value,manual:el.querySelector('#a-murl').value.trim(),support:el.querySelector('#a-surl').value.trim(),pm:el.querySelector('#a-pm').value.trim()}); serviceRecords.push({title,technician:'Unassigned',assignedWorkers:[],status:'Scheduled',priority:'Routine',severity:'Low',lastService:TODAY,nextPm:addDays(TODAY,14),issue:'New asset setup',notes:el.querySelector('#a-pm').value.trim(),partsNeeded:'',photos:[],verifiedBy:'',accountability:'',lastUpdated:TODAY,issueHistory:[],history:[]}); saveAll(); renderAll(); showTab('assets');}};
+      el.querySelector('#export-json-admin').onclick=exportJsonBackup;
+      el.querySelector('#import-json-admin').onchange=importJsonBackup;
     }
 
     function renderAll(){
-      renderTabs(); renderMetrics(); renderDashboard(); renderInventory(); renderOperations(); renderTasks(); renderManuals(); renderContacts(); renderCalendar(); renderReports(); renderCatchup();
+      renderTabs(); renderMetrics(); renderDashboard(); renderAssets(); renderOperations(); renderTasks(); renderManuals(); renderContacts(); renderCalendar(); renderReports(); renderCatchup(); renderAdmin();
     }
 
     renderAll();
