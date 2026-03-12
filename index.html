@@ -3,36 +3,36 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>WOW Technicade Maintenance Portal</title>
+  <title>WOW Technicade Maintenance Portal — Enhanced</title>
   <style>
-    :root{--bg:#f6f7fb;--card:#fff;--line:#dfe3ea;--text:#17202a;--muted:#5b6573;--accent:#111827;--good:#0f766e;--warn:#b45309;--bad:#b91c1c;--soft:#eef2f7}
-    *{box-sizing:border-box} body{margin:0;font-family:Inter,Arial,sans-serif;background:var(--bg);color:var(--text)}
-    a{color:inherit} .wrap{max-width:1280px;margin:0 auto;padding:24px}
-    .hero,.card{background:var(--card);border:1px solid var(--line);border-radius:24px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
-    .hero{padding:24px;margin-bottom:20px}.hero h1{margin:8px 0 10px;font-size:clamp(28px,4vw,42px)} .muted{color:var(--muted)}
-    .pill{display:inline-flex;gap:8px;align-items:center;border:1px solid var(--line);background:var(--soft);padding:8px 12px;border-radius:999px;font-size:12px}
-    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:18px}.metric{background:var(--soft);border:1px solid var(--line);padding:14px;border-radius:18px}.metric .v{font-size:30px;font-weight:700}
-    .tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:20px}.tab{padding:13px 14px;border-radius:18px;border:1px solid var(--line);background:#fff;cursor:pointer;font-weight:600}.tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
-    .section{display:none}.section.active{display:block}.grid{display:grid;gap:16px}.grid-2{grid-template-columns:1.2fr .8fr}.grid-3{grid-template-columns:repeat(3,1fr)} @media(max-width:980px){.grid-2,.grid-3{grid-template-columns:1fr}}
-    .card{padding:18px}.card h2,.card h3{margin:0 0 10px}.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.space{justify-content:space-between}
-    .badge{display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;border:1px solid var(--line);font-size:12px;background:var(--soft)}
-    .bad{background:#fef2f2;border-color:#fecaca;color:var(--bad)} .warn{background:#fff7ed;border-color:#fed7aa;color:var(--warn)} .good{background:#ecfeff;border-color:#a5f3fc;color:var(--good)}
-    .controls{display:grid;grid-template-columns:1fr 220px 220px;gap:12px;margin-bottom:16px}@media(max-width:980px){.controls{grid-template-columns:1fr}}
-    input,select,textarea,button{font:inherit} input,select,textarea{width:100%;padding:12px 14px;border-radius:16px;border:1px solid var(--line);background:#fff;color:var(--text)}
-    textarea{min-height:92px;resize:vertical} button.primary, .upload-label{background:var(--accent);color:#fff;border:1px solid var(--accent);padding:12px 14px;border-radius:16px;cursor:pointer}
-    button.secondary{background:#fff;border:1px solid var(--line);padding:12px 14px;border-radius:16px;cursor:pointer} button.small{padding:8px 10px;border-radius:12px}
-    .item{border:1px solid var(--line);border-radius:20px;background:#fff;padding:16px}.kv{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}@media(max-width:740px){.kv{grid-template-columns:1fr}}
-    .kv .metric{padding:10px;border-radius:14px}.stack{display:grid;gap:10px}.steps li{background:#fff;border:1px solid var(--line);padding:12px;border-radius:14px;margin-bottom:8px}.photos{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.photo{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#fff}.photo img{width:100%;height:140px;object-fit:cover;display:block}.photo .meta{padding:10px}
-    .subtle{background:var(--soft);border-radius:16px;padding:14px;border:1px solid var(--line)} .history-item{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px}
-    ol,ul{padding-left:20px} .tiny{font-size:12px;color:var(--muted)} .mb{margin-bottom:12px} .mt{margin-top:12px} .hide{display:none}
+    :root{--bg:#f4f6fb;--card:#ffffff;--line:#d8dee8;--text:#14202b;--muted:#607080;--accent:#0f172a;--accent-2:#1d4ed8;--soft:#eef3fb;--good:#0f766e;--warn:#b45309;--bad:#b91c1c;--critical:#7f1d1d}
+    *{box-sizing:border-box} html,body{margin:0;padding:0} body{font-family:Inter,Arial,sans-serif;background:linear-gradient(180deg,#f7f9fc,#eef3fa);color:var(--text)}
+    a{color:inherit;text-decoration:none} .wrap{max-width:1440px;margin:0 auto;padding:22px}
+    .hero,.card,.item{background:var(--card);border:1px solid var(--line);border-radius:24px;box-shadow:0 8px 24px rgba(15,23,42,.05)}
+    .hero{padding:26px;margin-bottom:18px} .hero h1{margin:8px 0 10px;font-size:clamp(28px,3.5vw,44px)} .hero p{margin:0;color:var(--muted)}
+    .pill{display:inline-flex;gap:8px;align-items:center;border:1px solid var(--line);background:var(--soft);padding:8px 12px;border-radius:999px;font-size:12px;font-weight:600}
+    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:18px} .metric{background:var(--soft);border:1px solid var(--line);padding:14px;border-radius:18px} .metric .v{font-size:28px;font-weight:800;line-height:1.1}
+    .tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:18px} .tab{padding:13px 14px;border-radius:16px;border:1px solid var(--line);background:#fff;cursor:pointer;font-weight:700} .tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
+    .section{display:none} .section.active{display:block} .grid{display:grid;gap:16px} .grid-2{grid-template-columns:1.1fr .9fr} .grid-3{grid-template-columns:repeat(3,1fr)} .grid-4{grid-template-columns:repeat(4,1fr)} @media(max-width:1100px){.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}}
+    .card{padding:18px} .item{padding:16px} .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap} .space{justify-content:space-between} .stack{display:grid;gap:10px}
+    .subtle{background:var(--soft);border:1px solid var(--line);border-radius:18px;padding:14px} .tiny{font-size:12px;color:var(--muted)} .muted{color:var(--muted)} .mb{margin-bottom:10px} .mt{margin-top:12px}
+    .badge{display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;border:1px solid var(--line);font-size:12px;background:var(--soft);font-weight:700} .good{background:#ecfeff;border-color:#a5f3fc;color:var(--good)} .warn{background:#fff7ed;border-color:#fed7aa;color:var(--warn)} .bad{background:#fef2f2;border-color:#fecaca;color:var(--bad)}
+    .controls{display:grid;grid-template-columns:1.3fr repeat(4,minmax(140px,1fr));gap:12px;margin-bottom:16px} @media(max-width:1200px){.controls{grid-template-columns:1fr 1fr}} @media(max-width:720px){.controls{grid-template-columns:1fr}}
+    input,select,textarea,button{font:inherit} input,select,textarea{width:100%;padding:12px 14px;border-radius:16px;border:1px solid var(--line);background:#fff;color:var(--text)} textarea{min-height:92px;resize:vertical}
+    button.primary,.upload-label{background:var(--accent);color:#fff;border:1px solid var(--accent);padding:12px 14px;border-radius:16px;cursor:pointer} button.secondary{background:#fff;border:1px solid var(--line);padding:12px 14px;border-radius:16px;cursor:pointer} button.small{padding:8px 10px;border-radius:12px}
+    .kv{display:grid;grid-template-columns:repeat(4,1fr);gap:10px} @media(max-width:900px){.kv{grid-template-columns:1fr 1fr}} @media(max-width:640px){.kv{grid-template-columns:1fr}}
+    .history-item{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px} .photos{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px} .photo{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#fff} .photo img{width:100%;height:140px;object-fit:cover;display:block} .photo .meta{padding:10px}
+    .hide{display:none} .table{width:100%;border-collapse:separate;border-spacing:0 8px} .table th{text-align:left;font-size:12px;color:var(--muted);padding:0 10px} .table td{background:#fff;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:12px 10px} .table td:first-child{border-left:1px solid var(--line);border-radius:14px 0 0 14px} .table td:last-child{border-right:1px solid var(--line);border-radius:0 14px 14px 0}
+    .calendar-day{border:1px solid var(--line);border-radius:18px;padding:14px;background:#fff} .calendar-day h3{margin:0 0 10px} .callout{border-left:4px solid var(--accent-2);padding:10px 12px;background:#eff6ff;border-radius:0 14px 14px 0}
+    ol,ul{padding-left:20px} .mini{font-size:11px;color:var(--muted)}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="hero">
-      <div class="pill">WOW Technicade · Deploy-ready maintenance portal</div>
-      <h1>Play-WOW maintenance, issues, and one-off tasks</h1>
-      <p class="muted">This build is GitHub Pages friendly. It includes the machine inventory, imported current issues, troubleshooting steps, one-off tasks, PM notes, local notes, issue history, and browser-local photo attachments.</p>
+      <div class="pill">WOW Technicade · Enhanced browser-local maintenance portal</div>
+      <h1>Arcade PM, issues, manuals, accountability, and service evidence</h1>
+      <p>This revised build keeps the existing inventory and troubleshooting base, and adds stronger accountability, PM scheduling, manual/contact organization, handoff notes, evidence uploads on tasks, JSON backup/restore, and reporting views for daily arcade maintenance.</p>
       <div class="metrics" id="metrics"></div>
     </div>
 
@@ -42,20 +42,28 @@
     <section id="inventory" class="section"></section>
     <section id="operations" class="section"></section>
     <section id="tasks" class="section"></section>
-    <section id="catchup" class="section"></section>
+    <section id="manuals" class="section"></section>
+    <section id="contacts" class="section"></section>
     <section id="calendar" class="section"></section>
+    <section id="reports" class="section"></section>
+    <section id="catchup" class="section"></section>
   </div>
 
   <script>
-    const TODAY = '2026-03-10';
-    const STORAGE_KEYS = {service:'wow-technicade-service-v1', tasks:'wow-technicade-tasks-v1'};
-    const TABS = ['dashboard','inventory','operations','tasks','catchup','calendar'];
-    const TECHNICIANS = ['Unassigned','Alex','Jordan','Sam','Riley'];
-    const STATUS_OPTIONS = ['Open','Scheduled','In Progress','Complete'];
-    const TASK_STATUS_OPTIONS = ['Open','Scheduled','Blocked','Complete'];
+    const TODAY = '2026-03-11';
+    const STORAGE_KEYS = {
+      service:'wow-technicade-service-v2',
+      tasks:'wow-technicade-tasks-v2',
+      handoff:'wow-technicade-handoff-v2',
+      contacts:'wow-technicade-contacts-v2'
+    };
+    const TABS = ['dashboard','inventory','operations','tasks','manuals','contacts','calendar','reports','catchup'];
+    const TECHNICIANS = ['Unassigned','Alex','Jordan','Sam','Riley','Manager'];
+    const STATUS_OPTIONS = ['Open','Scheduled','In Progress','Waiting Parts','Blocked','Complete'];
+    const TASK_STATUS_OPTIONS = ['Open','Scheduled','In Progress','Waiting Parts','Blocked','Complete'];
     const SEVERITY_OPTIONS = ['Low','Medium','High','Critical'];
 
-    const games = [
+const games = [
       {title:'StepManiaX',manufacturer:'Step Revolution',category:'Dance / Rhythm',qty:1,status:'Manual linked',manual:'https://www.stepmaniax.com/docs/Software%20-%20Manual.pdf',support:'https://stepmaniax.com/support/',pm:'Pads, bar hardware, fan vents, stage sensors'},
       {title:'Over The Edge',manufacturer:'UNIS',category:'Prize / Redemption',qty:1,status:'Manual linked',manual:'https://www.betson.com/wp-content/uploads/2023/10/O119_Over_The_Edge_Plus_GMP_Manual__F645652E8DAEE.pdf',support:'https://www.unispartsandservice.com/games/manuals',pm:'Prize channels, sensors, marble feed, motors'},
       {title:'Fast & Furious - 2 Player',manufacturer:'Raw Thrills',category:'Driving',qty:1,status:'Family manual',manual:'https://rawthrills.com/wp-content/uploads/2023/07/040-00086-01_FF_Motion_REV7.pdf',support:'https://www.betson.com/amusement-games-all/?wpv_view_count=10409',pm:'Steering centering, pedals, seats, force feedback, monitor vents'},
@@ -104,7 +112,7 @@
       {title:'HyperShoot - 2 Player',manufacturer:'LAI Games',category:'Basketball / Redemption',qty:1,status:'Manual linked',manual:'https://primetimeamusements.com/wp-content/uploads/2016/12/HYPERshootManual10.pdf',support:'https://www.laigames.com/games',pm:'Rims, balls, shot sensors, return ramp, score display'}
     ];
 
-    const issueGuides = {
+const issueGuides = {
       'Quick Shot - 2 Player': {issue:'Air compressor sounds rough / clanky.',severity:'Medium',steps:['Confirm the sound is from the compressor head/tank area and not from the gun valves or another pneumatic device.','Inspect compressor mounts, rubber isolators, and base hardware; tighten loose hardware and replace split isolators.','Check intake filter condition and drain any tank or line moisture before retesting.','Listen for check-valve chatter or startup kickback that would indicate a leaking check valve or pressure issue.','If the clank persists, inspect for worn piston/rod bearing, reed valve damage, or internal compressor wear and replace the compressor if metal-on-metal noise remains.']},
       'Skee-Ball Machines': {issue:'5000 score sensor false-detects and toggles when the lane or harness is lightly bumped.',severity:'High',steps:['Enter diagnostics and watch the 5000 target input while gently flexing the sensor board, connector, and harness.','Clean the opto windows and confirm the transmitter/receiver brackets are square and not vibration-sensitive.','Reseat the sensor connector and inspect for pushed-back pins, cracked solder joints, or a taut harness that changes state when moved.','Measure the sensor supply voltage under play conditions to rule out a marginal 5V feed or noisy ground.','Swap the suspect 5000 sensor or harness with a known-good position to confirm whether the fault follows the board or stays with the wiring.']},
       'Willy Crash': {issue:'Playfield / plunger area LEDs are flickering.',severity:'High',steps:['Confirm whether the flicker happens only during actions like plunger movement, coil fire, or ticket payout; if so, suspect a voltage dip.','Measure the 12V feed at the LED strip input while the game is active and look for sag or ripple.','Reseat the harness path from PSU to power distribution to LED strip and inspect for heat damage or loose grounds.','Inspect the wiring near hinges and moving playfield sections for intermittent shorts or broken conductors.','If only one strip flickers, swap or isolate that strip to determine whether the strip itself or the driver/output path is failing.']},
@@ -118,7 +126,7 @@
       'SpongeBob Pineapple Arcade - 2 Player': {issue:'Card dispenser is constantly jamming.',severity:'High',steps:['Empty the dispenser completely and inspect for bent, delaminated, or sticky cards in the path.','Clean the card feed rollers and path, and check whether humidity or warped stock is contributing to repeated jams.','Verify in test mode that the dispense sensor changes state when a card passes through the mechanism.','Inspect path guides and retention fingers to make sure the cards are not being pinched or skewed during feed.','If jams continue with known-good cards, replace the worn rollers, belt, or the dispenser motor / gearbox assembly as needed.']}
     };
 
-    const catchUpPlan = [
+const catchUpPlan = [
       {day:'Day 1',title:'Baseline safety sweep',scope:'All 54 listed units',detail:'Power cords, plugs, levelers, door locks, obvious damage, missing guards.'},
       {day:'Day 1',title:'Exterior clean and customer-touchpoint reset',scope:'All cabinets',detail:'Glass, acrylic, controls, seats, gun grips, pedals, wheels, and buttons.'},
       {day:'Day 1',title:'Cooling and dust pass',scope:'Video, VR, driving, shooters',detail:'Fans, intake vents, rear grills, monitor housings, PC bays.'},
@@ -130,7 +138,7 @@
       {day:'Day 3',title:'Open-issues log and recurring PM schedule',scope:'All games',detail:'Record faults, parts needed, next PM date, and machine owner notes.'}
     ];
 
-    const pmCadence = [
+const pmCadence = [
       {frequency:'Daily',items:['Boot test and attract mode confirmation','Clean touch points and play surfaces','Check ticket/card payout behavior','Walk floor for leaks, jams, and broken plastics']},
       {frequency:'Weekly',items:['Test every control and player position','Inspect fans, vents, filters, and monitor glass','Confirm ticket stocks, card stock, and redemption settings','Check crane claws, string cutters, and prize doors']},
       {frequency:'Monthly',items:['Open cabinets for dust removal where appropriate','Inspect power supplies, harnesses, and connectors','Verify moving assemblies: rails, belts, wheels, and launchers','Audit software/settings backups where supported']},
@@ -138,31 +146,52 @@
       {frequency:'Annual',items:['Full fleet review against manuals and serials','Refresh labels, manuals, and training notes','Plan rebuilds, retirements, and capital replacements','Re-score every machine for PM priority and support coverage']}
     ];
 
+    const defaultContacts = [
+      {manufacturer:'UNIS',contact:'General parts / service',phone:'',email:'',notes:'Use linked support/manual pages first.',website:'https://www.unispartsandservice.com/games/manuals'},
+      {manufacturer:'Bay Tek / Skee-Ball',contact:'Parts / tech support',phone:'',email:'',notes:'Use Bay Tek parts portal for modern Skee-Ball references.',website:'https://parts.baytekent.com/'},
+      {manufacturer:'ICE',contact:'Tech support',phone:'',email:'',notes:'Useful for redemption, ticketing, and sensor troubleshooting.',website:'https://support.icegame.com/'},
+      {manufacturer:'Raw Thrills',contact:'Service resources',phone:'',email:'',notes:'Driving and shooter family support.',website:'https://rawthrills.com/'},
+      {manufacturer:'Andamiro',contact:'General support',phone:'',email:'',notes:'Card/pusher support notes and parts tracking.',website:'https://www.andamirousa.com/'},
+      {manufacturer:'Adrenaline Amusements',contact:'Support resources',phone:'',email:'',notes:'Water, video redemption, and Crossy Road family support.',website:'https://adrenalineamp.com/'},
+      {manufacturer:'Smart Industries',contact:'Cranes support',phone:'',email:'',notes:'Serial/model verification matters before ordering.',website:'https://www.smartind.com/'},
+      {manufacturer:'LAI Games',contact:'Service resources',phone:'',email:'',notes:'Use for pushers and modern redemption.',website:'https://www.laigames.com/'},
+      {manufacturer:'Step Revolution',contact:'SMX support',phone:'',email:'',notes:'Pads, sensors, and software resources.',website:'https://stepmaniax.com/support/'}
+    ];
+
     function addDays(date, days){const d=new Date(date+'T12:00:00'); d.setDate(d.getDate()+days); return d.toISOString().slice(0,10)}
+    function diffDays(a,b){const A=new Date(a+'T12:00:00'), B=new Date(b+'T12:00:00'); return Math.round((B-A)/86400000)}
     function priorityForCategory(c){if(['VR','Driving','Shooter','Dance / Rhythm'].includes(c)) return 'High'; if(['Coin Pusher','Coin / Card Pusher','Ticket / Pusher','Crane','Ticket Crane','Sports','Basketball / Redemption'].includes(c)) return 'Medium'; return 'Routine';}
     function severityForCategory(c){if(['VR','Driving','Shooter'].includes(c)) return 'High'; if(['Coin Pusher','Coin / Card Pusher','Ticket / Pusher','Crane','Ticket Crane','Sports'].includes(c)) return 'Medium'; return 'Low';}
     function severityOffsetDays(s){return s==='Critical'?0:s==='High'?1:s==='Medium'?2:4}
     function safeLoad(key, fallback){try{const v=localStorage.getItem(key); return v?JSON.parse(v):fallback}catch{return fallback}}
     function safeSave(key, value){try{localStorage.setItem(key, JSON.stringify(value))}catch{}}
     function issueTaskId(title){return 'import-'+title.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')}
+    function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+    function escapeAttr(s){return escapeHtml(s)}
+    function sortByDateAsc(a,b){return String(a).localeCompare(String(b))}
 
     function buildServiceSeed(){
       return games.map((g,i)=>{
         const guide=issueGuides[g.title];
         const lastService=addDays(TODAY,-((i%5)*6+2));
+        const severity=guide?.severity||severityForCategory(g.category);
+        const nextPm=addDays(lastService,14);
         return {
           title:g.title,
           technician:TECHNICIANS[i%TECHNICIANS.length],
           status:guide?'Open':['Open','Scheduled','In Progress','Scheduled','Open'][i%5],
           priority:priorityForCategory(g.category),
-          severity:guide?.severity||severityForCategory(g.category),
+          severity,
           lastService,
-          nextPm:addDays(lastService,14),
+          nextPm,
           issue:guide?.issue||'Needs first verified PM pass after portal sync.',
           notes:guide?guide.steps[0]:g.pm,
           partsNeeded:'',
           photos:[],
-          issueHistory:[{id:'seed-'+i,date:TODAY,status:guide?'Open':'Scheduled',severity:guide?.severity||severityForCategory(g.category),tech:TECHNICIANS[i%TECHNICIANS.length],note:guide?`Imported current issue: ${guide.issue}`:`Baseline issue log seeded from PM focus: ${g.pm}`}],
+          verifiedBy:'',
+          accountability:'',
+          lastUpdated:TODAY,
+          issueHistory:[{id:'seed-'+i,date:TODAY,status:guide?'Open':'Scheduled',severity,tech:TECHNICIANS[i%TECHNICIANS.length],note:guide?`Imported current issue: ${guide.issue}`:`Baseline issue log seeded from PM focus: ${g.pm}`}],
           history:[{date:lastService,action:g.pm,tech:TECHNICIANS[i%TECHNICIANS.length]}]
         }
       })
@@ -170,20 +199,51 @@
 
     function buildOneOffSeed(){
       const manual=[
-        {id:'task-1',title:'Photograph serial plates on family-manual machines',machine:'Mini Taj Mahel Ticket Crane',technician:'Alex',dueDate:'2026-03-12',severity:'Medium',status:'Open',notes:'Capture model tag, width, and any revision sticker for the crane file.',source:'Manual task'},
-        {id:'task-2',title:'Verify pusher card stock and bonus settings',machine:'Willy Wonka Coin Pushers',technician:'Jordan',dueDate:'2026-03-11',severity:'High',status:'Scheduled',notes:'Check card count, settings menu, and hopper behavior after opening.',source:'Manual task'},
-        {id:'task-3',title:'Inspect blower noise and puck wear',machine:'Air Hockey Table',technician:'Sam',dueDate:'2026-03-13',severity:'Medium',status:'Open',notes:'Confirm blower output is even and replace puck if cracked or rough.',source:'Manual task'}
+        {id:'task-1',title:'Photograph serial plates on family-manual machines',machine:'Mini Taj Mahel Ticket Crane',technician:'Alex',dueDate:'2026-03-12',severity:'Medium',status:'Open',notes:'Capture model tag, width, and any revision sticker for the crane file.',source:'Manual task',photos:[],checklist:['Photo of serial plate','Revision sticker','Upload to notes'],createdDate:TODAY},
+        {id:'task-2',title:'Verify pusher card stock and bonus settings',machine:'Willy Wonka Coin Pushers',technician:'Jordan',dueDate:'2026-03-11',severity:'High',status:'Scheduled',notes:'Check card count, settings menu, and hopper behavior after opening.',source:'Manual task',photos:[],checklist:['Count stock','Test payout','Record settings'],createdDate:TODAY},
+        {id:'task-3',title:'Inspect blower noise and puck wear',machine:'Air Hockey Table',technician:'Sam',dueDate:'2026-03-13',severity:'Medium',status:'Open',notes:'Confirm blower output is even and replace puck if cracked or rough.',source:'Manual task',photos:[],checklist:['Listen to blower','Check puck','Document result'],createdDate:TODAY}
       ];
-      const imported=Object.entries(issueGuides).map(([title,guide])=>({id:issueTaskId(title),title:'Troubleshoot current issue',machine:title,technician:'Unassigned',dueDate:addDays(TODAY,severityOffsetDays(guide.severity)),severity:guide.severity,status:'Open',notes:`${guide.issue} First steps: ${guide.steps.slice(0,2).join(' ')}`,source:'Imported issue'}));
+      const imported=Object.entries(issueGuides).map(([title,guide])=>({id:issueTaskId(title),title:'Troubleshoot current issue',machine:title,technician:'Unassigned',dueDate:addDays(TODAY,severityOffsetDays(guide.severity)),severity:guide.severity,status:'Open',notes:`${guide.issue} First steps: ${guide.steps.slice(0,2).join(' ')}`,source:'Imported issue',photos:[],checklist:['Verify symptom','Do first two steps','Add result note'],createdDate:TODAY}));
       return [...imported, ...manual]
+    }
+
+    function buildHandoffSeed(){
+      return [
+        {id:'handoff-1',date:TODAY,shift:'Open',author:'Manager',note:'Start with top severity redemptions and any games affecting payouts. Use photos for before/after proof.'},
+        {id:'handoff-2',date:TODAY,shift:'Close',author:'Manager',note:'Log all parts needed before leaving so ordering can happen the next morning.'}
+      ]
     }
 
     let serviceRecords = safeLoad(STORAGE_KEYS.service, buildServiceSeed());
     let oneOffTasks = safeLoad(STORAGE_KEYS.tasks, buildOneOffSeed());
+    let handoffLog = safeLoad(STORAGE_KEYS.handoff, buildHandoffSeed());
+    let contacts = safeLoad(STORAGE_KEYS.contacts, defaultContacts);
 
-    function save(){ safeSave(STORAGE_KEYS.service, serviceRecords); safeSave(STORAGE_KEYS.tasks, oneOffTasks); }
-    function badgeClass(v){return v==='Critical'||v==='High'?'bad':v==='Medium'||v==='Family manual'||v==='Support linked'||v==='Scheduled'?'warn':'good'}
+    function saveAll(){
+      safeSave(STORAGE_KEYS.service, serviceRecords);
+      safeSave(STORAGE_KEYS.tasks, oneOffTasks);
+      safeSave(STORAGE_KEYS.handoff, handoffLog);
+      safeSave(STORAGE_KEYS.contacts, contacts);
+    }
+
+    function badgeClass(v){return v==='Critical'||v==='High'?'bad':v==='Medium'||v==='Family manual'||v==='Support linked'||v==='Scheduled'||v==='Waiting Parts'?'warn':'good'}
     function gameByTitle(t){return games.find(g=>g.title===t)}
+    function getSlaDays(severity){return severity==='Critical'?0:severity==='High'?2:severity==='Medium'?5:10}
+    function isOverdueRecord(r){return r.status!=='Complete' && r.nextPm < TODAY}
+    function isOverdueTask(t){return t.status!=='Complete' && t.dueDate < TODAY}
+    function dueSoon(date, days=3){return date >= TODAY && date <= addDays(TODAY,days)}
+
+    function buildCalendarRows(){
+      const pmRows = serviceRecords.map(r=>({kind:'PM', title:r.title, owner:r.technician, date:r.nextPm, severity:r.severity, status:r.status, detail:r.issue}));
+      const taskRows = oneOffTasks.map(t=>({kind:'Task', title:t.title, owner:t.technician, date:t.dueDate, severity:t.severity, status:t.status, detail:t.machine}));
+      return [...pmRows,...taskRows].filter(x=>x.date).sort((a,b)=>a.date.localeCompare(b.date)||a.title.localeCompare(b.title));
+    }
+
+    function technicianSummary(name){
+      const records = serviceRecords.filter(r=>r.technician===name && r.status!=='Complete');
+      const tasks = oneOffTasks.filter(t=>t.technician===name && t.status!=='Complete');
+      return {name, openPm:records.length, openTasks:tasks.length, critical:records.filter(r=>r.severity==='Critical').length + tasks.filter(t=>t.severity==='Critical').length, overdue:records.filter(isOverdueRecord).length + tasks.filter(isOverdueTask).length};
+    }
 
     function renderTabs(){
       const el=document.getElementById('tabs');
@@ -197,16 +257,20 @@
 
     function renderMetrics(){
       const totalUnits=games.reduce((n,g)=>n+g.qty,0);
-      const overdue=serviceRecords.filter(r=>r.status!=='Complete' && r.nextPm<TODAY).length;
-      const photos=serviceRecords.reduce((n,r)=>n+r.photos.length,0);
-      const issues=serviceRecords.reduce((n,r)=>n+r.issueHistory.length,0);
+      const overduePm=serviceRecords.filter(isOverdueRecord).length;
+      const overdueTasks=oneOffTasks.filter(isOverdueTask).length;
+      const photos=serviceRecords.reduce((n,r)=>n+r.photos.length,0)+oneOffTasks.reduce((n,t)=>n+(t.photos?.length||0),0);
+      const openCritical=serviceRecords.filter(r=>r.severity==='Critical' && r.status!=='Complete').length + oneOffTasks.filter(t=>t.severity==='Critical' && t.status!=='Complete').length;
+      const docs=games.filter(g=>g.manual).length;
       document.getElementById('metrics').innerHTML=[
-        ['Line items',games.length,'Distinct listings'],
-        ['Units',totalUnits,'Approx. playable pieces'],
-        ['Overdue PM',overdue,'Needs action'],
-        ['Issue entries',issues,'Saved history'],
-        ['Photos',photos,'Local evidence'],
-        ['Open tasks',oneOffTasks.filter(t=>t.status!=='Complete').length,'One-off work']
+        ['Listings',games.length,'Distinct game lines'],
+        ['Units',totalUnits,'Approx. floor pieces'],
+        ['Overdue PM',overduePm,'Past next-PM date'],
+        ['Overdue tasks',overdueTasks,'Past due date'],
+        ['Critical open',openCritical,'Immediate attention'],
+        ['Photos',photos,'Saved evidence'],
+        ['Manual links',docs,'Direct manual entries'],
+        ['Handoff notes',handoffLog.length,'Shift continuity']
       ].map(m=>`<div class="metric"><div class="tiny">${m[0]}</div><div class="v">${m[1]}</div><div class="tiny">${m[2]}</div></div>`).join('')
     }
 
@@ -215,16 +279,19 @@
       const manualLinked=games.filter(g=>g.manual).length;
       const family=games.filter(g=>g.status==='Family manual').length;
       const supportOnly=games.filter(g=>!g.manual && g.support).length;
+      const techCards=TECHNICIANS.filter(t=>t!=='Unassigned').map(technicianSummary);
+      const topIssues=serviceRecords.filter(r=>r.status!=='Complete').sort((a,b)=>SEVERITY_OPTIONS.indexOf(a.severity)-SEVERITY_OPTIONS.indexOf(b.severity)).slice(0,6);
       el.innerHTML=`
         <div class="grid grid-2">
           <div class="card">
-            <h2>What this build includes</h2>
+            <h2>Operations command view</h2>
             <div class="grid grid-2">
-              <div class="subtle"><strong>Inventory + manuals</strong><div class="tiny mt">Real machine list, mapped manufacturers, manual/support links.</div></div>
-              <div class="subtle"><strong>Operations</strong><div class="tiny mt">Current issues, troubleshooting steps, notes, parts, issue history, photos.</div></div>
-              <div class="subtle"><strong>One-off tasks</strong><div class="tiny mt">Imported troubleshooting tasks plus custom jobs with due dates and assignments.</div></div>
-              <div class="subtle"><strong>GitHub Pages ready</strong><div class="tiny mt">This version is static HTML, so it can be published directly from a branch.</div></div>
+              <div class="subtle"><strong>Inventory + manuals</strong><div class="tiny mt">Searchable machine library with PM focus, manual links, and support pages.</div></div>
+              <div class="subtle"><strong>Accountability</strong><div class="tiny mt">PM owner, verification field, overdue views, and technician workload summary.</div></div>
+              <div class="subtle"><strong>Evidence</strong><div class="tiny mt">Photo uploads on machine records and one-off tasks for proof, serials, and damage notes.</div></div>
+              <div class="subtle"><strong>Backups</strong><div class="tiny mt">Export CSVs plus full JSON backup/restore for browser-local data.</div></div>
             </div>
+            <div class="callout mt">Some earlier uploaded files in this project are no longer available in the workspace, so this enhanced version is based on the current AI FEC project chat context and the included HTML file.</div>
           </div>
           <div class="card">
             <h2>Documentation status</h2>
@@ -232,67 +299,169 @@
               <div class="subtle"><strong>Direct manuals:</strong> ${manualLinked}</div>
               <div class="subtle"><strong>Family manuals:</strong> ${family}</div>
               <div class="subtle"><strong>Support only:</strong> ${supportOnly}</div>
+              <div class="subtle"><strong>Next 3 days scheduled items:</strong> ${buildCalendarRows().filter(x=>dueSoon(x.date,3) && x.status!=='Complete').length}</div>
             </div>
           </div>
-        </div>`
+        </div>
+        <div class="grid grid-2 mt">
+          <div class="card">
+            <div class="row space"><h2>Technician accountability</h2><span class="tiny">Open PM + task load</span></div>
+            <div class="grid grid-4">${techCards.map(t=>`<div class="subtle"><strong>${t.name}</strong><div class="tiny mt">Open PM: ${t.openPm}</div><div class="tiny">Open tasks: ${t.openTasks}</div><div class="tiny">Critical: ${t.critical}</div><div class="tiny">Overdue: ${t.overdue}</div></div>`).join('')}</div>
+          </div>
+          <div class="card">
+            <div class="row space"><h2>Priority queue</h2><span class="tiny">Top open machine records</span></div>
+            <div class="stack">${topIssues.map(r=>`<div class="history-item"><div class="row"><strong>${r.title}</strong><span class="badge ${badgeClass(r.severity)}">${r.severity}</span><span class="badge ${badgeClass(r.status)}">${r.status}</span></div><div class="tiny mt">Owner: ${r.technician} · Next PM ${r.nextPm}</div><div class="tiny mt">${escapeHtml(r.issue)}</div></div>`).join('') || '<div class="subtle tiny">No open issues.</div>'}</div>
+          </div>
+        </div>
+        <div class="grid grid-2 mt">
+          <div class="card">
+            <div class="row space"><h2>Shift handoff log</h2><button id="add-handoff" class="primary small">Add handoff note</button></div>
+            <div class="grid grid-3 mt">
+              <input id="handoff-author" placeholder="Author / lead">
+              <select id="handoff-shift"><option>Open</option><option>Mid</option><option>Close</option></select>
+              <input id="handoff-note" placeholder="Handoff summary or blocker">
+            </div>
+            <div class="stack mt">${handoffLog.sort((a,b)=>b.date.localeCompare(a.date)).map(h=>`<div class="history-item"><div class="row"><strong>${h.shift}</strong><span class="tiny">${h.date} · ${h.author}</span></div><div class="tiny mt">${escapeHtml(h.note)}</div></div>`).join('')}</div>
+          </div>
+          <div class="card">
+            <div class="row space"><h2>Backup / restore</h2><div class="tiny">Browser-local data only</div></div>
+            <div class="stack">
+              <button id="export-json" class="secondary">Export full JSON backup</button>
+              <label class="upload-label">Import JSON backup<input id="import-json" class="hide" type="file" accept="application/json"></label>
+              <div class="tiny">Use this before switching browsers or publishing updates.</div>
+            </div>
+          </div>
+        </div>`;
+      el.querySelector('#add-handoff').onclick=()=>{
+        const author=el.querySelector('#handoff-author').value.trim()||'Unknown';
+        const shift=el.querySelector('#handoff-shift').value;
+        const note=el.querySelector('#handoff-note').value.trim();
+        if(!note) return;
+        handoffLog.unshift({id:'handoff-'+Date.now(),date:TODAY,shift,author,note}); saveAll(); renderMetrics(); renderDashboard();
+      };
+      el.querySelector('#export-json').onclick=exportJsonBackup;
+      el.querySelector('#import-json').onchange=importJsonBackup;
     }
 
     function renderInventory(){
       const el=document.getElementById('inventory');
-      el.innerHTML=`<div class="card"><h2>Inventory</h2><div class="controls"><input id="inv-q" placeholder="Search title, manufacturer, or PM focus"><select id="inv-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].map(c=>`<option>${c}</option>`).join('')}</select><select id="inv-doc"><option>All</option>${[...new Set(games.map(g=>g.status))].map(s=>`<option>${s}</option>`).join('')}</select></div><div id="inv-list" class="stack"></div></div>`;
-      const q=el.querySelector('#inv-q'), cat=el.querySelector('#inv-cat'), doc=el.querySelector('#inv-doc'), list=el.querySelector('#inv-list');
-      const draw=()=>{const term=q.value.toLowerCase(); list.innerHTML=games.filter(g=>(!term||`${g.title} ${g.manufacturer} ${g.pm}`.toLowerCase().includes(term)) && (cat.value==='All'||g.category===cat.value) && (doc.value==='All'||g.status===doc.value)).map(g=>`<div class="item"><div class="row space"><div><div class="row"><h3>${g.title}</h3><span class="badge ${badgeClass(g.status)}">${g.status}</span><span class="badge">Qty ${g.qty}</span></div><div class="tiny">${g.manufacturer} · ${g.category}</div><div class="mt tiny"><strong>PM focus:</strong> ${g.pm}</div></div><div class="stack">${g.manual?`<a href="${g.manual}" target="_blank"><button class="secondary small">Open manual</button></a>`:''}${g.support?`<a href="${g.support}" target="_blank"><button class="secondary small">Support page</button></a>`:''}</div></div></div>`).join('')||'<div class="subtle">No matches.</div>'};
-      [q,cat,doc].forEach(i=>i.oninput=draw); cat.onchange=doc.onchange=draw; draw();
+      el.innerHTML=`<div class="card"><h2>Inventory</h2><div class="controls"><input id="inv-q" placeholder="Search title, manufacturer, or PM focus"><select id="inv-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].sort().map(c=>`<option>${c}</option>`).join('')}</select><select id="inv-doc"><option>All</option>${[...new Set(games.map(g=>g.status))].map(s=>`<option>${s}</option>`).join('')}</select><select id="inv-owner"><option>All owners</option>${TECHNICIANS.map(t=>`<option>${t}</option>`).join('')}</select><select id="inv-sev"><option>All severities</option>${SEVERITY_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select></div><div id="inv-list" class="stack"></div></div>`;
+      const q=el.querySelector('#inv-q'), cat=el.querySelector('#inv-cat'), doc=el.querySelector('#inv-doc'), owner=el.querySelector('#inv-owner'), sev=el.querySelector('#inv-sev'), list=el.querySelector('#inv-list');
+      const draw=()=>{
+        const term=q.value.toLowerCase();
+        list.innerHTML=games.filter(g=>{
+          const record=serviceRecords.find(r=>r.title===g.title);
+          return (!term||`${g.title} ${g.manufacturer} ${g.pm}`.toLowerCase().includes(term)) &&
+            (cat.value==='All'||g.category===cat.value) &&
+            (doc.value==='All'||g.status===doc.value) &&
+            (owner.value==='All owners'||record?.technician===owner.value) &&
+            (sev.value==='All severities'||record?.severity===sev.value)
+        }).map(g=>{
+          const record=serviceRecords.find(r=>r.title===g.title);
+          return `<div class="item"><div class="row space"><div><div class="row"><h3>${g.title}</h3><span class="badge ${badgeClass(g.status)}">${g.status}</span><span class="badge">Qty ${g.qty}</span><span class="badge ${badgeClass(record?.severity||'Low')}">${record?.severity||'Low'}</span></div><div class="tiny">${g.manufacturer} · ${g.category}</div><div class="tiny mt"><strong>PM focus:</strong> ${g.pm}</div><div class="tiny">Owner: ${record?.technician||'Unassigned'} · Next PM: ${record?.nextPm||'n/a'}</div></div><div class="stack">${g.manual?`<a href="${g.manual}" target="_blank"><button class="secondary small">Open manual</button></a>`:''}${g.support?`<a href="${g.support}" target="_blank"><button class="secondary small">Support page</button></a>`:''}</div></div></div>`
+        }).join('')||'<div class="subtle">No matches.</div>'
+      };
+      [q,cat,doc,owner,sev].forEach(i=>i.oninput=draw); cat.onchange=doc.onchange=owner.onchange=sev.onchange=draw; draw();
     }
 
     function renderOperations(){
       const el=document.getElementById('operations');
-      el.innerHTML=`<div class="card"><div class="row space"><div><h2>Operations</h2><div class="tiny">Edit notes, parts, status, issue history, and attach photos.</div></div><button id="exp-maint" class="secondary">Export maintenance CSV</button></div><div class="controls"><input id="ops-q" placeholder="Search machine, issue, notes, parts, or history"><select id="ops-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].map(c=>`<option>${c}</option>`).join('')}</select><select id="ops-status"><option>All</option>${STATUS_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select></div><div id="ops-list" class="stack"></div></div>`;
+      el.innerHTML=`<div class="card"><div class="row space"><div><h2>Operations</h2><div class="tiny">Edit notes, parts, accountability, verification, issue history, and attach photos.</div></div><button id="exp-maint" class="secondary">Export maintenance CSV</button></div><div class="controls"><input id="ops-q" placeholder="Search machine, issue, notes, parts, or history"><select id="ops-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].sort().map(c=>`<option>${c}</option>`).join('')}</select><select id="ops-status"><option>All</option>${STATUS_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select><select id="ops-owner"><option>All owners</option>${TECHNICIANS.map(t=>`<option>${t}</option>`).join('')}</select><select id="ops-overdue"><option>All dates</option><option>Overdue PM only</option><option>Due in 3 days</option></select></div><div id="ops-list" class="stack"></div></div>`;
       el.querySelector('#exp-maint').onclick=exportMaintenanceCsv;
-      const q=el.querySelector('#ops-q'), cat=el.querySelector('#ops-cat'), st=el.querySelector('#ops-status'), list=el.querySelector('#ops-list');
+      const q=el.querySelector('#ops-q'), cat=el.querySelector('#ops-cat'), st=el.querySelector('#ops-status'), owner=el.querySelector('#ops-owner'), overdue=el.querySelector('#ops-overdue'), list=el.querySelector('#ops-list');
       const draw=()=>{
         const term=q.value.toLowerCase();
         const filtered=serviceRecords.filter(r=>{
           const g=gameByTitle(r.title); const guide=issueGuides[r.title]; const guideText=guide?guide.issue+' '+guide.steps.join(' '):'';
-          return (!term||`${r.title} ${r.issue} ${r.notes} ${r.partsNeeded} ${guideText} ${(g?.manufacturer||'')}`.toLowerCase().includes(term)) && (cat.value==='All'||g.category===cat.value) && (st.value==='All'||r.status===st.value)
+          const overdueMatch = overdue.value==='All dates' ? true : overdue.value==='Overdue PM only' ? isOverdueRecord(r) : dueSoon(r.nextPm,3);
+          return (!term||`${r.title} ${r.issue} ${r.notes} ${r.partsNeeded} ${guideText} ${r.accountability} ${r.verifiedBy} ${g?.manufacturer||''}`.toLowerCase().includes(term)) &&
+            (cat.value==='All'||g.category===cat.value) && (st.value==='All'||r.status===st.value) &&
+            (owner.value==='All owners'||r.technician===owner.value) && overdueMatch
         });
         list.innerHTML=filtered.map(r=>{
-          const g=gameByTitle(r.title), guide=issueGuides[r.title];
-          return `<div class="item"><div class="row space"><div><div class="row"><h3>${r.title}</h3><span class="badge ${badgeClass(r.priority)}">${r.priority}</span><span class="badge ${badgeClass(r.severity)}">${r.severity}</span><span class="badge ${badgeClass(r.status)}">${r.status}</span></div><div class="tiny">${g.manufacturer} · ${g.category}</div></div><div class="row"><select data-field="technician" data-title="${encodeURIComponent(r.title)}">${TECHNICIANS.map(t=>`<option ${t===r.technician?'selected':''}>${t}</option>`).join('')}</select><select data-field="severity" data-title="${encodeURIComponent(r.title)}">${SEVERITY_OPTIONS.map(s=>`<option ${s===r.severity?'selected':''}>${s}</option>`).join('')}</select><select data-field="status" data-title="${encodeURIComponent(r.title)}">${STATUS_OPTIONS.map(s=>`<option ${s===r.status?'selected':''}>${s}</option>`).join('')}</select><button class="primary small" data-complete="${encodeURIComponent(r.title)}">Mark PM complete</button></div></div>
-          <div class="kv mt"><div class="metric"><div class="tiny">Last service</div><div>${r.lastService}</div></div><div class="metric"><div class="tiny">Next PM</div><div>${r.nextPm}</div></div><div class="metric"><div class="tiny">Documentation</div><div>${g.status}</div></div></div>
+          const g=gameByTitle(r.title), guide=issueGuides[r.title], sla=getSlaDays(r.severity), age=diffDays(r.issueHistory[0]?.date||TODAY,TODAY);
+          return `<div class="item"><div class="row space"><div><div class="row"><h3>${r.title}</h3><span class="badge ${badgeClass(r.priority)}">${r.priority}</span><span class="badge ${badgeClass(r.severity)}">${r.severity}</span><span class="badge ${badgeClass(r.status)}">${r.status}</span>${isOverdueRecord(r)?'<span class="badge bad">PM overdue</span>':''}</div><div class="tiny">${g.manufacturer} · ${g.category}</div></div><div class="row"><select data-field="technician" data-title="${encodeURIComponent(r.title)}">${TECHNICIANS.map(t=>`<option ${t===r.technician?'selected':''}>${t}</option>`).join('')}</select><select data-field="severity" data-title="${encodeURIComponent(r.title)}">${SEVERITY_OPTIONS.map(s=>`<option ${s===r.severity?'selected':''}>${s}</option>`).join('')}</select><select data-field="status" data-title="${encodeURIComponent(r.title)}">${STATUS_OPTIONS.map(s=>`<option ${s===r.status?'selected':''}>${s}</option>`).join('')}</select><button class="primary small" data-complete="${encodeURIComponent(r.title)}">Mark PM complete</button></div></div>
+          <div class="kv mt"><div class="metric"><div class="tiny">Last service</div><div>${r.lastService}</div></div><div class="metric"><div class="tiny">Next PM</div><div>${r.nextPm}</div></div><div class="metric"><div class="tiny">Issue age / SLA</div><div>${age}d / ${sla}d</div></div><div class="metric"><div class="tiny">Documentation</div><div>${g.status}</div></div></div>
           <div class="grid grid-2 mt"><div class="subtle"><div class="tiny mb">Issue / focus</div><textarea data-area="issue" data-title="${encodeURIComponent(r.title)}">${escapeHtml(r.issue)}</textarea></div><div class="subtle"><div class="tiny mb">Notes</div><textarea data-area="notes" data-title="${encodeURIComponent(r.title)}">${escapeHtml(r.notes)}</textarea></div></div>
-          <div class="subtle mt"><div class="tiny mb">Parts needed</div><input data-area="partsNeeded" data-title="${encodeURIComponent(r.title)}" value="${escapeAttr(r.partsNeeded)}" placeholder="blower motor, gun microswitch, puck set, ticket stock"></div>
-          ${guide?`<div class="subtle mt"><h3>Current troubleshooting guide</h3><div class="history-item"><strong>Current issue:</strong> ${guide.issue}</div><ol class="steps mt">${guide.steps.map(s=>`<li>${s}</li>`).join('')}</ol></div>`:''}
+          <div class="grid grid-3 mt"><div class="subtle"><div class="tiny mb">Parts needed</div><input data-area="partsNeeded" data-title="${encodeURIComponent(r.title)}" value="${escapeAttr(r.partsNeeded)}" placeholder="blower motor, microswitch, ticket stock"></div><div class="subtle"><div class="tiny mb">Accountability / next action</div><input data-area="accountability" data-title="${encodeURIComponent(r.title)}" value="${escapeAttr(r.accountability)}" placeholder="Order part, verify tomorrow, escalate to vendor"></div><div class="subtle"><div class="tiny mb">Verified by</div><input data-area="verifiedBy" data-title="${encodeURIComponent(r.title)}" value="${escapeAttr(r.verifiedBy)}" placeholder="Lead / manager initials"></div></div>
+          ${guide?`<div class="subtle mt"><h3>Current troubleshooting guide</h3><div class="history-item"><strong>Current issue:</strong> ${guide.issue}</div><ol class="mt">${guide.steps.map(s=>`<li>${s}</li>`).join('')}</ol></div>`:''}
           <div class="subtle mt"><div class="row space"><h3>Issue history</h3><button class="secondary small" data-add-issue="${encodeURIComponent(r.title)}">Add history note</button></div><textarea data-draft="${encodeURIComponent(r.title)}" placeholder="Add a dated issue note, inspection finding, or repair outcome"></textarea><div class="stack mt">${r.issueHistory.map(h=>`<div class="history-item"><div class="row"><span class="badge ${badgeClass(h.severity)}">${h.severity}</span><span class="badge ${badgeClass(h.status)}">${h.status}</span><span class="tiny">${h.date} · ${h.tech}</span></div><div class="mt tiny">${escapeHtml(h.note)}</div></div>`).join('')}</div></div>
-          <div class="subtle mt"><h3>Photo attachments</h3><div class="row"><input data-caption="${encodeURIComponent(r.title)}" placeholder="Caption, angle, or serial note"><label class="upload-label">Choose photo<input class="hide" type="file" accept="image/*" data-upload="${encodeURIComponent(r.title)}"></label></div><div class="photos mt">${r.photos.length?r.photos.map(p=>`<div class="photo"><img src="${p.src}" alt=""><div class="meta"><div>${escapeHtml(p.caption)}</div><div class="tiny">${p.date}</div><button class="secondary small mt" data-remove-photo="${encodeURIComponent(r.title)}" data-photo-id="${p.id}">Remove</button></div></div>`).join(''):'<div class="history-item tiny">No photos attached yet.</div>'}</div></div>
+          <div class="subtle mt"><h3>Photo attachments</h3><div class="row"><input data-caption="${encodeURIComponent(r.title)}" placeholder="Caption, serial, damage angle, or repaired result"><label class="upload-label">Choose photo<input class="hide" type="file" accept="image/*" data-upload="${encodeURIComponent(r.title)}"></label></div><div class="photos mt">${r.photos.length?r.photos.map(p=>`<div class="photo"><img src="${p.src}" alt=""><div class="meta"><div>${escapeHtml(p.caption)}</div><div class="tiny">${p.date}</div><button class="secondary small mt" data-remove-photo="${encodeURIComponent(r.title)}" data-photo-id="${p.id}">Remove</button></div></div>`).join(''):'<div class="history-item tiny">No photos attached yet.</div>'}</div></div>
           </div>`
         }).join('')||'<div class="subtle">No matches.</div>';
         bindOperationActions(list);
       };
-      [q,cat,st].forEach(i=>i.oninput=draw); cat.onchange=st.onchange=draw; draw();
+      [q,cat,st,owner,overdue].forEach(i=>i.oninput=draw); cat.onchange=st.onchange=owner.onchange=overdue.onchange=draw; draw();
     }
 
     function bindOperationActions(root){
-      root.querySelectorAll('select[data-field]').forEach(el=>el.onchange=()=>{const r=serviceRecords.find(x=>x.title===decodeURIComponent(el.dataset.title)); r[el.dataset.field]=el.value; save(); renderMetrics();});
-      root.querySelectorAll('textarea[data-area],input[data-area]').forEach(el=>el.onchange=()=>{const r=serviceRecords.find(x=>x.title===decodeURIComponent(el.dataset.title)); r[el.dataset.area]=el.value; save();});
-      root.querySelectorAll('[data-complete]').forEach(btn=>btn.onclick=()=>{const t=decodeURIComponent(btn.dataset.complete); const r=serviceRecords.find(x=>x.title===t); r.status='Complete'; r.lastService=TODAY; r.nextPm=addDays(TODAY,14); r.issueHistory.unshift({id:'issue-'+Date.now(),date:TODAY,status:'Complete',severity:r.severity,tech:r.technician,note:'Preventive maintenance cycle marked complete.'}); save(); renderMetrics(); renderOperations();});
-      root.querySelectorAll('[data-add-issue]').forEach(btn=>btn.onclick=()=>{const t=decodeURIComponent(btn.dataset.addIssue); const draft=root.querySelector(`[data-draft="${encodeURIComponent(t)}"]`).value.trim(); if(!draft) return; const r=serviceRecords.find(x=>x.title===t); r.issueHistory.unshift({id:'issue-'+Date.now(),date:TODAY,status:r.status,severity:r.severity,tech:r.technician,note:draft}); save(); renderMetrics(); renderOperations();});
-      root.querySelectorAll('[data-upload]').forEach(input=>input.onchange=(e)=>{const t=decodeURIComponent(input.dataset.upload); const file=e.target.files[0]; if(!file) return; const cap=root.querySelector(`[data-caption="${encodeURIComponent(t)}"]`).value.trim()||`Photo added ${TODAY}`; const reader=new FileReader(); reader.onload=()=>{const r=serviceRecords.find(x=>x.title===t); r.photos.unshift({id:'photo-'+Date.now(),src:reader.result,caption:cap,date:TODAY}); save(); renderMetrics(); renderOperations();}; reader.readAsDataURL(file);});
-      root.querySelectorAll('[data-remove-photo]').forEach(btn=>btn.onclick=()=>{const t=decodeURIComponent(btn.dataset.removePhoto), id=btn.dataset.photoId; const r=serviceRecords.find(x=>x.title===t); r.photos=r.photos.filter(p=>p.id!==id); save(); renderMetrics(); renderOperations();});
+      root.querySelectorAll('select[data-field]').forEach(el=>el.onchange=()=>{const r=serviceRecords.find(x=>x.title===decodeURIComponent(el.dataset.title)); r[el.dataset.field]=el.value; r.lastUpdated=TODAY; saveAll(); renderMetrics(); renderDashboard();});
+      root.querySelectorAll('textarea[data-area],input[data-area]').forEach(el=>el.onchange=()=>{const r=serviceRecords.find(x=>x.title===decodeURIComponent(el.dataset.title)); r[el.dataset.area]=el.value; r.lastUpdated=TODAY; saveAll();});
+      root.querySelectorAll('[data-complete]').forEach(btn=>btn.onclick=()=>{const t=decodeURIComponent(btn.dataset.complete); const r=serviceRecords.find(x=>x.title===t); r.status='Complete'; r.lastService=TODAY; r.nextPm=addDays(TODAY,14); r.lastUpdated=TODAY; r.issueHistory.unshift({id:'issue-'+Date.now(),date:TODAY,status:'Complete',severity:r.severity,tech:r.technician,note:'Preventive maintenance cycle marked complete.'}); saveAll(); renderMetrics(); renderDashboard(); renderOperations(); renderCalendar(); renderReports();});
+      root.querySelectorAll('[data-add-issue]').forEach(btn=>btn.onclick=()=>{const t=decodeURIComponent(btn.dataset.addIssue); const draft=root.querySelector(`[data-draft="${encodeURIComponent(t)}"]`).value.trim(); if(!draft) return; const r=serviceRecords.find(x=>x.title===t); r.issueHistory.unshift({id:'issue-'+Date.now(),date:TODAY,status:r.status,severity:r.severity,tech:r.technician,note:draft}); r.lastUpdated=TODAY; saveAll(); renderMetrics(); renderOperations(); renderReports();});
+      root.querySelectorAll('[data-upload]').forEach(input=>input.onchange=(e)=>{const t=decodeURIComponent(input.dataset.upload); const file=e.target.files[0]; if(!file) return; const cap=root.querySelector(`[data-caption="${encodeURIComponent(t)}"]`).value.trim()||`Photo added ${TODAY}`; const reader=new FileReader(); reader.onload=()=>{const r=serviceRecords.find(x=>x.title===t); r.photos.unshift({id:'photo-'+Date.now(),src:reader.result,caption:cap,date:TODAY}); r.lastUpdated=TODAY; saveAll(); renderMetrics(); renderOperations();}; reader.readAsDataURL(file);});
+      root.querySelectorAll('[data-remove-photo]').forEach(btn=>btn.onclick=()=>{const t=decodeURIComponent(btn.dataset.removePhoto), id=btn.dataset.photoId; const r=serviceRecords.find(x=>x.title===t); r.photos=r.photos.filter(p=>p.id!==id); saveAll(); renderMetrics(); renderOperations();});
     }
 
     function renderTasks(){
       const el=document.getElementById('tasks');
-      el.innerHTML=`<div class="grid grid-2"><div class="card"><div class="row space"><div><h2>Add one-off task</h2><div class="tiny">Use this for urgent fixes, parts runs, photos, or non-recurring jobs.</div></div><button id="exp-task" class="secondary">Export tasks CSV</button></div><div class="stack mt"><input id="new-title" placeholder="Task title"><select id="new-machine"><option>General / Floor-wide</option>${games.map(g=>`<option>${g.title}</option>`).join('')}</select><div class="row"><select id="new-tech">${TECHNICIANS.map(t=>`<option>${t}</option>`).join('')}</select><select id="new-sev">${SEVERITY_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select></div><input id="new-date" type="date" value="${TODAY}"><textarea id="new-notes" placeholder="Notes, context, or parts pickup details"></textarea><button id="add-task" class="primary">Add one-off task</button></div></div><div class="card"><h2>Task board</h2><div class="controls"><input id="task-q" placeholder="Search task, machine, notes, or tech"><select id="task-status"><option>All</option>${TASK_STATUS_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select><select id="task-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].map(c=>`<option>${c}</option>`).join('')}</select></div><div id="task-list" class="stack"></div></div></div>`;
+      el.innerHTML=`<div class="grid grid-2"><div class="card"><div class="row space"><div><h2>Add one-off task</h2><div class="tiny">Use this for urgent fixes, parts runs, photos, vendor follow-up, or non-recurring jobs.</div></div><button id="exp-task" class="secondary">Export tasks CSV</button></div><div class="stack mt"><input id="new-title" placeholder="Task title"><select id="new-machine"><option>General / Floor-wide</option>${games.map(g=>`<option>${g.title}</option>`).join('')}</select><div class="row"><select id="new-tech">${TECHNICIANS.map(t=>`<option>${t}</option>`).join('')}</select><select id="new-sev">${SEVERITY_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select></div><input id="new-date" type="date" value="${TODAY}"><input id="new-checklist" placeholder="Checklist items separated by commas"><textarea id="new-notes" placeholder="Notes, context, or parts pickup details"></textarea><button id="add-task" class="primary">Add one-off task</button></div></div><div class="card"><h2>Task board</h2><div class="controls"><input id="task-q" placeholder="Search task, machine, notes, or tech"><select id="task-status"><option>All</option>${TASK_STATUS_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select><select id="task-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].sort().map(c=>`<option>${c}</option>`).join('')}</select><select id="task-owner"><option>All owners</option>${TECHNICIANS.map(t=>`<option>${t}</option>`).join('')}</select><select id="task-date"><option>All dates</option><option>Overdue only</option><option>Due in 3 days</option></select></div><div id="task-list" class="stack"></div></div></div>`;
       el.querySelector('#exp-task').onclick=exportTaskCsv;
-      el.querySelector('#add-task').onclick=()=>{const title=el.querySelector('#new-title').value.trim(); if(!title) return; oneOffTasks.unshift({id:'task-'+Date.now(),title,machine:el.querySelector('#new-machine').value,technician:el.querySelector('#new-tech').value,dueDate:el.querySelector('#new-date').value,severity:el.querySelector('#new-sev').value,status:'Open',notes:el.querySelector('#new-notes').value.trim(),source:'Manual task'}); save(); renderMetrics(); renderTasks();};
-      const q=el.querySelector('#task-q'), st=el.querySelector('#task-status'), cat=el.querySelector('#task-cat'), list=el.querySelector('#task-list');
-      const draw=()=>{const term=q.value.toLowerCase(); list.innerHTML=oneOffTasks.filter(t=>{const g=gameByTitle(t.machine); return (!term||`${t.title} ${t.machine} ${t.notes} ${t.technician}`.toLowerCase().includes(term)) && (st.value==='All'||t.status===st.value) && (cat.value==='All'||t.machine==='General / Floor-wide'||g?.category===cat.value)}).map(t=>`<div class="item"><div class="row space"><div><div class="row"><h3>${t.title}</h3><span class="badge ${badgeClass(t.severity)}">${t.severity}</span><span class="badge ${badgeClass(t.status)}">${t.status}</span></div><div class="tiny">${t.machine} · Due ${t.dueDate} · ${t.technician} · ${t.source||'Manual task'}</div></div><div class="row"><select data-task-field="technician" data-id="${t.id}">${TECHNICIANS.map(v=>`<option ${v===t.technician?'selected':''}>${v}</option>`).join('')}</select><select data-task-field="status" data-id="${t.id}">${TASK_STATUS_OPTIONS.map(v=>`<option ${v===t.status?'selected':''}>${v}</option>`).join('')}</select><button class="primary small" data-task-complete="${t.id}">Complete</button></div></div><textarea data-task-notes="${t.id}" class="mt">${escapeHtml(t.notes)}</textarea></div>`).join('')||'<div class="subtle">No matches.</div>';
-        list.querySelectorAll('select[data-task-field]').forEach(s=>s.onchange=()=>{const t=oneOffTasks.find(x=>x.id===s.dataset.id); t[s.dataset.taskField]=s.value; save(); renderMetrics();});
-        list.querySelectorAll('[data-task-complete]').forEach(b=>b.onclick=()=>{const t=oneOffTasks.find(x=>x.id===b.dataset.taskComplete); t.status='Complete'; save(); renderMetrics(); renderTasks();});
-        list.querySelectorAll('[data-task-notes]').forEach(a=>a.onchange=()=>{const t=oneOffTasks.find(x=>x.id===a.dataset.taskNotes); t.notes=a.value; save();});
+      el.querySelector('#add-task').onclick=()=>{const title=el.querySelector('#new-title').value.trim(); if(!title) return; oneOffTasks.unshift({id:'task-'+Date.now(),title,machine:el.querySelector('#new-machine').value,technician:el.querySelector('#new-tech').value,dueDate:el.querySelector('#new-date').value,severity:el.querySelector('#new-sev').value,status:'Open',notes:el.querySelector('#new-notes').value.trim(),source:'Manual task',photos:[],checklist:el.querySelector('#new-checklist').value.split(',').map(s=>s.trim()).filter(Boolean),createdDate:TODAY}); saveAll(); renderMetrics(); renderDashboard(); renderTasks(); renderCalendar();};
+      const q=el.querySelector('#task-q'), st=el.querySelector('#task-status'), cat=el.querySelector('#task-cat'), owner=el.querySelector('#task-owner'), dateFilter=el.querySelector('#task-date'), list=el.querySelector('#task-list');
+      const draw=()=>{
+        const term=q.value.toLowerCase();
+        list.innerHTML=oneOffTasks.filter(t=>{const g=gameByTitle(t.machine); const dateMatch=dateFilter.value==='All dates'?true:dateFilter.value==='Overdue only'?isOverdueTask(t):dueSoon(t.dueDate,3); return (!term||`${t.title} ${t.machine} ${t.notes} ${t.technician}`.toLowerCase().includes(term)) && (st.value==='All'||t.status===st.value) && (cat.value==='All'||t.machine==='General / Floor-wide'||g?.category===cat.value) && (owner.value==='All owners'||t.technician===owner.value) && dateMatch}).map(t=>`<div class="item"><div class="row space"><div><div class="row"><h3>${t.title}</h3><span class="badge ${badgeClass(t.severity)}">${t.severity}</span><span class="badge ${badgeClass(t.status)}">${t.status}</span>${isOverdueTask(t)?'<span class="badge bad">Overdue</span>':''}</div><div class="tiny">${t.machine} · Due ${t.dueDate} · ${t.technician} · ${t.source||'Manual task'}</div></div><div class="row"><select data-task-field="technician" data-id="${t.id}">${TECHNICIANS.map(v=>`<option ${v===t.technician?'selected':''}>${v}</option>`).join('')}</select><select data-task-field="status" data-id="${t.id}">${TASK_STATUS_OPTIONS.map(v=>`<option ${v===t.status?'selected':''}>${v}</option>`).join('')}</select><button class="primary small" data-task-complete="${t.id}">Complete</button></div></div><div class="subtle mt"><div class="tiny mb">Checklist</div>${(t.checklist?.length?t.checklist:['No checklist']).map(i=>`<div class="tiny">• ${escapeHtml(i)}</div>`).join('')}</div><textarea data-task-notes="${t.id}" class="mt">${escapeHtml(t.notes)}</textarea><div class="subtle mt"><div class="row"><input data-task-caption="${t.id}" placeholder="Task photo caption / receipt / serial"><label class="upload-label">Choose photo<input class="hide" type="file" accept="image/*" data-task-upload="${t.id}"></label></div><div class="photos mt">${(t.photos?.length)?t.photos.map(p=>`<div class="photo"><img src="${p.src}" alt=""><div class="meta"><div>${escapeHtml(p.caption)}</div><div class="tiny">${p.date}</div><button class="secondary small mt" data-task-remove-photo="${t.id}" data-photo-id="${p.id}">Remove</button></div></div>`).join(''):'<div class="history-item tiny">No task photos yet.</div>'}</div></div></div>`).join('')||'<div class="subtle">No matches.</div>';
+        bindTaskActions(list);
       };
-      [q,st,cat].forEach(i=>i.oninput=draw); st.onchange=cat.onchange=draw; draw();
+      [q,st,cat,owner,dateFilter].forEach(i=>i.oninput=draw); st.onchange=cat.onchange=owner.onchange=dateFilter.onchange=draw; draw();
+    }
+
+    function bindTaskActions(root){
+      root.querySelectorAll('select[data-task-field]').forEach(s=>s.onchange=()=>{const t=oneOffTasks.find(x=>x.id===s.dataset.id); t[s.dataset.taskField]=s.value; saveAll(); renderMetrics(); renderDashboard();});
+      root.querySelectorAll('[data-task-complete]').forEach(b=>b.onclick=()=>{const t=oneOffTasks.find(x=>x.id===b.dataset.taskComplete); t.status='Complete'; saveAll(); renderMetrics(); renderDashboard(); renderTasks(); renderCalendar(); renderReports();});
+      root.querySelectorAll('[data-task-notes]').forEach(a=>a.onchange=()=>{const t=oneOffTasks.find(x=>x.id===a.dataset.taskNotes); t.notes=a.value; saveAll();});
+      root.querySelectorAll('[data-task-upload]').forEach(input=>input.onchange=(e)=>{const id=input.dataset.taskUpload; const task=oneOffTasks.find(x=>x.id===id); const file=e.target.files[0]; if(!file) return; const cap=root.querySelector(`[data-task-caption="${id}"]`).value.trim()||`Task photo added ${TODAY}`; const reader=new FileReader(); reader.onload=()=>{task.photos=task.photos||[]; task.photos.unshift({id:'photo-'+Date.now(),src:reader.result,caption:cap,date:TODAY}); saveAll(); renderMetrics(); renderTasks();}; reader.readAsDataURL(file);});
+      root.querySelectorAll('[data-task-remove-photo]').forEach(btn=>btn.onclick=()=>{const task=oneOffTasks.find(x=>x.id===btn.dataset.taskRemovePhoto); task.photos=(task.photos||[]).filter(p=>p.id!==btn.dataset.photoId); saveAll(); renderMetrics(); renderTasks();});
+    }
+
+    function renderManuals(){
+      const el=document.getElementById('manuals');
+      const manufacturers=[...new Set(games.map(g=>g.manufacturer))].sort();
+      el.innerHTML=`<div class="card"><div class="row space"><div><h2>Manual and support hub</h2><div class="tiny">Central lookup for manuals, support pages, and documentation gaps.</div></div></div><div class="controls"><input id="man-q" placeholder="Search game, manufacturer, or PM focus"><select id="man-maker"><option>All manufacturers</option>${manufacturers.map(m=>`<option>${m}</option>`).join('')}</select><select id="man-doc"><option>All statuses</option>${[...new Set(games.map(g=>g.status))].map(s=>`<option>${s}</option>`).join('')}</select><select id="man-direct"><option>All docs</option><option>Direct manual only</option><option>Needs follow-up</option></select><select disabled><option>Manuals tab</option></select></div><div id="man-list" class="stack"></div></div>`;
+      const q=el.querySelector('#man-q'), maker=el.querySelector('#man-maker'), doc=el.querySelector('#man-doc'), direct=el.querySelector('#man-direct'), list=el.querySelector('#man-list');
+      const draw=()=>{const term=q.value.toLowerCase(); list.innerHTML=games.filter(g=>{const needsFollow = !g.manual; return (!term||`${g.title} ${g.manufacturer} ${g.pm}`.toLowerCase().includes(term)) && (maker.value==='All manufacturers'||g.manufacturer===maker.value) && (doc.value==='All statuses'||g.status===doc.value) && (direct.value==='All docs'||(direct.value==='Direct manual only'?!!g.manual:needsFollow))}).map(g=>`<div class="item"><div class="row space"><div><div class="row"><h3>${g.title}</h3><span class="badge ${badgeClass(g.status)}">${g.status}</span></div><div class="tiny">${g.manufacturer} · ${g.category}</div><div class="tiny mt">${g.pm}</div></div><div class="row">${g.manual?`<a href="${g.manual}" target="_blank"><button class="secondary small">Manual</button></a>`:'<span class="badge warn">Needs exact manual</span>'}${g.support?`<a href="${g.support}" target="_blank"><button class="secondary small">Support</button></a>`:''}</div></div></div>`).join('') || '<div class="subtle">No matches.</div>'};
+      [q,maker,doc,direct].forEach(i=>i.oninput=draw); maker.onchange=doc.onchange=direct.onchange=draw; draw();
+    }
+
+    function renderContacts(){
+      const el=document.getElementById('contacts');
+      el.innerHTML=`<div class="grid grid-2"><div class="card"><div class="row space"><div><h2>Vendor / support contacts</h2><div class="tiny">Edit phone, email, parts notes, and preferred contact path.</div></div><button id="add-contact" class="primary small">Add contact</button></div><div id="contact-list" class="stack mt"></div></div><div class="card"><h2>Severity and response guide</h2><table class="table"><thead><tr><th>Severity</th><th>Target response</th><th>Examples</th></tr></thead><tbody><tr><td>Critical</td><td>Same day</td><td>Unsafe condition, payout failure across key game, power issue</td></tr><tr><td>High</td><td>Within 2 days</td><td>Major earning game down, repeated game stoppage</td></tr><tr><td>Medium</td><td>Within 5 days</td><td>Single station degraded, weak sensor, intermittent issue</td></tr><tr><td>Low</td><td>Within 10 days</td><td>Cosmetic, non-gameplay note, labeling, minor hardware</td></tr></tbody></table><div class="subtle mt"><strong>Accountability rule:</strong><div class="tiny mt">Every open item should have an owner, a next action, and either a due date or next PM date.</div></div></div></div>`;
+      const list=el.querySelector('#contact-list');
+      const draw=()=>{list.innerHTML=contacts.map((c,idx)=>`<div class="item"><div class="row space"><div><h3>${c.manufacturer}</h3><div class="tiny">${c.contact||'Contact name not set'}</div></div><button class="secondary small" data-del-contact="${idx}">Remove</button></div><div class="grid grid-2 mt"><input data-contact-field="manufacturer" data-idx="${idx}" value="${escapeAttr(c.manufacturer)}" placeholder="Manufacturer"><input data-contact-field="contact" data-idx="${idx}" value="${escapeAttr(c.contact)}" placeholder="Contact / department"></div><div class="grid grid-3 mt"><input data-contact-field="phone" data-idx="${idx}" value="${escapeAttr(c.phone)}" placeholder="Phone"><input data-contact-field="email" data-idx="${idx}" value="${escapeAttr(c.email)}" placeholder="Email"><input data-contact-field="website" data-idx="${idx}" value="${escapeAttr(c.website)}" placeholder="Website"></div><textarea data-contact-field="notes" data-idx="${idx}" class="mt">${escapeHtml(c.notes)}</textarea></div>`).join('')};
+      draw();
+      el.querySelector('#add-contact').onclick=()=>{contacts.unshift({manufacturer:'New vendor',contact:'',phone:'',email:'',notes:'',website:''}); saveAll(); renderContacts();};
+      list.addEventListener('change',e=>{const f=e.target.dataset.contactField; if(!f) return; const idx=Number(e.target.dataset.idx); contacts[idx][f]=e.target.value; saveAll();});
+      list.addEventListener('click',e=>{const idx=e.target.dataset.delContact; if(idx===undefined) return; contacts.splice(Number(idx),1); saveAll(); renderContacts();});
+    }
+
+    function renderCalendar(){
+      const el=document.getElementById('calendar');
+      const rows=buildCalendarRows().filter(x=>x.date>=TODAY && x.date<=addDays(TODAY,30));
+      const grouped={}; rows.forEach(r=>{(grouped[r.date]=grouped[r.date]||[]).push(r)});
+      el.innerHTML=`<div class="grid grid-2"><div class="card"><h2>Next 30 days</h2><div class="stack">${Object.keys(grouped).sort(sortByDateAsc).map(date=>`<div class="calendar-day"><h3>${date}</h3><div class="stack">${grouped[date].map(r=>`<div class="history-item"><div class="row"><span class="badge ${badgeClass(r.severity)}">${r.severity}</span><span class="badge">${r.kind}</span><strong>${r.title}</strong></div><div class="tiny mt">Owner: ${r.owner} · Status: ${r.status}</div><div class="tiny">${escapeHtml(r.detail)}</div></div>`).join('')}</div></div>`).join('') || '<div class="subtle tiny">Nothing scheduled in the next 30 days.</div>'}</div></div><div class="card"><h2>Recurring PM cadence</h2><div class="grid grid-2">${pmCadence.map(b=>`<div class="subtle"><strong>${b.frequency}</strong><ul>${b.items.map(i=>`<li>${i}</li>`).join('')}</ul></div>`).join('')}</div></div></div>`;
+    }
+
+    function renderReports(){
+      const el=document.getElementById('reports');
+      const bySeverity=SEVERITY_OPTIONS.map(s=>({severity:s,count:serviceRecords.filter(r=>r.severity===s && r.status!=='Complete').length + oneOffTasks.filter(t=>t.severity===s && t.status!=='Complete').length}));
+      const overduePm=serviceRecords.filter(isOverdueRecord);
+      const overdueTasks=oneOffTasks.filter(isOverdueTask);
+      const noOwner=serviceRecords.filter(r=>r.technician==='Unassigned').length + oneOffTasks.filter(t=>t.technician==='Unassigned').length;
+      el.innerHTML=`<div class="grid grid-3"><div class="card"><h2>Open by severity</h2><div class="stack">${bySeverity.map(x=>`<div class="subtle"><strong>${x.severity}</strong><div class="tiny mt">${x.count} open items</div></div>`).join('')}</div></div><div class="card"><h2>Overdue PM list</h2><div class="stack">${overduePm.slice(0,12).map(r=>`<div class="history-item"><strong>${r.title}</strong><div class="tiny mt">Owner: ${r.technician} · Next PM: ${r.nextPm}</div></div>`).join('') || '<div class="subtle tiny">No overdue PM items.</div>'}</div></div><div class="card"><h2>Overdue task list</h2><div class="stack">${overdueTasks.slice(0,12).map(t=>`<div class="history-item"><strong>${t.title}</strong><div class="tiny mt">${t.machine} · Owner: ${t.technician} · Due: ${t.dueDate}</div></div>`).join('') || '<div class="subtle tiny">No overdue tasks.</div>'}</div></div></div>
+      <div class="grid grid-2 mt"><div class="card"><h2>Management flags</h2><div class="stack"><div class="subtle"><strong>Unassigned items</strong><div class="tiny mt">${noOwner}</div></div><div class="subtle"><strong>Records waiting parts</strong><div class="tiny mt">${serviceRecords.filter(r=>r.status==='Waiting Parts').length + oneOffTasks.filter(t=>t.status==='Waiting Parts').length}</div></div><div class="subtle"><strong>Games without exact manual link</strong><div class="tiny mt">${games.filter(g=>!g.manual).length}</div></div></div></div><div class="card"><div class="row space"><h2>Exports</h2><div class="row"><button id="rep-maint" class="secondary small">Maintenance CSV</button><button id="rep-task" class="secondary small">Tasks CSV</button></div></div><div class="tiny">Use the exports for accountability reviews, parts ordering, or a printed service packet.</div></div></div>`;
+      el.querySelector('#rep-maint').onclick=exportMaintenanceCsv;
+      el.querySelector('#rep-task').onclick=exportTaskCsv;
     }
 
     function renderCatchup(){
@@ -300,30 +469,34 @@
       el.innerHTML=`<div class="grid grid-3">${['Day 1','Day 2','Day 3'].map(day=>`<div class="card"><h2>${day}</h2><div class="stack">${catchUpPlan.filter(x=>x.day===day).map(i=>`<div class="subtle"><strong>${i.title}</strong><div class="tiny mt">${i.scope}</div><div class="tiny mt">${i.detail}</div></div>`).join('')}</div></div>`).join('')}</div>`
     }
 
-    function renderCalendar(){
-      const el=document.getElementById('calendar');
-      el.innerHTML=`<div class="grid grid-3">${pmCadence.map(b=>`<div class="card"><h2>${b.frequency}</h2><ul>${b.items.map(i=>`<li>${i}</li>`).join('')}</ul></div>`).join('')}</div>`
-    }
-
     function exportMaintenanceCsv(){
-      const headers=['Title','Manufacturer','Category','Qty','Documentation Status','Priority','Severity','Technician','Service Status','Last Service','Next PM','Issue','Troubleshooting Summary','Parts Needed','Notes','Issue History Count','Photo Count','Manual URL','Support URL'];
-      const rows=serviceRecords.map(r=>{const g=gameByTitle(r.title), guide=issueGuides[r.title]; return [r.title,g?.manufacturer||'',g?.category||'',g?.qty||'',g?.status||'',r.priority,r.severity,r.technician,r.status,r.lastService,r.nextPm,r.issue,guide?guide.steps[0]:'',r.partsNeeded,r.notes,r.issueHistory.length,r.photos.length,g?.manual||'',g?.support||'']});
-      downloadCsv('play-wow-maintenance-report.csv',headers,rows)
+      const headers=['Title','Manufacturer','Category','Qty','Documentation Status','Priority','Severity','Technician','Service Status','Last Service','Next PM','Issue','Parts Needed','Notes','Accountability','Verified By','Issue History Count','Photo Count','Manual URL','Support URL'];
+      const rows=serviceRecords.map(r=>{const g=gameByTitle(r.title); return [r.title,g?.manufacturer||'',g?.category||'',g?.qty||'',g?.status||'',r.priority,r.severity,r.technician,r.status,r.lastService,r.nextPm,r.issue,r.partsNeeded,r.notes,r.accountability,r.verifiedBy,r.issueHistory.length,r.photos.length,g?.manual||'',g?.support||'']});
+      downloadCsv('play-wow-maintenance-report-enhanced.csv',headers,rows)
     }
     function exportTaskCsv(){
-      const headers=['Task','Machine','Source','Technician','Severity','Status','Due Date','Notes'];
-      const rows=oneOffTasks.map(t=>[t.title,t.machine,t.source||'Manual task',t.technician,t.severity,t.status,t.dueDate,t.notes]);
-      downloadCsv('play-wow-one-off-tasks.csv',headers,rows)
+      const headers=['Task','Machine','Source','Technician','Severity','Status','Due Date','Checklist','Notes','Photo Count'];
+      const rows=oneOffTasks.map(t=>[t.title,t.machine,t.source||'Manual task',t.technician,t.severity,t.status,t.dueDate,(t.checklist||[]).join(' | '),t.notes,(t.photos||[]).length]);
+      downloadCsv('play-wow-one-off-tasks-enhanced.csv',headers,rows)
     }
     function downloadCsv(filename, headers, rows){
       const esc=v=>`"${String(v??'').replace(/"/g,'""')}"`;
       const csv=[headers,...rows].map(r=>r.map(esc).join(',')).join('\n');
       const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url);
     }
-    function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-    function escapeAttr(s){return escapeHtml(s)}
+    function exportJsonBackup(){
+      const payload={exportedAt:new Date().toISOString(), serviceRecords, oneOffTasks, handoffLog, contacts};
+      const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='play-wow-maintenance-backup.json'; a.click(); URL.revokeObjectURL(url);
+    }
+    function importJsonBackup(e){
+      const file=e.target.files?.[0]; if(!file) return; const reader=new FileReader(); reader.onload=()=>{try{const data=JSON.parse(reader.result); if(data.serviceRecords) serviceRecords=data.serviceRecords; if(data.oneOffTasks) oneOffTasks=data.oneOffTasks; if(data.handoffLog) handoffLog=data.handoffLog; if(data.contacts) contacts=data.contacts; saveAll(); renderAll();}catch(err){alert('Could not import JSON backup.')}}; reader.readAsText(file);
+    }
 
-    renderTabs(); renderMetrics(); renderDashboard(); renderInventory(); renderOperations(); renderTasks(); renderCatchup(); renderCalendar();
+    function renderAll(){
+      renderTabs(); renderMetrics(); renderDashboard(); renderInventory(); renderOperations(); renderTasks(); renderManuals(); renderContacts(); renderCalendar(); renderReports(); renderCatchup();
+    }
+
+    renderAll();
   </script>
 </body>
 </html>
