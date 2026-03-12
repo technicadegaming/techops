@@ -47,6 +47,7 @@
     <section id="calendar" class="section"></section>
     <section id="reports" class="section"></section>
     <section id="catchup" class="section"></section>
+    <section id="admin" class="section"></section>
   </div>
 
   <script>
@@ -57,7 +58,7 @@
       handoff:'wow-technicade-handoff-v2',
       contacts:'wow-technicade-contacts-v2'
     };
-    const TABS = ['dashboard','inventory','operations','tasks','manuals','contacts','calendar','reports','catchup'];
+    const TABS = ['dashboard','inventory','operations','tasks','manuals','contacts','calendar','reports','catchup','admin'];
     const TECHNICIANS = ['Unassigned','Alex','Jordan','Sam','Riley','Manager'];
     const STATUS_OPTIONS = ['Open','Scheduled','In Progress','Waiting Parts','Blocked','Complete'];
     const TASK_STATUS_OPTIONS = ['Open','Scheduled','In Progress','Waiting Parts','Blocked','Complete'];
@@ -169,6 +170,7 @@ const pmCadence = [
     function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
     function escapeAttr(s){return escapeHtml(s)}
     function sortByDateAsc(a,b){return String(a).localeCompare(String(b))}
+    function norm(s){return String(s||'').trim().toLowerCase()}
 
     function buildServiceSeed(){
       return games.map((g,i)=>{
@@ -214,16 +216,41 @@ const pmCadence = [
       ]
     }
 
+    const EXTRA_KEYS={workers:'wow-technicade-workers-v1',admin:'wow-technicade-admin-v1',assetHistory:'wow-technicade-asset-history-v1'};
+    const uiState={dashboardDrill:null};
+
     let serviceRecords = safeLoad(STORAGE_KEYS.service, buildServiceSeed());
     let oneOffTasks = safeLoad(STORAGE_KEYS.tasks, buildOneOffSeed());
     let handoffLog = safeLoad(STORAGE_KEYS.handoff, buildHandoffSeed());
     let contacts = safeLoad(STORAGE_KEYS.contacts, defaultContacts);
+    let workers = safeLoad(EXTRA_KEYS.workers, []);
+    let adminConfig = safeLoad(EXTRA_KEYS.admin, {pin:'1234',notice:'Client-side only'});
+    let assetHistory = safeLoad(EXTRA_KEYS.assetHistory, {});
+
+    function normalizeWorkers(arr){return (Array.isArray(arr)?arr:[]).filter(w=>w&&w.name).map(w=>({name:String(w.name),role:w.role||'Staff'}))}
+
+    function ensureMigrations(){
+      if(!workers.length) workers=TECHNICIANS.filter(t=>t&&t!=='Unassigned').map(n=>({name:n,role:n==='Manager'?'Manager':'Staff'}));
+      workers = normalizeWorkers(workers);
+      serviceRecords=serviceRecords.map(r=>({...r,assignedWorkers:Array.isArray(r.assignedWorkers)?r.assignedWorkers:(r.technician&&r.technician!=='Unassigned'?[r.technician]:[]),photos:Array.isArray(r.photos)?r.photos:[],issueHistory:Array.isArray(r.issueHistory)?r.issueHistory:[],history:Array.isArray(r.history)?r.history:[]}));
+      oneOffTasks=oneOffTasks.map(t=>({...t,assignedWorkers:Array.isArray(t.assignedWorkers)?t.assignedWorkers:(t.technician&&t.technician!=='Unassigned'?[t.technician]:[]),photos:Array.isArray(t.photos)?t.photos:[],checklist:Array.isArray(t.checklist)?t.checklist:[]}));
+      games.forEach(g=>{assetHistory[g.title]=Array.isArray(assetHistory[g.title])?assetHistory[g.title]:[]});
+    }
 
     function saveAll(){
       safeSave(STORAGE_KEYS.service, serviceRecords);
       safeSave(STORAGE_KEYS.tasks, oneOffTasks);
       safeSave(STORAGE_KEYS.handoff, handoffLog);
       safeSave(STORAGE_KEYS.contacts, contacts);
+      safeSave(EXTRA_KEYS.workers, workers);
+      safeSave(EXTRA_KEYS.admin, adminConfig);
+      safeSave(EXTRA_KEYS.assetHistory, assetHistory);
+    }
+
+    function recordAssetHistoryOnce(title, entry, key){
+      assetHistory[title]=Array.isArray(assetHistory[title])?assetHistory[title]:[];
+      if(assetHistory[title].some(h=>h.key===key)) return;
+      assetHistory[title].unshift({...entry,key});
     }
 
     function badgeClass(v){return v==='Critical'||v==='High'?'bad':v==='Medium'||v==='Family manual'||v==='Support linked'||v==='Scheduled'||v==='Waiting Parts'?'warn':'good'}
@@ -247,7 +274,7 @@ const pmCadence = [
 
     function renderTabs(){
       const el=document.getElementById('tabs');
-      el.innerHTML=TABS.map(t=>`<button class="tab ${t==='dashboard'?'active':''}" data-tab="${t}">${t}</button>`).join('');
+      el.innerHTML=TABS.map(t=>`<button class="tab ${t==='dashboard'?'active':''}" data-tab="${t}">${t==='inventory'?'assets':t}</button>`).join('');
       el.querySelectorAll('.tab').forEach(btn=>btn.onclick=()=>showTab(btn.dataset.tab));
     }
     function showTab(tab){
@@ -296,11 +323,25 @@ const pmCadence = [
           <div class="card">
             <h2>Documentation status</h2>
             <div class="stack">
-              <div class="subtle"><strong>Direct manuals:</strong> ${manualLinked}</div>
-              <div class="subtle"><strong>Family manuals:</strong> ${family}</div>
-              <div class="subtle"><strong>Support only:</strong> ${supportOnly}</div>
-              <div class="subtle"><strong>Next 3 days scheduled items:</strong> ${buildCalendarRows().filter(x=>dueSoon(x.date,3) && x.status!=='Complete').length}</div>
+              <div class="subtle" data-drill="docs"><strong>Direct manuals:</strong> ${manualLinked}</div>
+              <div class="subtle" data-drill="family"><strong>Family manuals:</strong> ${family}</div>
+              <div class="subtle" data-drill="support"><strong>Support only:</strong> ${supportOnly}</div>
+              <div class="subtle" data-drill="priority"><strong>Next 3 days scheduled items:</strong> ${buildCalendarRows().filter(x=>dueSoon(x.date,3) && x.status!=='Complete').length}</div>
             </div>
+          </div>
+        </div>
+        <div class="card mt">
+          <h2>Dashboard drill-down</h2>
+          <div class="grid grid-3">
+            <button class="secondary" data-drill="open-operations">Open operations</button>
+            <button class="secondary" data-drill="overdue">Overdue PM</button>
+            <button class="secondary" data-drill="waiting-parts">Waiting parts</button>
+            <button class="secondary" data-drill="unassigned">Unassigned work</button>
+            <button class="secondary" data-drill="high-critical">High / critical</button>
+            <button class="secondary" data-drill="recent-completions">Recent completions</button>
+            <button class="secondary" data-drill="docs">Documentation status</button>
+            <button class="secondary" data-drill="priority">Priority queue</button>
+            <button class="secondary" data-drill="handoff">Handoff</button>
           </div>
         </div>
         <div class="grid grid-2 mt">
@@ -310,7 +351,7 @@ const pmCadence = [
           </div>
           <div class="card">
             <div class="row space"><h2>Priority queue</h2><span class="tiny">Top open machine records</span></div>
-            <div class="stack">${topIssues.map(r=>`<div class="history-item"><div class="row"><strong>${r.title}</strong><span class="badge ${badgeClass(r.severity)}">${r.severity}</span><span class="badge ${badgeClass(r.status)}">${r.status}</span></div><div class="tiny mt">Owner: ${r.technician} · Next PM ${r.nextPm}</div><div class="tiny mt">${escapeHtml(r.issue)}</div></div>`).join('') || '<div class="subtle tiny">No open issues.</div>'}</div>
+            <div class="stack">${topIssues.map(r=>`<div class="history-item" data-drill="high"><div class="row"><strong>${r.title}</strong><span class="badge ${badgeClass(r.severity)}">${r.severity}</span><span class="badge ${badgeClass(r.status)}">${r.status}</span></div><div class="tiny mt">Owner: ${r.technician} · Next PM ${r.nextPm}</div><div class="tiny mt">${escapeHtml(r.issue)}</div></div>`).join('') || '<div class="subtle tiny">No open issues.</div>'}</div>
           </div>
         </div>
         <div class="grid grid-2 mt">
@@ -341,11 +382,19 @@ const pmCadence = [
       };
       el.querySelector('#export-json').onclick=exportJsonBackup;
       el.querySelector('#import-json').onchange=importJsonBackup;
+      el.querySelectorAll('[data-drill]').forEach(node=>node.onclick=()=>applyDashboardDrill(node.dataset.drill));
+    }
+
+    function applyDashboardDrill(drill){
+      if(drill==='docs'||drill==='family'||drill==='support'){ uiState.dashboardDrill={tab:'inventory',drill}; renderInventory(); showTab('inventory'); return; }
+      if(drill==='priority'){ uiState.dashboardDrill={tab:'calendar',drill}; renderCalendar(); showTab('calendar'); return; }
+      if(drill==='handoff'){ showTab('dashboard'); document.getElementById('handoff-note')?.focus(); return; }
+      uiState.dashboardDrill={tab:'operations',drill}; renderOperations(); showTab('operations');
     }
 
     function renderInventory(){
       const el=document.getElementById('inventory');
-      el.innerHTML=`<div class="card"><h2>Inventory</h2><div class="controls"><input id="inv-q" placeholder="Search title, manufacturer, or PM focus"><select id="inv-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].sort().map(c=>`<option>${c}</option>`).join('')}</select><select id="inv-doc"><option>All</option>${[...new Set(games.map(g=>g.status))].map(s=>`<option>${s}</option>`).join('')}</select><select id="inv-owner"><option>All owners</option>${TECHNICIANS.map(t=>`<option>${t}</option>`).join('')}</select><select id="inv-sev"><option>All severities</option>${SEVERITY_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select></div><div id="inv-list" class="stack"></div></div>`;
+      el.innerHTML=`<div class="card"><h2>Assets</h2><div class="controls"><input id="inv-q" placeholder="Search title, manufacturer, or PM focus"><select id="inv-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].sort().map(c=>`<option>${c}</option>`).join('')}</select><select id="inv-doc"><option>All</option>${[...new Set(games.map(g=>g.status))].map(s=>`<option>${s}</option>`).join('')}</select><select id="inv-owner"><option>All owners</option>${TECHNICIANS.map(t=>`<option>${t}</option>`).join('')}</select><select id="inv-sev"><option>All severities</option>${SEVERITY_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select></div><div id="inv-list" class="stack"></div></div>`;
       const q=el.querySelector('#inv-q'), cat=el.querySelector('#inv-cat'), doc=el.querySelector('#inv-doc'), owner=el.querySelector('#inv-owner'), sev=el.querySelector('#inv-sev'), list=el.querySelector('#inv-list');
       const draw=()=>{
         const term=q.value.toLowerCase();
@@ -358,17 +407,33 @@ const pmCadence = [
             (sev.value==='All severities'||record?.severity===sev.value)
         }).map(g=>{
           const record=serviceRecords.find(r=>r.title===g.title);
-          return `<div class="item"><div class="row space"><div><div class="row"><h3>${g.title}</h3><span class="badge ${badgeClass(g.status)}">${g.status}</span><span class="badge">Qty ${g.qty}</span><span class="badge ${badgeClass(record?.severity||'Low')}">${record?.severity||'Low'}</span></div><div class="tiny">${g.manufacturer} · ${g.category}</div><div class="tiny mt"><strong>PM focus:</strong> ${g.pm}</div><div class="tiny">Owner: ${record?.technician||'Unassigned'} · Next PM: ${record?.nextPm||'n/a'}</div></div><div class="stack">${g.manual?`<a href="${g.manual}" target="_blank"><button class="secondary small">Open manual</button></a>`:''}${g.support?`<a href="${g.support}" target="_blank"><button class="secondary small">Support page</button></a>`:''}</div></div></div>`
+          return `<div class="item"><div class="row space"><div><div class="row"><h3>${g.title}</h3><span class="badge ${badgeClass(g.status)}">${g.status}</span><span class="badge">Qty ${g.qty}</span><span class="badge ${badgeClass(record?.severity||'Low')}">${record?.severity||'Low'}</span></div><div class="tiny">${g.manufacturer} · ${g.category}</div><div class="tiny mt"><strong>PM focus:</strong> ${g.pm}</div><div class="tiny">Owner: ${record?.technician||'Unassigned'} · Next PM: ${record?.nextPm||'n/a'}</div></div><div class="stack"><button class="primary small" data-asset-detail="${encodeURIComponent(g.title)}">Asset detail</button>${g.manual?`<a href="${g.manual}" target="_blank"><button class="secondary small">Open manual</button></a>`:''}${g.support?`<a href="${g.support}" target="_blank"><button class="secondary small">Support page</button></a>`:''}</div></div></div>`
         }).join('')||'<div class="subtle">No matches.</div>'
+        list.querySelectorAll('[data-asset-detail]').forEach(btn=>btn.onclick=()=>openAssetModal(decodeURIComponent(btn.dataset.assetDetail)));
       };
+      if(uiState.dashboardDrill?.tab==='inventory'){
+        if(uiState.dashboardDrill.drill==='family') doc.value='Family manual';
+        if(uiState.dashboardDrill.drill==='support') doc.value='Support linked';
+        if(uiState.dashboardDrill.drill==='docs') doc.value='Manual linked';
+        uiState.dashboardDrill=null;
+      }
       [q,cat,doc,owner,sev].forEach(i=>i.oninput=draw); cat.onchange=doc.onchange=owner.onchange=sev.onchange=draw; draw();
     }
 
     function renderOperations(){
       const el=document.getElementById('operations');
-      el.innerHTML=`<div class="card"><div class="row space"><div><h2>Operations</h2><div class="tiny">Edit notes, parts, accountability, verification, issue history, and attach photos.</div></div><button id="exp-maint" class="secondary">Export maintenance CSV</button></div><div class="controls"><input id="ops-q" placeholder="Search machine, issue, notes, parts, or history"><select id="ops-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].sort().map(c=>`<option>${c}</option>`).join('')}</select><select id="ops-status"><option>All</option>${STATUS_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select><select id="ops-owner"><option>All owners</option>${TECHNICIANS.map(t=>`<option>${t}</option>`).join('')}</select><select id="ops-overdue"><option>All dates</option><option>Overdue PM only</option><option>Due in 3 days</option></select></div><div id="ops-list" class="stack"></div></div>`;
+      el.innerHTML=`<div class="card"><div class="row space"><div><h2>Operations</h2><div class="tiny">Edit notes, parts, accountability, verification, issue history, and attach photos.</div></div><button id="exp-maint" class="secondary">Export maintenance CSV</button></div><div class="controls"><input id="ops-q" placeholder="Search machine, issue, notes, parts, or history"><select id="ops-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].sort().map(c=>`<option>${c}</option>`).join('')}</select><select id="ops-status"><option>All</option>${STATUS_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select><select id="ops-owner"><option>All owners</option>${TECHNICIANS.map(t=>`<option>${t}</option>`).join('')}</select><select id="ops-sev"><option>All severities</option>${SEVERITY_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select><select id="ops-overdue"><option>All dates</option><option>Overdue PM only</option><option>Due in 3 days</option></select></div><div id="ops-list" class="stack"></div></div>`;
       el.querySelector('#exp-maint').onclick=exportMaintenanceCsv;
-      const q=el.querySelector('#ops-q'), cat=el.querySelector('#ops-cat'), st=el.querySelector('#ops-status'), owner=el.querySelector('#ops-owner'), overdue=el.querySelector('#ops-overdue'), list=el.querySelector('#ops-list');
+      const q=el.querySelector('#ops-q'), cat=el.querySelector('#ops-cat'), st=el.querySelector('#ops-status'), owner=el.querySelector('#ops-owner'), sev=el.querySelector('#ops-sev'), overdue=el.querySelector('#ops-overdue'), list=el.querySelector('#ops-list');
+      if(uiState.dashboardDrill?.tab==='operations'){
+        if(uiState.dashboardDrill.drill==='high'||uiState.dashboardDrill.drill==='open-operations') st.value='Open';
+        if(uiState.dashboardDrill.drill==='overdue') overdue.value='Overdue PM only';
+        if(uiState.dashboardDrill.drill==='waiting-parts') st.value='Waiting Parts';
+        if(uiState.dashboardDrill.drill==='unassigned') owner.value='Unassigned';
+        if(uiState.dashboardDrill.drill==='high-critical'||uiState.dashboardDrill.drill==='priority') sev.value='High';
+        if(uiState.dashboardDrill.drill==='recent-completions') st.value='Complete';
+        uiState.dashboardDrill=null;
+      }
       const draw=()=>{
         const term=q.value.toLowerCase();
         const filtered=serviceRecords.filter(r=>{
@@ -376,7 +441,7 @@ const pmCadence = [
           const overdueMatch = overdue.value==='All dates' ? true : overdue.value==='Overdue PM only' ? isOverdueRecord(r) : dueSoon(r.nextPm,3);
           return (!term||`${r.title} ${r.issue} ${r.notes} ${r.partsNeeded} ${guideText} ${r.accountability} ${r.verifiedBy} ${g?.manufacturer||''}`.toLowerCase().includes(term)) &&
             (cat.value==='All'||g.category===cat.value) && (st.value==='All'||r.status===st.value) &&
-            (owner.value==='All owners'||r.technician===owner.value) && overdueMatch
+            (owner.value==='All owners'||r.technician===owner.value) && (sev.value==='All severities'||r.severity===sev.value||(sev.value==='High'&&r.severity==='Critical')) && overdueMatch
         });
         list.innerHTML=filtered.map(r=>{
           const g=gameByTitle(r.title), guide=issueGuides[r.title], sla=getSlaDays(r.severity), age=diffDays(r.issueHistory[0]?.date||TODAY,TODAY);
@@ -391,13 +456,13 @@ const pmCadence = [
         }).join('')||'<div class="subtle">No matches.</div>';
         bindOperationActions(list);
       };
-      [q,cat,st,owner,overdue].forEach(i=>i.oninput=draw); cat.onchange=st.onchange=owner.onchange=overdue.onchange=draw; draw();
+      [q,cat,st,owner,sev,overdue].forEach(i=>i.oninput=draw); cat.onchange=st.onchange=owner.onchange=sev.onchange=overdue.onchange=draw; draw();
     }
 
     function bindOperationActions(root){
       root.querySelectorAll('select[data-field]').forEach(el=>el.onchange=()=>{const r=serviceRecords.find(x=>x.title===decodeURIComponent(el.dataset.title)); r[el.dataset.field]=el.value; r.lastUpdated=TODAY; saveAll(); renderMetrics(); renderDashboard();});
       root.querySelectorAll('textarea[data-area],input[data-area]').forEach(el=>el.onchange=()=>{const r=serviceRecords.find(x=>x.title===decodeURIComponent(el.dataset.title)); r[el.dataset.area]=el.value; r.lastUpdated=TODAY; saveAll();});
-      root.querySelectorAll('[data-complete]').forEach(btn=>btn.onclick=()=>{const t=decodeURIComponent(btn.dataset.complete); const r=serviceRecords.find(x=>x.title===t); r.status='Complete'; r.lastService=TODAY; r.nextPm=addDays(TODAY,14); r.lastUpdated=TODAY; r.issueHistory.unshift({id:'issue-'+Date.now(),date:TODAY,status:'Complete',severity:r.severity,tech:r.technician,note:'Preventive maintenance cycle marked complete.'}); saveAll(); renderMetrics(); renderDashboard(); renderOperations(); renderCalendar(); renderReports();});
+      root.querySelectorAll('[data-complete]').forEach(btn=>btn.onclick=()=>{const t=decodeURIComponent(btn.dataset.complete); const r=serviceRecords.find(x=>x.title===t); r.status='Complete'; r.lastService=TODAY; r.nextPm=addDays(TODAY,14); r.lastUpdated=TODAY; r.issueHistory.unshift({id:'issue-'+Date.now(),date:TODAY,status:'Complete',severity:r.severity,tech:r.technician,note:'Preventive maintenance cycle marked complete.'}); recordAssetHistoryOnce(t,{date:TODAY,type:'operation',status:'Complete',note:'PM marked complete',by:r.technician},`op-complete-${t}-${TODAY}`); saveAll(); renderMetrics(); renderDashboard(); renderOperations(); renderCalendar(); renderReports();});
       root.querySelectorAll('[data-add-issue]').forEach(btn=>btn.onclick=()=>{const t=decodeURIComponent(btn.dataset.addIssue); const draft=root.querySelector(`[data-draft="${encodeURIComponent(t)}"]`).value.trim(); if(!draft) return; const r=serviceRecords.find(x=>x.title===t); r.issueHistory.unshift({id:'issue-'+Date.now(),date:TODAY,status:r.status,severity:r.severity,tech:r.technician,note:draft}); r.lastUpdated=TODAY; saveAll(); renderMetrics(); renderOperations(); renderReports();});
       root.querySelectorAll('[data-upload]').forEach(input=>input.onchange=(e)=>{const t=decodeURIComponent(input.dataset.upload); const file=e.target.files[0]; if(!file) return; const cap=root.querySelector(`[data-caption="${encodeURIComponent(t)}"]`).value.trim()||`Photo added ${TODAY}`; const reader=new FileReader(); reader.onload=()=>{const r=serviceRecords.find(x=>x.title===t); r.photos.unshift({id:'photo-'+Date.now(),src:reader.result,caption:cap,date:TODAY}); r.lastUpdated=TODAY; saveAll(); renderMetrics(); renderOperations();}; reader.readAsDataURL(file);});
       root.querySelectorAll('[data-remove-photo]').forEach(btn=>btn.onclick=()=>{const t=decodeURIComponent(btn.dataset.removePhoto), id=btn.dataset.photoId; const r=serviceRecords.find(x=>x.title===t); r.photos=r.photos.filter(p=>p.id!==id); saveAll(); renderMetrics(); renderOperations();});
@@ -407,7 +472,7 @@ const pmCadence = [
       const el=document.getElementById('tasks');
       el.innerHTML=`<div class="grid grid-2"><div class="card"><div class="row space"><div><h2>Add one-off task</h2><div class="tiny">Use this for urgent fixes, parts runs, photos, vendor follow-up, or non-recurring jobs.</div></div><button id="exp-task" class="secondary">Export tasks CSV</button></div><div class="stack mt"><input id="new-title" placeholder="Task title"><select id="new-machine"><option>General / Floor-wide</option>${games.map(g=>`<option>${g.title}</option>`).join('')}</select><div class="row"><select id="new-tech">${TECHNICIANS.map(t=>`<option>${t}</option>`).join('')}</select><select id="new-sev">${SEVERITY_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select></div><input id="new-date" type="date" value="${TODAY}"><input id="new-checklist" placeholder="Checklist items separated by commas"><textarea id="new-notes" placeholder="Notes, context, or parts pickup details"></textarea><button id="add-task" class="primary">Add one-off task</button></div></div><div class="card"><h2>Task board</h2><div class="controls"><input id="task-q" placeholder="Search task, machine, notes, or tech"><select id="task-status"><option>All</option>${TASK_STATUS_OPTIONS.map(s=>`<option>${s}</option>`).join('')}</select><select id="task-cat"><option>All</option>${[...new Set(games.map(g=>g.category))].sort().map(c=>`<option>${c}</option>`).join('')}</select><select id="task-owner"><option>All owners</option>${TECHNICIANS.map(t=>`<option>${t}</option>`).join('')}</select><select id="task-date"><option>All dates</option><option>Overdue only</option><option>Due in 3 days</option></select></div><div id="task-list" class="stack"></div></div></div>`;
       el.querySelector('#exp-task').onclick=exportTaskCsv;
-      el.querySelector('#add-task').onclick=()=>{const title=el.querySelector('#new-title').value.trim(); if(!title) return; oneOffTasks.unshift({id:'task-'+Date.now(),title,machine:el.querySelector('#new-machine').value,technician:el.querySelector('#new-tech').value,dueDate:el.querySelector('#new-date').value,severity:el.querySelector('#new-sev').value,status:'Open',notes:el.querySelector('#new-notes').value.trim(),source:'Manual task',photos:[],checklist:el.querySelector('#new-checklist').value.split(',').map(s=>s.trim()).filter(Boolean),createdDate:TODAY}); saveAll(); renderMetrics(); renderDashboard(); renderTasks(); renderCalendar();};
+      el.querySelector('#add-task').onclick=()=>{const title=el.querySelector('#new-title').value.trim(); if(!title) return; oneOffTasks.unshift({id:'task-'+Date.now(),title,machine:el.querySelector('#new-machine').value,technician:el.querySelector('#new-tech').value,dueDate:el.querySelector('#new-date').value,severity:el.querySelector('#new-sev').value,status:'Open',notes:el.querySelector('#new-notes').value.trim(),source:'Manual task',photos:[],checklist:el.querySelector('#new-checklist').value.split(',').map(s=>s.trim()).filter(Boolean),createdDate:TODAY,assignedWorkers:[]}); saveAll(); renderMetrics(); renderDashboard(); renderTasks(); renderCalendar();};
       const q=el.querySelector('#task-q'), st=el.querySelector('#task-status'), cat=el.querySelector('#task-cat'), owner=el.querySelector('#task-owner'), dateFilter=el.querySelector('#task-date'), list=el.querySelector('#task-list');
       const draw=()=>{
         const term=q.value.toLowerCase();
@@ -419,7 +484,7 @@ const pmCadence = [
 
     function bindTaskActions(root){
       root.querySelectorAll('select[data-task-field]').forEach(s=>s.onchange=()=>{const t=oneOffTasks.find(x=>x.id===s.dataset.id); t[s.dataset.taskField]=s.value; saveAll(); renderMetrics(); renderDashboard();});
-      root.querySelectorAll('[data-task-complete]').forEach(b=>b.onclick=()=>{const t=oneOffTasks.find(x=>x.id===b.dataset.taskComplete); t.status='Complete'; saveAll(); renderMetrics(); renderDashboard(); renderTasks(); renderCalendar(); renderReports();});
+      root.querySelectorAll('[data-task-complete]').forEach(b=>b.onclick=()=>{const t=oneOffTasks.find(x=>x.id===b.dataset.taskComplete); t.status='Complete'; if(t.machine&&t.machine!=='General / Floor-wide') recordAssetHistoryOnce(t.machine,{date:TODAY,type:'task',status:'Complete',note:t.title,by:t.technician},`task-complete-${t.id}`); saveAll(); renderMetrics(); renderDashboard(); renderTasks(); renderCalendar(); renderReports();});
       root.querySelectorAll('[data-task-notes]').forEach(a=>a.onchange=()=>{const t=oneOffTasks.find(x=>x.id===a.dataset.taskNotes); t.notes=a.value; saveAll();});
       root.querySelectorAll('[data-task-upload]').forEach(input=>input.onchange=(e)=>{const id=input.dataset.taskUpload; const task=oneOffTasks.find(x=>x.id===id); const file=e.target.files[0]; if(!file) return; const cap=root.querySelector(`[data-task-caption="${id}"]`).value.trim()||`Task photo added ${TODAY}`; const reader=new FileReader(); reader.onload=()=>{task.photos=task.photos||[]; task.photos.unshift({id:'photo-'+Date.now(),src:reader.result,caption:cap,date:TODAY}); saveAll(); renderMetrics(); renderTasks();}; reader.readAsDataURL(file);});
       root.querySelectorAll('[data-task-remove-photo]').forEach(btn=>btn.onclick=()=>{const task=oneOffTasks.find(x=>x.id===btn.dataset.taskRemovePhoto); task.photos=(task.photos||[]).filter(p=>p.id!==btn.dataset.photoId); saveAll(); renderMetrics(); renderTasks();});
@@ -469,6 +534,33 @@ const pmCadence = [
       el.innerHTML=`<div class="grid grid-3">${['Day 1','Day 2','Day 3'].map(day=>`<div class="card"><h2>${day}</h2><div class="stack">${catchUpPlan.filter(x=>x.day===day).map(i=>`<div class="subtle"><strong>${i.title}</strong><div class="tiny mt">${i.scope}</div><div class="tiny mt">${i.detail}</div></div>`).join('')}</div></div>`).join('')}</div>`
     }
 
+    function openAssetModal(title){
+      let modal=document.getElementById('asset-detail-modal');
+      if(!modal){
+        modal=document.createElement('div');
+        modal.id='asset-detail-modal';
+        modal.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50;padding:20px;overflow:auto';
+        document.body.appendChild(modal);
+      }
+      const game=games.find(g=>g.title===title); const rec=serviceRecords.find(r=>r.title===title);
+      const linked=oneOffTasks.filter(t=>norm(t.machine)===norm(title));
+      const history=(assetHistory[title]||[]).slice(0,8);
+      modal.innerHTML=`<div class="card" style="max-width:1000px;margin:0 auto"><div class="row space"><h2>${title} · asset detail</h2><button id="close-asset-modal" class="secondary small">Close</button></div><div class="grid grid-2"><div class="subtle"><h3>Basic info</h3><div class="tiny">${game.manufacturer} · ${game.category} · Qty ${game.qty}</div></div><div class="subtle"><h3>Documentation/manual/support</h3><div class="tiny">${game.manual?`<a href="${game.manual}" target="_blank">Manual link</a>`:'Manual missing'}</div><div class="tiny">${game.support?`<a href="${game.support}" target="_blank">Support link</a>`:'Support missing'}</div></div><div class="subtle"><h3>Status / urgency / PM</h3><div class="tiny">${rec?.status||'Open'} · ${rec?.severity||'Low'} · Next PM ${rec?.nextPm||''}</div></div><div class="subtle"><h3>Assigned workers</h3><div class="tiny">${(rec?.assignedWorkers||[]).join(', ')||rec?.technician||'Unassigned'}</div></div><div class="subtle"><h3>Current issues</h3><div class="tiny">${rec?.issue||'None'}</div></div><div class="subtle"><h3>Service notes</h3><div class="tiny">${rec?.notes||'No notes'}</div></div><div class="subtle"><h3>Operation history</h3><div class="tiny">${(rec?.issueHistory||[]).slice(0,5).map(h=>h.date+' · '+(h.note||'')).join('<br>')||'No history'}</div></div><div class="subtle"><h3>Task history</h3><div class="tiny">${linked.map(t=>t.title+' · '+t.status).join('<br>')||'No linked tasks'}</div></div><div class="subtle"><h3>Photos/evidence</h3><div class="tiny">Operations ${(rec?.photos||[]).length} · Tasks ${linked.reduce((n,t)=>n+((t.photos||[]).length),0)}</div></div><div class="subtle"><h3>Vendor references</h3><div class="tiny">${contacts.filter(c=>norm(c.manufacturer).includes(norm(game.manufacturer).split('/')[0])).map(c=>c.contact).join(', ')||'No mapped contact'}</div></div></div><div class="subtle mt"><h3>Asset history log</h3><div class="stack">${history.map(h=>`<div class="history-item"><div class="tiny">${h.date} · ${h.type} · ${h.status}</div><div>${escapeHtml(h.note||'')}</div></div>`).join('')||'<div class="tiny">No entries yet.</div>'}</div></div></div>`;
+      modal.querySelector('#close-asset-modal').onclick=()=>modal.remove();
+    }
+
+    function renderAdmin(){
+      const el=document.getElementById('admin');
+      el.innerHTML=`<div class="card"><h2>Admin (browser-local only)</h2><div class="tiny">This is not server security. It only gates tools on this browser.</div><div class="grid grid-2 mt"><div class="subtle"><h3>Workers</h3><div id="worker-list" class="stack"></div><div class="row mt"><div><label for="worker-name">Worker name</label><input id="worker-name"></div><div><label for="worker-role">Role</label><select id="worker-role"><option>Manager</option><option>Assistant</option><option>Lead</option><option>Staff</option></select></div><button id="add-worker" class="primary small">Add worker</button></div></div><div class="subtle"><h3>Admin config</h3><label for="admin-pin">Local admin PIN</label><input id="admin-pin" value="${adminConfig.pin||''}"><div class="row mt"><button id="save-admin-pin" class="secondary small">Save PIN</button><button id="export-full" class="secondary small">Export full backup</button><label class="upload-label small">Import backup<input id="import-full" class="hide" type="file" accept="application/json"></label></div></div></div></div>`;
+      const draw=()=>{el.querySelector('#worker-list').innerHTML=workers.map((w,i)=>`<div class="history-item row space"><span>${w.name} · ${w.role}</span><button class="secondary small" data-del-worker="${i}">Remove</button></div>`).join('')||'<div class="tiny">No workers yet.</div>';};
+      draw();
+      el.querySelector('#add-worker').onclick=()=>{const name=el.querySelector('#worker-name').value.trim(); if(!name) return; workers.push({name,role:el.querySelector('#worker-role').value}); saveAll(); draw();};
+      el.querySelector('#worker-list').onclick=(e)=>{const i=e.target.dataset.delWorker; if(i===undefined) return; workers.splice(Number(i),1); saveAll(); draw();};
+      el.querySelector('#save-admin-pin').onclick=()=>{adminConfig.pin=el.querySelector('#admin-pin').value.trim(); saveAll();};
+      el.querySelector('#export-full').onclick=exportJsonBackup;
+      el.querySelector('#import-full').onchange=importJsonBackup;
+    }
+
     function exportMaintenanceCsv(){
       const headers=['Title','Manufacturer','Category','Qty','Documentation Status','Priority','Severity','Technician','Service Status','Last Service','Next PM','Issue','Parts Needed','Notes','Accountability','Verified By','Issue History Count','Photo Count','Manual URL','Support URL'];
       const rows=serviceRecords.map(r=>{const g=gameByTitle(r.title); return [r.title,g?.manufacturer||'',g?.category||'',g?.qty||'',g?.status||'',r.priority,r.severity,r.technician,r.status,r.lastService,r.nextPm,r.issue,r.partsNeeded,r.notes,r.accountability,r.verifiedBy,r.issueHistory.length,r.photos.length,g?.manual||'',g?.support||'']});
@@ -485,96 +577,20 @@ const pmCadence = [
       const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url);
     }
     function exportJsonBackup(){
-      const payload={exportedAt:new Date().toISOString(), serviceRecords, oneOffTasks, handoffLog, contacts};
+      const payload={exportedAt:new Date().toISOString(), serviceRecords, oneOffTasks, handoffLog, contacts, workers, adminConfig, assetHistory};
       const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='play-wow-maintenance-backup.json'; a.click(); URL.revokeObjectURL(url);
     }
     function importJsonBackup(e){
-      const file=e.target.files?.[0]; if(!file) return; const reader=new FileReader(); reader.onload=()=>{try{const data=JSON.parse(reader.result); if(data.serviceRecords) serviceRecords=data.serviceRecords; if(data.oneOffTasks) oneOffTasks=data.oneOffTasks; if(data.handoffLog) handoffLog=data.handoffLog; if(data.contacts) contacts=data.contacts; saveAll(); renderAll();}catch(err){alert('Could not import JSON backup.')}}; reader.readAsText(file);
+      const file=e.target.files?.[0]; if(!file) return; const reader=new FileReader(); reader.onload=()=>{try{const data=JSON.parse(reader.result); if(data.serviceRecords) serviceRecords=data.serviceRecords; if(data.oneOffTasks||data.tasks) oneOffTasks=data.oneOffTasks||data.tasks; if(data.handoffLog) handoffLog=data.handoffLog; if(data.contacts) contacts=data.contacts; if(data.workers) workers=normalizeWorkers(data.workers); if(data.adminConfig) adminConfig=data.adminConfig; if(data.assetHistory) assetHistory=data.assetHistory; ensureMigrations(); saveAll(); renderAll();}catch(err){alert('Could not import JSON backup.')}}; reader.readAsText(file);
     }
 
     function renderAll(){
-      renderTabs(); renderMetrics(); renderDashboard(); renderInventory(); renderOperations(); renderTasks(); renderManuals(); renderContacts(); renderCalendar(); renderReports(); renderCatchup();
+      renderTabs(); renderMetrics(); renderDashboard(); renderInventory(); renderOperations(); renderTasks(); renderManuals(); renderContacts(); renderCalendar(); renderReports(); renderCatchup(); renderAdmin();
     }
 
+    ensureMigrations();
+    saveAll();
     renderAll();
-  </script>
-  <script>
-    (function(){
-      const EXTRA_KEYS={workers:'wow-technicade-workers-v1',admin:'wow-technicade-admin-v1',assetHistory:'wow-technicade-asset-history-v1'};
-      const safeLoad=(k,f)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):f}catch{return f}};
-      const safeSave=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}};
-      const norm=s=>String(s||'').trim().toLowerCase();
-      let workers=safeLoad(EXTRA_KEYS.workers,[]);
-      let adminConfig=safeLoad(EXTRA_KEYS.admin,{pin:'1234',notice:'Client-side only'});
-      let assetHistory=safeLoad(EXTRA_KEYS.assetHistory,{});
-
-      function ensureMigrations(){
-        if(!Array.isArray(window.serviceRecords)||!Array.isArray(window.oneOffTasks)||!Array.isArray(window.games)) return;
-        if(!workers.length&&Array.isArray(window.TECHNICIANS)) workers=window.TECHNICIANS.filter(t=>t&&t!=='Unassigned').map(n=>({name:n,role:n==='Manager'?'Manager':'Staff'}));
-        window.serviceRecords=window.serviceRecords.map(r=>({...r,assignedWorkers:Array.isArray(r.assignedWorkers)?r.assignedWorkers:(r.technician&&r.technician!=='Unassigned'?[r.technician]:[]),photos:Array.isArray(r.photos)?r.photos:[],issueHistory:Array.isArray(r.issueHistory)?r.issueHistory:[],history:Array.isArray(r.history)?r.history:[]}));
-        window.oneOffTasks=window.oneOffTasks.map(t=>({...t,assignedWorkers:Array.isArray(t.assignedWorkers)?t.assignedWorkers:(t.technician&&t.technician!=='Unassigned'?[t.technician]:[]),photos:Array.isArray(t.photos)?t.photos:[],checklist:Array.isArray(t.checklist)?t.checklist:[]}));
-        window.games.forEach(g=>{assetHistory[g.title]=assetHistory[g.title]||[]});
-        safeSave(EXTRA_KEYS.workers,workers); safeSave(EXTRA_KEYS.admin,adminConfig); safeSave(EXTRA_KEYS.assetHistory,assetHistory);
-      }
-
-      function injectAdminView(){
-        const tabs=document.getElementById('tabs');
-        if(!tabs||tabs.querySelector('[data-tab="admin"]')) return;
-        const btn=document.createElement('button'); btn.className='tab'; btn.dataset.tab='admin'; btn.textContent='admin';
-        btn.onclick=()=>window.showTab('admin');
-        tabs.appendChild(btn);
-        const sec=document.createElement('section'); sec.id='admin'; sec.className='section';
-        sec.innerHTML=`<div class="card"><h2>Admin (browser-local only)</h2><div class="tiny">This is not server security. It only gates tools on this browser.</div><div class="grid grid-2 mt"><div class="subtle"><h3>Workers</h3><div id="worker-list" class="stack"></div><div class="row mt"><div><label for="worker-name">Worker name</label><input id="worker-name"></div><div><label for="worker-role">Role</label><select id="worker-role"><option>Manager</option><option>Assistant</option><option>Lead</option><option>Staff</option></select></div><button id="add-worker" class="primary small">Add worker</button></div></div><div class="subtle"><h3>Admin config</h3><label for="admin-pin">Local admin PIN</label><input id="admin-pin" value="${adminConfig.pin||''}"><div class="row mt"><button id="save-admin-pin" class="secondary small">Save PIN</button><button id="export-full" class="secondary small">Export full backup</button><label class="upload-label small">Import backup<input id="import-full" class="hide" type="file" accept="application/json"></label></div></div></div></div>`;
-        document.querySelector('.wrap').appendChild(sec);
-        const drawWorkers=()=>{const wl=sec.querySelector('#worker-list'); wl.innerHTML=workers.map((w,i)=>`<div class="history-item row space"><span>${w.name} · ${w.role}</span><button class="secondary small" data-del="${i}">Remove</button></div>`).join('')||'<div class="tiny">No workers yet.</div>'; wl.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{workers.splice(Number(b.dataset.del),1); safeSave(EXTRA_KEYS.workers,workers); drawWorkers();});};
-        drawWorkers();
-        sec.querySelector('#add-worker').onclick=()=>{const name=sec.querySelector('#worker-name').value.trim(); if(!name) return; workers.push({name,role:sec.querySelector('#worker-role').value}); safeSave(EXTRA_KEYS.workers,workers); drawWorkers();};
-        sec.querySelector('#save-admin-pin').onclick=()=>{adminConfig.pin=sec.querySelector('#admin-pin').value.trim(); safeSave(EXTRA_KEYS.admin,adminConfig);};
-        sec.querySelector('#export-full').onclick=()=>window.exportJsonBackup?.();
-        sec.querySelector('#import-full').onchange=e=>window.importJsonBackup?.(e);
-      }
-
-      function renameInventoryToAssets(){
-        document.querySelectorAll('#tabs .tab').forEach(t=>{if(t.dataset.tab==='inventory') t.textContent='assets'});
-        const h2=document.querySelector('#inventory h2'); if(h2&&h2.textContent.trim()==='Inventory') h2.textContent='Assets';
-      }
-
-      function injectAssetDetailModal(){
-        if(document.getElementById('asset-detail-modal')) return;
-        const modal=document.createElement('div');
-        modal.id='asset-detail-modal';
-        modal.className='hide';
-        modal.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50;padding:20px;overflow:auto';
-        document.body.appendChild(modal);
-        document.addEventListener('click',(e)=>{
-          const card=e.target.closest('#inventory .item');
-          if(!card) return;
-          const title=card.querySelector('h3')?.textContent?.trim();
-          const game=window.games?.find(g=>g.title===title); const rec=window.serviceRecords?.find(r=>r.title===title);
-          if(!game) return;
-          modal.classList.remove('hide');
-          const linked=(window.oneOffTasks||[]).filter(t=>norm(t.machine)===norm(title));
-          modal.innerHTML=`<div class="card" style="max-width:1000px;margin:0 auto"><div class="row space"><h2>${title} · asset detail</h2><button id="close-asset-modal" class="secondary small">Close</button></div><div class="grid grid-2"><div class="subtle"><h3>Basic info</h3><div class="tiny">${game.manufacturer} · ${game.category} · Qty ${game.qty}</div></div><div class="subtle"><h3>Documentation/manual/support</h3><div class="tiny">${game.manual?`<a href="${game.manual}" target="_blank">Manual link</a>`:'Manual missing'}</div><div class="tiny">${game.support?`<a href="${game.support}" target="_blank">Support link</a>`:'Support missing'}</div></div><div class="subtle"><h3>Status / urgency / PM</h3><div class="tiny">${rec?.status||'Open'} · ${rec?.severity||'Low'} · Next PM ${rec?.nextPm||''}</div></div><div class="subtle"><h3>Assigned worker(s)</h3><div class="tiny">${(rec?.assignedWorkers||[]).join(', ')||rec?.technician||'Unassigned'}</div></div><div class="subtle"><h3>Current issues</h3><div class="tiny">${rec?.issue||'None'}</div></div><div class="subtle"><h3>Service notes</h3><div class="tiny">${rec?.notes||'No notes'}</div></div><div class="subtle"><h3>Operation history</h3><div class="tiny">${(rec?.issueHistory||[]).slice(-5).map(h=>h.date+' · '+(h.note||'')).join('<br>')||'No history'}</div></div><div class="subtle"><h3>Task history</h3><div class="tiny">${linked.map(t=>t.title+' · '+t.status).join('<br>')||'No linked tasks'}</div></div><div class="subtle"><h3>Photos/evidence</h3><div class="tiny">Operations ${(rec?.photos||[]).length} · Tasks ${linked.reduce((n,t)=>n+((t.photos||[]).length),0)}</div></div><div class="subtle"><h3>Vendor/support references</h3><div class="tiny">${(window.contacts||[]).filter(c=>norm(c.manufacturer).includes(norm(game.manufacturer).split('/')[0])).map(c=>c.contact).join(', ')||'No mapped contact'}</div></div></div></div>`;
-          modal.querySelector('#close-asset-modal').onclick=()=>modal.classList.add('hide');
-        });
-      }
-
-      const originalExport=window.exportJsonBackup;
-      window.exportJsonBackup=function(){
-        if(!originalExport) return;
-        const payload={exportedAt:new Date().toISOString(),serviceRecords:window.serviceRecords,oneOffTasks:window.oneOffTasks,handoffLog:window.handoffLog,contacts:window.contacts,workers,adminConfig,assetHistory};
-        const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='play-wow-maintenance-backup.json'; a.click(); URL.revokeObjectURL(url);
-      };
-      window.importJsonBackup=function(e){
-        const file=e.target.files?.[0]; if(!file) return; const r=new FileReader(); r.onload=()=>{try{const d=JSON.parse(r.result); if(d.serviceRecords) window.serviceRecords=d.serviceRecords; if(d.oneOffTasks||d.tasks) window.oneOffTasks=d.oneOffTasks||d.tasks; if(d.handoffLog) window.handoffLog=d.handoffLog; if(d.contacts) window.contacts=d.contacts; if(d.workers) workers=d.workers; if(d.adminConfig) adminConfig=d.adminConfig; if(d.assetHistory) assetHistory=d.assetHistory; ensureMigrations(); window.saveAll?.(); safeSave(EXTRA_KEYS.workers,workers); safeSave(EXTRA_KEYS.admin,adminConfig); safeSave(EXTRA_KEYS.assetHistory,assetHistory); window.renderAll?.(); setupEnhancements();}catch{alert('Could not import JSON backup.')}}; r.readAsText(file);
-      };
-
-      function setupEnhancements(){ renameInventoryToAssets(); injectAdminView(); injectAssetDetailModal(); }
-      ensureMigrations();
-      setupEnhancements();
-      const originalRenderAll=window.renderAll;
-      if(originalRenderAll){ window.renderAll=function(){ originalRenderAll(); setupEnhancements(); }; }
-    })();
   </script>
 </body>
 </html>
