@@ -57,12 +57,30 @@ export async function saveUserProfile(uid, profile, actor) {
   await logAudit({ action: before ? 'update' : 'create', entityType: 'users', entityId: uid, summary: 'user profile changed', user: actor || { uid }, before, after: profile });
 }
 
+const defaultAiSettings = {
+  aiEnabled: false,
+  aiAutoAttach: false,
+  aiUseInternalKnowledge: true,
+  aiUseWebSearch: false,
+  aiAskFollowups: true,
+  aiModel: 'gpt-4.1-mini',
+  aiMaxWebSources: 3,
+  aiConfidenceThreshold: 0.45,
+  aiAllowManualRerun: true,
+  aiSaveSuccessfulFixesToLibraryDefault: false,
+  aiShortResponseMode: true,
+  aiVerboseManagerMode: false
+};
+
 export async function getAppSettings() {
-  const ref = doc(db, C.appSettings, 'global');
-  const snap = await getDoc(ref);
-  return snap.exists() ? snap.data() : { aiEnabled: false, aiAutoAttach: false, aiUseInternalKnowledge: true, aiUseWebSearch: false, aiAskFollowups: true };
+  const aiRef = doc(db, C.appSettings, 'ai');
+  const aiSnap = await getDoc(aiRef);
+  if (aiSnap.exists()) return { ...defaultAiSettings, ...aiSnap.data() };
+  const legacyRef = doc(db, C.appSettings, 'global');
+  const legacySnap = await getDoc(legacyRef);
+  return legacySnap.exists() ? { ...defaultAiSettings, ...legacySnap.data() } : defaultAiSettings;
 }
 
 export async function saveAppSettings(settings, user) {
-  await upsertEntity('appSettings', 'global', settings, user);
+  await upsertEntity('appSettings', 'ai', settings, user);
 }

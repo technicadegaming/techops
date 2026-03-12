@@ -130,3 +130,63 @@ Admin settings scaffold includes:
 - Secure backend endpoint for AI task troubleshooting suggestions.
 - Task-linked AI run generation + persistence in `taskAiRuns`.
 - Prompt orchestration, internal knowledge retrieval, and optional web search pipeline.
+
+## Phase 2A AI orchestration (server-side)
+
+Phase 2A adds secure Firebase Functions orchestration for AI troubleshooting:
+- `analyzeTaskTroubleshooting` (manual run)
+- `answerTaskFollowup` (submit follow-up answers + continue run)
+- `regenerateTaskTroubleshooting` (manual rerun)
+- `fetchWebContextForTask` (abstraction endpoint)
+- `saveTaskFixToTroubleshootingLibrary` (lead/manager/admin action)
+- `onTaskCreatedQueueAi` (automatic run on task creation when enabled)
+
+### Firebase Functions setup
+
+1. Install functions dependencies:
+   ```bash
+   cd functions
+   npm install
+   ```
+2. Set OpenAI secret (required by AI callables):
+   ```bash
+   firebase functions:secrets:set OPENAI_API_KEY
+   ```
+3. Deploy functions:
+   ```bash
+   firebase deploy --only functions
+   ```
+
+> Never place OpenAI API keys in frontend code. The key is read server-side from Firebase Functions secrets.
+
+### Local emulator testing
+
+```bash
+firebase emulators:start --only functions,firestore,auth
+```
+
+Then run frontend against emulator-configured Firebase project and invoke task AI actions from the Operations tab.
+
+### AI auto-run behavior
+
+- On task create, backend trigger `onTaskCreatedQueueAi` starts pipeline when `appSettings/ai.aiEnabled = true`.
+- Pipeline stages: context gathering, optional follow-up questions, optional web enrichment, structured analysis generation, persistence.
+- Failures are captured in `taskAiRuns` as `failed`, without blocking task creation.
+
+### Follow-up question workflow
+
+- If task description is weak and `aiAskFollowups` is enabled, AI run status becomes `followup_required`.
+- Questions are stored in `taskAiRuns.followupQuestions` and `taskAiFollowups`.
+- Assigned users can submit answers; backend continues orchestration via `answerTaskFollowup`.
+
+### New/expanded data documents
+
+- `appSettings/ai` expanded with:
+  - `aiEnabled`, `aiAutoAttach`, `aiUseInternalKnowledge`, `aiUseWebSearch`, `aiAskFollowups`
+  - `aiModel`, `aiMaxWebSources`, `aiConfidenceThreshold`
+  - `aiAllowManualRerun`, `aiSaveSuccessfulFixesToLibraryDefault`
+  - `aiShortResponseMode`, `aiVerboseManagerMode`
+- `taskAiRuns`
+- `taskAiFollowups`
+- `troubleshootingLibrary`
+- `aiWebContextCache` (optional cache)

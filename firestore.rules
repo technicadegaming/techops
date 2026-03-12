@@ -25,7 +25,7 @@ service cloud.firestore {
 
     match /appSettings/{docId} {
       allow read: if isStaffPlus();
-      allow write: if isAdmin();
+      allow write: if isManagerPlus();
     }
 
     match /auditLogs/{docId} {

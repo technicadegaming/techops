@@ -1,5 +1,9 @@
 import { Roles, canChangeAISettings, canManageBackups, canManageUsers, isAdmin } from './roles.js';
 
+const aiBooleanFields = ['aiEnabled', 'aiAutoAttach', 'aiUseInternalKnowledge', 'aiUseWebSearch', 'aiAskFollowups', 'aiAllowManualRerun', 'aiSaveSuccessfulFixesToLibraryDefault', 'aiShortResponseMode', 'aiVerboseManagerMode'];
+const aiNumericFields = ['aiMaxWebSources', 'aiConfidenceThreshold'];
+const aiTextFields = ['aiModel'];
+
 export function renderAdmin(el, state, actions) {
   if (!isAdmin(state.profile)) {
     el.innerHTML = '<h2>Admin</h2><p class="tiny">Admin access required.</p>';
@@ -34,9 +38,11 @@ export function renderAdmin(el, state, actions) {
       </section>
 
       <section class="item">
-        <h3>AI settings scaffold</h3>
+        <h3>AI settings</h3>
         <form id="aiSettingsForm" class="grid">
-          ${['aiEnabled','aiAutoAttach','aiUseInternalKnowledge','aiUseWebSearch','aiAskFollowups'].map((k) => `<label><input type="checkbox" name="${k}" ${state.settings[k] ? 'checked' : ''} ${canChangeAISettings(state.profile) ? '' : 'disabled'} /> ${k}</label>`).join('')}
+          ${aiBooleanFields.map((k) => `<label><input type="checkbox" name="${k}" ${state.settings[k] ? 'checked' : ''} ${canChangeAISettings(state.profile) ? '' : 'disabled'} /> ${k}</label>`).join('')}
+          ${aiTextFields.map((k) => `<label>${k}<input name="${k}" value="${state.settings[k] || ''}" ${canChangeAISettings(state.profile) ? '' : 'disabled'} /></label>`).join('')}
+          ${aiNumericFields.map((k) => `<label>${k}<input type="number" step="0.01" name="${k}" value="${state.settings[k] ?? ''}" ${canChangeAISettings(state.profile) ? '' : 'disabled'} /></label>`).join('')}
           <button ${canChangeAISettings(state.profile) ? '' : 'disabled'}>Save AI settings</button>
         </form>
       </section>
@@ -78,7 +84,12 @@ export function renderAdmin(el, state, actions) {
   el.querySelector('#aiSettingsForm')?.addEventListener('submit', (e) => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    const payload = Object.fromEntries(['aiEnabled','aiAutoAttach','aiUseInternalKnowledge','aiUseWebSearch','aiAskFollowups'].map((k) => [k, fd.get(k) === 'on']));
+    const payload = {
+      ...Object.fromEntries(aiBooleanFields.map((k) => [k, fd.get(k) === 'on'])),
+      aiModel: fd.get('aiModel') || 'gpt-4.1-mini',
+      aiMaxWebSources: Number(fd.get('aiMaxWebSources') || 3),
+      aiConfidenceThreshold: Number(fd.get('aiConfidenceThreshold') || 0.45)
+    };
     actions.saveAISettings(payload);
   });
 

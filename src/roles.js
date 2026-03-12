@@ -18,4 +18,7 @@ export const canManageBackups = (u) => isAdmin(u);
 export const canEditAssets = (u) => isLead(u);
 export const canEditTasks = (u) => isLead(u);
 export const canCloseTasks = (u) => isLead(u);
-export const canChangeAISettings = (u) => isAdmin(u);
+export const canChangeAISettings = (u) => isManager(u);
+export const canRunAiTroubleshooting = (u) => isLead(u);
+export const canAnswerAiFollowups = (u) => isStaff(u);
+export const canSaveFixToLibrary = (u) => isLead(u);
