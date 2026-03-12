@@ -498,5 +498,83 @@ const pmCadence = [
 
     renderAll();
   </script>
+  <script>
+    (function(){
+      const EXTRA_KEYS={workers:'wow-technicade-workers-v1',admin:'wow-technicade-admin-v1',assetHistory:'wow-technicade-asset-history-v1'};
+      const safeLoad=(k,f)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):f}catch{return f}};
+      const safeSave=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}};
+      const norm=s=>String(s||'').trim().toLowerCase();
+      let workers=safeLoad(EXTRA_KEYS.workers,[]);
+      let adminConfig=safeLoad(EXTRA_KEYS.admin,{pin:'1234',notice:'Client-side only'});
+      let assetHistory=safeLoad(EXTRA_KEYS.assetHistory,{});
+
+      function ensureMigrations(){
+        if(!Array.isArray(window.serviceRecords)||!Array.isArray(window.oneOffTasks)||!Array.isArray(window.games)) return;
+        if(!workers.length&&Array.isArray(window.TECHNICIANS)) workers=window.TECHNICIANS.filter(t=>t&&t!=='Unassigned').map(n=>({name:n,role:n==='Manager'?'Manager':'Staff'}));
+        window.serviceRecords=window.serviceRecords.map(r=>({...r,assignedWorkers:Array.isArray(r.assignedWorkers)?r.assignedWorkers:(r.technician&&r.technician!=='Unassigned'?[r.technician]:[]),photos:Array.isArray(r.photos)?r.photos:[],issueHistory:Array.isArray(r.issueHistory)?r.issueHistory:[],history:Array.isArray(r.history)?r.history:[]}));
+        window.oneOffTasks=window.oneOffTasks.map(t=>({...t,assignedWorkers:Array.isArray(t.assignedWorkers)?t.assignedWorkers:(t.technician&&t.technician!=='Unassigned'?[t.technician]:[]),photos:Array.isArray(t.photos)?t.photos:[],checklist:Array.isArray(t.checklist)?t.checklist:[]}));
+        window.games.forEach(g=>{assetHistory[g.title]=assetHistory[g.title]||[]});
+        safeSave(EXTRA_KEYS.workers,workers); safeSave(EXTRA_KEYS.admin,adminConfig); safeSave(EXTRA_KEYS.assetHistory,assetHistory);
+      }
+
+      function injectAdminView(){
+        const tabs=document.getElementById('tabs');
+        if(!tabs||tabs.querySelector('[data-tab="admin"]')) return;
+        const btn=document.createElement('button'); btn.className='tab'; btn.dataset.tab='admin'; btn.textContent='admin';
+        btn.onclick=()=>window.showTab('admin');
+        tabs.appendChild(btn);
+        const sec=document.createElement('section'); sec.id='admin'; sec.className='section';
+        sec.innerHTML=`<div class="card"><h2>Admin (browser-local only)</h2><div class="tiny">This is not server security. It only gates tools on this browser.</div><div class="grid grid-2 mt"><div class="subtle"><h3>Workers</h3><div id="worker-list" class="stack"></div><div class="row mt"><div><label for="worker-name">Worker name</label><input id="worker-name"></div><div><label for="worker-role">Role</label><select id="worker-role"><option>Manager</option><option>Assistant</option><option>Lead</option><option>Staff</option></select></div><button id="add-worker" class="primary small">Add worker</button></div></div><div class="subtle"><h3>Admin config</h3><label for="admin-pin">Local admin PIN</label><input id="admin-pin" value="${adminConfig.pin||''}"><div class="row mt"><button id="save-admin-pin" class="secondary small">Save PIN</button><button id="export-full" class="secondary small">Export full backup</button><label class="upload-label small">Import backup<input id="import-full" class="hide" type="file" accept="application/json"></label></div></div></div></div>`;
+        document.querySelector('.wrap').appendChild(sec);
+        const drawWorkers=()=>{const wl=sec.querySelector('#worker-list'); wl.innerHTML=workers.map((w,i)=>`<div class="history-item row space"><span>${w.name} · ${w.role}</span><button class="secondary small" data-del="${i}">Remove</button></div>`).join('')||'<div class="tiny">No workers yet.</div>'; wl.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{workers.splice(Number(b.dataset.del),1); safeSave(EXTRA_KEYS.workers,workers); drawWorkers();});};
+        drawWorkers();
+        sec.querySelector('#add-worker').onclick=()=>{const name=sec.querySelector('#worker-name').value.trim(); if(!name) return; workers.push({name,role:sec.querySelector('#worker-role').value}); safeSave(EXTRA_KEYS.workers,workers); drawWorkers();};
+        sec.querySelector('#save-admin-pin').onclick=()=>{adminConfig.pin=sec.querySelector('#admin-pin').value.trim(); safeSave(EXTRA_KEYS.admin,adminConfig);};
+        sec.querySelector('#export-full').onclick=()=>window.exportJsonBackup?.();
+        sec.querySelector('#import-full').onchange=e=>window.importJsonBackup?.(e);
+      }
+
+      function renameInventoryToAssets(){
+        document.querySelectorAll('#tabs .tab').forEach(t=>{if(t.dataset.tab==='inventory') t.textContent='assets'});
+        const h2=document.querySelector('#inventory h2'); if(h2&&h2.textContent.trim()==='Inventory') h2.textContent='Assets';
+      }
+
+      function injectAssetDetailModal(){
+        if(document.getElementById('asset-detail-modal')) return;
+        const modal=document.createElement('div');
+        modal.id='asset-detail-modal';
+        modal.className='hide';
+        modal.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50;padding:20px;overflow:auto';
+        document.body.appendChild(modal);
+        document.addEventListener('click',(e)=>{
+          const card=e.target.closest('#inventory .item');
+          if(!card) return;
+          const title=card.querySelector('h3')?.textContent?.trim();
+          const game=window.games?.find(g=>g.title===title); const rec=window.serviceRecords?.find(r=>r.title===title);
+          if(!game) return;
+          modal.classList.remove('hide');
+          const linked=(window.oneOffTasks||[]).filter(t=>norm(t.machine)===norm(title));
+          modal.innerHTML=`<div class="card" style="max-width:1000px;margin:0 auto"><div class="row space"><h2>${title} · asset detail</h2><button id="close-asset-modal" class="secondary small">Close</button></div><div class="grid grid-2"><div class="subtle"><h3>Basic info</h3><div class="tiny">${game.manufacturer} · ${game.category} · Qty ${game.qty}</div></div><div class="subtle"><h3>Documentation/manual/support</h3><div class="tiny">${game.manual?`<a href="${game.manual}" target="_blank">Manual link</a>`:'Manual missing'}</div><div class="tiny">${game.support?`<a href="${game.support}" target="_blank">Support link</a>`:'Support missing'}</div></div><div class="subtle"><h3>Status / urgency / PM</h3><div class="tiny">${rec?.status||'Open'} · ${rec?.severity||'Low'} · Next PM ${rec?.nextPm||''}</div></div><div class="subtle"><h3>Assigned worker(s)</h3><div class="tiny">${(rec?.assignedWorkers||[]).join(', ')||rec?.technician||'Unassigned'}</div></div><div class="subtle"><h3>Current issues</h3><div class="tiny">${rec?.issue||'None'}</div></div><div class="subtle"><h3>Service notes</h3><div class="tiny">${rec?.notes||'No notes'}</div></div><div class="subtle"><h3>Operation history</h3><div class="tiny">${(rec?.issueHistory||[]).slice(-5).map(h=>h.date+' · '+(h.note||'')).join('<br>')||'No history'}</div></div><div class="subtle"><h3>Task history</h3><div class="tiny">${linked.map(t=>t.title+' · '+t.status).join('<br>')||'No linked tasks'}</div></div><div class="subtle"><h3>Photos/evidence</h3><div class="tiny">Operations ${(rec?.photos||[]).length} · Tasks ${linked.reduce((n,t)=>n+((t.photos||[]).length),0)}</div></div><div class="subtle"><h3>Vendor/support references</h3><div class="tiny">${(window.contacts||[]).filter(c=>norm(c.manufacturer).includes(norm(game.manufacturer).split('/')[0])).map(c=>c.contact).join(', ')||'No mapped contact'}</div></div></div></div>`;
+          modal.querySelector('#close-asset-modal').onclick=()=>modal.classList.add('hide');
+        });
+      }
+
+      const originalExport=window.exportJsonBackup;
+      window.exportJsonBackup=function(){
+        if(!originalExport) return;
+        const payload={exportedAt:new Date().toISOString(),serviceRecords:window.serviceRecords,oneOffTasks:window.oneOffTasks,handoffLog:window.handoffLog,contacts:window.contacts,workers,adminConfig,assetHistory};
+        const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='play-wow-maintenance-backup.json'; a.click(); URL.revokeObjectURL(url);
+      };
+      window.importJsonBackup=function(e){
+        const file=e.target.files?.[0]; if(!file) return; const r=new FileReader(); r.onload=()=>{try{const d=JSON.parse(r.result); if(d.serviceRecords) window.serviceRecords=d.serviceRecords; if(d.oneOffTasks||d.tasks) window.oneOffTasks=d.oneOffTasks||d.tasks; if(d.handoffLog) window.handoffLog=d.handoffLog; if(d.contacts) window.contacts=d.contacts; if(d.workers) workers=d.workers; if(d.adminConfig) adminConfig=d.adminConfig; if(d.assetHistory) assetHistory=d.assetHistory; ensureMigrations(); window.saveAll?.(); safeSave(EXTRA_KEYS.workers,workers); safeSave(EXTRA_KEYS.admin,adminConfig); safeSave(EXTRA_KEYS.assetHistory,assetHistory); window.renderAll?.(); setupEnhancements();}catch{alert('Could not import JSON backup.')}}; r.readAsText(file);
+      };
+
+      function setupEnhancements(){ renameInventoryToAssets(); injectAdminView(); injectAssetDetailModal(); }
+      ensureMigrations();
+      setupEnhancements();
+      const originalRenderAll=window.renderAll;
+      if(originalRenderAll){ window.renderAll=function(){ originalRenderAll(); setupEnhancements(); }; }
+    })();
+  </script>
 </body>
 </html>
