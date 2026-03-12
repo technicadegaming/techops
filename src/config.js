@@ -8,7 +8,7 @@ const defaults = {
     messagingSenderId: '257947502595',
     appId: '1:257947502595:web:43fc4fc28bd69bac69a636'
   },
-  bootstrapAdmins: ['owner@example.com'],
+  bootstrapAdmins: ['technicadegaming@gmail.com'],
   collections: {
     users: 'users', assets: 'assets', tasks: 'tasks', operations: 'operations', manuals: 'manuals',
     pmSchedules: 'pmSchedules', notes: 'notes', auditLogs: 'auditLogs', appSettings: 'appSettings',
