@@ -22,7 +22,11 @@ function renderEnrichmentDetails(asset, manager) {
     }).join(' | ')}</div>`
     : '<div class="tiny">Suggested docs: none yet</div>';
   const followup = asset.enrichmentFollowupQuestion
-    ? `<div class="tiny"><b>Follow-up:</b> ${asset.enrichmentFollowupQuestion}</div>`
+    ? `<div class="tiny"><b>Follow-up:</b> ${asset.enrichmentFollowupQuestion}</div>
+       <form data-enrichment-followup-form="${asset.id}" class="grid" style="margin:6px 0; gap:4px;">
+         <textarea name="followupAnswer" rows="2" placeholder="Add answer to improve match...">${asset.enrichmentFollowupAnswer || ''}</textarea>
+         <button type="submit">Submit answer and retry</button>
+       </form>`
     : '';
   return `
     <div class="tiny">Enrichment status: ${ENRICHMENT_STATUS_LABELS[status] || status}</div>
@@ -97,6 +101,11 @@ export function renderAssets(el, state, actions) {
   el.querySelectorAll('[data-docs]').forEach((btn) => btn.addEventListener('click', () => actions.markDocsReviewed(btn.dataset.docs)));
   el.querySelectorAll('[data-del]').forEach((btn) => btn.addEventListener('click', () => actions.deleteAsset(btn.dataset.del)));
   el.querySelectorAll('[data-enrich]').forEach((btn) => btn.addEventListener('click', () => actions.runAssetEnrichment(btn.dataset.enrich)));
+  el.querySelectorAll('[data-enrichment-followup-form]').forEach((followupForm) => followupForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const fd = new FormData(followupForm);
+    actions.submitEnrichmentFollowup(followupForm.dataset.enrichmentFollowupForm, `${fd.get('followupAnswer') || ''}`);
+  }));
   el.querySelectorAll('[data-apply-docs]').forEach((btn) => btn.addEventListener('click', () => actions.applyDocSuggestions(btn.dataset.applyDocs)));
   el.querySelectorAll('[data-edit]').forEach((assetForm) => assetForm.addEventListener('submit', (e) => {
     e.preventDefault();
