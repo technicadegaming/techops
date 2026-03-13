@@ -19,7 +19,7 @@ function tokenize(value) {
     .filter((v) => v.length >= 2);
 }
 
-function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manufacturerSuggestion }) {
+function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manufacturerSuggestion, followupAnswer }) {
   const url = `${row?.url || ''}`.trim();
   const title = `${row?.title || ''}`.trim();
   let parsedUrl;
@@ -41,7 +41,8 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     ...tokenize(asset?.name),
     ...tokenize(normalizedName),
     ...tokenize(asset?.manufacturer),
-    ...tokenize(manufacturerSuggestion)
+    ...tokenize(manufacturerSuggestion),
+    ...tokenize(followupAnswer || asset?.enrichmentFollowupAnswer)
   ]);
   const titleTokens = tokenize(title);
 
@@ -122,23 +123,31 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   };
 }
 
-function normalizeDocumentationSuggestions({ links, confidence, asset, normalizedName, manufacturerSuggestion }) {
+function normalizeDocumentationSuggestions({ links, confidence, asset, normalizedName, manufacturerSuggestion, followupAnswer }) {
   if (!Array.isArray(links)) return [];
   const fallbackConfidence = Math.max(0.35, Number(confidence) || 0);
 
   return links
-    .map((row) => scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manufacturerSuggestion }))
+    .map((row) => scoreSuggestion({
+      row,
+      asset,
+      fallbackConfidence,
+      normalizedName,
+      manufacturerSuggestion,
+      followupAnswer
+    }))
     .filter(Boolean)
     .sort((a, b) => b.matchScore - a.matchScore)
     .slice(0, 5);
 }
 
-function buildLookupContext(asset, assetId) {
+function buildLookupContext(asset, assetId, followupAnswer = '') {
   return {
     assetName: asset.name || '',
     manufacturer: asset.manufacturer || '',
     serialNumber: asset.serialNumber || '',
     assetId: asset.id || assetId,
+    followupAnswer: `${followupAnswer || asset.enrichmentFollowupAnswer || ''}`.trim(),
     lookupTargets: [
       'arcade game manual',
       'operator manual',
@@ -150,7 +159,7 @@ function buildLookupContext(asset, assetId) {
   };
 }
 
-async function enrichAssetDocumentation({ db, assetId, userId, settings, triggerSource, traceId }) {
+async function enrichAssetDocumentation({ db, assetId, userId, settings, triggerSource, followupAnswer, traceId }) {
   const assetRef = db.collection('assets').doc(assetId);
   const assetSnap = await assetRef.get();
   if (!assetSnap.exists) throw new HttpsError('not-found', 'Asset not found');
@@ -163,7 +172,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     updatedBy: userId
   }, { merge: true });
 
-  const context = buildLookupContext(asset, assetId);
+  const context = buildLookupContext(asset, assetId, followupAnswer);
   const { parsed } = await requestAssetDocumentationLookup({
     model: settings.aiModel || 'gpt-4.1-mini',
     traceId,
@@ -178,7 +187,8 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     confidence,
     asset,
     normalizedName,
-    manufacturerSuggestion
+    manufacturerSuggestion,
+    followupAnswer: context.followupAnswer
   });
   const confidenceThreshold = settings.aiConfidenceThreshold || 0.45;
 
@@ -211,6 +221,11 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedBy: userId
   };
+
+  if (context.followupAnswer) {
+    updatePayload.enrichmentFollowupAnswer = context.followupAnswer;
+    updatePayload.enrichmentFollowupAnsweredAt = admin.firestore.FieldValue.serverTimestamp();
+  }
 
   if (manufacturerSuggestion) updatePayload.manufacturerSuggestion = manufacturerSuggestion;
   if (shouldSetManufacturer) updatePayload.manufacturer = manufacturerSuggestion;

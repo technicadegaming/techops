@@ -184,6 +184,7 @@ exports.enrichAssetDocumentation = onCall({ secrets: [OPENAI_API_KEY] }, async (
     userId: request.auth.uid,
     settings,
     triggerSource: request.data?.trigger || 'manual',
+    followupAnswer: `${request.data?.followupAnswer || ''}`.trim(),
     traceId: request.rawRequest.headers['x-cloud-trace-context'] || `asset-${Date.now()}`
   });
 });

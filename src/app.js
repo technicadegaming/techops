@@ -162,6 +162,23 @@ async function render() {
       await enrichAssetDocumentation(id, { trigger: 'manual' });
       await refreshData(); render();
     },
+    submitEnrichmentFollowup: async (id, answer) => {
+      const trimmedAnswer = `${answer || ''}`.trim();
+      if (!trimmedAnswer) return alert('Please enter an answer before retrying enrichment.');
+      const current = state.assets.find((a) => a.id === id) || {};
+      await upsertEntity('assets', id, {
+        ...current,
+        enrichmentFollowupAnswer: trimmedAnswer,
+        enrichmentFollowupAnsweredAt: new Date().toISOString(),
+        enrichmentStatus: 'in_progress'
+      }, state.user);
+      await refreshData(); render();
+      await enrichAssetDocumentation(id, {
+        trigger: 'followup_answer',
+        followupAnswer: trimmedAnswer
+      });
+      await refreshData(); render();
+    },
     applyDocSuggestions: async (id) => {
       if (state.profile?.role !== 'admin') return;
 

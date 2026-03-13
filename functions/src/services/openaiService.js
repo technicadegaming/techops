@@ -45,6 +45,7 @@ function buildAssetLookupInstructions() {
     'You identify arcade/redemption equipment and find manuals/documentation.',
     'Focus on equipment identification and documentation lookup, not troubleshooting.',
     'Use the provided asset fields as the source context: name, manufacturer, serial, and asset ID.',
+    'If followupAnswer is provided, treat it as high-signal disambiguation context for title/version/manufacturer matching.',
     'Prioritize official manufacturer pages and trusted manual-library sources.',
     'Bias search intent toward arcade game manual, operator manual, service manual, parts manual, and manufacturer documentation.',
     'Return strict JSON only; do not include markdown or explanatory prose.',
