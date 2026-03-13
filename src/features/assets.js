@@ -29,6 +29,10 @@ function renderPreviewPanel(state) {
     return '<div class="tiny">Lookup assistant: searching for likely docs/support...</div>';
   }
 
+  if (!preview && status === 'searching_refined') {
+    return '<div class="tiny">Lookup assistant: refining suggestions with applied manufacturer...</div>';
+  }
+
   if (!preview && status === 'no_strong_match') {
     return '<div class="tiny">Lookup assistant: no strong match yet. Verify manufacturer/model text and try again.</div>';
   }
@@ -94,22 +98,22 @@ export function renderAssets(el, state, actions) {
   el.innerHTML = `
     <h2>Assets (Operational source of truth)</h2>
     <form id="assetForm" class="grid grid-2">
-      <input name="name" placeholder="Asset name *" required ${editable ? '' : 'disabled'} />
-      <input name="serialNumber" placeholder="Serial number" ${editable ? '' : 'disabled'} />
-      <input name="manufacturer" placeholder="Manufacturer" ${editable ? '' : 'disabled'} />
-      <input name="id" placeholder="Asset ID (optional; auto-generated if blank)" ${editable ? '' : 'disabled'} />
-      <input name="status" placeholder="Current status" ${editable ? '' : 'disabled'} />
-      <input name="ownerWorkers" placeholder="Assigned workers / owners (comma-separated)" ${editable ? '' : 'disabled'} />
-      <input name="manualLinks" placeholder="Manual links (comma-separated URLs)" ${editable ? '' : 'disabled'} />
-      <textarea name="historyNote" placeholder="Service note (added to timeline)" ${editable ? '' : 'disabled'}></textarea>
+      <input name="name" value="${state.assetDraft?.name || ''}" placeholder="Asset name *" required ${editable ? '' : 'disabled'} />
+      <input name="serialNumber" value="${state.assetDraft?.serialNumber || ''}" placeholder="Serial number" ${editable ? '' : 'disabled'} />
+      <input name="manufacturer" value="${state.assetDraft?.manufacturer || ''}" placeholder="Manufacturer" ${editable ? '' : 'disabled'} />
+      <input name="id" value="${state.assetDraft?.id || ''}" placeholder="Asset ID (optional; auto-generated if blank)" ${editable ? '' : 'disabled'} />
+      <input name="status" value="${state.assetDraft?.status || ''}" placeholder="Current status" ${editable ? '' : 'disabled'} />
+      <input name="ownerWorkers" value="${state.assetDraft?.ownerWorkers || ''}" placeholder="Assigned workers / owners (comma-separated)" ${editable ? '' : 'disabled'} />
+      <input name="manualLinks" value="${state.assetDraft?.manualLinksText || ''}" placeholder="Manual links (comma-separated URLs)" ${editable ? '' : 'disabled'} />
+      <textarea name="historyNote" placeholder="Service note (added to timeline)" ${editable ? '' : 'disabled'}>${state.assetDraft?.historyNote || ''}</textarea>
       <div class="grid" style="grid-column:1/-1; gap:6px; border:1px solid #ddd; padding:8px; border-radius:8px;">
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-          <button type="button" data-preview-lookup="1" ${(editable && state.assetDraft?.previewStatus !== 'searching') ? '' : 'disabled'}>${state.assetDraft?.previewStatus === 'searching' ? 'Looking up...' : 'Find manufacturer/manual info'}</button>
+          <button type="button" data-preview-lookup="1" ${(editable && !['searching', 'searching_refined'].includes(state.assetDraft?.previewStatus)) ? '' : 'disabled'}>${['searching', 'searching_refined'].includes(state.assetDraft?.previewStatus) ? 'Looking up...' : 'Find manufacturer/manual info'}</button>
           <span class="tiny">Preview suggestions are not saved until you save the asset.</span>
         </div>
         ${renderPreviewPanel(state)}
       </div>
-      <button class="primary" ${editable ? '' : 'disabled'}>Save asset</button>
+      <button type="submit" class="primary" ${editable ? '' : 'disabled'}>Save asset</button>
     </form>
     <div class="list">${state.assets.map((a) => {
       const openTasks = state.tasks.filter((t) => t.assetId === a.id && t.status !== 'completed');
@@ -149,28 +153,51 @@ export function renderAssets(el, state, actions) {
   const form = el.querySelector('#assetForm');
   form?.addEventListener('submit', (e) => {
     e.preventDefault();
-    const fd = new FormData(form);
-    const p = Object.fromEntries(fd.entries());
+    const p = {
+      name: `${state.assetDraft?.name || ''}`,
+      serialNumber: `${state.assetDraft?.serialNumber || ''}`,
+      manufacturer: `${state.assetDraft?.manufacturer || ''}`,
+      id: `${state.assetDraft?.id || ''}`,
+      status: `${state.assetDraft?.status || ''}`,
+      ownerWorkers: `${state.assetDraft?.ownerWorkers || ''}`,
+      manualLinks: `${state.assetDraft?.manualLinksText || ''}`,
+      historyNote: `${state.assetDraft?.historyNote || ''}`
+    };
     actions.saveAsset(p.id, p);
-    form.reset();
   });
 
   let previewTimer = null;
   const nameInput = form?.querySelector('[name="name"]');
+  const serialInput = form?.querySelector('[name="serialNumber"]');
+  const manufacturerInput = form?.querySelector('[name="manufacturer"]');
+  const idInput = form?.querySelector('[name="id"]');
+  const statusInput = form?.querySelector('[name="status"]');
+  const ownerWorkersInput = form?.querySelector('[name="ownerWorkers"]');
+  const manualLinksInput = form?.querySelector('[name="manualLinks"]');
+  const historyNoteInput = form?.querySelector('[name="historyNote"]');
   const requestPreview = () => {
-    const assetName = `${nameInput?.value || ''}`.trim();
+    const assetName = `${state.assetDraft?.name || ''}`.trim();
     if (assetName.length < 3) return;
-    const manufacturer = `${form?.querySelector('[name="manufacturer"]')?.value || ''}`.trim();
-    const serialNumber = `${form?.querySelector('[name="serialNumber"]')?.value || ''}`.trim();
-    const assetId = `${form?.querySelector('[name="id"]')?.value || ''}`.trim();
+    const manufacturer = `${state.assetDraft?.manufacturer || ''}`.trim();
+    const serialNumber = `${state.assetDraft?.serialNumber || ''}`.trim();
+    const assetId = `${state.assetDraft?.id || ''}`.trim();
     actions.previewAssetLookup({ assetName, manufacturer, serialNumber, assetId });
   };
 
   nameInput?.addEventListener('input', () => {
-    actions.handleDraftNameChange(nameInput?.value || '');
+    const name = nameInput?.value || '';
+    actions.updateAssetDraftField('name', name);
+    actions.handleDraftNameChange(name);
     clearTimeout(previewTimer);
     previewTimer = setTimeout(requestPreview, 700);
   });
+  serialInput?.addEventListener('input', () => actions.updateAssetDraftField('serialNumber', serialInput?.value || ''));
+  manufacturerInput?.addEventListener('input', () => actions.updateAssetDraftField('manufacturer', manufacturerInput?.value || ''));
+  idInput?.addEventListener('input', () => actions.updateAssetDraftField('id', idInput?.value || ''));
+  statusInput?.addEventListener('input', () => actions.updateAssetDraftField('status', statusInput?.value || ''));
+  ownerWorkersInput?.addEventListener('input', () => actions.updateAssetDraftField('ownerWorkers', ownerWorkersInput?.value || ''));
+  manualLinksInput?.addEventListener('input', () => actions.updateAssetDraftField('manualLinksText', manualLinksInput?.value || ''));
+  historyNoteInput?.addEventListener('input', () => actions.updateAssetDraftField('historyNote', historyNoteInput?.value || ''));
 
   form?.querySelector('[data-preview-lookup]')?.addEventListener('click', requestPreview);
 
@@ -180,20 +207,14 @@ export function renderAssets(el, state, actions) {
     const support = (preview.supportResourcesSuggestion || []).map((d) => d.url).filter(Boolean);
     const contacts = (preview.supportContactsSuggestion || []).map((c) => `${c.label || c.contactType}: ${c.value}`).filter(Boolean);
     const mode = btn.dataset.applyPreview;
-    if (mode === 'manufacturer' || mode === 'all') {
-      if (preview.likelyManufacturer) form.querySelector('[name="manufacturer"]').value = preview.likelyManufacturer;
-    }
-    if (mode === 'manuals' || mode === 'all') {
-      if (docs.length) form.querySelector('[name="manualLinks"]').value = docs.slice(0, 2).join(', ');
-    }
     if (mode === 'support' || mode === 'all') {
       actions.applyPreviewToDraft({ supportResources: support.slice(0, 3) });
     }
     if (mode === 'contacts' || mode === 'all') {
       actions.applyPreviewToDraft({ notes: contacts.join(' | '), supportContacts: preview.supportContactsSuggestion || [] });
     }
-    if (mode === 'manuals' || mode === 'all') actions.applyPreviewToDraft({ manualLinks: docs.slice(0, 2) });
-    if (mode === 'manufacturer' || mode === 'all') actions.applyPreviewToDraft({ manufacturer: preview.likelyManufacturer || '' });
+    if (mode === 'manuals' || mode === 'all') actions.applyPreviewToDraft({ manualLinks: docs.slice(0, 2), manualLinksText: docs.slice(0, 2).join(', ') });
+    if (mode === 'manufacturer' || mode === 'all') actions.applyPreviewToDraft({ manufacturer: preview.likelyManufacturer || '', triggerRefinedPreview: mode === 'manufacturer' });
   }));
 
   form?.querySelector('[data-clear-preview]')?.addEventListener('click', () => actions.clearPreview());
