@@ -39,6 +39,15 @@ function validateAiResultShape(result) {
   };
 }
 
+function isHttpUrl(value) {
+  try {
+    const parsed = new URL(`${value || ''}`);
+    return /^https?:$/.test(parsed.protocol);
+  } catch (error) {
+    return false;
+  }
+}
+
 function validateAssetLookupResultShape(result) {
   if (!result || typeof result !== 'object') throw new Error('Asset lookup response is not an object');
   if (typeof result.normalizedName !== 'string') throw new Error('Missing normalizedName');
@@ -47,6 +56,10 @@ function validateAssetLookupResultShape(result) {
   if (typeof result.confidence !== 'number') throw new Error('Missing confidence');
 
   const docs = Array.isArray(result.documentationLinks) ? result.documentationLinks : [];
+  const resources = Array.isArray(result.supportResources) ? result.supportResources : [];
+  const contacts = Array.isArray(result.supportContacts) ? result.supportContacts : [];
+  const alternateNames = Array.isArray(result.alternateNames) ? result.alternateNames : [];
+  const searchHints = Array.isArray(result.searchHints) ? result.searchHints : [];
   return {
     normalizedName: result.normalizedName.trim().slice(0, 140),
     likelyManufacturer: result.likelyManufacturer.trim().slice(0, 80),
@@ -54,12 +67,35 @@ function validateAssetLookupResultShape(result) {
     confidence: Math.max(0, Math.min(1, result.confidence)),
     oneFollowupQuestion: typeof result.oneFollowupQuestion === 'string' ? result.oneFollowupQuestion.trim().slice(0, 220) : '',
     documentationLinks: docs
-      .filter((row) => row && typeof row.url === 'string')
+      .filter((row) => row && typeof row.url === 'string' && isHttpUrl(row.url))
       .map((row) => ({
         title: typeof row.title === 'string' ? row.title.trim().slice(0, 120) : '',
         url: row.url.trim(),
         sourceType: typeof row.sourceType === 'string' ? row.sourceType.trim().slice(0, 40) : ''
-      }))
+      })),
+    supportResources: resources
+      .filter((row) => row && typeof row.url === 'string' && isHttpUrl(row.url))
+      .map((row) => ({
+        label: typeof row.label === 'string' ? row.label.trim().slice(0, 120) : '',
+        url: row.url.trim(),
+        resourceType: typeof row.resourceType === 'string' ? row.resourceType.trim().slice(0, 40) : 'other'
+      })),
+    supportContacts: contacts
+      .filter((row) => row && typeof row.value === 'string' && row.value.trim())
+      .map((row) => ({
+        label: typeof row.label === 'string' ? row.label.trim().slice(0, 80) : '',
+        value: row.value.trim().slice(0, 180),
+        contactType: typeof row.contactType === 'string' ? row.contactType.trim().slice(0, 20) : 'other'
+      })),
+    alternateNames: alternateNames
+      .map((v) => `${v || ''}`.trim().slice(0, 100))
+      .filter(Boolean)
+      .slice(0, 10),
+    searchHints: searchHints
+      .map((v) => `${v || ''}`.trim().slice(0, 120))
+      .filter(Boolean)
+      .slice(0, 10),
+    topMatchReason: typeof result.topMatchReason === 'string' ? result.topMatchReason.trim().slice(0, 320) : ''
   };
 }
 

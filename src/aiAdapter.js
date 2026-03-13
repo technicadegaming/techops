@@ -26,3 +26,7 @@ export function saveTaskFixToTroubleshootingLibrary(payload) {
 export function enrichAssetDocumentation(assetId, options = {}) {
   return call('enrichAssetDocumentation', { assetId, ...options });
 }
+
+export function previewAssetDocumentationLookup(payload) {
+  return call('previewAssetDocumentationLookup', payload);
+}

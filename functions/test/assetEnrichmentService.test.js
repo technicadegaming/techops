@@ -120,3 +120,36 @@ test('buildFollowupQuestion asks one actionable arcade-specific question', () =>
   });
   assert.match(failedVerificationPrompt, /nameplate/i);
 });
+
+
+test('low-confidence normalization does not crash and returns bounded scores', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Support', url: 'https://rawthrills.com/support', sourceType: 'manufacturer' },
+      { title: 'Broken', url: 'notaurl', sourceType: 'other' }
+    ],
+    confidence: 0.01,
+    asset: { name: 'Unknown Racer', manufacturer: '' },
+    normalizedName: 'Unknown Racer',
+    manufacturerSuggestion: ''
+  });
+
+  assert.ok(Array.isArray(suggestions));
+  assert.ok(suggestions.every((row) => row.matchScore >= 35 && row.matchScore <= 100));
+});
+
+test('support resources ranking favors official support pages', () => {
+  const support = normalizeDocumentationSuggestions({
+    links: [
+      { label: 'Official support', url: 'https://baytekent.com/support', resourceType: 'support' },
+      { label: 'Community thread', url: 'https://reddit.com/r/arcade/comments/x', resourceType: 'other' }
+    ],
+    confidence: 0.5,
+    asset: { name: 'Monopoly Roll N Go', manufacturer: 'Bay Tek' },
+    normalizedName: 'Monopoly Roll N Go',
+    manufacturerSuggestion: 'Bay Tek',
+    kind: 'support'
+  });
+  assert.ok(support.length >= 1);
+  assert.equal(support[0].url, 'https://baytekent.com/support');
+});
