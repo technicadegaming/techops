@@ -38,14 +38,77 @@ async function enforceRateLimit(taskId, userId) {
 }
 
 exports.analyzeTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
-  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
-  assertString(request.data?.taskId, 'taskId');
-  const role = await getUserRole(request.auth.uid);
-  if (!canRunManualAi(role)) throw new HttpsError('permission-denied', 'Insufficient role for AI run');
-  await enforceRateLimit(request.data.taskId, request.auth.uid);
-  const settings = await getAiSettings();
-  if (!settings.aiEnabled) throw new HttpsError('failed-precondition', 'AI is disabled by admin settings');
-  return runPipeline({ db, taskId: request.data.taskId, userId: request.auth.uid, triggerSource: 'manual', settings, traceId: request.rawRequest.headers['x-cloud-trace-context'] || `manual-${Date.now()}` });
+  console.log('analyzeTaskTroubleshooting:start', {
+    taskId: request.data?.taskId,
+    uid: request.auth?.uid || null,
+  });
+
+  try {
+    console.log('analyzeTaskTroubleshooting:before-auth-check');
+    if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+
+    console.log('analyzeTaskTroubleshooting:before-assert-taskId', { taskId: request.data?.taskId });
+    assertString(request.data?.taskId, 'taskId');
+
+    console.log('analyzeTaskTroubleshooting:before-getUserRole', { uid: request.auth.uid });
+    const role = await getUserRole(request.auth.uid);
+    console.log('analyzeTaskTroubleshooting:user-role', { uid: request.auth.uid, role });
+
+    console.log('analyzeTaskTroubleshooting:before-canRunManualAi', { role });
+    const canRun = canRunManualAi(role);
+    console.log('analyzeTaskTroubleshooting:canRunManualAi-result', { canRun });
+    if (!canRun) {
+      throw new HttpsError('permission-denied', 'Insufficient role for AI run');
+    }
+
+    console.log('analyzeTaskTroubleshooting:before-enforceRateLimit', {
+      taskId: request.data.taskId,
+      uid: request.auth.uid,
+    });
+    await enforceRateLimit(request.data.taskId, request.auth.uid);
+    console.log('analyzeTaskTroubleshooting:rate-limit-passed', { taskId: request.data.taskId });
+
+    console.log('analyzeTaskTroubleshooting:before-getAiSettings');
+    const settings = await getAiSettings();
+    console.log('analyzeTaskTroubleshooting:settings', {
+      aiEnabled: settings?.aiEnabled,
+      aiAllowManualRerun: settings?.aiAllowManualRerun,
+    });
+
+    if (!settings.aiEnabled) {
+      throw new HttpsError('failed-precondition', 'AI is disabled by admin settings');
+    }
+
+    console.log('analyzeTaskTroubleshooting:before-runPipeline', {
+      taskId: request.data.taskId,
+      uid: request.auth.uid,
+    });
+
+    const result = await runPipeline({
+      db,
+      taskId: request.data.taskId,
+      userId: request.auth.uid,
+      triggerSource: 'manual',
+      settings,
+      traceId: request.rawRequest.headers['x-cloud-trace-context'] || `manual-${Date.now()}`
+    });
+
+    console.log('analyzeTaskTroubleshooting:success', {
+      taskId: request.data.taskId,
+      result,
+    });
+
+    return result;
+  } catch (error) {
+    console.error('analyzeTaskTroubleshooting:error', {
+      taskId: request.data?.taskId || null,
+      uid: request.auth?.uid || null,
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+      code: error?.code || null,
+    });
+    throw error;
+  }
 });
 
 exports.answerTaskFollowup = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
@@ -68,14 +131,62 @@ exports.answerTaskFollowup = onCall({ secrets: [OPENAI_API_KEY] }, async (reques
 });
 
 exports.regenerateTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
-  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
-  assertString(request.data?.taskId, 'taskId');
-  const role = await getUserRole(request.auth.uid);
-  if (!canRunManualAi(role)) throw new HttpsError('permission-denied', 'Insufficient role');
-  const settings = await getAiSettings();
-  if (!settings.aiAllowManualRerun) throw new HttpsError('failed-precondition', 'Manual rerun disabled in settings');
-  await enforceRateLimit(request.data.taskId, request.auth.uid);
-  return runPipeline({ db, taskId: request.data.taskId, userId: request.auth.uid, triggerSource: 'manual', settings, traceId: request.rawRequest.headers['x-cloud-trace-context'] || `rerun-${Date.now()}` });
+  console.log('regenerateTaskTroubleshooting:start', {
+    taskId: request.data?.taskId,
+    uid: request.auth?.uid || null,
+  });
+
+  try {
+    if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+    assertString(request.data?.taskId, 'taskId');
+
+    const role = await getUserRole(request.auth.uid);
+    console.log('regenerateTaskTroubleshooting:user-role', { uid: request.auth.uid, role });
+
+    if (!canRunManualAi(role)) {
+      throw new HttpsError('permission-denied', 'Insufficient role');
+    }
+
+    const settings = await getAiSettings();
+    console.log('regenerateTaskTroubleshooting:settings', {
+      aiEnabled: settings.aiEnabled,
+      aiAllowManualRerun: settings.aiAllowManualRerun,
+    });
+
+    if (!settings.aiAllowManualRerun) {
+      throw new HttpsError('failed-precondition', 'Manual rerun disabled in settings');
+    }
+
+    await enforceRateLimit(request.data.taskId, request.auth.uid);
+    console.log('regenerateTaskTroubleshooting:rate-limit-passed', { taskId: request.data.taskId });
+
+    console.log('regenerateTaskTroubleshooting:calling-runPipeline', { taskId: request.data.taskId });
+
+    const result = await runPipeline({
+      db,
+      taskId: request.data.taskId,
+      userId: request.auth.uid,
+      triggerSource: 'manual',
+      settings,
+      traceId: request.rawRequest.headers['x-cloud-trace-context'] || `rerun-${Date.now()}`,
+    });
+
+    console.log('regenerateTaskTroubleshooting:success', {
+      taskId: request.data.taskId,
+      result,
+    });
+
+    return result;
+  } catch (error) {
+    console.error('regenerateTaskTroubleshooting:error', {
+      taskId: request.data?.taskId || null,
+      uid: request.auth?.uid || null,
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+      code: error?.code || null,
+    });
+    throw error;
+  }
 });
 
 exports.fetchWebContextForTask = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
