@@ -5,4 +5,5 @@ const { isWeakTaskDescription } = require('../src/lib/followup');
 test('weak description detection', () => {
   assert.equal(isWeakTaskDescription({ title: 'help', notes: '' }), true);
   assert.equal(isWeakTaskDescription({ title: 'Pinball table left flipper sticks after 20 minutes', notes: 'intermittent with heat' }), false);
+  assert.equal(isWeakTaskDescription({ title: 'help', issueCategory: 'controls', severity: 'high', assetId: 'a1', symptomTags: ['flipper'] }), false);
 });

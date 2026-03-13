@@ -190,3 +190,31 @@ Then run frontend against emulator-configured Firebase project and invoke task A
 - `taskAiFollowups`
 - `troubleshootingLibrary`
 - `aiWebContextCache` (optional cache)
+
+## Phase 2B workflow polish (implemented)
+
+### Structured intake flow
+
+Operations task creation now captures structured intake fields (asset, location, category, symptom tags, severity, impact, error text, discovered time, occurrence/reproducibility, prior attempts, visible conditions, assignments, reporter, notes). Freeform description is still supported and auto-generated when blank.
+
+Admin settings now support `defaultTaskSeverity` and `taskIntakeRequiredFields` so required/optional behavior can be tuned.
+
+### Task closeout workflow + knowledge loop
+
+Closeout now prompts for root cause, fix, parts/tools, time spent, verification, resolved state, optional fix summary/evidence, and AI helpfulness feedback. On completion:
+- closeout payload is written to the task,
+- a structured completion event is appended to linked asset history,
+- optional auto-save to troubleshooting library respects admin default,
+- audit entry is recorded.
+
+### Asset-centric operations view
+
+Asset detail cards now include open/completed tasks, AI run snapshots, documentation status, PM context, service history timeline, recurring issue indicators, owners/assigned workers, and troubleshooting library snippets.
+
+### Worker assignment / reassignment notes
+
+Admin worker directory now supports shift start, availability, active/inactive status, and specialty tags. Task lists show unavailable assignees and provide quick reassignment action. Dashboard includes workload snapshot per worker.
+
+### Deep linking / navigation
+
+URL query state now preserves selected tab/task/asset (`?tab=operations&taskId=...`). Dashboard queue/watchlist cards deep-link to exact task/asset and highlight selected records after refresh.

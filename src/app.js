@@ -10,13 +10,14 @@ import { canDelete } from './roles.js';
 import { previewLegacyImport, importLegacyData } from './migration.js';
 import { dryRunBackup, exportBackupJson, restoreBackup, validateBackup } from './backup.js';
 import { analyzeTaskTroubleshooting, answerTaskFollowup, regenerateTaskTroubleshooting, saveTaskFixToTroubleshootingLibrary } from './aiAdapter.js';
+import { buildCloseoutEvent, parseRouteState, pushRouteState } from './features/workflow.js';
 
 const authView = document.getElementById('authView');
 const appView = document.getElementById('appView');
 const authMessage = document.getElementById('authMessage');
 
 const sections = ['dashboard', 'operations', 'assets', 'calendar', 'reports', 'admin'];
-const state = { user: null, profile: null, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], settings: {}, restorePayload: null };
+const state = { user: null, profile: null, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], settings: {}, restorePayload: null, route: parseRouteState() };
 
 function tabVisible(tab) {
   if (tab === 'admin') return state.profile?.role === 'admin';
@@ -25,14 +26,17 @@ function tabVisible(tab) {
 
 function buildTabs() {
   const tabs = document.getElementById('tabs');
-  tabs.innerHTML = sections.filter(tabVisible).map((id) => `<button class="tab ${id === 'dashboard' ? 'active' : ''}" data-tab="${id}">${id}</button>`).join('');
+  tabs.innerHTML = sections.filter(tabVisible).map((id) => `<button class="tab ${id === state.route.tab ? 'active' : ''}" data-tab="${id}">${id}</button>`).join('');
   tabs.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => openTab(b.dataset.tab)));
 }
 
-function openTab(name, anchorId = null) {
+function openTab(name, taskId = null, assetId = null) {
+  state.route = { ...state.route, tab: name, taskId: taskId || null, assetId: assetId || null };
+  pushRouteState(state.route);
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
   document.querySelectorAll('.section').forEach((s) => s.classList.toggle('active', s.id === name));
-  if (anchorId) setTimeout(() => document.getElementById(`task-${anchorId}`)?.scrollIntoView({ behavior: 'smooth' }), 100);
+  if (taskId) setTimeout(() => document.getElementById(`task-${taskId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 120);
+  if (assetId) setTimeout(() => document.getElementById(`asset-${assetId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 120);
 }
 
 async function refreshData() {
@@ -47,6 +51,7 @@ async function refreshData() {
   state.auditLogs = await listAudit().catch(() => []);
   state.taskAiRuns = await listEntities('taskAiRuns').catch(() => []);
   state.taskAiFollowups = await listEntities('taskAiFollowups').catch(() => []);
+  state.troubleshootingLibrary = await listEntities('troubleshootingLibrary').catch(() => []);
 }
 
 function downloadJson(filename, payload) {
@@ -65,13 +70,30 @@ async function render() {
   renderOperations(document.getElementById('operations'), state, {
     saveTask: async (id, payload) => {
       await upsertEntity('tasks', id, payload, state.user);
-      if (payload.status === 'completed' && payload.assetId) {
-        const asset = state.assets.find((a) => a.id === payload.assetId);
-        await upsertEntity('assets', payload.assetId, {
-          ...(asset || {}),
-          history: [...(asset?.history || []), { at: new Date().toISOString(), note: `Task ${id} completed` }]
-        }, state.user);
+      await refreshData(); render();
+    },
+    reassignTask: async (taskId) => {
+      const task = state.tasks.find((t) => t.id === taskId);
+      if (!task) return;
+      const worker = prompt('Reassign to worker uid/email:');
+      if (!worker) return;
+      await upsertEntity('tasks', taskId, { ...task, assignedWorkers: [worker.trim()] }, state.user);
+      await refreshData(); render();
+    },
+    completeTask: async (taskId, closeout) => {
+      const task = state.tasks.find((t) => t.id === taskId);
+      if (!task) return;
+      const saveToLibrary = closeout.saveToLibrary === 'yes' || (closeout.saveToLibrary !== 'no' && state.settings.aiSaveSuccessfulFixesToLibraryDefault);
+      await upsertEntity('tasks', taskId, { ...task, status: 'completed', closeout: { ...closeout, completedAt: new Date().toISOString() } }, state.user);
+      if (task.assetId) {
+        const asset = state.assets.find((a) => a.id === task.assetId) || { id: task.assetId };
+        const event = buildCloseoutEvent(taskId, closeout, state.user);
+        await upsertEntity('assets', task.assetId, { ...asset, history: [...(asset.history || []), event] }, state.user);
       }
+      if (saveToLibrary && closeout.fixPerformed) {
+        await saveTaskFixToTroubleshootingLibrary({ taskId, successfulFix: closeout.bestFixSummary || closeout.fixPerformed });
+      }
+      await upsertEntity('auditLogs', `closeout-${taskId}-${Date.now()}`, { action: 'task_closeout', entityType: 'tasks', entityId: taskId, summary: `Task ${taskId} closeout saved` }, state.user);
       await refreshData(); render();
     },
     deleteTask: async (id) => {
@@ -89,17 +111,32 @@ async function render() {
     }
   });
   renderAssets(document.getElementById('assets'), state, {
-    saveAsset: async (id, payload) => { await upsertEntity('assets', id, { ...payload, history: payload.historyNote ? [{ at: new Date().toISOString(), note: payload.historyNote }] : [] }, state.user); await refreshData(); render(); },
+    saveAsset: async (id, payload) => {
+      const current = state.assets.find((a) => a.id === id) || {};
+      await upsertEntity('assets', id, {
+        ...current,
+        ...payload,
+        ownerWorkers: `${payload.ownerWorkers || ''}`.split(',').map((v) => v.trim()).filter(Boolean),
+        manualLinks: `${payload.manualLinks || ''}`.split(',').map((v) => v.trim()).filter(Boolean),
+        history: payload.historyNote ? [...(current.history || []), { at: new Date().toISOString(), note: payload.historyNote }] : (current.history || [])
+      }, state.user);
+      await refreshData(); render();
+    },
+    markDocsReviewed: async (id) => {
+      const current = state.assets.find((a) => a.id === id) || {};
+      await upsertEntity('assets', id, { ...current, docsLastReviewedAt: new Date().toISOString() }, state.user);
+      await refreshData(); render();
+    },
     deleteAsset: async (id) => { if (!canDelete(state.profile)) return; await deleteEntity('assets', id, state.user); await refreshData(); render(); }
   });
   renderCalendar(document.getElementById('calendar'), state);
   renderReports(document.getElementById('reports'), state);
   renderAdmin(document.getElementById('admin'), state, {
-    saveUserRole: async (uid, role, enabled) => {
+    saveUserRole: async (uid, role, enabled, extra = {}) => {
       const admins = state.users.filter((u) => u.role === 'admin' && u.enabled !== false);
       if (uid === state.user.uid && state.profile.role === 'admin' && role !== 'admin' && admins.length <= 1) return alert('Cannot self-demote the last enabled admin.');
       const existing = state.users.find((u) => u.id === uid) || {};
-      await saveUserProfile(uid, { ...existing, role, enabled }, state.user);
+      await saveUserProfile(uid, { ...existing, role, enabled, ...extra }, state.user);
       await refreshData(); render();
     },
     previewImport: async () => previewLegacyImport(),
@@ -124,7 +161,14 @@ async function render() {
     saveAISettings: async (settings) => { await saveAppSettings(settings, state.user); await refreshData(); render(); },
     filterAudit: async (filters) => { state.auditLogs = await listAudit(filters); render(); }
   });
+
+  openTab(state.route.tab, state.route.taskId, state.route.assetId);
 }
+
+window.addEventListener('popstate', () => {
+  state.route = parseRouteState();
+  openTab(state.route.tab, state.route.taskId, state.route.assetId);
+});
 
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();

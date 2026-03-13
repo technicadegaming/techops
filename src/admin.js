@@ -1,25 +1,28 @@
 import { Roles, canChangeAISettings, canManageBackups, canManageUsers, isAdmin } from './roles.js';
 
-const aiBooleanFields = ['aiEnabled', 'aiAutoAttach', 'aiUseInternalKnowledge', 'aiUseWebSearch', 'aiAskFollowups', 'aiAllowManualRerun', 'aiSaveSuccessfulFixesToLibraryDefault', 'aiShortResponseMode', 'aiVerboseManagerMode'];
+const aiBooleanFields = ['aiEnabled', 'aiAutoAttach', 'aiUseInternalKnowledge', 'aiUseWebSearch', 'aiAskFollowups', 'aiAllowManualRerun', 'aiSaveSuccessfulFixesToLibraryDefault', 'aiShortResponseMode', 'aiVerboseManagerMode', 'aiFeedbackCollectionEnabled', 'mobileConciseModeDefault'];
 const aiNumericFields = ['aiMaxWebSources', 'aiConfidenceThreshold'];
-const aiTextFields = ['aiModel'];
+const aiTextFields = ['aiModel', 'defaultTaskSeverity', 'taskIntakeRequiredFields'];
 
 export function renderAdmin(el, state, actions) {
   if (!isAdmin(state.profile)) {
     el.innerHTML = '<h2>Admin</h2><p class="tiny">Admin access required.</p>';
     return;
   }
+  const grouped = Object.values(Roles).map((role) => ({ role, users: state.users.filter((u) => u.role === role) }));
   el.innerHTML = `
     <h2>Admin Controls</h2>
     <div class="grid grid-2">
       <section class="item">
-        <h3>User management</h3>
-        <table class="table"><thead><tr><th>Email</th><th>Role</th><th>Enabled</th><th>Save</th></tr></thead><tbody>
-        ${state.users.map((u) => `<tr><td>${u.email || u.id}</td><td>
-          <select data-role="${u.id}" ${canManageUsers(state.profile) ? '' : 'disabled'}>${Object.values(Roles).map((r) => `<option ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}</select>
-        </td><td><input type="checkbox" data-enabled="${u.id}" ${u.enabled !== false ? 'checked' : ''} ${canManageUsers(state.profile) ? '' : 'disabled'} /></td>
-        <td><button data-save-user="${u.id}">Save</button></td></tr>`).join('')}
-        </tbody></table>
+        <h3>Worker directory (grouped by role)</h3>
+        ${grouped.map((g) => `<h4>${g.role}</h4><table class="table"><thead><tr><th>Email</th><th>Enabled</th><th>Shift start</th><th>Available</th><th>Skills</th><th>Save</th></tr></thead><tbody>
+        ${g.users.map((u) => `<tr><td>${u.email || u.id}</td>
+          <td><input type="checkbox" data-enabled="${u.id}" ${u.enabled !== false ? 'checked' : ''} /></td>
+          <td><input data-shift="${u.id}" value="${u.shiftStart || ''}" placeholder="09:00" /></td>
+          <td><input type="checkbox" data-available="${u.id}" ${u.available !== false ? 'checked' : ''} /></td>
+          <td><input data-skills="${u.id}" value="${(u.specialties || []).join(', ')}" placeholder="pinball, redemption" /></td>
+          <td><select data-role="${u.id}">${Object.values(Roles).map((r) => `<option ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}</select><button data-save-user="${u.id}">Save</button></td></tr>`).join('')}
+        </tbody></table>`).join('')}
       </section>
 
       <section class="item">
@@ -38,12 +41,12 @@ export function renderAdmin(el, state, actions) {
       </section>
 
       <section class="item">
-        <h3>AI settings</h3>
+        <h3>AI + workflow settings</h3>
         <form id="aiSettingsForm" class="grid">
           ${aiBooleanFields.map((k) => `<label><input type="checkbox" name="${k}" ${state.settings[k] ? 'checked' : ''} ${canChangeAISettings(state.profile) ? '' : 'disabled'} /> ${k}</label>`).join('')}
-          ${aiTextFields.map((k) => `<label>${k}<input name="${k}" value="${state.settings[k] || ''}" ${canChangeAISettings(state.profile) ? '' : 'disabled'} /></label>`).join('')}
+          ${aiTextFields.map((k) => `<label>${k}<input name="${k}" value="${Array.isArray(state.settings[k]) ? state.settings[k].join(',') : (state.settings[k] || '')}" ${canChangeAISettings(state.profile) ? '' : 'disabled'} /></label>`).join('')}
           ${aiNumericFields.map((k) => `<label>${k}<input type="number" step="0.01" name="${k}" value="${state.settings[k] ?? ''}" ${canChangeAISettings(state.profile) ? '' : 'disabled'} /></label>`).join('')}
-          <button ${canChangeAISettings(state.profile) ? '' : 'disabled'}>Save AI settings</button>
+          <button ${canChangeAISettings(state.profile) ? '' : 'disabled'}>Save settings</button>
         </form>
       </section>
     </div>
@@ -63,7 +66,10 @@ export function renderAdmin(el, state, actions) {
     const id = b.dataset.saveUser;
     const role = el.querySelector(`[data-role="${id}"]`).value;
     const enabled = el.querySelector(`[data-enabled="${id}"]`).checked;
-    await actions.saveUserRole(id, role, enabled);
+    const available = el.querySelector(`[data-available="${id}"]`).checked;
+    const shiftStart = el.querySelector(`[data-shift="${id}"]`).value.trim();
+    const specialties = el.querySelector(`[data-skills="${id}"]`).value.split(',').map((v) => v.trim()).filter(Boolean);
+    await actions.saveUserRole(id, role, enabled, { available, shiftStart, specialties });
   }));
 
   el.querySelector('#previewImport')?.addEventListener('click', async () => {
@@ -88,7 +94,9 @@ export function renderAdmin(el, state, actions) {
       ...Object.fromEntries(aiBooleanFields.map((k) => [k, fd.get(k) === 'on'])),
       aiModel: fd.get('aiModel') || 'gpt-4.1-mini',
       aiMaxWebSources: Number(fd.get('aiMaxWebSources') || 3),
-      aiConfidenceThreshold: Number(fd.get('aiConfidenceThreshold') || 0.45)
+      aiConfidenceThreshold: Number(fd.get('aiConfidenceThreshold') || 0.45),
+      defaultTaskSeverity: fd.get('defaultTaskSeverity') || 'medium',
+      taskIntakeRequiredFields: (fd.get('taskIntakeRequiredFields') || 'id,title,assetId,issueCategory,severity').split(',').map((v) => v.trim()).filter(Boolean)
     };
     actions.saveAISettings(payload);
   });
