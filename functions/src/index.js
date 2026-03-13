@@ -44,45 +44,24 @@ exports.analyzeTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async
   });
 
   try {
-    console.log('analyzeTaskTroubleshooting:before-auth-check');
     if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
 
-    console.log('analyzeTaskTroubleshooting:before-assert-taskId', { taskId: request.data?.taskId });
     assertString(request.data?.taskId, 'taskId');
 
-    console.log('analyzeTaskTroubleshooting:before-getUserRole', { uid: request.auth.uid });
     const role = await getUserRole(request.auth.uid);
-    console.log('analyzeTaskTroubleshooting:user-role', { uid: request.auth.uid, role });
 
-    console.log('analyzeTaskTroubleshooting:before-canRunManualAi', { role });
     const canRun = canRunManualAi(role);
-    console.log('analyzeTaskTroubleshooting:canRunManualAi-result', { canRun });
     if (!canRun) {
       throw new HttpsError('permission-denied', 'Insufficient role for AI run');
     }
 
-    console.log('analyzeTaskTroubleshooting:before-enforceRateLimit', {
-      taskId: request.data.taskId,
-      uid: request.auth.uid,
-    });
     await enforceRateLimit(request.data.taskId, request.auth.uid);
-    console.log('analyzeTaskTroubleshooting:rate-limit-passed', { taskId: request.data.taskId });
 
-    console.log('analyzeTaskTroubleshooting:before-getAiSettings');
     const settings = await getAiSettings();
-    console.log('analyzeTaskTroubleshooting:settings', {
-      aiEnabled: settings?.aiEnabled,
-      aiAllowManualRerun: settings?.aiAllowManualRerun,
-    });
 
     if (!settings.aiEnabled) {
       throw new HttpsError('failed-precondition', 'AI is disabled by admin settings');
     }
-
-    console.log('analyzeTaskTroubleshooting:before-runPipeline', {
-      taskId: request.data.taskId,
-      uid: request.auth.uid,
-    });
 
     const result = await runPipeline({
       db,
@@ -141,26 +120,18 @@ exports.regenerateTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, as
     assertString(request.data?.taskId, 'taskId');
 
     const role = await getUserRole(request.auth.uid);
-    console.log('regenerateTaskTroubleshooting:user-role', { uid: request.auth.uid, role });
 
     if (!canRunManualAi(role)) {
       throw new HttpsError('permission-denied', 'Insufficient role');
     }
 
     const settings = await getAiSettings();
-    console.log('regenerateTaskTroubleshooting:settings', {
-      aiEnabled: settings.aiEnabled,
-      aiAllowManualRerun: settings.aiAllowManualRerun,
-    });
 
     if (!settings.aiAllowManualRerun) {
       throw new HttpsError('failed-precondition', 'Manual rerun disabled in settings');
     }
 
     await enforceRateLimit(request.data.taskId, request.auth.uid);
-    console.log('regenerateTaskTroubleshooting:rate-limit-passed', { taskId: request.data.taskId });
-
-    console.log('regenerateTaskTroubleshooting:calling-runPipeline', { taskId: request.data.taskId });
 
     const result = await runPipeline({
       db,
