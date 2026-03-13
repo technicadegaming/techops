@@ -34,7 +34,9 @@ function createEmptyAssetDraft() {
     preview: null,
     previewStatus: 'idle',
     previewMeta: { inFlightQuery: '', lastCompletedQuery: '' },
-    draftNameNormalized: ''
+    draftNameNormalized: '',
+    saveFeedback: '',
+    saving: false
   };
 }
 
@@ -163,7 +165,11 @@ async function render() {
   const assetActions = {
     saveAsset: async (id, payload) => {
       const name = `${payload.name || ''}`.trim();
+      const manufacturer = `${payload.manufacturer || ''}`.trim();
       if (!name) return alert('Asset name is required.');
+      if (!manufacturer) return alert('Manufacturer is required.');
+      state.assetDraft = { ...(state.assetDraft || {}), saving: true, saveFeedback: '' };
+      render();
       const desiredId = `${id || ''}`.trim() || normalizeAssetId(name);
       const current = state.assets.find((a) => a.id === desiredId) || {};
       const finalId = current.id ? desiredId : pickUniqueAssetId(desiredId, state.assets);
@@ -174,7 +180,7 @@ async function render() {
         id: finalId,
         name,
         serialNumber: `${payload.serialNumber || current.serialNumber || ''}`.trim(),
-        manufacturer: `${payload.manufacturer || draft.manufacturer || current.manufacturer || ''}`.trim(),
+        manufacturer: `${manufacturer || draft.manufacturer || current.manufacturer || ''}`.trim(),
         ownerWorkers: `${payload.ownerWorkers || ''}`.split(',').map((v) => v.trim()).filter(Boolean),
         manualLinks: `${payload.manualLinks || ''}`.split(',').map((v) => v.trim()).filter(Boolean).concat(Array.isArray(draft.manualLinks) ? draft.manualLinks : []).filter(Boolean).filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 5),
         enrichmentStatus: (payload.manualLinks || current.manualLinks?.length) ? (current.enrichmentStatus || 'idle') : 'searching_docs',
@@ -184,8 +190,9 @@ async function render() {
         notes: `${payload.notes || ''}`.trim() || `${current.notes || ''}`.trim() || (draft.notes ? `${draft.notes}`.trim() : '')
       };
       await upsertEntity('assets', finalId, entityPayload, state.user);
-      state.assetDraft = createEmptyAssetDraft();
-      refreshData().then(render);
+      state.assetDraft = { ...createEmptyAssetDraft(), saveFeedback: 'Asset saved — documentation search running.' };
+      await refreshData();
+      render();
       enrichAssetDocumentation(finalId, { trigger: 'post_save' })
         .then(async () => { await refreshData(); render(); })
         .catch(async () => { await refreshData(); render(); });
@@ -329,6 +336,42 @@ async function render() {
       }
 
       await upsertEntity('assets', id, { ...current, manualLinks: links, enrichmentStatus: 'docs_found', enrichmentFollowupQuestion: '' }, state.user);
+      await refreshData(); render();
+    },
+    applyEnrichmentSuggestions: async (id, mode) => {
+      if (state.profile?.role !== 'admin') return;
+      const current = state.assets.find((a) => a.id === id) || {};
+      const patch = {};
+      if (mode === 'manufacturer' || mode === 'all') {
+        const suggestedManufacturer = `${current.manufacturerSuggestion || ''}`.trim();
+        if (suggestedManufacturer) patch.manufacturer = suggestedManufacturer;
+      }
+      if (mode === 'manuals' || mode === 'all') {
+        const strongManuals = (Array.isArray(current.documentationSuggestions) ? current.documentationSuggestions : [])
+          .filter((s) => !!s?.verified)
+          .sort((a, b) => Number(b?.matchScore || 0) - Number(a?.matchScore || 0))
+          .map((s) => s?.url)
+          .filter(Boolean)
+          .slice(0, 2);
+        if (strongManuals.length) patch.manualLinks = strongManuals;
+      }
+      if (mode === 'support' || mode === 'all') {
+        const supportLinks = (Array.isArray(current.supportResourcesSuggestion) ? current.supportResourcesSuggestion : [])
+          .map((s) => s?.url)
+          .filter(Boolean)
+          .slice(0, 3);
+        if (supportLinks.length) patch.supportResourcesSuggestion = supportLinks.map((url) => ({ url }));
+      }
+      if (mode === 'contacts' || mode === 'all') {
+        const contacts = Array.isArray(current.supportContactsSuggestion) ? current.supportContactsSuggestion : [];
+        if (contacts.length) {
+          patch.supportContactsSuggestion = contacts;
+          const contactSummary = contacts.map((c) => `${c.label || c.contactType || 'contact'}: ${c.value || ''}`).filter(Boolean).join(' | ');
+          patch.notes = [current.notes, contactSummary].filter(Boolean).join(' | ');
+        }
+      }
+      if (!Object.keys(patch).length) return;
+      await upsertEntity('assets', id, { ...current, ...patch }, state.user);
       await refreshData(); render();
     },
     editAsset: async (currentId, payload) => {
