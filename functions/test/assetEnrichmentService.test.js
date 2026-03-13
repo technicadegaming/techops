@@ -153,3 +153,82 @@ test('support resources ranking favors official support pages', () => {
   assert.ok(support.length >= 1);
   assert.equal(support[0].url, 'https://baytekent.com/support');
 });
+
+test('exact manual outranks generic manufacturer manual library page', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Bay Tek Sink It Manuals', url: 'https://baytekent.com/support/manuals/sink-it-operator-manual.pdf', sourceType: 'manufacturer' },
+      { title: 'Bay Tek Games Manual Library', url: 'https://baytekent.com/support/manual-library', sourceType: 'manufacturer' }
+    ],
+    confidence: 0.71,
+    asset: { name: 'Sink It', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Sink It',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+
+  assert.equal(suggestions[0].url, 'https://baytekent.com/support/manuals/sink-it-operator-manual.pdf');
+  assert.equal(suggestions[0].exactManualMatch, true);
+});
+
+test('exact title official support/product page outranks generic distributor listing', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Sink It Support', url: 'https://baytekent.com/support/sink-it', sourceType: 'support' },
+      { title: 'Bay Tek Products', url: 'https://www.betson.com/amusement-products/bay-tek-games/', sourceType: 'distributor' }
+    ],
+    confidence: 0.74,
+    asset: { name: 'Sink It', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Sink It',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+
+  assert.equal(suggestions[0].url, 'https://baytekent.com/support/sink-it');
+  assert.equal(suggestions[0].exactTitleMatch, true);
+});
+
+test('short/common title does not overmatch weak generic results', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Pro Product Catalog', url: 'https://genericdocs.example.com/products/pro', sourceType: 'other' },
+      { title: 'Bay Tek Pro Operator Manual', url: 'https://baytekent.com/support/manuals/pro-operator-manual.pdf', sourceType: 'manufacturer' }
+    ],
+    confidence: 0.62,
+    asset: { name: 'Pro', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Pro',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+
+  assert.equal(suggestions[0].url, 'https://baytekent.com/support/manuals/pro-operator-manual.pdf');
+});
+
+test('official generic page remains fallback but not top exact-doc result', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Sink It Service Manual', url: 'https://baytekent.com/support/sink-it-service-manual.pdf', sourceType: 'manufacturer' },
+      { title: 'Bay Tek Home', url: 'https://baytekent.com/', sourceType: 'manufacturer' }
+    ],
+    confidence: 0.76,
+    asset: { name: 'Sink It', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Sink It',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+
+  assert.equal(suggestions[0].url, 'https://baytekent.com/support/sink-it-service-manual.pdf');
+  assert.ok(suggestions.some((row) => row.url === 'https://baytekent.com/'));
+});
+
+test('conservative docs_found threshold signals exact-title requirement', () => {
+  const generic = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Bay Tek Manual Library', url: 'https://baytekent.com/support/manual-library', sourceType: 'manufacturer' }
+    ],
+    confidence: 0.82,
+    asset: { name: 'Sink It', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Sink It',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+
+  assert.equal(generic[0].exactTitleMatch, false);
+  assert.equal(generic[0].exactManualMatch, false);
+  assert.ok(generic[0].matchScore < 78);
+});
