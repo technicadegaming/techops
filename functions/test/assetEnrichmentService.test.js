@@ -4,7 +4,9 @@ const {
   normalizeDocumentationSuggestions,
   detectDeadPageText,
   verifySuggestionUrl,
-  verifyDocumentationSuggestions
+  verifyDocumentationSuggestions,
+  getManufacturerProfile,
+  buildFollowupQuestion
 } = require('../src/services/assetEnrichmentService');
 
 test('normalizeDocumentationSuggestions filters weak and malformed links and ranks strong matches first', () => {
@@ -77,4 +79,44 @@ test('verifyDocumentationSuggestions sorts verified links first and preserves ex
   assert.equal(verified[0].verified, true);
   assert.equal(verified[1].verified, false);
   assert.equal(verified[1].deadPage, true);
+});
+
+test('manufacturer-aware scoring prefers trusted manufacturer ecosystem links', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Raw Thrills support manual index', url: 'https://rawthrills.com/support/manuals', sourceType: 'manufacturer' },
+      { title: 'Arcade game page', url: 'https://genericdocs.example.com/manual/fast-and-furious', sourceType: 'other' }
+    ],
+    confidence: 0.66,
+    asset: { name: 'Fast and Furious Arcade', manufacturer: 'Raw Thrills' },
+    normalizedName: 'Fast and Furious Arcade',
+    manufacturerSuggestion: 'Raw Thrills'
+  });
+
+  assert.equal(suggestions[0].url, 'https://rawthrills.com/support/manuals');
+  assert.equal(suggestions[0].matchedManufacturer, 'raw thrills');
+  assert.ok(suggestions[0].reason.includes('manufacturer_trusted_source_match'));
+});
+
+test('getManufacturerProfile resolves aliases for known FEC manufacturers', () => {
+  const profile = getManufacturerProfile('Baytek', 'Monopoly Roll-N-Go');
+  assert.equal(profile?.key, 'bay tek');
+  assert.ok(profile?.sourceTokens.includes('baytekent.com'));
+});
+
+test('buildFollowupQuestion asks one actionable arcade-specific question', () => {
+  const noUrlPrompt = buildFollowupQuestion({
+    parsedQuestion: 'Please share exact manual URL',
+    profile: { categories: ['redemption'] },
+    likelyCategory: 'ticket redemption'
+  });
+  assert.match(noUrlPrompt, /ticket\/redemption/i);
+
+  const failedVerificationPrompt = buildFollowupQuestion({
+    parsedQuestion: '',
+    profile: { categories: ['video'] },
+    likelyCategory: 'video',
+    hasOnlyFailedVerification: true
+  });
+  assert.match(failedVerificationPrompt, /nameplate/i);
 });
