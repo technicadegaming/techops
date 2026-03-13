@@ -80,20 +80,7 @@ function downloadJson(filename, payload) {
 }
 
 
-<<<<<<< ours
-async function autoQueueMissingDocumentation() {
-  const missing = (state.assets || []).filter((a) => !(a.manualLinks || []).length && !['in_progress', 'searching_docs'].includes(a.enrichmentStatus || '')).slice(0, 3);
-  for (const asset of missing) {
-    const current = state.assets.find((row) => row.id === asset.id) || asset;
-    await upsertEntity('assets', asset.id, { ...current, enrichmentStatus: 'searching_docs' }, state.user);
-    enrichAssetDocumentation(asset.id, { trigger: 'missing_docs_auto' })
-      .then(async () => { await refreshData(); render(); })
-      .catch(async () => { await refreshData(); render(); });
-  }
-}
 
-=======
->>>>>>> theirs
 async function render() {
   buildTabs();
   document.getElementById('userBadge').textContent = `${state.user.email} (${state.profile.role})`;
@@ -142,7 +129,7 @@ async function render() {
       await refreshData(); render();
     }
   });
-  autoQueueMissingDocumentation();
+
   renderAssets(document.getElementById('assets'), state, {
     saveAsset: async (id, payload) => {
       const name = `${payload.name || ''}`.trim();
@@ -176,11 +163,10 @@ async function render() {
       await refreshData(); render();
     },
     applyDocSuggestions: async (id) => {
-<<<<<<< ours
-      if (state.profile?.role !== 'admin' && state.profile?.role !== 'manager') return;
-=======
+
+
       if (state.profile?.role !== 'admin') return;
->>>>>>> theirs
+
       const current = state.assets.find((a) => a.id === id) || {};
       const suggestions = Array.isArray(current.documentationSuggestions) ? current.documentationSuggestions : [];
       const links = suggestions.map((s) => s.url).filter(Boolean);

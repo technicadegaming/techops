@@ -67,21 +67,17 @@ export function renderAssets(el, state, actions) {
         <div class="tiny">Linked manuals: ${(a.manualLinks || []).concat(docs.map((d) => d.url || d.title)).filter(Boolean).join(' | ') || 'none'}</div>
         <div class="tiny">Missing docs: ${docsStatus === 'linked' ? 'none flagged' : 'manual not linked'}</div>
         <div class="tiny">Last reviewed: ${a.docsLastReviewedAt || 'n/a'}</div>
-<<<<<<< ours
-        ${renderEnrichmentDetails(a, isManager(state.profile))}
-=======
+
         ${renderEnrichmentDetails(a, isAdmin(state.profile))}
->>>>>>> theirs
+
         ${isManager(state.profile) ? `<button data-docs="${a.id}">Update docs review date</button>` : ''}
       </details>
       <details><summary>Service notes timeline (${(a.history || []).length})</summary>${(a.history || []).slice(0, 8).map((h) => `<div class="tiny">${h.at}: ${h.note || h.fixPerformed || ''}</div>`).join('') || '<div class="tiny">No history</div>'}</details>
       ${recurring.length ? `<div class="tiny"><b>Recurring patterns:</b> ${recurring.map((r) => `${r.issueCategory || 'uncategorized'} (${r.count})`).join(', ')}</div>` : ''}
       ${library.length ? `<div class="tiny"><b>Troubleshooting library:</b> ${library.map((row) => row.successfulFix || row.title).join(' | ')}</div>` : ''}
-<<<<<<< ours
-      ${isManager(state.profile) ? `<details><summary>Edit core fields</summary><form data-edit="${a.id}" class="grid grid-2"><input name="name" value="${a.name || ''}" placeholder="Asset name" /><input name="id" value="${a.id || ''}" placeholder="Asset ID" /><input name="serialNumber" value="${a.serialNumber || ''}" placeholder="Serial number" /><input name="manufacturer" value="${a.manufacturer || ''}" placeholder="Manufacturer" /><input name="status" value="${a.status || ''}" placeholder="Status" /><input name="manualLinks" value="${(a.manualLinks || []).join(', ')}" placeholder="Manual links (comma-separated)" /><textarea name="notes" placeholder="Notes">${a.notes || ''}</textarea><button>Save core fields</button></form></details>` : ''}
-=======
+
       ${isAdmin(state.profile) ? `<details><summary>Edit core fields</summary><form data-edit="${a.id}" class="grid grid-2"><input name="name" value="${a.name || ''}" placeholder="Asset name" /><input name="id" value="${a.id || ''}" placeholder="Asset ID" /><input name="serialNumber" value="${a.serialNumber || ''}" placeholder="Serial number" /><input name="manufacturer" value="${a.manufacturer || ''}" placeholder="Manufacturer" /><input name="status" value="${a.status || ''}" placeholder="Status" /><input name="manualLinks" value="${(a.manualLinks || []).join(', ')}" placeholder="Manual links (comma-separated)" /><textarea name="notes" placeholder="Notes">${a.notes || ''}</textarea><button>Save core fields</button></form></details>` : ''}
->>>>>>> theirs
+
       ${canDelete(state.profile) ? `<button data-del="${a.id}" class="danger">Delete</button>` : ''}
       </details>`;
     }).join('')}</div>`;
