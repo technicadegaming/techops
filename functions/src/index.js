@@ -5,7 +5,12 @@ const { onDocumentCreated } = require('firebase-functions/v2/firestore');
 const { DEFAULT_SETTINGS, runPipeline } = require('./services/taskAiOrchestrator');
 const { assertString, sanitizeFollowupAnswers } = require('./lib/validators');
 
-const { canAnswerFollowup, canRunManualAi, canSaveToTroubleshootingLibrary } = require('./lib/permissions');
+const {
+  canAnswerFollowup,
+  canRunAssetEnrichment,
+  canRunManualAi,
+  canSaveToTroubleshootingLibrary
+} = require('./lib/permissions');
 
 
 
