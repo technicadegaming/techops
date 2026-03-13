@@ -35,8 +35,8 @@ export function renderAdmin(el, state, actions) {
 
       <section class="item">
         <h3>Migration</h3>
-        <button id="previewImport">Preview browser data</button>
-        <button id="runImport">Import browser data</button>
+        <button id="previewImport">Preview legacy browser data</button>
+        <button id="runImport">Import legacy browser data</button>
         <pre id="importPreview" class="tiny"></pre>
       </section>
 
