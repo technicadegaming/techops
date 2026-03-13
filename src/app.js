@@ -187,7 +187,8 @@ async function render() {
       const strongSuggestions = suggestions
         .filter((s) => {
           const score = Number(s?.matchScore || 0);
-          return score >= 70 || (s?.isOfficial && score >= 62) || (s?.sourceType === 'manufacturer' && score >= 60);
+          const isStrong = score >= 70 || (s?.isOfficial && score >= 62) || (s?.sourceType === 'manufacturer' && score >= 60);
+          return isStrong && !!s?.verified;
         })
         .sort((a, b) => Number(b?.matchScore || 0) - Number(a?.matchScore || 0));
       const links = strongSuggestions.slice(0, 2).map((s) => s.url).filter(Boolean);

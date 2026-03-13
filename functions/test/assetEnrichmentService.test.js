@@ -1,6 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { normalizeDocumentationSuggestions } = require('../src/services/assetEnrichmentService');
+const {
+  normalizeDocumentationSuggestions,
+  detectDeadPageText,
+  verifySuggestionUrl,
+  verifyDocumentationSuggestions
+} = require('../src/services/assetEnrichmentService');
 
 test('normalizeDocumentationSuggestions filters weak and malformed links and ranks strong matches first', () => {
   const suggestions = normalizeDocumentationSuggestions({
@@ -22,4 +27,54 @@ test('normalizeDocumentationSuggestions filters weak and malformed links and ran
   assert.ok(suggestions.every((row) => /^https?:\/\//.test(row.url)));
   assert.ok(suggestions.every((row) => Number(row.matchScore) >= 35));
   assert.ok(suggestions.some((row) => row.isOfficial));
+});
+
+test('detectDeadPageText identifies common not-found/manual-missing responses', () => {
+  assert.equal(detectDeadPageText('Manual Not Found for this model.'), true);
+  assert.equal(detectDeadPageText('Welcome to the official operator manual.'), false);
+});
+
+test('verifySuggestionUrl marks dead pages and verified links', async () => {
+  const deadFetch = async () => ({
+    ok: false,
+    status: 404,
+    text: async () => 'page not found'
+  });
+  const deadResult = await verifySuggestionUrl('https://example.com/dead-manual', deadFetch);
+  assert.equal(deadResult.verified, false);
+  assert.equal(deadResult.deadPage, true);
+  assert.equal(deadResult.httpStatus, 404);
+
+  const goodFetch = async () => ({
+    ok: true,
+    status: 200,
+    text: async () => 'Operator manual for Cool Game Deluxe'
+  });
+  const goodResult = await verifySuggestionUrl('https://example.com/manual', goodFetch);
+  assert.equal(goodResult.verified, true);
+  assert.equal(goodResult.deadPage, false);
+  assert.equal(goodResult.httpStatus, 200);
+});
+
+test('verifyDocumentationSuggestions sorts verified links first and preserves existing metadata', async () => {
+  const fetchMock = async (url, options = {}) => {
+    if (options.method === 'HEAD') {
+      return { ok: true, status: 200, text: async () => '' };
+    }
+    if (url.includes('bad')) {
+      return { ok: false, status: 404, text: async () => 'manual not found' };
+    }
+    return { ok: true, status: 200, text: async () => 'service manual' };
+  };
+
+  const verified = await verifyDocumentationSuggestions([
+    { url: 'https://example.com/bad', matchScore: 85, isOfficial: true },
+    { url: 'https://example.com/good', matchScore: 70, isOfficial: false }
+  ], fetchMock);
+
+  assert.equal(verified.length, 2);
+  assert.equal(verified[0].url, 'https://example.com/good');
+  assert.equal(verified[0].verified, true);
+  assert.equal(verified[1].verified, false);
+  assert.equal(verified[1].deadPage, true);
 });

@@ -10,6 +10,17 @@ const TRUSTED_MANUAL_HOST_TOKENS = [
   'archive.org'
 ];
 
+const DEAD_PAGE_PATTERNS = [
+  /page not found/i,
+  /manual not found/i,
+  /not available/i,
+  /error\s*(404|410|500)?/i,
+  /document no longer exists/i
+];
+
+const VERIFY_TIMEOUT_MS = 3500;
+const VERIFY_MAX_SUGGESTIONS = 5;
+
 function tokenize(value) {
   return `${value || ''}`
     .toLowerCase()
@@ -141,6 +152,107 @@ function normalizeDocumentationSuggestions({ links, confidence, asset, normalize
     .slice(0, 5);
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = VERIFY_TIMEOUT_MS, fetchImpl = fetch) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetchImpl(url, {
+      ...options,
+      redirect: 'follow',
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function detectDeadPageText(rawText) {
+  const text = `${rawText || ''}`.slice(0, 3000);
+  return DEAD_PAGE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+async function verifySuggestionUrl(url, fetchImpl = fetch) {
+  let headResponse = null;
+  try {
+    headResponse = await fetchWithTimeout(url, {
+      method: 'HEAD',
+      headers: { 'user-agent': 'techops-asset-enrichment/1.0' }
+    }, VERIFY_TIMEOUT_MS, fetchImpl);
+  } catch (error) {
+    headResponse = null;
+  }
+
+  const shouldFallbackToGet = !headResponse || [400, 403, 405, 501].includes(headResponse.status) || (headResponse.status >= 404);
+
+  let getResponse = null;
+  let pageSnippet = '';
+  if (shouldFallbackToGet || (headResponse && headResponse.ok)) {
+    try {
+      getResponse = await fetchWithTimeout(url, {
+        method: 'GET',
+        headers: {
+          'user-agent': 'techops-asset-enrichment/1.0',
+          range: 'bytes=0-2500'
+        }
+      }, VERIFY_TIMEOUT_MS, fetchImpl);
+      pageSnippet = await getResponse.text();
+    } catch (error) {
+      if (!headResponse) {
+        return {
+          verified: false,
+          unreachable: true,
+          deadPage: false,
+          verificationStatus: 'unreachable',
+          httpStatus: null
+        };
+      }
+    }
+  }
+
+  const response = getResponse || headResponse;
+  if (!response) {
+    return {
+      verified: false,
+      unreachable: true,
+      deadPage: false,
+      verificationStatus: 'unreachable',
+      httpStatus: null
+    };
+  }
+
+  const httpStatus = Number(response.status) || null;
+  const deadByStatus = httpStatus === 404 || httpStatus === 410 || httpStatus >= 500;
+  const deadByText = !!pageSnippet && detectDeadPageText(pageSnippet);
+  const deadPage = deadByStatus || deadByText;
+  const verified = response.ok && !deadPage;
+
+  return {
+    verified,
+    unreachable: false,
+    deadPage,
+    verificationStatus: verified ? 'verified' : (deadPage ? 'dead_page' : 'unverified'),
+    httpStatus
+  };
+}
+
+async function verifyDocumentationSuggestions(suggestions, fetchImpl = fetch) {
+  const bounded = Array.isArray(suggestions) ? suggestions.slice(0, VERIFY_MAX_SUGGESTIONS) : [];
+  const verifiedRows = await Promise.all(
+    bounded.map(async (row) => {
+      const verification = await verifySuggestionUrl(row.url, fetchImpl);
+      return {
+        ...row,
+        ...verification
+      };
+    })
+  );
+
+  return verifiedRows.sort((a, b) => {
+    if (!!a.verified !== !!b.verified) return a.verified ? -1 : 1;
+    return Number(b.matchScore || 0) - Number(a.matchScore || 0);
+  });
+}
+
 function buildLookupContext(asset, assetId, followupAnswer = '') {
   return {
     assetName: asset.name || '',
@@ -182,7 +294,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
   const confidence = Number(parsed?.confidence || 0);
   const normalizedName = parsed?.normalizedName || asset.name || '';
   const manufacturerSuggestion = parsed?.likelyManufacturer || '';
-  const suggestions = normalizeDocumentationSuggestions({
+  const normalizedSuggestions = normalizeDocumentationSuggestions({
     links: parsed?.documentationLinks,
     confidence,
     asset,
@@ -190,21 +302,29 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     manufacturerSuggestion,
     followupAnswer: context.followupAnswer
   });
+  const suggestions = await verifyDocumentationSuggestions(normalizedSuggestions);
   const confidenceThreshold = settings.aiConfidenceThreshold || 0.45;
 
   const strongSuggestions = suggestions.filter((s) => s.matchScore >= 70 || (s.isOfficial && s.matchScore >= 62));
-  const hasConfidentSingleMatch = confidence >= confidenceThreshold && strongSuggestions.length === 1;
+  const strongVerifiedSuggestions = strongSuggestions.filter((s) => s.verified);
+  const hasConfidentSingleMatch = confidence >= confidenceThreshold && strongVerifiedSuggestions.length === 1;
   const topSuggestionScore = suggestions[0]?.matchScore || 0;
   const isAmbiguousTitle = suggestions.length > 1 && topSuggestionScore < 78;
+  const hasUnverifiedCandidates = suggestions.some((s) => !s.verified && !s.deadPage && !s.unreachable);
+  const hasOnlyFailedVerification = suggestions.length > 0 && !strongVerifiedSuggestions.length;
 
   const followupQuestion = hasConfidentSingleMatch
     ? ''
+    : (hasOnlyFailedVerification
+      ? 'Please share the exact manual title or a working URL from the cabinet nameplate.'
     : (isAmbiguousTitle
       ? 'Which cabinet/version is it (upright/cocktail/deluxe) as shown on the manufacturer plate?'
-      : (parsed?.oneFollowupQuestion || 'Can you confirm the manufacturer and exact model from the nameplate?'));
+      : (parsed?.oneFollowupQuestion || 'Can you confirm the manufacturer and exact model from the nameplate?')));
   const shouldSetManufacturer = !asset.manufacturer && confidence >= Math.max(0.75, confidenceThreshold) && manufacturerSuggestion;
 
-  const status = strongSuggestions.length ? (hasConfidentSingleMatch ? 'docs_found' : 'needs_follow_up') : 'no_match_yet';
+  const status = strongVerifiedSuggestions.length
+    ? (hasConfidentSingleMatch ? 'docs_found' : 'needs_follow_up')
+    : (hasUnverifiedCandidates ? 'needs_follow_up' : 'no_match_yet');
 
   const updatePayload = {
     normalizedName,
@@ -255,5 +375,8 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
 
 module.exports = {
   enrichAssetDocumentation,
-  normalizeDocumentationSuggestions
+  normalizeDocumentationSuggestions,
+  detectDeadPageText,
+  verifySuggestionUrl,
+  verifyDocumentationSuggestions
 };
