@@ -39,8 +39,33 @@ function validateAiResultShape(result) {
   };
 }
 
+function validateAssetLookupResultShape(result) {
+  if (!result || typeof result !== 'object') throw new Error('Asset lookup response is not an object');
+  if (typeof result.normalizedName !== 'string') throw new Error('Missing normalizedName');
+  if (typeof result.likelyManufacturer !== 'string') throw new Error('Missing likelyManufacturer');
+  if (typeof result.likelyCategory !== 'string') throw new Error('Missing likelyCategory');
+  if (typeof result.confidence !== 'number') throw new Error('Missing confidence');
+
+  const docs = Array.isArray(result.documentationLinks) ? result.documentationLinks : [];
+  return {
+    normalizedName: result.normalizedName.trim().slice(0, 140),
+    likelyManufacturer: result.likelyManufacturer.trim().slice(0, 80),
+    likelyCategory: result.likelyCategory.trim().slice(0, 60),
+    confidence: Math.max(0, Math.min(1, result.confidence)),
+    oneFollowupQuestion: typeof result.oneFollowupQuestion === 'string' ? result.oneFollowupQuestion.trim().slice(0, 220) : '',
+    documentationLinks: docs
+      .filter((row) => row && typeof row.url === 'string')
+      .map((row) => ({
+        title: typeof row.title === 'string' ? row.title.trim().slice(0, 120) : '',
+        url: row.url.trim(),
+        sourceType: typeof row.sourceType === 'string' ? row.sourceType.trim().slice(0, 40) : ''
+      }))
+  };
+}
+
 module.exports = {
   assertString,
   sanitizeFollowupAnswers,
-  validateAiResultShape
+  validateAiResultShape,
+  validateAssetLookupResultShape
 };
