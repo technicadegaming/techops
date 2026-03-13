@@ -1,6 +1,6 @@
 const OpenAI = require('openai');
 const { defineSecret } = require('firebase-functions/params');
-const { validateAiResultShape } = require('../lib/validators');
+const { validateAiResultShape, validateAssetLookupResultShape } = require('../lib/validators');
 
 const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
 
@@ -40,6 +40,35 @@ function buildSchemaPrompt() {
   });
 }
 
+function buildAssetLookupInstructions() {
+  return [
+    'You identify arcade/redemption equipment and find manuals/documentation.',
+    'Focus on equipment identification and documentation lookup, not troubleshooting.',
+    'Use the provided asset fields as the source context: name, manufacturer, serial, and asset ID.',
+    'Prioritize official manufacturer pages and trusted manual-library sources.',
+    'Bias search intent toward arcade game manual, operator manual, service manual, parts manual, and manufacturer documentation.',
+    'Return strict JSON only; do not include markdown or explanatory prose.',
+    'Do not fabricate URLs. Omit a link if uncertain.'
+  ].join('\n');
+}
+
+function buildAssetLookupSchemaPrompt() {
+  return JSON.stringify({
+    normalizedName: 'string',
+    likelyManufacturer: 'string',
+    likelyCategory: 'string',
+    confidence: 0.0,
+    oneFollowupQuestion: 'string or empty string',
+    documentationLinks: [
+      {
+        title: 'string',
+        url: 'https://...',
+        sourceType: 'manufacturer|manual_library|distributor|other'
+      }
+    ]
+  });
+}
+
 async function requestFollowupQuestions({ model, traceId, context }) {
   const client = getClient();
   const prompt = `Determine if follow-up questions are needed. Return JSON: {"needsFollowup":boolean, "questions": string[]} with 2-5 concise practical questions max. Context: ${JSON.stringify(context)}`;
@@ -75,8 +104,28 @@ async function requestTroubleshootingPlan({ model, traceId, settings, context })
   };
 }
 
+async function requestAssetDocumentationLookup({ model, traceId, context }) {
+  const client = getClient();
+  const response = await client.responses.create({
+    model,
+    metadata: { traceId, flow: 'asset-documentation-lookup' },
+    input: [
+      { role: 'system', content: buildAssetLookupInstructions() },
+      { role: 'developer', content: `Output strict JSON schema: ${buildAssetLookupSchemaPrompt()}` },
+      { role: 'user', content: `Use this structured lookup context: ${JSON.stringify(context)}` }
+    ]
+  });
+
+  const parsed = validateAssetLookupResultShape(JSON.parse(response.output_text || '{}'));
+  return {
+    parsed,
+    responseMeta: { responseId: response.id, model: response.model }
+  };
+}
+
 module.exports = {
   OPENAI_API_KEY,
   requestFollowupQuestions,
-  requestTroubleshootingPlan
+  requestTroubleshootingPlan,
+  requestAssetDocumentationLookup
 };
