@@ -9,7 +9,7 @@ import { renderAdmin } from './admin.js';
 import { canDelete } from './roles.js';
 import { previewLegacyImport, importLegacyData } from './migration.js';
 import { dryRunBackup, exportBackupJson, restoreBackup, validateBackup } from './backup.js';
-import { analyzeTaskTroubleshooting, answerTaskFollowup, enrichAssetDocumentation, regenerateTaskTroubleshooting, saveTaskFixToTroubleshootingLibrary } from './aiAdapter.js';
+import { analyzeTaskTroubleshooting, answerTaskFollowup, enrichAssetDocumentation, previewAssetDocumentationLookup, regenerateTaskTroubleshooting, saveTaskFixToTroubleshootingLibrary } from './aiAdapter.js';
 import { buildCloseoutEvent, parseRouteState, pushRouteState } from './features/workflow.js';
 
 const authView = document.getElementById('authView');
@@ -17,7 +17,7 @@ const appView = document.getElementById('appView');
 const authMessage = document.getElementById('authMessage');
 
 const sections = ['dashboard', 'operations', 'assets', 'calendar', 'reports', 'admin'];
-const state = { user: null, profile: null, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], settings: {}, restorePayload: null, route: parseRouteState() };
+const state = { user: null, profile: null, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], settings: {}, restorePayload: null, route: parseRouteState(), assetDraft: { manufacturer: '', manualLinks: [], supportResources: [], supportContacts: [], notes: '', preview: null, previewStatus: 'idle' } };
 
 function tabVisible(tab) {
   if (tab === 'admin') return state.profile?.role === 'admin';
@@ -137,23 +137,49 @@ async function render() {
       const desiredId = `${id || ''}`.trim() || normalizeAssetId(name);
       const current = state.assets.find((a) => a.id === desiredId) || {};
       const finalId = current.id ? desiredId : pickUniqueAssetId(desiredId, state.assets);
+      const draft = state.assetDraft || {};
       const entityPayload = {
         ...current,
         ...payload,
         id: finalId,
         name,
         serialNumber: `${payload.serialNumber || current.serialNumber || ''}`.trim(),
-        manufacturer: `${payload.manufacturer || current.manufacturer || ''}`.trim(),
+        manufacturer: `${payload.manufacturer || draft.manufacturer || current.manufacturer || ''}`.trim(),
         ownerWorkers: `${payload.ownerWorkers || ''}`.split(',').map((v) => v.trim()).filter(Boolean),
-        manualLinks: `${payload.manualLinks || ''}`.split(',').map((v) => v.trim()).filter(Boolean),
+        manualLinks: `${payload.manualLinks || ''}`.split(',').map((v) => v.trim()).filter(Boolean).concat(Array.isArray(draft.manualLinks) ? draft.manualLinks : []).filter(Boolean).filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 5),
         enrichmentStatus: (payload.manualLinks || current.manualLinks?.length) ? (current.enrichmentStatus || 'idle') : 'searching_docs',
-        history: payload.historyNote ? [...(current.history || []), { at: new Date().toISOString(), note: payload.historyNote }] : (current.history || [])
+        history: payload.historyNote ? [...(current.history || []), { at: new Date().toISOString(), note: payload.historyNote }] : (current.history || []),
+        supportResourcesSuggestion: Array.isArray(draft.supportResources) && draft.supportResources.length ? draft.supportResources : (current.supportResourcesSuggestion || []),
+        supportContactsSuggestion: Array.isArray(draft.supportContacts) && draft.supportContacts.length ? draft.supportContacts : (current.supportContactsSuggestion || []),
+        notes: `${payload.notes || ''}`.trim() || `${current.notes || ''}`.trim() || (draft.notes ? `${draft.notes}`.trim() : '')
       };
       await upsertEntity('assets', finalId, entityPayload, state.user);
+      state.assetDraft = { manufacturer: '', manualLinks: [], supportResources: [], supportContacts: [], notes: '', preview: null, previewStatus: 'idle' };
       refreshData().then(render);
       enrichAssetDocumentation(finalId, { trigger: 'post_save' })
         .then(async () => { await refreshData(); render(); })
         .catch(async () => { await refreshData(); render(); });
+    },
+    previewAssetLookup: async (payload) => {
+      const assetName = `${payload?.assetName || ''}`.trim();
+      if (assetName.length < 3) {
+        state.assetDraft = { ...state.assetDraft, preview: null, previewStatus: 'idle' };
+        render();
+        return;
+      }
+      state.assetDraft = { ...state.assetDraft, previewStatus: 'searching' };
+      render();
+      const preview = await previewAssetDocumentationLookup(payload);
+      state.assetDraft = { ...state.assetDraft, preview, previewStatus: preview?.status || 'found_suggestions' };
+      render();
+    },
+    applyPreviewToDraft: (partialPayload = {}) => {
+      state.assetDraft = { ...state.assetDraft, ...partialPayload };
+      render();
+    },
+    clearPreview: () => {
+      state.assetDraft = { ...state.assetDraft, preview: null, previewStatus: 'idle' };
+      render();
     },
     runAssetEnrichment: async (id) => {
       const current = state.assets.find((a) => a.id === id) || {};
@@ -212,7 +238,7 @@ async function render() {
         id: nextId,
         name: `${payload.name || current.name || ''}`.trim(),
         serialNumber: `${payload.serialNumber || current.serialNumber || ''}`.trim(),
-        manufacturer: `${payload.manufacturer || current.manufacturer || ''}`.trim(),
+        manufacturer: `${payload.manufacturer || draft.manufacturer || current.manufacturer || ''}`.trim(),
         manualLinks: `${payload.manualLinks || ''}`.split(',').map((v) => v.trim()).filter(Boolean)
       }, state.user);
       if (nextId !== currentId) await deleteEntity('assets', currentId, state.user);

@@ -10,6 +10,47 @@ const ENRICHMENT_STATUS_LABELS = {
   idle: 'not started'
 };
 
+
+function renderPreviewPanel(state) {
+  const preview = state.assetDraft?.preview || null;
+  const status = state.assetDraft?.previewStatus || 'idle';
+  const labels = {
+    idle: 'idle',
+    searching: 'searching',
+    found_suggestions: 'found suggestions',
+    needs_follow_up: 'needs follow-up',
+    no_strong_match: 'no strong match'
+  };
+  if (!preview && status === 'idle') {
+    return '<div class="tiny">Lookup assistant: idle</div>';
+  }
+
+  const docs = (preview?.documentationSuggestions || []).slice(0, 3);
+  const support = (preview?.supportResourcesSuggestion || []).slice(0, 3);
+  const contacts = (preview?.supportContactsSuggestion || []).slice(0, 3);
+  const alternate = (preview?.alternateNames || []).join(', ');
+
+  return `
+    <div class="tiny"><b>Lookup assistant:</b> ${labels[status] || status}</div>
+    <div class="tiny">Best match: ${preview?.normalizedName || 'n/a'} (${Math.round(Number(preview?.confidence || 0) * 100)}%)</div>
+    <div class="tiny">Suggested manufacturer: ${preview?.likelyManufacturer || 'n/a'} · Category: ${preview?.likelyCategory || 'n/a'}</div>
+    <div class="tiny">Top reason: ${preview?.topMatchReason || 'n/a'}</div>
+    <div class="tiny">Manual/docs: ${docs.map((d) => `<a href="${d.url}" target="_blank" rel="noopener">${d.title || d.url}</a>`).join(' | ') || 'none'}</div>
+    <div class="tiny">Support links: ${support.map((d) => `<a href="${d.url}" target="_blank" rel="noopener">${d.title || d.url}</a>`).join(' | ') || 'none'}</div>
+    <div class="tiny">Support contacts: ${contacts.map((c) => `${c.label || c.contactType}: ${c.value}`).join(' | ') || 'none'}</div>
+    <div class="tiny">Alternate names: ${alternate || 'none'}</div>
+    ${preview?.oneFollowupQuestion ? `<div class="tiny"><b>Follow-up:</b> ${preview.oneFollowupQuestion}</div>` : ''}
+    <div style="display:flex; gap:6px; flex-wrap:wrap; margin:6px 0;">
+      <button type="button" data-apply-preview="manufacturer">Apply manufacturer</button>
+      <button type="button" data-apply-preview="manuals">Apply top manual link(s)</button>
+      <button type="button" data-apply-preview="support">Apply support link(s)</button>
+      <button type="button" data-apply-preview="contacts">Apply contact info / notes</button>
+      <button type="button" data-apply-preview="all">Apply all safe suggestions</button>
+      <button type="button" data-clear-preview="1">Clear preview</button>
+    </div>
+  `;
+}
+
 function renderEnrichmentDetails(asset, manager) {
   const status = asset.enrichmentStatus || 'idle';
   const suggestions = Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : [];
@@ -53,6 +94,13 @@ export function renderAssets(el, state, actions) {
       <input name="ownerWorkers" placeholder="Assigned workers / owners (comma-separated)" ${editable ? '' : 'disabled'} />
       <input name="manualLinks" placeholder="Manual links (comma-separated URLs)" ${editable ? '' : 'disabled'} />
       <textarea name="historyNote" placeholder="Service note (added to timeline)" ${editable ? '' : 'disabled'}></textarea>
+      <div class="grid" style="grid-column:1/-1; gap:6px; border:1px solid #ddd; padding:8px; border-radius:8px;">
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <button type="button" data-preview-lookup="1" ${editable ? '' : 'disabled'}>Find manufacturer/manual info</button>
+          <span class="tiny">Runs on unsaved draft, no auto-save.</span>
+        </div>
+        ${renderPreviewPanel(state)}
+      </div>
       <button class="primary" ${editable ? '' : 'disabled'}>Save asset</button>
     </form>
     <div class="list">${state.assets.map((a) => {
@@ -98,6 +146,48 @@ export function renderAssets(el, state, actions) {
     actions.saveAsset(p.id, p);
     form.reset();
   });
+
+  let previewTimer = null;
+  const nameInput = form?.querySelector('[name="name"]');
+  const requestPreview = () => {
+    const assetName = `${nameInput?.value || ''}`.trim();
+    if (assetName.length < 3) return;
+    const manufacturer = `${form?.querySelector('[name="manufacturer"]')?.value || ''}`.trim();
+    const serialNumber = `${form?.querySelector('[name="serialNumber"]')?.value || ''}`.trim();
+    const assetId = `${form?.querySelector('[name="id"]')?.value || ''}`.trim();
+    actions.previewAssetLookup({ assetName, manufacturer, serialNumber, assetId });
+  };
+
+  nameInput?.addEventListener('input', () => {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(requestPreview, 700);
+  });
+
+  form?.querySelector('[data-preview-lookup]')?.addEventListener('click', requestPreview);
+
+  form?.querySelectorAll('[data-apply-preview]').forEach((btn) => btn.addEventListener('click', () => {
+    const preview = state.assetDraft?.preview || {};
+    const docs = (preview.documentationSuggestions || []).map((d) => d.url).filter(Boolean);
+    const support = (preview.supportResourcesSuggestion || []).map((d) => d.url).filter(Boolean);
+    const contacts = (preview.supportContactsSuggestion || []).map((c) => `${c.label || c.contactType}: ${c.value}`).filter(Boolean);
+    const mode = btn.dataset.applyPreview;
+    if (mode === 'manufacturer' || mode === 'all') {
+      if (preview.likelyManufacturer) form.querySelector('[name="manufacturer"]').value = preview.likelyManufacturer;
+    }
+    if (mode === 'manuals' || mode === 'all') {
+      if (docs.length) form.querySelector('[name="manualLinks"]').value = docs.slice(0, 2).join(', ');
+    }
+    if (mode === 'support' || mode === 'all') {
+      actions.applyPreviewToDraft({ supportResources: support.slice(0, 3) });
+    }
+    if (mode === 'contacts' || mode === 'all') {
+      actions.applyPreviewToDraft({ notes: contacts.join(' | '), supportContacts: preview.supportContactsSuggestion || [] });
+    }
+    if (mode === 'manuals' || mode === 'all') actions.applyPreviewToDraft({ manualLinks: docs.slice(0, 2) });
+    if (mode === 'manufacturer' || mode === 'all') actions.applyPreviewToDraft({ manufacturer: preview.likelyManufacturer || '' });
+  }));
+
+  form?.querySelector('[data-clear-preview]')?.addEventListener('click', () => actions.clearPreview());
   el.querySelectorAll('[data-docs]').forEach((btn) => btn.addEventListener('click', () => actions.markDocsReviewed(btn.dataset.docs)));
   el.querySelectorAll('[data-del]').forEach((btn) => btn.addEventListener('click', () => actions.deleteAsset(btn.dataset.del)));
   el.querySelectorAll('[data-enrich]').forEach((btn) => btn.addEventListener('click', () => actions.runAssetEnrichment(btn.dataset.enrich)));

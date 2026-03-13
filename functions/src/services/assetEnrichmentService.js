@@ -82,9 +82,9 @@ function buildFollowupQuestion({ parsedQuestion, profile, likelyCategory, hasOnl
   return 'Which cabinet type is it (upright/deluxe/SDX) from the manufacturer plate?';
 }
 
-function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manufacturerSuggestion, followupAnswer }) {
+function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manufacturerSuggestion, followupAnswer, kind = 'documentation' }) {
   const url = `${row?.url || ''}`.trim();
-  const title = `${row?.title || ''}`.trim();
+  const title = `${row?.title || row?.label || ''}`.trim();
   let parsedUrl;
   try {
     parsedUrl = new URL(url);
@@ -99,7 +99,7 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   if (lowerHost.length < 4 || /\.(png|jpg|gif|webp|svg|zip|exe)$/i.test(lowerPath)) return null;
   if (/(redirect|tracker|utm_|clickid=|javascript:|mailto:)/i.test(lowerUrl)) return null;
 
-  const sourceType = `${row.sourceType || 'other'}`.trim().toLowerCase();
+  const sourceType = `${row.sourceType || row.resourceType || 'other'}`.trim().toLowerCase();
   const assetTokens = new Set([
     ...tokenize(asset?.name),
     ...tokenize(normalizedName),
@@ -119,11 +119,11 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   const isLikelyManual = /manual|operator|service|parts|schematic|instruction/.test(`${titleJoined} ${lowerPath}`);
   const isGenericHomepage = lowerPath === '/' || /^\/(home|index(\.html?)?)?$/.test(lowerPath);
 
-  if (sourceType === 'manufacturer') {
+  if (sourceType === 'manufacturer' || sourceType === 'official_site' || sourceType === 'support' || sourceType === 'parts' || sourceType === 'contact') {
     score += 14;
     reasons.push('manufacturer_source');
   }
-  if (sourceType === 'manual_library') {
+  if (sourceType === 'manual_library' || sourceType === 'distributor') {
     score += 12;
     reasons.push('manual_library_source');
   }
@@ -188,11 +188,16 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     reasons.push('category_mismatch_penalty');
   }
 
+  if (kind === 'support' && /official_site|support|parts|contact/.test(sourceType)) {
+    score += 8;
+    reasons.push('support_resource_bias');
+  }
+
   const bounded = Math.max(0, Math.min(100, score));
   if (bounded < 35) return null;
 
   return {
-    title: row.title || 'Candidate documentation',
+    title: row.title || row.label || 'Candidate documentation',
     url,
     confidence: fallbackConfidence,
     sourceType: sourceType || 'other',
@@ -205,7 +210,7 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   };
 }
 
-function normalizeDocumentationSuggestions({ links, confidence, asset, normalizedName, manufacturerSuggestion, followupAnswer }) {
+function normalizeDocumentationSuggestions({ links, confidence, asset, normalizedName, manufacturerSuggestion, followupAnswer, kind = 'documentation' }) {
   if (!Array.isArray(links)) return [];
   const fallbackConfidence = Math.max(0.35, Number(confidence) || 0);
 
@@ -216,11 +221,30 @@ function normalizeDocumentationSuggestions({ links, confidence, asset, normalize
       fallbackConfidence,
       normalizedName,
       manufacturerSuggestion,
-      followupAnswer
+      followupAnswer,
+      kind
     }))
     .filter(Boolean)
     .sort((a, b) => b.matchScore - a.matchScore)
     .slice(0, 5);
+}
+
+function normalizeSupportContacts(rows) {
+  if (!Array.isArray(rows)) return [];
+  const trustedContact = rows
+    .map((row) => ({
+      label: `${row?.label || ''}`.trim().slice(0, 80),
+      value: `${row?.value || ''}`.trim().slice(0, 180),
+      contactType: `${row?.contactType || 'other'}`.trim().toLowerCase() || 'other'
+    }))
+    .filter((row) => row.value)
+    .filter((row) => {
+      if (row.contactType === 'email') return /@/.test(row.value);
+      if (row.contactType === 'phone') return /\d{7,}/.test(row.value.replace(/\D/g, ''));
+      if (row.contactType === 'form') return /^https?:\/\//i.test(row.value);
+      return row.value.length >= 4;
+    });
+  return trustedContact.slice(0, 5);
 }
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = VERIFY_TIMEOUT_MS, fetchImpl = fetch) {
@@ -346,6 +370,61 @@ function buildLookupContext(asset, assetId, followupAnswer = '') {
   };
 }
 
+async function runLookupPreview({ settings, traceId, draftAsset }) {
+  const context = buildLookupContext(draftAsset || {}, draftAsset?.assetId, draftAsset?.followupAnswer);
+  const { parsed } = await requestAssetDocumentationLookup({
+    model: settings.aiModel || 'gpt-4.1-mini',
+    traceId,
+    context
+  });
+
+  const confidence = Number(parsed?.confidence || 0);
+  const normalizedName = parsed?.normalizedName || draftAsset?.name || '';
+  const manufacturerSuggestion = parsed?.likelyManufacturer || '';
+  const manufacturerProfile = getManufacturerProfile(draftAsset?.manufacturer, manufacturerSuggestion, normalizedName, parsed?.likelyCategory);
+
+  const documentationSuggestions = normalizeDocumentationSuggestions({
+    links: parsed?.documentationLinks,
+    confidence,
+    asset: draftAsset || {},
+    normalizedName,
+    manufacturerSuggestion,
+    followupAnswer: context.followupAnswer
+  });
+
+  const supportResourcesSuggestion = normalizeDocumentationSuggestions({
+    links: parsed?.supportResources,
+    confidence,
+    asset: draftAsset || {},
+    normalizedName,
+    manufacturerSuggestion,
+    followupAnswer: context.followupAnswer,
+    kind: 'support'
+  });
+
+  const supportContactsSuggestion = normalizeSupportContacts(parsed?.supportContacts);
+  const confidenceThreshold = settings.aiConfidenceThreshold || 0.45;
+  const status = confidence >= confidenceThreshold && documentationSuggestions.length
+    ? 'found_suggestions'
+    : (parsed?.oneFollowupQuestion ? 'needs_follow_up' : 'no_strong_match');
+
+  return {
+    status,
+    normalizedName,
+    likelyManufacturer: manufacturerSuggestion,
+    likelyCategory: parsed?.likelyCategory || '',
+    confidence,
+    oneFollowupQuestion: parsed?.oneFollowupQuestion || '',
+    topMatchReason: parsed?.topMatchReason || '',
+    alternateNames: Array.isArray(parsed?.alternateNames) ? parsed.alternateNames : [],
+    searchHints: Array.isArray(parsed?.searchHints) ? parsed.searchHints : [],
+    documentationSuggestions,
+    supportResourcesSuggestion,
+    supportContactsSuggestion,
+    matchedManufacturer: manufacturerProfile?.key || ''
+  };
+}
+
 async function enrichAssetDocumentation({ db, assetId, userId, settings, triggerSource, followupAnswer, traceId }) {
   const assetRef = db.collection('assets').doc(assetId);
   const assetSnap = await assetRef.get();
@@ -359,26 +438,17 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     updatedBy: userId
   }, { merge: true });
 
-  const context = buildLookupContext(asset, assetId, followupAnswer);
-  const { parsed } = await requestAssetDocumentationLookup({
-    model: settings.aiModel || 'gpt-4.1-mini',
+  const preview = await runLookupPreview({
+    settings,
     traceId,
-    context
+    draftAsset: { ...asset, assetId, followupAnswer }
   });
 
-  const confidence = Number(parsed?.confidence || 0);
-  const normalizedName = parsed?.normalizedName || asset.name || '';
-  const manufacturerSuggestion = parsed?.likelyManufacturer || '';
-  const manufacturerProfile = getManufacturerProfile(asset?.manufacturer, manufacturerSuggestion, normalizedName, parsed?.likelyCategory);
-  const normalizedSuggestions = normalizeDocumentationSuggestions({
-    links: parsed?.documentationLinks,
-    confidence,
-    asset,
-    normalizedName,
-    manufacturerSuggestion,
-    followupAnswer: context.followupAnswer
-  });
-  const suggestions = await verifyDocumentationSuggestions(normalizedSuggestions);
+  const confidence = Number(preview?.confidence || 0);
+  const normalizedName = preview?.normalizedName || asset.name || '';
+  const manufacturerSuggestion = preview?.likelyManufacturer || '';
+  const manufacturerProfile = getManufacturerProfile(asset?.manufacturer, manufacturerSuggestion, normalizedName, preview?.likelyCategory);
+  const suggestions = await verifyDocumentationSuggestions(preview.documentationSuggestions || []);
   const confidenceThreshold = settings.aiConfidenceThreshold || 0.45;
 
   const strongSuggestions = suggestions.filter((s) => s.matchScore >= 70 || (s.isOfficial && s.matchScore >= 62));
@@ -394,9 +464,9 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     : (isAmbiguousTitle
       ? 'Which cabinet/version is it (upright/cocktail/deluxe) as shown on the manufacturer plate?'
       : buildFollowupQuestion({
-        parsedQuestion: parsed?.oneFollowupQuestion,
+        parsedQuestion: preview?.oneFollowupQuestion,
         profile: manufacturerProfile,
-        likelyCategory: parsed?.likelyCategory,
+        likelyCategory: preview?.likelyCategory,
         hasOnlyFailedVerification
       }));
   const shouldSetManufacturer = !asset.manufacturer && confidence >= Math.max(0.75, confidenceThreshold) && manufacturerSuggestion;
@@ -413,20 +483,26 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     enrichmentStatus: status,
     enrichmentCandidates: [
       manufacturerSuggestion,
-      parsed?.likelyCategory,
-      parsed?.normalizedName
+      preview?.likelyCategory,
+      preview?.normalizedName
     ].filter(Boolean).slice(0, 5),
     enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedBy: userId
   };
 
-  if (context.followupAnswer) {
-    updatePayload.enrichmentFollowupAnswer = context.followupAnswer;
+  const followupAnswerText = `${followupAnswer || asset.enrichmentFollowupAnswer || ''}`.trim();
+  if (followupAnswerText) {
+    updatePayload.enrichmentFollowupAnswer = followupAnswerText;
     updatePayload.enrichmentFollowupAnsweredAt = admin.firestore.FieldValue.serverTimestamp();
   }
 
   if (manufacturerSuggestion) updatePayload.manufacturerSuggestion = manufacturerSuggestion;
+  if (Array.isArray(preview.supportResourcesSuggestion) && preview.supportResourcesSuggestion.length) updatePayload.supportResourcesSuggestion = preview.supportResourcesSuggestion;
+  if (Array.isArray(preview.supportContactsSuggestion) && preview.supportContactsSuggestion.length) updatePayload.supportContactsSuggestion = preview.supportContactsSuggestion;
+  if (Array.isArray(preview.alternateNames) && preview.alternateNames.length) updatePayload.alternateNames = preview.alternateNames;
+  if (Array.isArray(preview.searchHints) && preview.searchHints.length) updatePayload.searchHints = preview.searchHints;
+  if (preview.topMatchReason) updatePayload.topMatchReason = preview.topMatchReason;
   if (manufacturerProfile?.key) updatePayload.matchedManufacturer = manufacturerProfile.key;
   if (shouldSetManufacturer) updatePayload.manufacturer = manufacturerSuggestion;
 
@@ -453,8 +529,19 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
   };
 }
 
+async function previewAssetDocumentationLookup({ settings, traceId, draftAsset }) {
+  const preview = await runLookupPreview({ settings, traceId, draftAsset });
+  console.log('previewAssetDocumentationLookup:start', { traceId, assetName: `${draftAsset?.name || ''}`.slice(0, 80) });
+  console.log('previewAssetDocumentationLookup:normalized_target', { traceId, normalizedName: preview.normalizedName });
+  console.log('previewAssetDocumentationLookup:manufacturer_suggestion', { traceId, likelyManufacturer: preview.likelyManufacturer || '' });
+  console.log('previewAssetDocumentationLookup:counts', { traceId, documentationSuggestions: preview.documentationSuggestions.length, supportResources: preview.supportResourcesSuggestion.length });
+  console.log('previewAssetDocumentationLookup:status', { traceId, status: preview.status });
+  return { ok: true, ...preview };
+}
+
 module.exports = {
   enrichAssetDocumentation,
+  previewAssetDocumentationLookup,
   normalizeDocumentationSuggestions,
   detectDeadPageText,
   verifySuggestionUrl,

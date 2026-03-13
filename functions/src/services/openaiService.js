@@ -42,14 +42,17 @@ function buildSchemaPrompt() {
 
 function buildAssetLookupInstructions() {
   return [
-    'You identify arcade/redemption equipment and find manuals/documentation.',
-    'Focus on equipment identification and documentation lookup, not troubleshooting.',
+    'You identify arcade/FEC equipment and return pre-save documentation/support lookup suggestions.',
+    'Focus on exact equipment identification (cabinet, model, revision/version) and documentation/support lookup, not troubleshooting.',
     'Use the provided asset fields as the source context: name, manufacturer, serial, and asset ID.',
     'If followupAnswer is provided, treat it as high-signal disambiguation context for title/version/manufacturer matching.',
-    'Prioritize official manufacturer pages and trusted manual-library sources.',
+    'Prioritize official manufacturer docs/support/contact/parts pages first.',
+    'Use distributor or manual-library links only when relevant and useful.',
+    'Avoid generic homepages unless that is the best official support entry point.',
+    'Provide one short actionable follow-up question only if needed to disambiguate the exact model/version.',
     'Bias search intent toward arcade game manual, operator manual, service manual, parts manual, and manufacturer documentation.',
     'Return strict JSON only; do not include markdown or explanatory prose.',
-    'Do not fabricate URLs. Omit a link if uncertain.'
+    'Never fabricate manuals, contact details, or URLs. Omit uncertain data.'
   ].join('\n');
 }
 
@@ -66,7 +69,24 @@ function buildAssetLookupSchemaPrompt() {
         url: 'https://...',
         sourceType: 'manufacturer|manual_library|distributor|other'
       }
-    ]
+    ],
+    supportResources: [
+      {
+        label: 'string',
+        url: 'https://...',
+        resourceType: 'official_site|support|parts|contact|distributor|manual_library|other'
+      }
+    ],
+    supportContacts: [
+      {
+        label: 'string',
+        value: 'string',
+        contactType: 'phone|email|form|other'
+      }
+    ],
+    alternateNames: ['string'],
+    searchHints: ['string'],
+    topMatchReason: 'string'
   });
 }
 

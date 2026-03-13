@@ -9,7 +9,7 @@ const { canAnswerFollowup, canRunAssetEnrichment, canRunManualAi, canSaveToTroub
 
 
 
-const { enrichAssetDocumentation } = require('./services/assetEnrichmentService');
+const { enrichAssetDocumentation, previewAssetDocumentationLookup } = require('./services/assetEnrichmentService');
 
 const { onRequest } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
@@ -186,6 +186,31 @@ exports.enrichAssetDocumentation = onCall({ secrets: [OPENAI_API_KEY] }, async (
     triggerSource: request.data?.trigger || 'manual',
     followupAnswer: `${request.data?.followupAnswer || ''}`.trim(),
     traceId: request.rawRequest.headers['x-cloud-trace-context'] || `asset-${Date.now()}`
+  });
+});
+
+
+exports.previewAssetDocumentationLookup = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+  assertString(request.data?.assetName, 'assetName');
+  const role = await getUserRole(request.auth.uid);
+  if (!canRunAssetEnrichment(role)) throw new HttpsError('permission-denied', 'Insufficient role for asset enrichment');
+
+  const settings = await getAiSettings();
+  if (!settings.aiEnabled) {
+    return { ok: false, status: 'no_strong_match', message: 'AI is disabled by admin settings' };
+  }
+
+  return previewAssetDocumentationLookup({
+    settings,
+    traceId: request.rawRequest.headers['x-cloud-trace-context'] || `asset-preview-${Date.now()}`,
+    draftAsset: {
+      name: `${request.data?.assetName || ''}`.trim(),
+      manufacturer: `${request.data?.manufacturer || ''}`.trim(),
+      serialNumber: `${request.data?.serialNumber || ''}`.trim(),
+      assetId: `${request.data?.assetId || ''}`.trim(),
+      followupAnswer: `${request.data?.followupAnswer || ''}`.trim()
+    }
   });
 });
 
