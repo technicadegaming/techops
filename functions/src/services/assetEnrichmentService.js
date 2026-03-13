@@ -47,6 +47,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
   const confidence = Number(parsed?.confidence || 0);
   const suggestions = extractSuggestions(parsed);
   const normalizedName = parsed?.conciseIssueSummary ? `${parsed.conciseIssueSummary}`.slice(0, 140) : (asset.name || '');
+<<<<<<< ours
   const inferredManufacturer = parsed?.probableCauses?.[0]?.split(':')[0]?.slice(0, 80) || asset.manufacturer || '';
   const hasConfidentSingleMatch = confidence >= (settings.aiConfidenceThreshold || 0.45) && suggestions.length <= 1;
   const followupQuestion = hasConfidentSingleMatch ? '' : (parsed?.diagnosticSteps?.[0] || 'Can you confirm the manufacturer and exact model on the nameplate?');
@@ -54,6 +55,15 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
   await assetRef.set({
     normalizedName,
     manufacturer: asset.manufacturer || inferredManufacturer,
+=======
+  const manufacturerSuggestion = parsed?.probableCauses?.[0]?.split(':')[0]?.slice(0, 80) || '';
+  const hasConfidentSingleMatch = confidence >= (settings.aiConfidenceThreshold || 0.45) && suggestions.length <= 1;
+  const shouldSetManufacturer = !asset.manufacturer && hasConfidentSingleMatch && manufacturerSuggestion;
+  const followupQuestion = hasConfidentSingleMatch ? '' : (parsed?.diagnosticSteps?.[0] || 'Can you confirm the manufacturer and exact model on the nameplate?');
+
+  const updatePayload = {
+    normalizedName,
+>>>>>>> theirs
     documentationSuggestions: suggestions,
     enrichmentConfidence: confidence,
     enrichmentFollowupQuestion: followupQuestion,
@@ -62,7 +72,16 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedBy: userId
+<<<<<<< ours
   }, { merge: true });
+=======
+  };
+
+  if (manufacturerSuggestion) updatePayload.manufacturerSuggestion = manufacturerSuggestion;
+  if (shouldSetManufacturer) updatePayload.manufacturer = manufacturerSuggestion;
+
+  await assetRef.set(updatePayload, { merge: true });
+>>>>>>> theirs
 
   await db.collection('auditLogs').add({
     action: 'asset_enrichment_run',

@@ -4,7 +4,11 @@ const { onDocumentCreated } = require('firebase-functions/v2/firestore');
 
 const { DEFAULT_SETTINGS, runPipeline } = require('./services/taskAiOrchestrator');
 const { assertString, sanitizeFollowupAnswers } = require('./lib/validators');
+<<<<<<< ours
 const { canAnswerFollowup, canRunManualAi, canSaveToTroubleshootingLibrary } = require('./lib/permissions');
+=======
+const { canAnswerFollowup, canRunAssetEnrichment, canRunManualAi, canSaveToTroubleshootingLibrary } = require('./lib/permissions');
+>>>>>>> theirs
 const { enrichAssetDocumentation } = require('./services/assetEnrichmentService');
 
 const { onRequest } = require("firebase-functions/v2/https");
@@ -166,7 +170,11 @@ exports.enrichAssetDocumentation = onCall({ secrets: [OPENAI_API_KEY] }, async (
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
   assertString(request.data?.assetId, 'assetId');
   const role = await getUserRole(request.auth.uid);
+<<<<<<< ours
   if (!canAnswerFollowup(role)) throw new HttpsError('permission-denied', 'Insufficient role for asset enrichment');
+=======
+  if (!canRunAssetEnrichment(role)) throw new HttpsError('permission-denied', 'Insufficient role for asset enrichment');
+>>>>>>> theirs
   const settings = await getAiSettings();
   if (!settings.aiEnabled) {
     return { ok: false, status: 'no_match_yet', message: 'AI is disabled by admin settings' };

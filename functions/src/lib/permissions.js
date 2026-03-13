@@ -12,6 +12,11 @@ function canAnswerFollowup(role) {
   return hasRoleAtLeast(role, 'staff');
 }
 
+
+function canRunAssetEnrichment(role) {
+  return hasRoleAtLeast(role, 'staff');
+}
+
 function canSaveToTroubleshootingLibrary(role) {
   return hasRoleAtLeast(role, 'lead');
 }
@@ -24,6 +29,7 @@ module.exports = {
   hasRoleAtLeast,
   canRunManualAi,
   canAnswerFollowup,
+  canRunAssetEnrichment,
   canSaveToTroubleshootingLibrary,
   canManageAiSettings
 };

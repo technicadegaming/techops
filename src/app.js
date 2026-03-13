@@ -80,6 +80,7 @@ function downloadJson(filename, payload) {
 }
 
 
+<<<<<<< ours
 async function autoQueueMissingDocumentation() {
   const missing = (state.assets || []).filter((a) => !(a.manualLinks || []).length && !['in_progress', 'searching_docs'].includes(a.enrichmentStatus || '')).slice(0, 3);
   for (const asset of missing) {
@@ -91,6 +92,8 @@ async function autoQueueMissingDocumentation() {
   }
 }
 
+=======
+>>>>>>> theirs
 async function render() {
   buildTabs();
   document.getElementById('userBadge').textContent = `${state.user.email} (${state.profile.role})`;
@@ -173,7 +176,11 @@ async function render() {
       await refreshData(); render();
     },
     applyDocSuggestions: async (id) => {
+<<<<<<< ours
       if (state.profile?.role !== 'admin' && state.profile?.role !== 'manager') return;
+=======
+      if (state.profile?.role !== 'admin') return;
+>>>>>>> theirs
       const current = state.assets.find((a) => a.id === id) || {};
       const suggestions = Array.isArray(current.documentationSuggestions) ? current.documentationSuggestions : [];
       const links = suggestions.map((s) => s.url).filter(Boolean);
