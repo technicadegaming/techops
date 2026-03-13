@@ -163,14 +163,24 @@ async function render() {
       await refreshData(); render();
     },
     applyDocSuggestions: async (id) => {
-
-
       if (state.profile?.role !== 'admin') return;
 
       const current = state.assets.find((a) => a.id === id) || {};
       const suggestions = Array.isArray(current.documentationSuggestions) ? current.documentationSuggestions : [];
-      const links = suggestions.map((s) => s.url).filter(Boolean);
-      if (!links.length) return;
+      const strongSuggestions = suggestions
+        .filter((s) => {
+          const score = Number(s?.matchScore || 0);
+          return score >= 70 || (s?.isOfficial && score >= 62) || (s?.sourceType === 'manufacturer' && score >= 60);
+        })
+        .sort((a, b) => Number(b?.matchScore || 0) - Number(a?.matchScore || 0));
+      const links = strongSuggestions.slice(0, 2).map((s) => s.url).filter(Boolean);
+      if (!links.length) {
+        const weakQuestion = current.enrichmentFollowupQuestion || 'Can you confirm cabinet type/version from the manufacturer plate?';
+        await upsertEntity('assets', id, { ...current, enrichmentStatus: 'needs_follow_up', enrichmentFollowupQuestion: weakQuestion }, state.user);
+        await refreshData(); render();
+        return;
+      }
+
       await upsertEntity('assets', id, { ...current, manualLinks: links, enrichmentStatus: 'docs_found', enrichmentFollowupQuestion: '' }, state.user);
       await refreshData(); render();
     },

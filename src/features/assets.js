@@ -14,7 +14,12 @@ function renderEnrichmentDetails(asset, manager) {
   const status = asset.enrichmentStatus || 'idle';
   const suggestions = Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : [];
   const suggestionsHtml = suggestions.length
-    ? `<div class="tiny">Suggested docs: ${suggestions.map((s) => `<a href="${s.url}" target="_blank" rel="noopener">${s.title || s.url}</a>${s.confidence ? ` (${Math.round(Number(s.confidence) * 100)}%)` : ''}`).join(' | ')}</div>`
+    ? `<div class="tiny">Suggested docs: ${suggestions.map((s) => {
+      const confidence = s.confidence ? ` (${Math.round(Number(s.confidence) * 100)}%)` : '';
+      const score = Number.isFinite(Number(s.matchScore)) ? ` score:${Math.round(Number(s.matchScore))}` : '';
+      const source = s.isOfficial ? ' official' : (s.isLikelyManual ? ' manual' : '');
+      return `<a href="${s.url}" target="_blank" rel="noopener">${s.title || s.url}</a>${confidence}${score}${source}`;
+    }).join(' | ')}</div>`
     : '<div class="tiny">Suggested docs: none yet</div>';
   const followup = asset.enrichmentFollowupQuestion
     ? `<div class="tiny"><b>Follow-up:</b> ${asset.enrichmentFollowupQuestion}</div>`
