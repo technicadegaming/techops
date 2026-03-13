@@ -1,10 +1,14 @@
 const admin = require('firebase-admin');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
-const { OPENAI_API_KEY } = require('./services/openaiService');
+
 const { DEFAULT_SETTINGS, runPipeline } = require('./services/taskAiOrchestrator');
 const { assertString, sanitizeFollowupAnswers } = require('./lib/validators');
 const { canAnswerFollowup, canRunManualAi, canSaveToTroubleshootingLibrary } = require('./lib/permissions');
+
+const { onRequest } = require("firebase-functions/v2/https");
+const { defineSecret } = require("firebase-functions/params");
+const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -118,3 +122,25 @@ exports.onTaskCreatedQueueAi = onDocumentCreated({
   const createdBy = event.data?.data()?.createdBy || 'system';
   await runPipeline({ db, taskId: event.params.taskId, userId: createdBy, triggerSource: 'auto_create', settings, traceId: event.id || `create-${Date.now()}` });
 });
+
+
+exports.askOpenAI = onRequest(
+  { secrets: [OPENAI_API_KEY] },
+  async (req, res) => {
+    try {
+      const client = new OpenAI({
+        apiKey: OPENAI_API_KEY.value(),
+      });
+
+      const response = await client.responses.create({
+        model: "gpt-4.1-mini",
+        input: "Hello from Firebase",
+      });
+
+      res.json(response);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
