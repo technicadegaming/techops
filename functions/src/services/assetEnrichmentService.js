@@ -10,6 +10,33 @@ const TRUSTED_MANUAL_HOST_TOKENS = [
   'archive.org'
 ];
 
+const MANUFACTURER_SOURCE_MAP = [
+  { key: 'raw thrills', aliases: ['rawthrills'], sourceTokens: ['rawthrills.com', 'betson.com'], categories: ['video', 'motion', 'simulator'] },
+  { key: 'bay tek', aliases: ['baytek'], sourceTokens: ['baytekent.com', 'betson.com'], categories: ['redemption', 'ticket'] },
+  { key: 'ice', aliases: ['innovative concepts in entertainment'], sourceTokens: ['icegame.com', 'betson.com'], categories: ['redemption', 'ticket'] },
+  { key: 'betson', aliases: ['betson enterprises'], sourceTokens: ['betson.com'], categories: ['parts', 'distribution'] },
+  { key: 'unis', aliases: ['unis technology', 'unis technologies'], sourceTokens: ['unistop.com', 'unistechnology.com', 'betson.com'], categories: ['video', 'redemption'] },
+  { key: 'sega', aliases: ['sega amusements'], sourceTokens: ['segaarcade.com', 'segaarcade.co.uk', 'arcade', 'manual'], categories: ['video', 'arcade'] },
+  { key: 'adrenaline amusements', aliases: ['adrenaline games'], sourceTokens: ['adrenalineamusements.com', 'betson.com'], categories: ['redemption', 'ticket'] },
+  { key: 'coastal amusements', aliases: [], sourceTokens: ['coastalamusements.com', 'betson.com'], categories: ['redemption', 'crane', 'prize'] },
+  { key: 'smart industries', aliases: [], sourceTokens: ['smartind.com', 'betson.com'], categories: ['crane', 'prize'] },
+  { key: 'people games', aliases: ['peoplegames'], sourceTokens: ['peoplegames.com', 'betson.com'], categories: ['redemption'] },
+  { key: 'moss', aliases: ['moss distributors'], sourceTokens: ['mossdistributing.com'], categories: ['distribution', 'parts'] },
+  { key: 'andamiro', aliases: [], sourceTokens: ['andamirousa.com', 'andamiro.com', 'betson.com'], categories: ['redemption', 'ticket'] },
+  { key: 'elaut', aliases: [], sourceTokens: ['elaut.com', 'elaut-group.com'], categories: ['crane', 'prize'] },
+  { key: 'stern pinball', aliases: ['stern'], sourceTokens: ['sternpinball.com', 'ipdb.org'], categories: ['pinball'] },
+  { key: 'bally midway', aliases: ['bally', 'midway', 'bally/midway'], sourceTokens: ['ipdb.org', 'arcade-museum.com', 'archive.org'], categories: ['arcade', 'legacy'] },
+  { key: 'namco', aliases: ['bandai namco'], sourceTokens: ['bandainamco-am.co.jp', 'bandainamcoent.com', 'arcade-museum.com'], categories: ['video', 'arcade'] },
+  { key: 'komuse', aliases: [], sourceTokens: ['komuse.com'], categories: ['redemption', 'ticket'] },
+  { key: 'benchmark games', aliases: ['benchmark'], sourceTokens: ['benchmarkgames.com', 'betson.com'], categories: ['redemption', 'ticket'] },
+  { key: 'touchmagix', aliases: ['touch magix'], sourceTokens: ['touchmagix.com'], categories: ['interactive', 'video'] },
+  { key: 'wahlap', aliases: ['wahlap technology'], sourceTokens: ['wahlap.com', 'betson.com'], categories: ['video', 'redemption'] },
+  { key: 'falgas', aliases: ['falgas usa'], sourceTokens: ['falgas.com', 'falgasusa.com'], categories: ['kiddie', 'ride'] },
+  { key: 'lai games', aliases: ['lai'], sourceTokens: ['laigames.com', 'betson.com'], categories: ['redemption', 'video'] },
+  { key: 'magic play', aliases: ['magicplay'], sourceTokens: ['magicplay.com.br', 'magicplay'], categories: ['redemption'] },
+  { key: 'zamperla', aliases: [], sourceTokens: ['zamperla.com'], categories: ['attraction', 'ride'] }
+];
+
 const DEAD_PAGE_PATTERNS = [
   /page not found/i,
   /manual not found/i,
@@ -28,6 +55,31 @@ function tokenize(value) {
     .split(/\s+/)
     .map((v) => v.trim())
     .filter((v) => v.length >= 2);
+}
+
+function getManufacturerProfile(...values) {
+  const joined = values.filter(Boolean).join(' ').toLowerCase();
+  return MANUFACTURER_SOURCE_MAP.find((entry) => {
+    const candidates = [entry.key, ...(entry.aliases || [])];
+    return candidates.some((candidate) => joined.includes(candidate));
+  }) || null;
+}
+
+function buildFollowupQuestion({ parsedQuestion, profile, likelyCategory, hasOnlyFailedVerification }) {
+  if (hasOnlyFailedVerification) {
+    return 'Is the cabinet nameplate manufacturer and model readable (photo text is fine)?';
+  }
+  const category = `${likelyCategory || ''}`.toLowerCase();
+  if (/crane|claw|prize/.test(category) || (profile?.categories || []).some((c) => ['crane', 'prize'].includes(c))) {
+    return 'Is this a prize/crane game, and what exact model text appears on the marquee?';
+  }
+  if (/redemption|ticket/.test(category) || (profile?.categories || []).some((c) => ['redemption', 'ticket'].includes(c))) {
+    return 'Is this ticket/redemption, and what subtitle/version appears under the game logo?';
+  }
+  if (parsedQuestion && !/exact manual link|provide.*url|share.*url|lookup/i.test(parsedQuestion)) {
+    return parsedQuestion;
+  }
+  return 'Which cabinet type is it (upright/deluxe/SDX) from the manufacturer plate?';
 }
 
 function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manufacturerSuggestion, followupAnswer }) {
@@ -61,6 +113,7 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   const reasons = [];
 
   const manufacturerToken = tokenize(asset?.manufacturer || manufacturerSuggestion)[0];
+  const manufacturerProfile = getManufacturerProfile(asset?.manufacturer, manufacturerSuggestion, normalizedName, title);
   const titleJoined = title.toLowerCase();
   const isOfficial = !!manufacturerToken && (lowerHost.includes(manufacturerToken) || sourceType === 'manufacturer');
   const isLikelyManual = /manual|operator|service|parts|schematic|instruction/.test(`${titleJoined} ${lowerPath}`);
@@ -86,6 +139,14 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     score += 9;
     reasons.push('trusted_manual_host');
   }
+  if (manufacturerProfile && manufacturerProfile.sourceTokens.some((token) => lowerHost.includes(token))) {
+    score += 18;
+    reasons.push('manufacturer_trusted_source_match');
+  }
+  if (manufacturerProfile && /manual|support|docs|service|operators?/.test(lowerPath)) {
+    score += 7;
+    reasons.push('manufacturer_docs_path_match');
+  }
 
   const overlapCount = titleTokens.filter((token) => assetTokens.has(token)).length;
   score += Math.min(22, overlapCount * 5);
@@ -97,7 +158,7 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   }
 
   if (isGenericHomepage) {
-    score -= 16;
+    score -= 22;
     reasons.push('generic_homepage_penalty');
   }
   if (/forum|reddit|facebook|youtube|pinterest/.test(lowerHost)) {
@@ -118,6 +179,14 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     score -= 10;
     reasons.push('model_mismatch_penalty');
   }
+  if (manufacturerProfile && !manufacturerProfile.sourceTokens.some((token) => lowerHost.includes(token)) && sourceType !== 'manual_library' && !isOfficial) {
+    score -= 10;
+    reasons.push('manufacturer_source_mismatch_penalty');
+  }
+  if (manufacturerProfile && /pinball/.test((manufacturerProfile.categories || []).join(' ')) && !/pinball|ipdb|stern|bally|midway/.test(`${lowerHost} ${titleJoined}`)) {
+    score -= 8;
+    reasons.push('category_mismatch_penalty');
+  }
 
   const bounded = Math.max(0, Math.min(100, score));
   if (bounded < 35) return null;
@@ -130,6 +199,8 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     matchScore: bounded,
     isOfficial,
     isLikelyManual,
+    matchedManufacturer: manufacturerProfile?.key || '',
+    sourceTrustReason: reasons.find((reason) => /manufacturer_trusted_source_match|trusted_manual_host|official_host_match/.test(reason)) || '',
     reason: reasons.slice(0, 4).join(',') || 'basic_match'
   };
 }
@@ -254,6 +325,8 @@ async function verifyDocumentationSuggestions(suggestions, fetchImpl = fetch) {
 }
 
 function buildLookupContext(asset, assetId, followupAnswer = '') {
+  const manufacturerProfile = getManufacturerProfile(asset.manufacturer, asset.name, followupAnswer);
+  const preferredSources = manufacturerProfile?.sourceTokens || [];
   return {
     assetName: asset.name || '',
     manufacturer: asset.manufacturer || '',
@@ -265,9 +338,11 @@ function buildLookupContext(asset, assetId, followupAnswer = '') {
       'operator manual',
       'service manual',
       'parts manual',
+      'redemption game manual',
       'manufacturer documentation'
     ],
-    notes: 'Identify likely manufacturer/model/category and provide documentation links. Ask one short follow-up question only if needed.'
+    preferredSourceHints: preferredSources,
+    notes: 'Prioritize trusted manufacturer/operator documentation for arcade/FEC equipment. Identify likely manufacturer/model/category and provide documentation links. Ask one short actionable follow-up question only if needed.'
   };
 }
 
@@ -294,6 +369,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
   const confidence = Number(parsed?.confidence || 0);
   const normalizedName = parsed?.normalizedName || asset.name || '';
   const manufacturerSuggestion = parsed?.likelyManufacturer || '';
+  const manufacturerProfile = getManufacturerProfile(asset?.manufacturer, manufacturerSuggestion, normalizedName, parsed?.likelyCategory);
   const normalizedSuggestions = normalizeDocumentationSuggestions({
     links: parsed?.documentationLinks,
     confidence,
@@ -315,11 +391,14 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
 
   const followupQuestion = hasConfidentSingleMatch
     ? ''
-    : (hasOnlyFailedVerification
-      ? 'Please share the exact manual title or a working URL from the cabinet nameplate.'
     : (isAmbiguousTitle
       ? 'Which cabinet/version is it (upright/cocktail/deluxe) as shown on the manufacturer plate?'
-      : (parsed?.oneFollowupQuestion || 'Can you confirm the manufacturer and exact model from the nameplate?')));
+      : buildFollowupQuestion({
+        parsedQuestion: parsed?.oneFollowupQuestion,
+        profile: manufacturerProfile,
+        likelyCategory: parsed?.likelyCategory,
+        hasOnlyFailedVerification
+      }));
   const shouldSetManufacturer = !asset.manufacturer && confidence >= Math.max(0.75, confidenceThreshold) && manufacturerSuggestion;
 
   const status = strongVerifiedSuggestions.length
@@ -348,6 +427,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
   }
 
   if (manufacturerSuggestion) updatePayload.manufacturerSuggestion = manufacturerSuggestion;
+  if (manufacturerProfile?.key) updatePayload.matchedManufacturer = manufacturerProfile.key;
   if (shouldSetManufacturer) updatePayload.manufacturer = manufacturerSuggestion;
 
   await assetRef.set(updatePayload, { merge: true });
@@ -378,5 +458,7 @@ module.exports = {
   normalizeDocumentationSuggestions,
   detectDeadPageText,
   verifySuggestionUrl,
-  verifyDocumentationSuggestions
+  verifyDocumentationSuggestions,
+  getManufacturerProfile,
+  buildFollowupQuestion
 };
