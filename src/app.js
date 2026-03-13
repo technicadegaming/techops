@@ -17,7 +17,7 @@ const appView = document.getElementById('appView');
 const authMessage = document.getElementById('authMessage');
 
 const sections = ['dashboard', 'operations', 'assets', 'calendar', 'reports', 'admin'];
-const state = { user: null, profile: null, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], settings: {}, restorePayload: null, route: parseRouteState(), assetDraft: { manufacturer: '', manualLinks: [], supportResources: [], supportContacts: [], notes: '', preview: null, previewStatus: 'idle' } };
+const state = { user: null, profile: null, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], settings: {}, restorePayload: null, route: parseRouteState(), assetDraft: { manufacturer: '', manualLinks: [], supportResources: [], supportContacts: [], notes: '', preview: null, previewStatus: 'idle', previewMeta: { inFlightQuery: '', lastCompletedQuery: '' }, draftNameNormalized: '' } };
 
 function tabVisible(tab) {
   if (tab === 'admin') return state.profile?.role === 'admin';
@@ -154,7 +154,7 @@ async function render() {
         notes: `${payload.notes || ''}`.trim() || `${current.notes || ''}`.trim() || (draft.notes ? `${draft.notes}`.trim() : '')
       };
       await upsertEntity('assets', finalId, entityPayload, state.user);
-      state.assetDraft = { manufacturer: '', manualLinks: [], supportResources: [], supportContacts: [], notes: '', preview: null, previewStatus: 'idle' };
+      state.assetDraft = { manufacturer: '', manualLinks: [], supportResources: [], supportContacts: [], notes: '', preview: null, previewStatus: 'idle', previewMeta: { inFlightQuery: '', lastCompletedQuery: '' }, draftNameNormalized: '' };
       refreshData().then(render);
       enrichAssetDocumentation(finalId, { trigger: 'post_save' })
         .then(async () => { await refreshData(); render(); })
@@ -162,23 +162,76 @@ async function render() {
     },
     previewAssetLookup: async (payload) => {
       const assetName = `${payload?.assetName || ''}`.trim();
-      if (assetName.length < 3) {
-        state.assetDraft = { ...state.assetDraft, preview: null, previewStatus: 'idle' };
+      const normalizedQuery = assetName.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const previewMeta = state.assetDraft?.previewMeta || { inFlightQuery: '', lastCompletedQuery: '' };
+      if (assetName.length < 3 || !normalizedQuery) {
+        state.assetDraft = {
+          ...state.assetDraft,
+          preview: null,
+          previewStatus: 'idle',
+          previewMeta: { ...previewMeta, inFlightQuery: '' },
+          draftNameNormalized: normalizedQuery
+        };
         render();
         return;
       }
-      state.assetDraft = { ...state.assetDraft, previewStatus: 'searching' };
+
+      if (previewMeta.inFlightQuery === normalizedQuery || previewMeta.lastCompletedQuery === normalizedQuery) {
+        return;
+      }
+
+      state.assetDraft = {
+        ...state.assetDraft,
+        previewStatus: 'searching',
+        previewMeta: { ...previewMeta, inFlightQuery: normalizedQuery },
+        draftNameNormalized: normalizedQuery
+      };
       render();
-      const preview = await previewAssetDocumentationLookup(payload);
-      state.assetDraft = { ...state.assetDraft, preview, previewStatus: preview?.status || 'found_suggestions' };
+
+      try {
+        const preview = await previewAssetDocumentationLookup(payload);
+        state.assetDraft = {
+          ...state.assetDraft,
+          preview,
+          previewStatus: preview?.status || 'found_suggestions',
+          previewMeta: { inFlightQuery: '', lastCompletedQuery: normalizedQuery },
+          draftNameNormalized: normalizedQuery
+        };
+      } catch (error) {
+        state.assetDraft = {
+          ...state.assetDraft,
+          previewStatus: 'no_strong_match',
+          previewMeta: { ...previewMeta, inFlightQuery: '' },
+          draftNameNormalized: normalizedQuery
+        };
+      }
       render();
     },
     applyPreviewToDraft: (partialPayload = {}) => {
       state.assetDraft = { ...state.assetDraft, ...partialPayload };
       render();
     },
+    handleDraftNameChange: (assetName) => {
+      const normalizedName = `${assetName || ''}`.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const previousNormalizedName = `${state.assetDraft?.draftNameNormalized || ''}`;
+      const shouldClear = !normalizedName || (previousNormalizedName && normalizedName !== previousNormalizedName);
+      if (!shouldClear) return;
+      state.assetDraft = {
+        ...state.assetDraft,
+        preview: null,
+        previewStatus: 'idle',
+        previewMeta: { ...(state.assetDraft?.previewMeta || {}), inFlightQuery: '' },
+        draftNameNormalized: normalizedName
+      };
+      render();
+    },
     clearPreview: () => {
-      state.assetDraft = { ...state.assetDraft, preview: null, previewStatus: 'idle' };
+      state.assetDraft = {
+        ...state.assetDraft,
+        preview: null,
+        previewStatus: 'idle',
+        previewMeta: { ...(state.assetDraft?.previewMeta || {}), inFlightQuery: '' }
+      };
       render();
     },
     runAssetEnrichment: async (id) => {
