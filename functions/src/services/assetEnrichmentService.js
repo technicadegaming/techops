@@ -47,6 +47,7 @@ const DEAD_PAGE_PATTERNS = [
 
 const VERIFY_TIMEOUT_MS = 3500;
 const VERIFY_MAX_SUGGESTIONS = 5;
+const COMMON_SHORT_TITLE_WORDS = new Set(['the', 'pro', 'plus', 'super', 'game', 'deluxe', 'sport']);
 
 function tokenize(value) {
   return `${value || ''}`
@@ -55,6 +56,20 @@ function tokenize(value) {
     .split(/\s+/)
     .map((v) => v.trim())
     .filter((v) => v.length >= 2);
+}
+
+function normalizePhrase(value) {
+  return `${value || ''}`
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildExactTitleVariants(assetName, normalizedName) {
+  const variants = new Set([normalizePhrase(normalizedName), normalizePhrase(assetName)]);
+  return Array.from(variants).filter((entry) => entry && entry.length >= 4);
 }
 
 function getManufacturerProfile(...values) {
@@ -79,7 +94,7 @@ function buildFollowupQuestion({ parsedQuestion, profile, likelyCategory, hasOnl
   if (parsedQuestion && !/exact manual link|provide.*url|share.*url|lookup/i.test(parsedQuestion)) {
     return parsedQuestion;
   }
-  return 'Which cabinet type is it (upright/deluxe/SDX) from the manufacturer plate?';
+  return 'What exact cabinet nameplate text appears under/near the game logo (including subtitle/version/model)?';
 }
 
 function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manufacturerSuggestion, followupAnswer, kind = 'documentation' }) {
@@ -113,11 +128,24 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   const reasons = [];
 
   const manufacturerToken = tokenize(asset?.manufacturer || manufacturerSuggestion)[0];
+  const manufacturerPhrase = normalizePhrase(asset?.manufacturer || manufacturerSuggestion);
   const manufacturerProfile = getManufacturerProfile(asset?.manufacturer, manufacturerSuggestion, normalizedName, title);
   const titleJoined = title.toLowerCase();
+  const combinedText = normalizePhrase(`${title} ${lowerPath} ${lowerHost}`);
+  const titleVariants = buildExactTitleVariants(asset?.name, normalizedName);
+  const shortTitle = titleVariants.some((variant) => {
+    const words = variant.split(' ').filter(Boolean);
+    const commonOnly = words.every((word) => COMMON_SHORT_TITLE_WORDS.has(word));
+    return words.length <= 2 && variant.length <= 9 && commonOnly;
+  });
+  const hasExactTitleMatch = titleVariants.some((variant) => combinedText.includes(variant));
+  const hasTitleManufacturerCombo = hasExactTitleMatch && (!!manufacturerPhrase && combinedText.includes(manufacturerPhrase));
   const isOfficial = !!manufacturerToken && (lowerHost.includes(manufacturerToken) || sourceType === 'manufacturer');
   const isLikelyManual = /manual|operator|service|parts|schematic|instruction/.test(`${titleJoined} ${lowerPath}`);
+  const hasPdfSignal = /\.pdf($|\?|#)|pdf/.test(`${lowerPath} ${titleJoined}`);
   const isGenericHomepage = lowerPath === '/' || /^\/(home|index(\.html?)?)?$/.test(lowerPath);
+  const isGenericManualHub = /manuals?|support|docs?|downloads?|products?/.test(lowerPath) && !hasExactTitleMatch;
+  const isDistributorLike = sourceType === 'distributor' || /distributor|betson/.test(lowerHost);
 
   if (sourceType === 'manufacturer' || sourceType === 'official_site' || sourceType === 'support' || sourceType === 'parts' || sourceType === 'contact') {
     score += 14;
@@ -148,6 +176,23 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     reasons.push('manufacturer_docs_path_match');
   }
 
+  if (hasExactTitleMatch) {
+    score += 24;
+    reasons.push('exact_title_phrase_match');
+  }
+  if (hasTitleManufacturerCombo) {
+    score += 20;
+    reasons.push('exact_title_manufacturer_match');
+  }
+  if (hasExactTitleMatch && (isLikelyManual || hasPdfSignal)) {
+    score += 26;
+    reasons.push('exact_title_manual_match');
+  }
+  if (hasExactTitleMatch && isOfficial && /support|product|manual|service|parts/.test(lowerPath)) {
+    score += 14;
+    reasons.push('exact_title_official_support_match');
+  }
+
   const overlapCount = titleTokens.filter((token) => assetTokens.has(token)).length;
   score += Math.min(22, overlapCount * 5);
   if (overlapCount >= 3) reasons.push('strong_title_overlap');
@@ -160,6 +205,18 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   if (isGenericHomepage) {
     score -= 22;
     reasons.push('generic_homepage_penalty');
+  }
+  if (isGenericManualHub) {
+    score -= 18;
+    reasons.push('generic_manual_hub_penalty');
+  }
+  if (isDistributorLike && !hasExactTitleMatch) {
+    score -= 16;
+    reasons.push('generic_distributor_penalty');
+  }
+  if (sourceType === 'manual_library' && !hasExactTitleMatch) {
+    score -= 12;
+    reasons.push('generic_library_penalty');
   }
   if (/forum|reddit|facebook|youtube|pinterest/.test(lowerHost)) {
     score -= 14;
@@ -183,6 +240,11 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     score -= 10;
     reasons.push('manufacturer_source_mismatch_penalty');
   }
+
+  if (shortTitle && hasExactTitleMatch && !(hasTitleManufacturerCombo || isLikelyManual || isOfficial || manufacturerProfile)) {
+    score -= 18;
+    reasons.push('short_title_weak_signal_penalty');
+  }
   if (manufacturerProfile && /pinball/.test((manufacturerProfile.categories || []).join(' ')) && !/pinball|ipdb|stern|bally|midway/.test(`${lowerHost} ${titleJoined}`)) {
     score -= 8;
     reasons.push('category_mismatch_penalty');
@@ -204,6 +266,9 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     matchScore: bounded,
     isOfficial,
     isLikelyManual,
+    exactTitleMatch: hasExactTitleMatch,
+    exactManualMatch: hasExactTitleMatch && (isLikelyManual || hasPdfSignal),
+    trustedSource: isOfficial || !!manufacturerProfile || TRUSTED_MANUAL_HOST_TOKENS.some((token) => lowerHost.includes(token)),
     matchedManufacturer: manufacturerProfile?.key || '',
     sourceTrustReason: reasons.find((reason) => /manufacturer_trusted_source_match|trusted_manual_host|official_host_match/.test(reason)) || '',
     reason: reasons.slice(0, 4).join(',') || 'basic_match'
@@ -358,15 +423,15 @@ function buildLookupContext(asset, assetId, followupAnswer = '') {
     assetId: asset.id || assetId,
     followupAnswer: `${followupAnswer || asset.enrichmentFollowupAnswer || ''}`.trim(),
     lookupTargets: [
-      'arcade game manual',
-      'operator manual',
-      'service manual',
-      'parts manual',
-      'redemption game manual',
-      'manufacturer documentation'
+      'exact title manufacturer operator manual',
+      'exact title operator manual pdf',
+      'exact title service manual pdf',
+      'exact title parts manual',
+      'exact title official support page',
+      'exact cabinet title install manual'
     ],
     preferredSourceHints: preferredSources,
-    notes: 'Prioritize trusted manufacturer/operator documentation for arcade/FEC equipment. Identify likely manufacturer/model/category and provide documentation links. Ask one short actionable follow-up question only if needed.'
+    notes: 'Prioritize exact title + manufacturer documentation for arcade/FEC equipment. Prefer exact operator/service/install/parts manuals and exact-title official support pages over generic manufacturer hubs/distributor listings. Ask one short actionable follow-up question only if needed.'
   };
 }
 
@@ -451,8 +516,12 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
   const suggestions = await verifyDocumentationSuggestions(preview.documentationSuggestions || []);
   const confidenceThreshold = settings.aiConfidenceThreshold || 0.45;
 
-  const strongSuggestions = suggestions.filter((s) => s.matchScore >= 70 || (s.isOfficial && s.matchScore >= 62));
-  const strongVerifiedSuggestions = strongSuggestions.filter((s) => s.verified);
+  const strongSuggestions = suggestions.filter((s) => {
+    const scoreGate = s.matchScore >= 78 || (s.isOfficial && s.matchScore >= 72);
+    const exactGate = !!s.exactTitleMatch && (!!s.exactManualMatch || !!s.isLikelyManual || /support|product|manual|service|parts/i.test(`${s.url || ''} ${s.title || ''}`));
+    return scoreGate && exactGate;
+  });
+  const strongVerifiedSuggestions = strongSuggestions.filter((s) => s.verified && s.trustedSource);
   const hasConfidentSingleMatch = confidence >= confidenceThreshold && strongVerifiedSuggestions.length === 1;
   const topSuggestionScore = suggestions[0]?.matchScore || 0;
   const isAmbiguousTitle = suggestions.length > 1 && topSuggestionScore < 78;
@@ -462,7 +531,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
   const followupQuestion = hasConfidentSingleMatch
     ? ''
     : (isAmbiguousTitle
-      ? 'Which cabinet/version is it (upright/cocktail/deluxe) as shown on the manufacturer plate?'
+      ? 'What exact cabinet nameplate text or subtitle/version appears under the logo (for example DX/Deluxe/SDX)?'
       : buildFollowupQuestion({
         parsedQuestion: preview?.oneFollowupQuestion,
         profile: manufacturerProfile,
