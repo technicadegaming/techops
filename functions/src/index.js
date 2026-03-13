@@ -9,6 +9,7 @@ const { canAnswerFollowup, canRunManualAi, canSaveToTroubleshootingLibrary } = r
 const { onRequest } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
 const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
+const OpenAI = require("openai");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -132,15 +133,19 @@ exports.askOpenAI = onRequest(
         apiKey: OPENAI_API_KEY.value(),
       });
 
+      const prompt = req.body?.prompt || "Say hello";
+
       const response = await client.responses.create({
         model: "gpt-4.1-mini",
-        input: "Hello from Firebase",
+        input: prompt,
       });
 
-      res.json(response);
+      res.status(200).json(response);
     } catch (error) {
       console.error(error);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({
+        error: error.message || "Server error",
+      });
     }
   }
 );
