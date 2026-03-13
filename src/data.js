@@ -69,7 +69,11 @@ const defaultAiSettings = {
   aiAllowManualRerun: true,
   aiSaveSuccessfulFixesToLibraryDefault: false,
   aiShortResponseMode: true,
-  aiVerboseManagerMode: false
+  aiVerboseManagerMode: false,
+  defaultTaskSeverity: 'medium',
+  aiFeedbackCollectionEnabled: true,
+  mobileConciseModeDefault: true,
+  taskIntakeRequiredFields: ['id', 'title', 'assetId', 'issueCategory', 'severity']
 };
 
 export async function getAppSettings() {
