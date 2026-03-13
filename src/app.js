@@ -9,7 +9,7 @@ import { renderAdmin } from './admin.js';
 import { canDelete } from './roles.js';
 import { previewLegacyImport, importLegacyData } from './migration.js';
 import { dryRunBackup, exportBackupJson, restoreBackup, validateBackup } from './backup.js';
-import { analyzeTaskTroubleshooting, answerTaskFollowup, regenerateTaskTroubleshooting, saveTaskFixToTroubleshootingLibrary } from './aiAdapter.js';
+import { analyzeTaskTroubleshooting, answerTaskFollowup, enrichAssetDocumentation, regenerateTaskTroubleshooting, saveTaskFixToTroubleshootingLibrary } from './aiAdapter.js';
 import { buildCloseoutEvent, parseRouteState, pushRouteState } from './features/workflow.js';
 
 const authView = document.getElementById('authView');
@@ -54,6 +54,23 @@ async function refreshData() {
   state.troubleshootingLibrary = await listEntities('troubleshootingLibrary').catch(() => []);
 }
 
+
+function normalizeAssetId(name = '') {
+  const base = `${name}`.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 40) || 'asset';
+  return `asset-${base}`;
+}
+
+function pickUniqueAssetId(desiredId, assets) {
+  const used = new Set((assets || []).map((a) => a.id));
+  const clean = `${desiredId || ''}`.trim();
+  if (clean && !used.has(clean)) return clean;
+  const root = clean || normalizeAssetId(clean);
+  if (!used.has(root)) return root;
+  let i = 2;
+  while (used.has(`${root}-${i}`)) i += 1;
+  return `${root}-${i}`;
+}
+
 function downloadJson(filename, payload) {
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
@@ -61,6 +78,8 @@ function downloadJson(filename, payload) {
   a.download = filename;
   a.click();
 }
+
+
 
 async function render() {
   buildTabs();
@@ -110,16 +129,65 @@ async function render() {
       await refreshData(); render();
     }
   });
+
   renderAssets(document.getElementById('assets'), state, {
     saveAsset: async (id, payload) => {
-      const current = state.assets.find((a) => a.id === id) || {};
-      await upsertEntity('assets', id, {
+      const name = `${payload.name || ''}`.trim();
+      if (!name) return alert('Asset name is required.');
+      const desiredId = `${id || ''}`.trim() || normalizeAssetId(name);
+      const current = state.assets.find((a) => a.id === desiredId) || {};
+      const finalId = current.id ? desiredId : pickUniqueAssetId(desiredId, state.assets);
+      const entityPayload = {
         ...current,
         ...payload,
+        id: finalId,
+        name,
+        serialNumber: `${payload.serialNumber || current.serialNumber || ''}`.trim(),
+        manufacturer: `${payload.manufacturer || current.manufacturer || ''}`.trim(),
         ownerWorkers: `${payload.ownerWorkers || ''}`.split(',').map((v) => v.trim()).filter(Boolean),
         manualLinks: `${payload.manualLinks || ''}`.split(',').map((v) => v.trim()).filter(Boolean),
+        enrichmentStatus: (payload.manualLinks || current.manualLinks?.length) ? (current.enrichmentStatus || 'idle') : 'searching_docs',
         history: payload.historyNote ? [...(current.history || []), { at: new Date().toISOString(), note: payload.historyNote }] : (current.history || [])
+      };
+      await upsertEntity('assets', finalId, entityPayload, state.user);
+      refreshData().then(render);
+      enrichAssetDocumentation(finalId, { trigger: 'post_save' })
+        .then(async () => { await refreshData(); render(); })
+        .catch(async () => { await refreshData(); render(); });
+    },
+    runAssetEnrichment: async (id) => {
+      const current = state.assets.find((a) => a.id === id) || {};
+      await upsertEntity('assets', id, { ...current, enrichmentStatus: 'in_progress' }, state.user);
+      await refreshData(); render();
+      await enrichAssetDocumentation(id, { trigger: 'manual' });
+      await refreshData(); render();
+    },
+    applyDocSuggestions: async (id) => {
+
+
+      if (state.profile?.role !== 'admin') return;
+
+      const current = state.assets.find((a) => a.id === id) || {};
+      const suggestions = Array.isArray(current.documentationSuggestions) ? current.documentationSuggestions : [];
+      const links = suggestions.map((s) => s.url).filter(Boolean);
+      if (!links.length) return;
+      await upsertEntity('assets', id, { ...current, manualLinks: links, enrichmentStatus: 'docs_found', enrichmentFollowupQuestion: '' }, state.user);
+      await refreshData(); render();
+    },
+    editAsset: async (currentId, payload) => {
+      if (state.profile?.role !== 'admin') return;
+      const current = state.assets.find((a) => a.id === currentId) || {};
+      const nextId = `${payload.id || currentId}`.trim() || currentId;
+      await upsertEntity('assets', nextId, {
+        ...current,
+        ...payload,
+        id: nextId,
+        name: `${payload.name || current.name || ''}`.trim(),
+        serialNumber: `${payload.serialNumber || current.serialNumber || ''}`.trim(),
+        manufacturer: `${payload.manufacturer || current.manufacturer || ''}`.trim(),
+        manualLinks: `${payload.manualLinks || ''}`.split(',').map((v) => v.trim()).filter(Boolean)
       }, state.user);
+      if (nextId !== currentId) await deleteEntity('assets', currentId, state.user);
       await refreshData(); render();
     },
     markDocsReviewed: async (id) => {

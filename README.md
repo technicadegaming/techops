@@ -21,7 +21,7 @@ WOW Technicade is a frontend web app backed by Firebase services for shared, aut
 - `functions/src/index.js` - callable + trigger entrypoints (including AI callables).
 - `src/firebase.js` - Firebase app/auth/firestore/functions/storage initialization.
 - `src/aiAdapter.js` - frontend AI adapter that calls backend functions.
-- `firebase.json` - Firebase hosting/functions/firestore configuration.
+- `firebase.json` - Firebase functions/firestore configuration for this repo.
 - `firestore.indexes.json` - tracked Firestore composite/single-field index definitions.
 
 ## Notes
