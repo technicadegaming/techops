@@ -530,13 +530,33 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
 }
 
 async function previewAssetDocumentationLookup({ settings, traceId, draftAsset }) {
-  const preview = await runLookupPreview({ settings, traceId, draftAsset });
-  console.log('previewAssetDocumentationLookup:start', { traceId, assetName: `${draftAsset?.name || ''}`.slice(0, 80) });
-  console.log('previewAssetDocumentationLookup:normalized_target', { traceId, normalizedName: preview.normalizedName });
-  console.log('previewAssetDocumentationLookup:manufacturer_suggestion', { traceId, likelyManufacturer: preview.likelyManufacturer || '' });
-  console.log('previewAssetDocumentationLookup:counts', { traceId, documentationSuggestions: preview.documentationSuggestions.length, supportResources: preview.supportResourcesSuggestion.length });
-  console.log('previewAssetDocumentationLookup:status', { traceId, status: preview.status });
-  return { ok: true, ...preview };
+  const normalizedTarget = `${draftAsset?.name || ''}`.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  console.log('previewAssetDocumentationLookup:start', {
+    traceId,
+    normalizedTarget,
+    manufacturerInput: `${draftAsset?.manufacturer || ''}`.trim().slice(0, 80)
+  });
+
+  try {
+    const preview = await runLookupPreview({ settings, traceId, draftAsset });
+    console.log('previewAssetDocumentationLookup:end', {
+      traceId,
+      normalizedTarget,
+      manufacturerSuggestion: preview.likelyManufacturer || '',
+      documentationSuggestions: preview.documentationSuggestions.length,
+      supportResources: preview.supportResourcesSuggestion.length,
+      supportContacts: preview.supportContactsSuggestion.length,
+      status: preview.status
+    });
+    return { ok: true, ...preview };
+  } catch (error) {
+    console.error('previewAssetDocumentationLookup:error', {
+      traceId,
+      normalizedTarget,
+      message: error?.message || String(error)
+    });
+    throw error;
+  }
 }
 
 module.exports = {

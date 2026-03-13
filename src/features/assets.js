@@ -22,7 +22,15 @@ function renderPreviewPanel(state) {
     no_strong_match: 'no strong match'
   };
   if (!preview && status === 'idle') {
-    return '<div class="tiny">Lookup assistant: idle</div>';
+    return '<div class="tiny">Lookup assistant: idle. Enter an asset name and run preview.</div>';
+  }
+
+  if (!preview && status === 'searching') {
+    return '<div class="tiny">Lookup assistant: searching for likely docs/support...</div>';
+  }
+
+  if (!preview && status === 'no_strong_match') {
+    return '<div class="tiny">Lookup assistant: no strong match yet. Verify manufacturer/model text and try again.</div>';
   }
 
   const docs = (preview?.documentationSuggestions || []).slice(0, 3);
@@ -36,7 +44,7 @@ function renderPreviewPanel(state) {
     <div class="tiny">Suggested manufacturer: ${preview?.likelyManufacturer || 'n/a'} · Category: ${preview?.likelyCategory || 'n/a'}</div>
     <div class="tiny">Top reason: ${preview?.topMatchReason || 'n/a'}</div>
     <div class="tiny">Manual/docs: ${docs.map((d) => `<a href="${d.url}" target="_blank" rel="noopener">${d.title || d.url}</a>`).join(' | ') || 'none'}</div>
-    <div class="tiny">Support links: ${support.map((d) => `<a href="${d.url}" target="_blank" rel="noopener">${d.title || d.url}</a>`).join(' | ') || 'none'}</div>
+    <div class="tiny">Support links: ${support.map((d) => `<a href="${d.url}" target="_blank" rel="noopener">${d.label || d.title || d.url}</a>`).join(' | ') || 'none'}</div>
     <div class="tiny">Support contacts: ${contacts.map((c) => `${c.label || c.contactType}: ${c.value}`).join(' | ') || 'none'}</div>
     <div class="tiny">Alternate names: ${alternate || 'none'}</div>
     ${preview?.oneFollowupQuestion ? `<div class="tiny"><b>Follow-up:</b> ${preview.oneFollowupQuestion}</div>` : ''}
@@ -96,8 +104,8 @@ export function renderAssets(el, state, actions) {
       <textarea name="historyNote" placeholder="Service note (added to timeline)" ${editable ? '' : 'disabled'}></textarea>
       <div class="grid" style="grid-column:1/-1; gap:6px; border:1px solid #ddd; padding:8px; border-radius:8px;">
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-          <button type="button" data-preview-lookup="1" ${editable ? '' : 'disabled'}>Find manufacturer/manual info</button>
-          <span class="tiny">Runs on unsaved draft, no auto-save.</span>
+          <button type="button" data-preview-lookup="1" ${(editable && state.assetDraft?.previewStatus !== 'searching') ? '' : 'disabled'}>${state.assetDraft?.previewStatus === 'searching' ? 'Looking up...' : 'Find manufacturer/manual info'}</button>
+          <span class="tiny">Preview suggestions are not saved until you save the asset.</span>
         </div>
         ${renderPreviewPanel(state)}
       </div>
@@ -159,6 +167,7 @@ export function renderAssets(el, state, actions) {
   };
 
   nameInput?.addEventListener('input', () => {
+    actions.handleDraftNameChange(nameInput?.value || '');
     clearTimeout(previewTimer);
     previewTimer = setTimeout(requestPreview, 700);
   });
