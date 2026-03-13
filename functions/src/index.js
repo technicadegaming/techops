@@ -5,6 +5,7 @@ const { onDocumentCreated } = require('firebase-functions/v2/firestore');
 const { DEFAULT_SETTINGS, runPipeline } = require('./services/taskAiOrchestrator');
 const { assertString, sanitizeFollowupAnswers } = require('./lib/validators');
 const { canAnswerFollowup, canRunManualAi, canSaveToTroubleshootingLibrary } = require('./lib/permissions');
+const { enrichAssetDocumentation } = require('./services/assetEnrichmentService');
 
 const { onRequest } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
@@ -158,6 +159,26 @@ exports.regenerateTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, as
     });
     throw error;
   }
+});
+
+
+exports.enrichAssetDocumentation = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+  assertString(request.data?.assetId, 'assetId');
+  const role = await getUserRole(request.auth.uid);
+  if (!canAnswerFollowup(role)) throw new HttpsError('permission-denied', 'Insufficient role for asset enrichment');
+  const settings = await getAiSettings();
+  if (!settings.aiEnabled) {
+    return { ok: false, status: 'no_match_yet', message: 'AI is disabled by admin settings' };
+  }
+  return enrichAssetDocumentation({
+    db,
+    assetId: request.data.assetId,
+    userId: request.auth.uid,
+    settings,
+    triggerSource: request.data?.trigger || 'manual',
+    traceId: request.rawRequest.headers['x-cloud-trace-context'] || `asset-${Date.now()}`
+  });
 });
 
 exports.fetchWebContextForTask = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {

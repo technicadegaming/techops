@@ -22,3 +22,7 @@ export function fetchWebContextForTask(taskId) {
 export function saveTaskFixToTroubleshootingLibrary(payload) {
   return call('saveTaskFixToTroubleshootingLibrary', payload);
 }
+
+export function enrichAssetDocumentation(assetId, options = {}) {
+  return call('enrichAssetDocumentation', { assetId, ...options });
+}
