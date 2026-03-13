@@ -17,7 +17,37 @@ const appView = document.getElementById('appView');
 const authMessage = document.getElementById('authMessage');
 
 const sections = ['dashboard', 'operations', 'assets', 'calendar', 'reports', 'admin'];
-const state = { user: null, profile: null, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], settings: {}, restorePayload: null, route: parseRouteState(), assetDraft: { manufacturer: '', manualLinks: [], supportResources: [], supportContacts: [], notes: '', preview: null, previewStatus: 'idle', previewMeta: { inFlightQuery: '', lastCompletedQuery: '' }, draftNameNormalized: '' } };
+function createEmptyAssetDraft() {
+  return {
+    name: '',
+    serialNumber: '',
+    manufacturer: '',
+    id: '',
+    status: '',
+    ownerWorkers: '',
+    manualLinksText: '',
+    historyNote: '',
+    notes: '',
+    manualLinks: [],
+    supportResources: [],
+    supportContacts: [],
+    preview: null,
+    previewStatus: 'idle',
+    previewMeta: { inFlightQuery: '', lastCompletedQuery: '' },
+    draftNameNormalized: ''
+  };
+}
+
+function buildPreviewQueryKey(payload = {}) {
+  const assetName = `${payload.assetName || ''}`.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const manufacturer = `${payload.manufacturer || ''}`.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const serialNumber = `${payload.serialNumber || ''}`.trim().toLowerCase();
+  const assetId = `${payload.assetId || ''}`.trim().toLowerCase();
+  const followupAnswer = `${payload.followupAnswer || ''}`.trim().toLowerCase();
+  return [assetName, manufacturer, serialNumber, assetId, followupAnswer].join('|');
+}
+
+const state = { user: null, profile: null, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], settings: {}, restorePayload: null, route: parseRouteState(), assetDraft: createEmptyAssetDraft() };
 
 function tabVisible(tab) {
   if (tab === 'admin') return state.profile?.role === 'admin';
@@ -130,7 +160,7 @@ async function render() {
     }
   });
 
-  renderAssets(document.getElementById('assets'), state, {
+  const assetActions = {
     saveAsset: async (id, payload) => {
       const name = `${payload.name || ''}`.trim();
       if (!name) return alert('Asset name is required.');
@@ -154,7 +184,7 @@ async function render() {
         notes: `${payload.notes || ''}`.trim() || `${current.notes || ''}`.trim() || (draft.notes ? `${draft.notes}`.trim() : '')
       };
       await upsertEntity('assets', finalId, entityPayload, state.user);
-      state.assetDraft = { manufacturer: '', manualLinks: [], supportResources: [], supportContacts: [], notes: '', preview: null, previewStatus: 'idle', previewMeta: { inFlightQuery: '', lastCompletedQuery: '' }, draftNameNormalized: '' };
+      state.assetDraft = createEmptyAssetDraft();
       refreshData().then(render);
       enrichAssetDocumentation(finalId, { trigger: 'post_save' })
         .then(async () => { await refreshData(); render(); })
@@ -162,15 +192,16 @@ async function render() {
     },
     previewAssetLookup: async (payload) => {
       const assetName = `${payload?.assetName || ''}`.trim();
-      const normalizedQuery = assetName.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const normalizedQuery = buildPreviewQueryKey(payload);
       const previewMeta = state.assetDraft?.previewMeta || { inFlightQuery: '', lastCompletedQuery: '' };
-      if (assetName.length < 3 || !normalizedQuery) {
+      const normalizedName = assetName.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      if (assetName.length < 3 || !normalizedName) {
         state.assetDraft = {
           ...state.assetDraft,
           preview: null,
           previewStatus: 'idle',
           previewMeta: { ...previewMeta, inFlightQuery: '' },
-          draftNameNormalized: normalizedQuery
+          draftNameNormalized: normalizedName
         };
         render();
         return;
@@ -182,9 +213,9 @@ async function render() {
 
       state.assetDraft = {
         ...state.assetDraft,
-        previewStatus: 'searching',
+        previewStatus: payload?.reason === 'manufacturer_refine' ? 'searching_refined' : 'searching',
         previewMeta: { ...previewMeta, inFlightQuery: normalizedQuery },
-        draftNameNormalized: normalizedQuery
+        draftNameNormalized: normalizedName
       };
       render();
 
@@ -195,21 +226,40 @@ async function render() {
           preview,
           previewStatus: preview?.status || 'found_suggestions',
           previewMeta: { inFlightQuery: '', lastCompletedQuery: normalizedQuery },
-          draftNameNormalized: normalizedQuery
+          draftNameNormalized: normalizedName
         };
       } catch (error) {
         state.assetDraft = {
           ...state.assetDraft,
           previewStatus: 'no_strong_match',
           previewMeta: { ...previewMeta, inFlightQuery: '' },
-          draftNameNormalized: normalizedQuery
+          draftNameNormalized: normalizedName
         };
       }
       render();
     },
     applyPreviewToDraft: (partialPayload = {}) => {
-      state.assetDraft = { ...state.assetDraft, ...partialPayload };
+      const { triggerRefinedPreview, ...draftPatch } = partialPayload;
+      state.assetDraft = { ...state.assetDraft, ...draftPatch };
       render();
+      if (triggerRefinedPreview) {
+        const draft = state.assetDraft || {};
+        const name = `${draft.name || ''}`.trim();
+        if (name.length >= 3) {
+          const followupAnswer = draft.preview?.followupAnswer || '';
+          assetActions.previewAssetLookup({
+            assetName: name,
+            manufacturer: `${draft.manufacturer || ''}`.trim(),
+            serialNumber: `${draft.serialNumber || ''}`.trim(),
+            assetId: `${draft.id || ''}`.trim(),
+            followupAnswer,
+            reason: 'manufacturer_refine'
+          });
+        }
+      }
+    },
+    updateAssetDraftField: (field, value) => {
+      state.assetDraft = { ...state.assetDraft, [field]: value };
     },
     handleDraftNameChange: (assetName) => {
       const normalizedName = `${assetName || ''}`.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -303,7 +353,8 @@ async function render() {
       await refreshData(); render();
     },
     deleteAsset: async (id) => { if (!canDelete(state.profile)) return; await deleteEntity('assets', id, state.user); await refreshData(); render(); }
-  });
+  };
+  renderAssets(document.getElementById('assets'), state, assetActions);
   renderCalendar(document.getElementById('calendar'), state);
   renderReports(document.getElementById('reports'), state);
   renderAdmin(document.getElementById('admin'), state, {
