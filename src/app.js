@@ -63,6 +63,18 @@ function reportActionError(label, error, fallbackMessage) {
   alert(formatActionError(error, fallbackMessage));
 }
 
+function requireActiveCompanyId(actionLabel = 'continue') {
+  const companyId = `${state.company?.id || state.memberships?.[0]?.companyId || ''}`.trim();
+  if (!companyId) {
+    throw new Error(`No active company context is available. Complete onboarding before trying to ${actionLabel}.`);
+  }
+  return companyId;
+}
+
+function withRequiredCompanyId(payload = {}, actionLabel = 'continue') {
+  return { ...payload, companyId: requireActiveCompanyId(actionLabel) };
+}
+
 async function runAction(label, work, options = {}) {
   try {
     return await work();
@@ -253,7 +265,7 @@ async function bootstrapCompanyContext() {
   const company = await getCompany(activeMembership.companyId);
   state.company = company;
   state.onboardingRequired = false;
-  setActiveCompanyContext(company?.id || activeMembership.companyId, { allowLegacy: true });
+  setActiveCompanyContext(company?.id || activeMembership.companyId, { allowLegacy: state.profile?.role === 'admin' });
 }
 
 async function render() {
@@ -272,7 +284,7 @@ async function render() {
       const taskId = `${payload?.id || ''}`.trim() || `${_id || ''}`.trim();
       if (!taskId) return alert('Unable to save task: missing generated task ID.');
       const saved = await runAction('save_task', async () => {
-        await upsertEntity('tasks', taskId, { ...payload, id: taskId }, state.user);
+        await upsertEntity('tasks', taskId, withRequiredCompanyId({ ...payload, id: taskId }, 'save a task'), state.user);
         await refreshData();
         render();
         return true;
@@ -348,7 +360,7 @@ async function render() {
           supportContactsSuggestion: Array.isArray(draft.supportContacts) && draft.supportContacts.length ? draft.supportContacts : (current.supportContactsSuggestion || []),
           notes: `${payload.notes || ''}`.trim() || `${current.notes || ''}`.trim() || (draft.notes ? `${draft.notes}`.trim() : '')
         };
-        await upsertEntity('assets', finalId, entityPayload, state.user);
+        await upsertEntity('assets', finalId, withRequiredCompanyId(entityPayload, 'save an asset'), state.user);
         state.assetDraft = { ...createEmptyAssetDraft(), saveFeedback: 'Asset saved - documentation search running.', saveFeedbackTone: 'success' };
         await refreshData();
         render();
@@ -371,31 +383,6 @@ async function render() {
           render();
         }
       }
-      const current = state.assets.find((a) => a.id === desiredId) || {};
-      const finalId = current.id ? desiredId : pickUniqueAssetId(desiredId, state.assets);
-      const draft = state.assetDraft || {};
-      const entityPayload = {
-        ...current,
-        ...payload,
-        id: finalId,
-        name,
-        serialNumber: `${payload.serialNumber || current.serialNumber || ''}`.trim(),
-        manufacturer: `${manufacturer || draft.manufacturer || current.manufacturer || ''}`.trim(),
-        ownerWorkers: `${payload.ownerWorkers || ''}`.split(',').map((v) => v.trim()).filter(Boolean),
-        manualLinks: `${payload.manualLinks || ''}`.split(',').map((v) => v.trim()).filter(Boolean).concat(Array.isArray(draft.manualLinks) ? draft.manualLinks : []).filter(Boolean).filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 5),
-        enrichmentStatus: (payload.manualLinks || current.manualLinks?.length) ? (current.enrichmentStatus || 'idle') : 'searching_docs',
-        history: payload.historyNote ? [...(current.history || []), { at: new Date().toISOString(), note: payload.historyNote }] : (current.history || []),
-        supportResourcesSuggestion: Array.isArray(draft.supportResources) && draft.supportResources.length ? draft.supportResources : (current.supportResourcesSuggestion || []),
-        supportContactsSuggestion: Array.isArray(draft.supportContacts) && draft.supportContacts.length ? draft.supportContacts : (current.supportContactsSuggestion || []),
-        notes: `${payload.notes || ''}`.trim() || `${current.notes || ''}`.trim() || (draft.notes ? `${draft.notes}`.trim() : '')
-      };
-      await upsertEntity('assets', finalId, entityPayload, state.user);
-      state.assetDraft = { ...createEmptyAssetDraft(), saveFeedback: 'Asset saved — documentation search running.' };
-      await refreshData();
-      render();
-      enrichAssetDocumentation(finalId, { trigger: 'post_save' })
-        .then(async () => { await refreshData(); render(); })
-        .catch(async () => { await refreshData(); render(); });
     },
     previewAssetLookup: async (payload) => {
       const assetName = `${payload?.assetName || ''}`.trim();
@@ -687,7 +674,7 @@ async function render() {
     addLocation: async (payload) => {
       const id = `loc-${Date.now().toString(36)}`;
       await runAction('add_location', async () => {
-        await upsertEntity('companyLocations', id, { id, ...payload }, state.user);
+        await upsertEntity('companyLocations', id, withRequiredCompanyId({ id, ...payload }, 'add a company location'), state.user);
         await refreshData();
         render();
       }, {
@@ -700,7 +687,7 @@ async function render() {
       for (const row of rows) {
         const id = `${row.assetId || row.id || normalizeAssetId(row['asset name'] || row.name || '')}`;
         if (!id) continue;
-        await upsertEntity('assets', id, {
+        await upsertEntity('assets', id, withRequiredCompanyId({
           id,
           name: row['asset name'] || row.name || id,
           manufacturer: row.manufacturer || '',
@@ -711,7 +698,7 @@ async function render() {
           notes: row.notes || '',
           category: row.category || row.type || '',
           status: row.status || 'active'
-        }, state.user);
+        }, 'import assets'), state.user);
       }
       await upsertEntity('importHistory', `import-assets-${Date.now()}`, { type: 'assets', rowCount: rows.length }, state.user);
       await refreshData(); render();

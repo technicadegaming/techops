@@ -17,7 +17,12 @@ const withMeta = (payload, user, isCreate) => ({
 });
 
 export async function listEntities(name) {
-  const snap = await getDocs(query(collection(db, C[name]), orderBy('updatedAt', 'desc')));
+  const scope = getActiveCompanyContext();
+  const scopedQuery = isCompanyScopedCollection(name) && scope.companyId && !scope.allowLegacy;
+  const baseQuery = scopedQuery
+    ? query(collection(db, C[name]), where('companyId', '==', scope.companyId), orderBy('updatedAt', 'desc'))
+    : query(collection(db, C[name]), orderBy('updatedAt', 'desc'));
+  const snap = await getDocs(baseQuery);
   return snap.docs
     .map((d) => ({ id: d.id, __collection: name, ...d.data() }))
     .filter((entity) => includeRecordForActiveCompany(name, entity))
@@ -25,8 +30,14 @@ export async function listEntities(name) {
 }
 
 export async function listAudit(filters = {}) {
-  let q = query(collection(db, C.auditLogs), orderBy('timestamp', 'desc'));
-  if (filters.action) q = query(collection(db, C.auditLogs), where('action', '==', filters.action), orderBy('timestamp', 'desc'));
+  const scope = getActiveCompanyContext();
+  const constraints = [];
+  if (isCompanyScopedCollection('auditLogs') && scope.companyId && !scope.allowLegacy) {
+    constraints.push(where('companyId', '==', scope.companyId));
+  }
+  if (filters.action) constraints.push(where('action', '==', filters.action));
+  constraints.push(orderBy('timestamp', 'desc'));
+  const q = query(collection(db, C.auditLogs), ...constraints);
   const snap = await getDocs(q);
   return snap.docs
     .map((d) => ({ id: d.id, __collection: 'auditLogs', ...d.data() }))

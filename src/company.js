@@ -66,8 +66,9 @@ export function canAutoAdoptLegacyWorkspace(user, profile) {
   const normalizedEmail = `${user?.email || ''}`.trim().toLowerCase();
   if (!normalizedEmail) return false;
   if (appConfig.bootstrapAdmins.map((email) => `${email || ''}`.trim().toLowerCase()).includes(normalizedEmail)) return true;
+  if (profile?.suppressLegacyAutoAdopt === true) return false;
   if (profile?.legacyBootstrapEligible === true) return true;
-  return profile?.role === 'admin' && profile?.isNewProfile !== true;
+  return profile?.role === 'admin';
 }
 
 export async function createCompanyFromOnboarding(user, payload = {}) {
