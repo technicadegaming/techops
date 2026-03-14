@@ -3,7 +3,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.3/firebase-auth.js';
 import { auth } from './firebase.js';
 import { appConfig } from './config.js';
-import { loadUserProfile, saveUserProfile, listEntities } from './data.js';
+import { loadUserProfile, saveUserProfile } from './data.js';
 
 export async function login(email, password) {
   return signInWithEmailAndPassword(auth, email, password);
@@ -23,16 +23,23 @@ export function watchAuth(cb) {
 
 export async function resolveProfile(user) {
   let profile = await loadUserProfile(user.uid);
+  let isNewProfile = false;
   if (!profile) {
-    const users = await listEntities('users').catch(() => []);
-    const shouldBootstrapAdmin = users.length === 0 || appConfig.bootstrapAdmins.includes(user.email);
+    const normalizedEmail = `${user?.email || ''}`.trim().toLowerCase();
+    const shouldBootstrapAdmin = appConfig.bootstrapAdmins
+      .map((email) => `${email || ''}`.trim().toLowerCase())
+      .includes(normalizedEmail);
     profile = {
       email: user.email,
       displayName: user.displayName || user.email,
-      role: shouldBootstrapAdmin ? 'admin' : 'staff',
-      enabled: true
+      role: shouldBootstrapAdmin ? 'admin' : 'pending',
+      enabled: true,
+      onboardingState: shouldBootstrapAdmin ? 'legacy_bootstrap' : 'needs_company_setup',
+      legacyBootstrapEligible: shouldBootstrapAdmin,
+      suppressLegacyAutoAdopt: !shouldBootstrapAdmin
     };
     await saveUserProfile(user.uid, profile, { uid: user.uid, email: user.email });
+    isNewProfile = true;
   }
-  return profile;
+  return { ...profile, isNewProfile };
 }

@@ -127,8 +127,8 @@ function renderEnrichmentDetails(asset, manager) {
 }
 
 export function renderAssets(el, state, actions) {
-  const editable = canEditAssets(state.profile);
-  const manager = isAdmin(state.profile);
+  const editable = canEditAssets(state.permissions);
+  const manager = isAdmin(state.permissions);
   const repeatPatterns = detectRepeatIssues(state.tasks || []);
   el.innerHTML = `
     <h2>Assets (Operational source of truth)</h2>
@@ -157,7 +157,7 @@ export function renderAssets(el, state, actions) {
           ${renderPreviewPanel(state)}
         </div>
       </details>
-      ${state.assetDraft?.saveFeedback ? `<div class="tiny" style="grid-column:1/-1; color:#166534;">${state.assetDraft.saveFeedback}</div>` : ''}
+      ${state.assetDraft?.saveFeedback ? `<div class="tiny" style="grid-column:1/-1; color:${state.assetDraft?.saveFeedbackTone === 'error' ? '#b91c1c' : '#166534'};">${state.assetDraft.saveFeedback}</div>` : ''}
       <button type="submit" class="primary" ${editable && !state.assetDraft?.saving ? '' : 'disabled'}>${state.assetDraft?.saving ? 'Saving…' : 'Save asset'}</button>
     </form>
 
@@ -209,9 +209,9 @@ export function renderAssets(el, state, actions) {
       ${recurring.length ? `<div class="tiny"><b>Recurring patterns:</b> ${recurring.map((r) => `${r.issueCategory || 'uncategorized'} (${r.count})`).join(', ')}</div>` : ''}
       ${library.length ? `<div class="tiny"><b>Troubleshooting library:</b> ${library.map((row) => row.successfulFix || row.title).join(' | ')}</div>` : ''}
 
-      ${isAdmin(state.profile) ? `<details><summary>Edit core fields</summary><form data-edit="${a.id}" class="grid grid-2"><input name="name" value="${a.name || ''}" placeholder="Asset name" /><input name="id" value="${a.id || ''}" placeholder="Asset ID" /><input name="serialNumber" value="${a.serialNumber || ''}" placeholder="Serial number" /><input name="manufacturer" value="${a.manufacturer || ''}" placeholder="Manufacturer" /><input name="status" value="${a.status || ''}" placeholder="Status" /><input name="manualLinks" value="${(a.manualLinks || []).join(', ')}" placeholder="Manual links (comma-separated)" /><textarea name="notes" placeholder="Notes">${a.notes || ''}</textarea><button>Save core fields</button></form></details>` : ''}
+      ${isAdmin(state.permissions) ? `<details><summary>Edit core fields</summary><form data-edit="${a.id}" class="grid grid-2"><input name="name" value="${a.name || ''}" placeholder="Asset name" /><input name="id" value="${a.id || ''}" placeholder="Asset ID" /><input name="serialNumber" value="${a.serialNumber || ''}" placeholder="Serial number" /><input name="manufacturer" value="${a.manufacturer || ''}" placeholder="Manufacturer" /><input name="status" value="${a.status || ''}" placeholder="Status" /><input name="manualLinks" value="${(a.manualLinks || []).join(', ')}" placeholder="Manual links (comma-separated)" /><textarea name="notes" placeholder="Notes">${a.notes || ''}</textarea><button>Save core fields</button></form></details>` : ''}
 
-      ${canDelete(state.profile) ? `<button data-del="${a.id}" class="danger" type="button">Delete</button>` : ''}
+      ${canDelete(state.permissions) ? `<button data-del="${a.id}" class="danger" type="button">Delete</button>` : ''}
       </details>`;
     }).join('')}</div>`;
 
