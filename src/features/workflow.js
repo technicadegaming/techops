@@ -40,12 +40,24 @@ export function getCurrentOpenedDateTimeValue(date = new Date()) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function summarizeIssue(description = '', maxLength = 48) {
+  const clean = `${description || ''}`.replace(/\s+/g, ' ').trim();
+  if (!clean) return 'new issue';
+  return clean.length <= maxLength ? clean : `${clean.slice(0, maxLength).trimEnd()}…`;
+}
+
+export function generateTaskTitle(assetName = '', description = '') {
+  const friendlyAsset = `${assetName || ''}`.trim() || 'Unknown asset';
+  return `${friendlyAsset} — ${summarizeIssue(description)}`;
+}
+
 export function normalizeTaskIntake(raw, settings = {}) {
   const nowIso = new Date().toISOString();
   const openedAt = raw.openedAt ? new Date(raw.openedAt).toISOString() : nowIso;
   const fields = {
     id: (raw.id || '').trim(),
     assetId: (raw.assetId || '').trim(),
+    assetName: (raw.assetName || '').trim(),
     location: (raw.location || '').trim(),
     issueCategory: (raw.issueCategory || '').trim(),
     symptomTags: [...new Set([...(Array.isArray(raw.symptomTags) ? raw.symptomTags : toList(raw.symptomTags)), ...toList(raw.symptomTagsExtra)])],
@@ -55,12 +67,12 @@ export function normalizeTaskIntake(raw, settings = {}) {
     startedAt: (raw.startedAt || '').trim(),
     occurrence: raw.occurrence || 'constant',
     reproducible: raw.reproducible || 'unknown',
-    alreadyTried: (raw.alreadyTried || '').trim(),
+    alreadyTried: (raw.alreadyTried || '').trim() || 'Nothing yet',
     visibleCondition: (raw.visibleCondition || '').trim(),
     assignedWorkers: [...new Set(toList(raw.assignedWorkers))],
     reporter: (raw.reporter || '').trim(),
     notes: (raw.notes || '').trim(),
-    title: (raw.title || '').trim(),
+    title: generateTaskTitle(raw.assetName || raw.assetId, raw.description || ''),
     status: raw.status || 'open',
     openedAt,
     createdAtClient: (raw.createdAtClient || '').trim() || nowIso,
@@ -97,7 +109,7 @@ export function buildStructuredDescription(task) {
   return lines.join('\n');
 }
 
-export function validateTaskIntake(payload, requiredFields = ['title', 'assetId', 'description', 'symptomTags', 'alreadyTried', 'reporter']) {
+export function validateTaskIntake(payload, requiredFields = ['assetId', 'description', 'reporter']) {
   const missing = requiredFields.filter((field) => {
     const value = payload[field];
     if (Array.isArray(value)) return value.length === 0;

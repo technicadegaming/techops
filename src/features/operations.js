@@ -62,8 +62,27 @@ function renderCloseout(task, state) {
   </details>`;
 }
 
+function createDefaultOperationsUiState() {
+  return {
+    draft: {},
+    moreDetailsOpen: false,
+    expandedTaskIds: [],
+    scrollY: 0
+  };
+}
+
+function readFormDraft(form) {
+  if (!form) return {};
+  return Object.fromEntries(new FormData(form).entries());
+}
+
 export function renderOperations(el, state, actions) {
+  state.operationsUi = { ...createDefaultOperationsUiState(), ...(state.operationsUi || {}) };
   const editable = canEditTasks(state.profile);
+  const expanded = new Set(state.operationsUi.expandedTaskIds || []);
+  const assetById = new Map((state.assets || []).map((a) => [a.id, a]));
+  const assetByName = new Map((state.assets || []).map((a) => [`${a.name || a.id}`.toLowerCase(), a]));
+
   el.innerHTML = `
     <div class="row space"><h2>Operations & Tasks</h2><div class="tiny">Structured intake enabled</div></div>
     <form id="taskForm" class="grid">
@@ -71,18 +90,20 @@ export function renderOperations(el, state, actions) {
         <label>Task ID<input name="id" readonly /></label>
         <label>Opened date/time<input name="openedAt" type="datetime-local" readonly /></label>
       </div>
-      <input name="title" placeholder="Task title" required ${editable ? '' : 'disabled'} />
-      <input name="assetId" list="assetOptions" placeholder="Asset / game" required ${editable ? '' : 'disabled'} />
-      <textarea name="description" placeholder="Issue description" required ${editable ? '' : 'disabled'}></textarea>
-      <input name="symptomTags" placeholder="Symptoms / tags (comma-separated)" required ${editable ? '' : 'disabled'} />
-      <input name="alreadyTried" placeholder="What already tried" required ${editable ? '' : 'disabled'} />
-      <input name="reporter" placeholder="Reporter" required ${editable ? '' : 'disabled'} />
+      <label>Asset / game
+        <input name="assetSearch" list="assetOptions" placeholder="Search by asset name" required ${editable ? '' : 'disabled'} />
+      </label>
+      <textarea name="description" placeholder="Describe the issue / concern" required ${editable ? '' : 'disabled'}></textarea>
+      <input name="alreadyTried" placeholder="What has been tried so far?" ${editable ? '' : 'disabled'} />
+      <input name="reporter" placeholder="Who are you" required ${editable ? '' : 'disabled'} />
 
-      <details>
+      <details data-more-details ${state.operationsUi.moreDetailsOpen ? 'open' : ''}>
         <summary>More details (optional)</summary>
         <div class="grid grid-2 mt">
           <input name="issueCategory" placeholder="Issue category" ${editable ? '' : 'disabled'} />
           <select name="severity" ${editable ? '' : 'disabled'}><option>critical</option><option>high</option><option selected>medium</option><option>low</option></select>
+          <input name="symptomTags" placeholder="Symptoms / tags (comma-separated)" ${editable ? '' : 'disabled'} />
+          <input name="symptomTagsExtra" placeholder="Additional symptom tags" ${editable ? '' : 'disabled'} />
           <input name="location" placeholder="Location / zone / area" ${editable ? '' : 'disabled'} />
           <input name="customerImpact" placeholder="Customer impact" ${editable ? '' : 'disabled'} />
           <input name="errorText" placeholder="Observed error text/code" ${editable ? '' : 'disabled'} />
@@ -91,86 +112,153 @@ export function renderOperations(el, state, actions) {
           <input name="visibleCondition" placeholder="Visible condition notes" ${editable ? '' : 'disabled'} />
           <input name="assignedWorkers" placeholder="Assigned worker IDs/emails (comma-separated)" ${editable ? '' : 'disabled'} />
           <select name="status" ${editable ? '' : 'disabled'}><option>open</option><option>in_progress</option><option>completed</option></select>
-          <input name="symptomTagsExtra" placeholder="Additional symptom tags" ${editable ? '' : 'disabled'} />
           <textarea name="notes" placeholder="Optional notes" ${editable ? '' : 'disabled'}></textarea>
         </div>
       </details>
 
       <button class="primary" ${editable ? '' : 'disabled'}>Save task</button>
-      <datalist id="assetOptions">${state.assets.map((a) => `<option value="${a.id}">${a.name || a.id}</option>`).join('')}</datalist>
+      <datalist id="assetOptions">${state.assets.map((a) => `<option value="${a.name || a.id}"></option>`).join('')}</datalist>
     </form>
     <div class="list mt">
       ${state.tasks.map((t) => {
       const unavailable = (t.assignedWorkers || []).filter((w) => state.users.some((u) => (u.id === w || u.email === w) && (u.enabled === false || u.available === false)));
-      return `<div class="item ${state.route?.taskId === t.id ? 'selected' : ''}" id="task-${t.id}"><b>${t.title || t.id}</b> · ${t.status || 'open'} · asset ${t.assetId || '-'}
-      <div class="tiny">${t.issueCategory || 'uncategorized'} · ${t.severity || 'medium'} · Assigned: ${(t.assignedWorkers || []).join(', ') || 'unassigned'} ${unavailable.length ? `· ⚠️ unavailable: ${unavailable.join(', ')}` : ''}</div>
-      <div><b>Issue:</b> ${t.description || ''}</div>
-      <div class="tiny">Tags: ${(t.symptomTags || []).join(', ') || 'none'}</div>
-      ${renderCloseout(t, state)}
-      ${renderAiPanel(t, state)}
-      ${unavailable.length ? `<button data-reassign="${t.id}">Quick reassign</button>` : ''}
-      ${canDelete(state.profile) ? `<button data-del="${t.id}" class="danger">Delete</button>` : ''}
-      </div>`;
+      const taskAsset = assetById.get(t.assetId);
+      const friendlyAsset = taskAsset?.name || t.assetName || t.assetId || '-';
+      const showTaskDetails = expanded.has(t.id);
+      return `<details class="item ${state.route?.taskId === t.id ? 'selected' : ''}" id="task-${t.id}" data-task-details="${t.id}" ${showTaskDetails ? 'open' : ''}>
+        <summary><b>${t.title || t.id}</b> · ${t.status || 'open'} · ${friendlyAsset}</summary>
+        <div class="tiny">Assigned: ${(t.assignedWorkers || []).join(', ') || 'unassigned'} ${unavailable.length ? `· ⚠️ unavailable: ${unavailable.join(', ')}` : ''}</div>
+        <div><b>Issue:</b> ${t.description || ''}</div>
+        <div class="tiny">${t.issueCategory || 'uncategorized'} · ${t.severity || 'medium'} · tags: ${(t.symptomTags || []).join(', ') || 'none'}</div>
+        ${renderCloseout(t, state)}
+        ${renderAiPanel(t, state)}
+        ${unavailable.length ? `<button data-reassign="${t.id}">Quick reassign</button>` : ''}
+        ${canDelete(state.profile) ? `<button data-del="${t.id}" class="danger">Delete</button>` : ''}
+      </details>`;
     }).join('')}
     </div>`;
 
   const form = el.querySelector('#taskForm');
   const idInput = form?.querySelector('[name="id"]');
   const openedAtInput = form?.querySelector('[name="openedAt"]');
-  const assetInput = form?.querySelector('[name="assetId"]');
+  const assetInput = form?.querySelector('[name="assetSearch"]');
   const reporterInput = form?.querySelector('[name="reporter"]');
+  const moreDetails = form?.querySelector('[data-more-details]');
 
-  const refreshTaskMeta = () => {
-    const assetId = `${assetInput?.value || ''}`.trim();
-    const asset = state.assets.find((a) => a.id === assetId || a.name === assetId);
+  const getSelectedAsset = () => {
+    const raw = `${assetInput?.value || ''}`.trim();
+    if (!raw) return null;
+    return assetByName.get(raw.toLowerCase()) || assetById.get(raw) || null;
+  };
+
+  const syncFormMeta = () => {
+    const selectedAsset = getSelectedAsset();
     const nextId = generateTaskId({
-      assetId: assetId || asset?.id,
-      assetName: asset?.name,
+      assetId: selectedAsset?.id,
+      assetName: selectedAsset?.name,
       existingIds: state.tasks.map((t) => t.id)
     });
-    if (idInput) idInput.value = nextId;
-    if (openedAtInput) openedAtInput.value = getCurrentOpenedDateTimeValue(new Date());
+    if (idInput && !idInput.value) idInput.value = nextId;
+    if (openedAtInput && !openedAtInput.value) openedAtInput.value = getCurrentOpenedDateTimeValue(new Date());
     if (reporterInput && !reporterInput.value) reporterInput.value = state.user?.email || '';
   };
 
-  refreshTaskMeta();
-  assetInput?.addEventListener('change', refreshTaskMeta);
+  const restoreDraft = () => {
+    const draft = state.operationsUi?.draft || {};
+    if (!form) return;
+    [...form.elements].forEach((input) => {
+      if (!input?.name || input.name === 'id' || input.name === 'openedAt') return;
+      if (typeof draft[input.name] === 'undefined') return;
+      input.value = draft[input.name];
+    });
+    if (idInput) idInput.value = `${draft.id || ''}`.trim() || idInput.value;
+    if (openedAtInput) openedAtInput.value = `${draft.openedAt || ''}`.trim() || openedAtInput.value;
+    syncFormMeta();
+  };
 
-  form?.addEventListener('submit', (e) => {
+  const persistDraft = () => {
+    if (!form) return;
+    state.operationsUi.draft = readFormDraft(form);
+    state.operationsUi.moreDetailsOpen = !!moreDetails?.open;
+    state.operationsUi.scrollY = window.scrollY;
+  };
+
+  syncFormMeta();
+  restoreDraft();
+
+  form?.addEventListener('input', persistDraft);
+  form?.addEventListener('change', () => {
+    syncFormMeta();
+    persistDraft();
+  });
+  moreDetails?.addEventListener('toggle', () => {
+    state.operationsUi.moreDetailsOpen = !!moreDetails.open;
+  });
+
+  form?.addEventListener('submit', async (e) => {
     e.preventDefault();
+    persistDraft();
     const fd = new FormData(form);
+    const selectedAsset = getSelectedAsset();
     const openedAtRaw = `${fd.get('openedAt') || ''}`.trim();
     const payload = normalizeTaskIntake({
       ...Object.fromEntries(fd.entries()),
       id: `${fd.get('id') || ''}`.trim(),
+      assetId: selectedAsset?.id || '',
       openedAt: openedAtRaw ? new Date(openedAtRaw).toISOString() : new Date().toISOString(),
       createdAtClient: new Date().toISOString(),
-      assetName: state.assets.find((a) => a.id === fd.get('assetId'))?.name || `${fd.get('assetId') || ''}`,
-      assetKeySnapshot: buildAssetKey(fd.get('assetId'), state.assets.find((a) => a.id === fd.get('assetId'))?.name),
+      assetName: selectedAsset?.name || `${fd.get('assetSearch') || ''}`,
+      assetKeySnapshot: buildAssetKey(selectedAsset?.id, selectedAsset?.name),
       reportedByUserId: state.user?.uid || '',
       reportedByEmail: state.user?.email || ''
     }, state.settings || {});
-    const validation = validateTaskIntake(payload, state.settings.taskIntakeRequiredFields || undefined);
+    const validation = validateTaskIntake(payload, ['assetId', 'description', 'reporter']);
     if (!validation.ok) return alert(`Missing required fields: ${validation.missing.join(', ')}`);
-    actions.saveTask(payload.id || `${fd.get('id') || ''}`.trim(), payload);
-    form.reset();
-    refreshTaskMeta();
+
+    await actions.saveTask(payload.id || `${fd.get('id') || ''}`.trim(), payload);
+    state.operationsUi.draft = {};
+    state.operationsUi.moreDetailsOpen = false;
   });
+
+  el.querySelectorAll('[data-task-details]').forEach((taskDetails) => taskDetails.addEventListener('toggle', () => {
+    const taskId = taskDetails.dataset.taskDetails;
+    const current = new Set(state.operationsUi.expandedTaskIds || []);
+    if (taskDetails.open) current.add(taskId);
+    else current.delete(taskId);
+    state.operationsUi.expandedTaskIds = [...current];
+  }));
 
   el.querySelectorAll('[data-closeout]').forEach((f) => f.addEventListener('submit', (e) => {
     e.preventDefault();
+    state.operationsUi.scrollY = window.scrollY;
     const taskId = f.dataset.closeout;
     const closeout = Object.fromEntries(new FormData(f).entries());
     actions.completeTask(taskId, closeout);
   }));
 
-  el.querySelectorAll('[data-reassign]').forEach((btn) => btn.addEventListener('click', () => actions.reassignTask(btn.dataset.reassign)));
-  el.querySelectorAll('[data-del]').forEach((btn) => btn.addEventListener('click', () => actions.deleteTask(btn.dataset.del)));
-  el.querySelectorAll('[data-run-ai]').forEach((btn) => btn.addEventListener('click', () => actions.runAi(btn.dataset.runAi)));
-  el.querySelectorAll('[data-rerun-ai]').forEach((btn) => btn.addEventListener('click', () => actions.rerunAi(btn.dataset.rerunAi)));
-  el.querySelectorAll('[data-save-fix]').forEach((btn) => btn.addEventListener('click', () => actions.saveFix(btn.dataset.saveFix)));
+  el.querySelectorAll('[data-reassign]').forEach((btn) => btn.addEventListener('click', () => {
+    state.operationsUi.scrollY = window.scrollY;
+    actions.reassignTask(btn.dataset.reassign);
+  }));
+  el.querySelectorAll('[data-del]').forEach((btn) => btn.addEventListener('click', () => {
+    state.operationsUi.scrollY = window.scrollY;
+    actions.deleteTask(btn.dataset.del);
+  }));
+  el.querySelectorAll('[data-run-ai]').forEach((btn) => btn.addEventListener('click', () => {
+    state.operationsUi.scrollY = window.scrollY;
+    actions.runAi(btn.dataset.runAi);
+  }));
+  el.querySelectorAll('[data-rerun-ai]').forEach((btn) => btn.addEventListener('click', () => {
+    state.operationsUi.scrollY = window.scrollY;
+    actions.rerunAi(btn.dataset.rerunAi);
+  }));
+  el.querySelectorAll('[data-save-fix]').forEach((btn) => btn.addEventListener('click', () => {
+    state.operationsUi.scrollY = window.scrollY;
+    actions.saveFix(btn.dataset.saveFix);
+  }));
   el.querySelectorAll('[data-followup]').forEach((f) => f.addEventListener('submit', (e) => {
     e.preventDefault();
+    state.operationsUi.scrollY = window.scrollY;
     const taskId = f.dataset.followup;
     const runId = f.dataset.run;
     const answers = [...new FormData(f).entries()].map(([, answer], idx) => ({ question: (state.taskAiFollowups.find((x) => x.runId === runId)?.questions || [])[idx] || `Question ${idx + 1}`, answer }));
