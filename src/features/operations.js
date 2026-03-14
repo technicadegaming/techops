@@ -33,17 +33,17 @@ function renderAiPanel(task, state) {
     ${run ? renderAiSourceLine(run) : ''}
     ${run?.shortFrontlineVersion ? `<div class="tiny"><b>Frontline:</b> ${run.shortFrontlineVersion}</div>` : ''}
     ${run?.diagnosticSteps?.length ? `<div class="tiny"><b>Steps:</b> ${run.diagnosticSteps.join(' | ')}</div>` : ''}
-    ${followup?.questions?.length ? `<form data-followup="${task.id}" data-run="${run.id}" class="grid">${followup.questions.map((q, i) => `<label class="tiny">${q}<input name="a${i}" placeholder="Answer" ${canAnswerAiFollowups(state.profile) ? '' : 'disabled'} /></label>`).join('')}<button ${canAnswerAiFollowups(state.profile) ? '' : 'disabled'}>Submit follow-up answers</button></form>` : ''}
+    ${followup?.questions?.length ? `<form data-followup="${task.id}" data-run="${run.id}" class="grid">${followup.questions.map((q, i) => `<label class="tiny">${q}<input name="a${i}" placeholder="Answer" ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'} /></label>`).join('')}<button ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'}>Submit follow-up answers</button></form>` : ''}
     <div class="row mt">
-      <button data-run-ai="${task.id}" ${canRunAiTroubleshooting(state.profile) ? '' : 'disabled'}>Run AI</button>
-      <button data-rerun-ai="${task.id}" ${canRunAiTroubleshooting(state.profile) ? '' : 'disabled'}>Regenerate</button>
-      <button data-save-fix="${task.id}" ${canSaveFixToLibrary(state.profile) ? '' : 'disabled'}>Save fix to library</button>
+      <button data-run-ai="${task.id}" ${canRunAiTroubleshooting(state.permissions) ? '' : 'disabled'}>Run AI</button>
+      <button data-rerun-ai="${task.id}" ${canRunAiTroubleshooting(state.permissions) ? '' : 'disabled'}>Regenerate</button>
+      <button data-save-fix="${task.id}" ${canSaveFixToLibrary(state.permissions) ? '' : 'disabled'}>Save fix to library</button>
     </div>
   </div>`;
 }
 
 function renderCloseout(task, state) {
-  if (task.status === 'completed' || !canCloseTasks(state.profile)) return '';
+  if (task.status === 'completed' || !canCloseTasks(state.permissions)) return '';
   return `<details class="item mt"><summary><b>Close task workflow</b></summary>
     <form data-closeout="${task.id}" class="grid grid-2 mt">
       <input name="rootCause" placeholder="Root cause" required />
@@ -78,7 +78,7 @@ function readFormDraft(form) {
 
 export function renderOperations(el, state, actions) {
   state.operationsUi = { ...createDefaultOperationsUiState(), ...(state.operationsUi || {}) };
-  const editable = canEditTasks(state.profile);
+  const editable = canEditTasks(state.permissions);
   const expanded = new Set(state.operationsUi.expandedTaskIds || []);
   const assetById = new Map((state.assets || []).map((a) => [a.id, a]));
   const assetByName = new Map((state.assets || []).map((a) => [`${a.name || a.id}`.toLowerCase(), a]));
@@ -133,7 +133,7 @@ export function renderOperations(el, state, actions) {
         ${renderCloseout(t, state)}
         ${renderAiPanel(t, state)}
         ${unavailable.length ? `<button data-reassign="${t.id}">Quick reassign</button>` : ''}
-        ${canDelete(state.profile) ? `<button data-del="${t.id}" class="danger">Delete</button>` : ''}
+        ${canDelete(state.permissions) ? `<button data-del="${t.id}" class="danger">Delete</button>` : ''}
       </details>`;
     }).join('')}
     </div>`;

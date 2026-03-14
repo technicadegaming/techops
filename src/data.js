@@ -49,16 +49,25 @@ export async function listAudit(filters = {}) {
 
 export async function upsertEntity(name, id, payload, user) {
   const ref = doc(db, C[name], id);
-  const beforeSnap = await getDoc(ref);
-  const before = beforeSnap.exists() ? beforeSnap.data() : null;
-  const action = before ? 'update' : 'create';
-  const nextPayload = withMeta(buildCompanyScopedPayload(name, { id, ...payload }), user, !before);
+  const basePayload = buildCompanyScopedPayload(name, { id, ...payload });
+  let before = null;
+  let action = 'create';
+  try {
+    const beforeSnap = await getDoc(ref);
+    before = beforeSnap.exists() ? beforeSnap.data() : null;
+    action = before ? 'update' : 'create';
+  } catch (error) {
+    const code = `${error?.code || ''}`;
+    const optimisticCreate = code.includes('permission-denied') && isCompanyScopedCollection(name) && !!basePayload.companyId;
+    if (!optimisticCreate) throw error;
+  }
+  const nextPayload = withMeta(basePayload, user, action === 'create');
   if (isCompanyScopedCollection(name) && !nextPayload.companyId && !before?.companyId) {
     const scope = getActiveCompanyContext();
     throw new Error(`Missing company context for ${name}/${id}. Active company: ${scope.companyId || 'none'}.`);
   }
   await setDoc(ref, nextPayload, { merge: true });
-  const after = (await getDoc(ref)).data();
+  const after = { ...(before || {}), ...nextPayload };
   await logAudit({ action, entityType: name, entityId: id, summary: `${action} ${name}/${id}`, user, before, after: { ...after, companyId: nextPayload.companyId || after?.companyId || null } });
 }
 

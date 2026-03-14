@@ -32,7 +32,7 @@ export async function resolveProfile(user) {
     profile = {
       email: user.email,
       displayName: user.displayName || user.email,
-      role: shouldBootstrapAdmin ? 'admin' : 'staff',
+      role: shouldBootstrapAdmin ? 'admin' : 'pending',
       enabled: true,
       onboardingState: shouldBootstrapAdmin ? 'legacy_bootstrap' : 'needs_company_setup',
       legacyBootstrapEligible: shouldBootstrapAdmin,

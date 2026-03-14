@@ -6,11 +6,21 @@ export const Roles = Object.freeze({
   STAFF: 'staff'
 });
 
-export const isAdmin = (u) => u?.role === Roles.ADMIN;
-export const isManager = (u) => [Roles.ADMIN, Roles.MANAGER].includes(u?.role);
-export const isAssistantManager = (u) => [Roles.ADMIN, Roles.MANAGER, Roles.ASSISTANT_MANAGER].includes(u?.role);
-export const isLead = (u) => [Roles.ADMIN, Roles.MANAGER, Roles.ASSISTANT_MANAGER, Roles.LEAD].includes(u?.role);
-export const isStaff = (u) => [Roles.ADMIN, Roles.MANAGER, Roles.ASSISTANT_MANAGER, Roles.LEAD, Roles.STAFF].includes(u?.role);
+const roleFrom = (u) => u?.companyRole || u?.role || null;
+
+export const buildPermissionContext = ({ profile = null, membership = null } = {}) => ({
+  role: membership?.role || null,
+  companyRole: membership?.role || null,
+  globalRole: profile?.role || null,
+  legacyBootstrapEligible: profile?.legacyBootstrapEligible === true
+});
+
+export const isGlobalAdmin = (u) => u?.globalRole === Roles.ADMIN;
+export const isAdmin = (u) => ['owner', Roles.ADMIN].includes(roleFrom(u));
+export const isManager = (u) => ['owner', Roles.ADMIN, Roles.MANAGER].includes(roleFrom(u));
+export const isAssistantManager = (u) => ['owner', Roles.ADMIN, Roles.MANAGER, Roles.ASSISTANT_MANAGER].includes(roleFrom(u));
+export const isLead = (u) => ['owner', Roles.ADMIN, Roles.MANAGER, Roles.ASSISTANT_MANAGER, Roles.LEAD].includes(roleFrom(u));
+export const isStaff = (u) => ['owner', Roles.ADMIN, Roles.MANAGER, Roles.ASSISTANT_MANAGER, Roles.LEAD, Roles.STAFF].includes(roleFrom(u));
 
 export const canDelete = (u) => isManager(u);
 export const canManageUsers = (u) => isAdmin(u);

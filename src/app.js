@@ -6,7 +6,7 @@ import { renderAssets } from './features/assets.js';
 import { renderCalendar } from './features/calendar.js';
 import { renderReports } from './features/reports.js';
 import { renderAdmin } from './admin.js';
-import { canDelete } from './roles.js';
+import { buildPermissionContext, canDelete, isAdmin, isGlobalAdmin } from './roles.js';
 import { previewLegacyImport, importLegacyData } from './migration.js';
 import { dryRunBackup, exportBackupJson, restoreBackup, validateBackup } from './backup.js';
 import { analyzeTaskTroubleshooting, answerTaskFollowup, enrichAssetDocumentation, previewAssetDocumentationLookup, regenerateTaskTroubleshooting, saveTaskFixToTroubleshootingLibrary } from './aiAdapter.js';
@@ -51,7 +51,7 @@ function buildPreviewQueryKey(payload = {}) {
   return [assetName, manufacturer, serialNumber, assetId, followupAnswer].join('|');
 }
 
-const state = { user: null, profile: null, company: null, memberships: [], onboardingRequired: false, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], workers: [], invites: [], companyLocations: [], importHistory: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], settings: {}, restorePayload: null, route: parseRouteState(), assetDraft: createEmptyAssetDraft(), operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0 } };
+const state = { user: null, profile: null, company: null, memberships: [], activeMembership: null, permissions: buildPermissionContext(), onboardingRequired: false, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], workers: [], invites: [], companyLocations: [], importHistory: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], settings: {}, restorePayload: null, route: parseRouteState(), assetDraft: createEmptyAssetDraft(), operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0 } };
 
 function formatActionError(error, fallbackMessage) {
   const detail = `${error?.message || error || ''}`.trim();
@@ -89,7 +89,7 @@ async function runAction(label, work, options = {}) {
 
 function tabVisible(tab) {
   if (state.onboardingRequired) return tab === 'dashboard';
-  if (tab === 'admin') return state.profile?.role === 'admin';
+  if (tab === 'admin') return isAdmin(state.permissions);
   return true;
 }
 
@@ -255,6 +255,8 @@ async function bootstrapCompanyContext() {
   }
 
   const activeMembership = state.memberships[0] || null;
+  state.activeMembership = activeMembership;
+  state.permissions = buildPermissionContext({ profile: state.profile, membership: activeMembership });
   if (!activeMembership) {
     state.company = null;
     state.onboardingRequired = true;
@@ -265,12 +267,13 @@ async function bootstrapCompanyContext() {
   const company = await getCompany(activeMembership.companyId);
   state.company = company;
   state.onboardingRequired = false;
-  setActiveCompanyContext(company?.id || activeMembership.companyId, { allowLegacy: state.profile?.role === 'admin' });
+  setActiveCompanyContext(company?.id || activeMembership.companyId, { allowLegacy: isGlobalAdmin(state.permissions) });
 }
 
 async function render() {
   buildTabs();
-  document.getElementById('userBadge').textContent = `${state.user.email} (${state.profile.role})${state.company?.name ? ` • ${state.company.name}` : ''}`;
+  const roleLabel = state.permissions.companyRole || state.profile?.role || 'pending';
+  document.getElementById('userBadge').textContent = `${state.user.email} (${roleLabel})${state.company?.name ? ` • ${state.company.name}` : ''}`;
 
   if (state.onboardingRequired) {
     renderOnboarding(document.getElementById('dashboard'));
@@ -318,7 +321,7 @@ async function render() {
       await refreshData(); render();
     },
     deleteTask: async (id) => {
-      if (!canDelete(state.profile)) return;
+      if (!canDelete(state.permissions)) return;
       await deleteEntity('tasks', id, state.user); await refreshData(); render();
     },
     runAi: async (taskId) => { await analyzeTaskTroubleshooting(taskId); await refreshData(); render(); },
@@ -503,7 +506,7 @@ async function render() {
       await refreshData(); render();
     },
     applyDocSuggestions: async (id) => {
-      if (state.profile?.role !== 'admin') return;
+      if (!isAdmin(state.permissions)) return;
 
       const current = state.assets.find((a) => a.id === id) || {};
       const suggestions = Array.isArray(current.documentationSuggestions) ? current.documentationSuggestions : [];
@@ -526,7 +529,7 @@ async function render() {
       await refreshData(); render();
     },
     applyEnrichmentSuggestions: async (id, mode) => {
-      if (state.profile?.role !== 'admin') return;
+      if (!isAdmin(state.permissions)) return;
       const current = state.assets.find((a) => a.id === id) || {};
       const patch = {};
       if (mode === 'manufacturer' || mode === 'all') {
@@ -562,7 +565,7 @@ async function render() {
       await refreshData(); render();
     },
     applySingleDocSuggestion: async (id, index) => {
-      if (state.profile?.role !== 'admin') return;
+      if (!isAdmin(state.permissions)) return;
       const current = state.assets.find((a) => a.id === id) || {};
       const suggestions = Array.isArray(current.documentationSuggestions) ? current.documentationSuggestions : [];
       const selected = suggestions[index];
@@ -576,7 +579,7 @@ async function render() {
       await refreshData(); render();
     },
     applySingleSupportSuggestion: async (id, index) => {
-      if (state.profile?.role !== 'admin') return;
+      if (!isAdmin(state.permissions)) return;
       const current = state.assets.find((a) => a.id === id) || {};
       const suggestions = Array.isArray(current.supportResourcesSuggestion) ? current.supportResourcesSuggestion : [];
       const selected = suggestions[index];
@@ -590,7 +593,7 @@ async function render() {
       await refreshData(); render();
     },
     removeManualLink: async (id, url) => {
-      if (state.profile?.role !== 'admin') return;
+      if (!isAdmin(state.permissions)) return;
       const clean = `${url || ''}`.trim();
       if (!clean) return;
       const current = state.assets.find((a) => a.id === id) || {};
@@ -601,7 +604,7 @@ async function render() {
       await refreshData(); render();
     },
     removeSupportLink: async (id, url) => {
-      if (state.profile?.role !== 'admin') return;
+      if (!isAdmin(state.permissions)) return;
       const clean = `${url || ''}`.trim();
       if (!clean) return;
       const current = state.assets.find((a) => a.id === id) || {};
@@ -612,7 +615,7 @@ async function render() {
       await refreshData(); render();
     },
     editAsset: async (currentId, payload) => {
-      if (state.profile?.role !== 'admin') return;
+      if (!isAdmin(state.permissions)) return;
       const current = state.assets.find((a) => a.id === currentId) || {};
       const nextId = `${payload.id || currentId}`.trim() || currentId;
       await upsertEntity('assets', nextId, {
@@ -621,7 +624,7 @@ async function render() {
         id: nextId,
         name: `${payload.name || current.name || ''}`.trim(),
         serialNumber: `${payload.serialNumber || current.serialNumber || ''}`.trim(),
-        manufacturer: `${payload.manufacturer || draft.manufacturer || current.manufacturer || ''}`.trim(),
+        manufacturer: `${payload.manufacturer || current.manufacturer || ''}`.trim(),
         manualLinks: `${payload.manualLinks || ''}`.split(',').map((v) => v.trim()).filter(Boolean)
       }, state.user);
       if (nextId !== currentId) await deleteEntity('assets', currentId, state.user);
@@ -632,7 +635,7 @@ async function render() {
       await upsertEntity('assets', id, { ...current, docsLastReviewedAt: new Date().toISOString() }, state.user);
       await refreshData(); render();
     },
-    deleteAsset: async (id) => { if (!canDelete(state.profile)) return; await deleteEntity('assets', id, state.user); await refreshData(); render(); }
+    deleteAsset: async (id) => { if (!canDelete(state.permissions)) return; await deleteEntity('assets', id, state.user); await refreshData(); render(); }
   };
   renderAssets(document.getElementById('assets'), state, assetActions);
   renderCalendar(document.getElementById('calendar'), state);
@@ -790,6 +793,7 @@ watchAuth(async (user) => {
   }
   state.user = { uid: user.uid, email: user.email, displayName: user.displayName };
   state.profile = await resolveProfile(user);
+  state.permissions = buildPermissionContext({ profile: state.profile, membership: null });
   if (state.profile.enabled === false) {
     await logout();
     authMessage.textContent = 'This account is disabled.';

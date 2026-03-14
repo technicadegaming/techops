@@ -17,7 +17,7 @@ function parseCsv(text = '') {
 }
 
 export function renderAdmin(el, state, actions) {
-  if (!isAdmin(state.profile)) {
+  if (!isAdmin(state.permissions)) {
     el.innerHTML = '<h2>Admin</h2><p class="tiny">Admin access required.</p>';
     return;
   }
@@ -103,10 +103,10 @@ export function renderAdmin(el, state, actions) {
     <section class="item">
       <h3>Workspace tools</h3>
       <form id="aiSettingsForm" class="grid">
-        ${aiBooleanFields.map((k) => `<label><input type="checkbox" name="${k}" ${state.settings[k] ? 'checked' : ''} ${canChangeAISettings(state.profile) ? '' : 'disabled'} /> ${k}</label>`).join('')}
-        ${aiTextFields.map((k) => `<label>${k}<input name="${k}" value="${Array.isArray(state.settings[k]) ? state.settings[k].join(',') : (state.settings[k] || '')}" ${canChangeAISettings(state.profile) ? '' : 'disabled'} /></label>`).join('')}
-        ${aiNumericFields.map((k) => `<label>${k}<input type="number" step="0.01" name="${k}" value="${state.settings[k] ?? ''}" ${canChangeAISettings(state.profile) ? '' : 'disabled'} /></label>`).join('')}
-        <button ${canChangeAISettings(state.profile) ? '' : 'disabled'}>Save settings</button>
+        ${aiBooleanFields.map((k) => `<label><input type="checkbox" name="${k}" ${state.settings[k] ? 'checked' : ''} ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /> ${k}</label>`).join('')}
+        ${aiTextFields.map((k) => `<label>${k}<input name="${k}" value="${Array.isArray(state.settings[k]) ? state.settings[k].join(',') : (state.settings[k] || '')}" ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /></label>`).join('')}
+        ${aiNumericFields.map((k) => `<label>${k}<input type="number" step="0.01" name="${k}" value="${state.settings[k] ?? ''}" ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /></label>`).join('')}
+        <button ${canChangeAISettings(state.permissions) ? '' : 'disabled'}>Save settings</button>
       </form>
     </section>
 
@@ -115,7 +115,7 @@ export function renderAdmin(el, state, actions) {
       <p class="tiny">All actions are scoped to this company. Type the confirmation phrase shown before running.</p>
       <input id="dangerPhrase" placeholder="Type: ${state.company?.name || 'CONFIRM'}" />
       <div class="row">
-        <button id="exportBackup" ${canManageBackups(state.profile) ? '' : 'disabled'}>Export workspace data</button>
+        <button id="exportBackup" ${canManageBackups(state.permissions) ? '' : 'disabled'}>Export workspace data</button>
         <button id="clearTasks">Clear tasks/operations</button>
         <button id="clearAssets">Clear assets</button>
         <button id="clearWorkers">Clear workers (except current owner)</button>
