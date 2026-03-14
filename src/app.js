@@ -113,14 +113,34 @@ function downloadJson(filename, payload) {
 
 
 
+
+function dedupeUrls(values = []) {
+  return [...new Set((values || []).map((v) => `${v || ''}`.trim()).filter(Boolean))];
+}
+
+function normalizeSupportEntries(values = []) {
+  const mapped = (values || []).map((entry) => {
+    if (typeof entry === 'string') return { url: entry.trim() };
+    return { ...entry, url: `${entry?.url || ''}`.trim() };
+  }).filter((entry) => entry.url);
+  const seen = new Set();
+  return mapped.filter((entry) => {
+    if (seen.has(entry.url)) return false;
+    seen.add(entry.url);
+    return true;
+  });
+}
+
 async function render() {
   buildTabs();
   document.getElementById('userBadge').textContent = `${state.user.email} (${state.profile.role})`;
 
   renderDashboard(document.getElementById('dashboard'), state, openTab);
   renderOperations(document.getElementById('operations'), state, {
-    saveTask: async (id, payload) => {
-      await upsertEntity('tasks', id, payload, state.user);
+    saveTask: async (_id, payload) => {
+      const taskId = `${payload?.id || ''}`.trim() || `${_id || ''}`.trim();
+      if (!taskId) return alert('Unable to save task: missing generated task ID.');
+      await upsertEntity('tasks', taskId, { ...payload, id: taskId }, state.user);
       await refreshData(); render();
     },
     reassignTask: async (taskId) => {
@@ -335,7 +355,7 @@ async function render() {
         return;
       }
 
-      await upsertEntity('assets', id, { ...current, manualLinks: links, enrichmentStatus: 'docs_found', enrichmentFollowupQuestion: '' }, state.user);
+      await upsertEntity('assets', id, { ...current, manualLinks: dedupeUrls([...(current.manualLinks || []), ...links]), enrichmentStatus: 'docs_found', enrichmentFollowupQuestion: '' }, state.user);
       await refreshData(); render();
     },
     applyEnrichmentSuggestions: async (id, mode) => {
@@ -353,14 +373,14 @@ async function render() {
           .map((s) => s?.url)
           .filter(Boolean)
           .slice(0, 2);
-        if (strongManuals.length) patch.manualLinks = strongManuals;
+        if (strongManuals.length) patch.manualLinks = dedupeUrls([...(current.manualLinks || []), ...strongManuals]);
       }
       if (mode === 'support' || mode === 'all') {
         const supportLinks = (Array.isArray(current.supportResourcesSuggestion) ? current.supportResourcesSuggestion : [])
           .map((s) => s?.url)
           .filter(Boolean)
           .slice(0, 3);
-        if (supportLinks.length) patch.supportResourcesSuggestion = supportLinks.map((url) => ({ url }));
+        if (supportLinks.length) patch.supportResourcesSuggestion = normalizeSupportEntries([...(current.supportResourcesSuggestion || []), ...supportLinks.map((url) => ({ url }))]);
       }
       if (mode === 'contacts' || mode === 'all') {
         const contacts = Array.isArray(current.supportContactsSuggestion) ? current.supportContactsSuggestion : [];
@@ -372,6 +392,56 @@ async function render() {
       }
       if (!Object.keys(patch).length) return;
       await upsertEntity('assets', id, { ...current, ...patch }, state.user);
+      await refreshData(); render();
+    },
+    applySingleDocSuggestion: async (id, index) => {
+      if (state.profile?.role !== 'admin') return;
+      const current = state.assets.find((a) => a.id === id) || {};
+      const suggestions = Array.isArray(current.documentationSuggestions) ? current.documentationSuggestions : [];
+      const selected = suggestions[index];
+      const url = `${selected?.url || ''}`.trim();
+      if (!url) return;
+      await upsertEntity('assets', id, {
+        ...current,
+        manualLinks: dedupeUrls([...(current.manualLinks || []), url]),
+        enrichmentStatus: 'docs_found'
+      }, state.user);
+      await refreshData(); render();
+    },
+    applySingleSupportSuggestion: async (id, index) => {
+      if (state.profile?.role !== 'admin') return;
+      const current = state.assets.find((a) => a.id === id) || {};
+      const suggestions = Array.isArray(current.supportResourcesSuggestion) ? current.supportResourcesSuggestion : [];
+      const selected = suggestions[index];
+      const url = `${selected?.url || selected || ''}`.trim();
+      if (!url) return;
+      const label = selected?.label || selected?.title || url;
+      await upsertEntity('assets', id, {
+        ...current,
+        supportResourcesSuggestion: normalizeSupportEntries([...(current.supportResourcesSuggestion || []), { url, label }])
+      }, state.user);
+      await refreshData(); render();
+    },
+    removeManualLink: async (id, url) => {
+      if (state.profile?.role !== 'admin') return;
+      const clean = `${url || ''}`.trim();
+      if (!clean) return;
+      const current = state.assets.find((a) => a.id === id) || {};
+      await upsertEntity('assets', id, {
+        ...current,
+        manualLinks: (current.manualLinks || []).filter((entry) => `${entry}`.trim() !== clean)
+      }, state.user);
+      await refreshData(); render();
+    },
+    removeSupportLink: async (id, url) => {
+      if (state.profile?.role !== 'admin') return;
+      const clean = `${url || ''}`.trim();
+      if (!clean) return;
+      const current = state.assets.find((a) => a.id === id) || {};
+      await upsertEntity('assets', id, {
+        ...current,
+        supportResourcesSuggestion: normalizeSupportEntries((current.supportResourcesSuggestion || []).filter((entry) => `${entry?.url || entry || ''}`.trim() !== clean))
+      }, state.user);
       await refreshData(); render();
     },
     editAsset: async (currentId, payload) => {

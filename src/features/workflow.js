@@ -3,9 +3,48 @@ const toList = (value) => `${value || ''}`
   .map((item) => item.trim())
   .filter(Boolean);
 
+function formatDateParts(date = new Date()) {
+  const pad = (n) => `${n}`.padStart(2, '0');
+  return {
+    yyyymmdd: `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`,
+    hhmm: `${pad(date.getHours())}${pad(date.getMinutes())}`
+  };
+}
+
+function randomSuffix(length = 4) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({ length }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+export function buildAssetKey(rawAssetId = '', rawAssetName = '') {
+  const source = `${rawAssetId || rawAssetName || 'asset'}`.toUpperCase();
+  const clean = source.replace(/[^A-Z0-9]+/g, '');
+  return (clean.slice(0, 10) || 'ASSET');
+}
+
+export function generateTaskId({ assetId = '', assetName = '', existingIds = [] } = {}) {
+  const { yyyymmdd, hhmm } = formatDateParts(new Date());
+  const assetKey = buildAssetKey(assetId, assetName);
+  const used = new Set((existingIds || []).map((id) => `${id}`));
+  let candidate = '';
+  let attempts = 0;
+  do {
+    candidate = `OPS-${yyyymmdd}-${hhmm}-${assetKey}-${randomSuffix(4)}`;
+    attempts += 1;
+  } while (used.has(candidate) && attempts < 12);
+  return candidate;
+}
+
+export function getCurrentOpenedDateTimeValue(date = new Date()) {
+  const pad = (n) => `${n}`.padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 export function normalizeTaskIntake(raw, settings = {}) {
-  const now = new Date().toISOString();
+  const nowIso = new Date().toISOString();
+  const openedAt = raw.openedAt ? new Date(raw.openedAt).toISOString() : nowIso;
   const fields = {
+    id: (raw.id || '').trim(),
     assetId: (raw.assetId || '').trim(),
     location: (raw.location || '').trim(),
     issueCategory: (raw.issueCategory || '').trim(),
@@ -22,7 +61,12 @@ export function normalizeTaskIntake(raw, settings = {}) {
     reporter: (raw.reporter || '').trim(),
     notes: (raw.notes || '').trim(),
     title: (raw.title || '').trim(),
-    status: raw.status || 'open'
+    status: raw.status || 'open',
+    openedAt,
+    createdAtClient: (raw.createdAtClient || '').trim() || nowIso,
+    assetKeySnapshot: buildAssetKey(raw.assetId, raw.assetName),
+    reportedByUserId: (raw.reportedByUserId || '').trim(),
+    reportedByEmail: (raw.reportedByEmail || '').trim()
   };
 
   const generatedDescription = buildStructuredDescription(fields);
@@ -30,12 +74,13 @@ export function normalizeTaskIntake(raw, settings = {}) {
     ...fields,
     description: (raw.description || '').trim() || generatedDescription,
     structuredIntakeVersion: 1,
-    updatedAtClient: now
+    updatedAtClient: nowIso
   };
 }
 
 export function buildStructuredDescription(task) {
   const lines = [
+    task.description ? `Issue description: ${task.description}` : '',
     `Asset: ${task.assetId || 'n/a'}`,
     `Location: ${task.location || 'n/a'}`,
     `Category: ${task.issueCategory || 'n/a'} · Severity: ${task.severity || 'n/a'}`,
@@ -52,7 +97,7 @@ export function buildStructuredDescription(task) {
   return lines.join('\n');
 }
 
-export function validateTaskIntake(payload, requiredFields = ['id', 'title', 'assetId', 'issueCategory', 'severity']) {
+export function validateTaskIntake(payload, requiredFields = ['title', 'assetId', 'description', 'symptomTags', 'alreadyTried', 'reporter']) {
   const missing = requiredFields.filter((field) => {
     const value = payload[field];
     if (Array.isArray(value)) return value.length === 0;
