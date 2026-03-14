@@ -215,7 +215,8 @@ export function renderOperations(el, state, actions) {
     const validation = validateTaskIntake(payload, ['assetId', 'description', 'reporter']);
     if (!validation.ok) return alert(`Missing required fields: ${validation.missing.join(', ')}`);
 
-    await actions.saveTask(payload.id || `${fd.get('id') || ''}`.trim(), payload);
+    const saved = await actions.saveTask(payload.id || `${fd.get('id') || ''}`.trim(), payload);
+    if (!saved) return;
     state.operationsUi.draft = {};
     state.operationsUi.moreDetailsOpen = false;
   });

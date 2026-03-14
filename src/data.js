@@ -4,40 +4,10 @@ import {
 import { db, serverTimestamp } from './firebase.js';
 import { appConfig } from './config.js';
 import { logAudit } from './audit.js';
+import { buildCompanyScopedPayload, getActiveCompanyContext, includeRecordForActiveCompany, isCompanyScopedCollection, setActiveCompanyContext } from './companyScope.js';
 
 const C = appConfig.collections;
-
-const companyScopedCollections = new Set([
-  'assets', 'tasks', 'operations', 'manuals', 'pmSchedules', 'notes', 'auditLogs',
-  'taskAiRuns', 'taskAiFollowups', 'troubleshootingLibrary', 'appSettings', 'workers', 'importHistory', 'companyLocations', 'companyInvites'
-]);
-
-const companyScopeState = {
-  companyId: null,
-  allowLegacy: false
-};
-
-export function setActiveCompanyContext(companyId, options = {}) {
-  companyScopeState.companyId = companyId || null;
-  companyScopeState.allowLegacy = !!options.allowLegacy;
-}
-
-function isScopedCollection(name) {
-  return companyScopedCollections.has(name);
-}
-
-function includeRecordForActiveCompany(entity = {}) {
-  if (!companyScopeState.companyId || !isScopedCollection(entity.__collection)) return true;
-  const itemCompanyId = entity.companyId || null;
-  if (itemCompanyId === companyScopeState.companyId) return true;
-  if (!itemCompanyId && companyScopeState.allowLegacy) return true;
-  return false;
-}
-
-function withCompanyPayload(name, payload = {}) {
-  if (!isScopedCollection(name) || !companyScopeState.companyId) return payload;
-  return { ...payload, companyId: payload.companyId || companyScopeState.companyId };
-}
+export { setActiveCompanyContext };
 
 const withMeta = (payload, user, isCreate) => ({
   ...payload,
@@ -50,7 +20,7 @@ export async function listEntities(name) {
   const snap = await getDocs(query(collection(db, C[name]), orderBy('updatedAt', 'desc')));
   return snap.docs
     .map((d) => ({ id: d.id, __collection: name, ...d.data() }))
-    .filter(includeRecordForActiveCompany)
+    .filter((entity) => includeRecordForActiveCompany(name, entity))
     .map(({ __collection, ...rest }) => rest);
 }
 
@@ -60,7 +30,7 @@ export async function listAudit(filters = {}) {
   const snap = await getDocs(q);
   return snap.docs
     .map((d) => ({ id: d.id, __collection: 'auditLogs', ...d.data() }))
-    .filter(includeRecordForActiveCompany)
+    .filter((entity) => includeRecordForActiveCompany('auditLogs', entity))
     .map(({ __collection, ...rest }) => rest)
     .filter((i) => !filters.entityType || i.entityType === filters.entityType)
     .filter((i) => !filters.userUid || i.userUid === filters.userUid);
@@ -71,7 +41,11 @@ export async function upsertEntity(name, id, payload, user) {
   const beforeSnap = await getDoc(ref);
   const before = beforeSnap.exists() ? beforeSnap.data() : null;
   const action = before ? 'update' : 'create';
-  const nextPayload = withMeta(withCompanyPayload(name, { id, ...payload }), user, !before);
+  const nextPayload = withMeta(buildCompanyScopedPayload(name, { id, ...payload }), user, !before);
+  if (isCompanyScopedCollection(name) && !nextPayload.companyId && !before?.companyId) {
+    const scope = getActiveCompanyContext();
+    throw new Error(`Missing company context for ${name}/${id}. Active company: ${scope.companyId || 'none'}.`);
+  }
   await setDoc(ref, nextPayload, { merge: true });
   const after = (await getDoc(ref)).data();
   await logAudit({ action, entityType: name, entityId: id, summary: `${action} ${name}/${id}`, user, before, after: { ...after, companyId: nextPayload.companyId || after?.companyId || null } });
@@ -116,8 +90,9 @@ const defaultAiSettings = {
 };
 
 export async function getAppSettings() {
-  if (companyScopeState.companyId) {
-    const companyDocId = `ai_${companyScopeState.companyId}`;
+  const scope = getActiveCompanyContext();
+  if (scope.companyId) {
+    const companyDocId = `ai_${scope.companyId}`;
     const scopedRef = doc(db, C.appSettings, companyDocId);
     const scopedSnap = await getDoc(scopedRef);
     if (scopedSnap.exists()) return { ...defaultAiSettings, ...scopedSnap.data() };
@@ -131,7 +106,8 @@ export async function getAppSettings() {
 }
 
 export async function saveAppSettings(settings, user) {
-  const id = companyScopeState.companyId ? `ai_${companyScopeState.companyId}` : 'ai';
+  const scope = getActiveCompanyContext();
+  const id = scope.companyId ? `ai_${scope.companyId}` : 'ai';
   await upsertEntity('appSettings', id, settings, user);
 }
 
@@ -150,5 +126,10 @@ export async function clearEntitySet(name, user, predicate = () => true) {
 }
 
 export async function updateEntity(name, id, payload) {
-  await updateDoc(doc(db, C[name], id), payload);
+  const nextPayload = buildCompanyScopedPayload(name, payload);
+  if (isCompanyScopedCollection(name) && !nextPayload.companyId) {
+    const scope = getActiveCompanyContext();
+    throw new Error(`Missing company context for ${name}/${id}. Active company: ${scope.companyId || 'none'}.`);
+  }
+  await updateDoc(doc(db, C[name], id), nextPayload);
 }

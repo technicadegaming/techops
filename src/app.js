@@ -37,6 +37,7 @@ function createEmptyAssetDraft() {
     previewMeta: { inFlightQuery: '', lastCompletedQuery: '' },
     draftNameNormalized: '',
     saveFeedback: '',
+    saveFeedbackTone: 'success',
     saving: false
   };
 }
@@ -51,6 +52,28 @@ function buildPreviewQueryKey(payload = {}) {
 }
 
 const state = { user: null, profile: null, company: null, memberships: [], onboardingRequired: false, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], workers: [], invites: [], companyLocations: [], importHistory: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], settings: {}, restorePayload: null, route: parseRouteState(), assetDraft: createEmptyAssetDraft(), operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0 } };
+
+function formatActionError(error, fallbackMessage) {
+  const detail = `${error?.message || error || ''}`.trim();
+  return detail ? `${fallbackMessage} ${detail}` : fallbackMessage;
+}
+
+function reportActionError(label, error, fallbackMessage) {
+  console.error(`[${label}]`, error);
+  alert(formatActionError(error, fallbackMessage));
+}
+
+async function runAction(label, work, options = {}) {
+  try {
+    return await work();
+  } catch (error) {
+    reportActionError(label, error, options.fallbackMessage || `${label} failed.`);
+    if (typeof options.onError === 'function') options.onError(error);
+    return null;
+  } finally {
+    if (typeof options.onFinally === 'function') options.onFinally();
+  }
+}
 
 function tabVisible(tab) {
   if (state.onboardingRequired) return tab === 'dashboard';
@@ -174,32 +197,41 @@ function renderOnboarding(el) {
       const [name, address, timeZone, notes] = line.split('|').map((v) => `${v || ''}`.trim());
       return { name, address, timeZone, notes };
     }).filter((row) => row.name);
-    await createCompanyFromOnboarding(state.user, {
-      name: fd.get('name'),
-      primaryEmail: fd.get('primaryEmail'),
-      primaryPhone: fd.get('primaryPhone'),
-      address: fd.get('address'),
-      timeZone: fd.get('timeZone'),
-      estimatedUsers: fd.get('estimatedUsers'),
-      estimatedAssets: fd.get('estimatedAssets'),
-      locations
+    await runAction('create_company', async () => {
+      await createCompanyFromOnboarding(state.user, {
+        name: fd.get('name'),
+        primaryEmail: fd.get('primaryEmail'),
+        primaryPhone: fd.get('primaryPhone'),
+        address: fd.get('address'),
+        timeZone: fd.get('timeZone'),
+        estimatedUsers: fd.get('estimatedUsers'),
+        estimatedAssets: fd.get('estimatedAssets'),
+        locations
+      });
+      await bootstrapCompanyContext();
+      await refreshData();
+      render();
+    }, {
+      fallbackMessage: 'Unable to create company workspace.'
     });
-    await bootstrapCompanyContext();
-    await refreshData();
-    render();
   });
 
   el.querySelector('#joinCompanyForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    await acceptInvite({ inviteCode: fd.get('inviteCode'), user: state.user });
-    await bootstrapCompanyContext();
-    await refreshData();
-    render();
+    await runAction('accept_invite', async () => {
+      await acceptInvite({ inviteCode: fd.get('inviteCode'), user: state.user });
+      await bootstrapCompanyContext();
+      await refreshData();
+      render();
+    }, {
+      fallbackMessage: 'Unable to accept invite.'
+    });
   });
 }
 
 async function bootstrapCompanyContext() {
+  setActiveCompanyContext(null);
   const memberships = await listMembershipsByUser(state.user.uid);
   state.memberships = memberships;
   const hasLegacyData = (await countEntities('assets').catch(() => 0)) + (await countEntities('tasks').catch(() => 0)) + (await countEntities('operations').catch(() => 0)) > 0;
@@ -239,8 +271,15 @@ async function render() {
     saveTask: async (_id, payload) => {
       const taskId = `${payload?.id || ''}`.trim() || `${_id || ''}`.trim();
       if (!taskId) return alert('Unable to save task: missing generated task ID.');
-      await upsertEntity('tasks', taskId, { ...payload, id: taskId }, state.user);
-      await refreshData(); render();
+      const saved = await runAction('save_task', async () => {
+        await upsertEntity('tasks', taskId, { ...payload, id: taskId }, state.user);
+        await refreshData();
+        render();
+        return true;
+      }, {
+        fallbackMessage: 'Unable to save task.'
+      });
+      return !!saved;
     },
     reassignTask: async (taskId) => {
       const task = state.tasks.find((t) => t.id === taskId);
@@ -287,9 +326,51 @@ async function render() {
       const manufacturer = `${payload.manufacturer || ''}`.trim();
       if (!name) return alert('Asset name is required.');
       if (!manufacturer) return alert('Manufacturer is required.');
-      state.assetDraft = { ...(state.assetDraft || {}), saving: true, saveFeedback: '' };
+      state.assetDraft = { ...(state.assetDraft || {}), saving: true, saveFeedback: '', saveFeedbackTone: 'success' };
       render();
-      const desiredId = `${id || ''}`.trim() || normalizeAssetId(name);
+      try {
+        const desiredId = `${id || ''}`.trim() || normalizeAssetId(name);
+        const current = state.assets.find((a) => a.id === desiredId) || {};
+        const finalId = current.id ? desiredId : pickUniqueAssetId(desiredId, state.assets);
+        const draft = state.assetDraft || {};
+        const entityPayload = {
+          ...current,
+          ...payload,
+          id: finalId,
+          name,
+          serialNumber: `${payload.serialNumber || current.serialNumber || ''}`.trim(),
+          manufacturer: `${manufacturer || draft.manufacturer || current.manufacturer || ''}`.trim(),
+          ownerWorkers: `${payload.ownerWorkers || ''}`.split(',').map((v) => v.trim()).filter(Boolean),
+          manualLinks: `${payload.manualLinks || ''}`.split(',').map((v) => v.trim()).filter(Boolean).concat(Array.isArray(draft.manualLinks) ? draft.manualLinks : []).filter(Boolean).filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 5),
+          enrichmentStatus: (payload.manualLinks || current.manualLinks?.length) ? (current.enrichmentStatus || 'idle') : 'searching_docs',
+          history: payload.historyNote ? [...(current.history || []), { at: new Date().toISOString(), note: payload.historyNote }] : (current.history || []),
+          supportResourcesSuggestion: Array.isArray(draft.supportResources) && draft.supportResources.length ? draft.supportResources : (current.supportResourcesSuggestion || []),
+          supportContactsSuggestion: Array.isArray(draft.supportContacts) && draft.supportContacts.length ? draft.supportContacts : (current.supportContactsSuggestion || []),
+          notes: `${payload.notes || ''}`.trim() || `${current.notes || ''}`.trim() || (draft.notes ? `${draft.notes}`.trim() : '')
+        };
+        await upsertEntity('assets', finalId, entityPayload, state.user);
+        state.assetDraft = { ...createEmptyAssetDraft(), saveFeedback: 'Asset saved - documentation search running.', saveFeedbackTone: 'success' };
+        await refreshData();
+        render();
+        enrichAssetDocumentation(finalId, { trigger: 'post_save' })
+          .then(async () => { await refreshData(); render(); })
+          .catch(async (error) => {
+            console.error('[asset_post_save_enrichment]', error);
+            await refreshData();
+            render();
+          });
+        return;
+      } catch (error) {
+        reportActionError('save_asset', error, 'Unable to save asset.');
+        state.assetDraft = { ...(state.assetDraft || {}), saving: false, saveFeedback: formatActionError(error, 'Unable to save asset.'), saveFeedbackTone: 'error' };
+        render();
+        return;
+      } finally {
+        if (state.assetDraft?.saving) {
+          state.assetDraft = { ...(state.assetDraft || {}), saving: false };
+          render();
+        }
+      }
       const current = state.assets.find((a) => a.id === desiredId) || {};
       const finalId = current.id ? desiredId : pickUniqueAssetId(desiredId, state.assets);
       const draft = state.assetDraft || {};
@@ -593,15 +674,25 @@ async function render() {
       await refreshData(); render();
     },
     createInvite: async ({ email, role }) => {
-      const invite = await createCompanyInvite({ companyId: state.company.id, email, role, user: state.user });
-      alert(`Invite created. Share code: ${invite.inviteCode}`);
-      await refreshData(); render();
+      await runAction('create_invite', async () => {
+        const invite = await createCompanyInvite({ companyId: state.company.id, email, role, user: state.user });
+        alert(`Invite created. Share code: ${invite.inviteCode}`);
+        await refreshData();
+        render();
+      }, {
+        fallbackMessage: 'Unable to create invite.'
+      });
     },
     revokeInvite: async (inviteId) => { await revokeInvite(inviteId, state.user); await refreshData(); render(); },
     addLocation: async (payload) => {
       const id = `loc-${Date.now().toString(36)}`;
-      await upsertEntity('companyLocations', id, { id, ...payload }, state.user);
-      await refreshData(); render();
+      await runAction('add_location', async () => {
+        await upsertEntity('companyLocations', id, { id, ...payload }, state.user);
+        await refreshData();
+        render();
+      }, {
+        fallbackMessage: 'Unable to add company location.'
+      });
     },
     downloadAssetTemplate: () => downloadFile('asset-template.csv', 'asset name,assetId,manufacturer,model,serial,location,zone,notes,category,status\n', 'text/csv'),
     downloadEmployeeTemplate: () => downloadFile('employee-template.csv', 'name,email,role,enabled,available,shift start,skills,location,phone\n', 'text/csv'),
@@ -705,6 +796,7 @@ document.getElementById('logoutBtn').addEventListener('click', () => logout());
 
 watchAuth(async (user) => {
   if (!user) {
+    setActiveCompanyContext(null);
     authView.classList.remove('hide');
     appView.classList.add('hide');
     return;

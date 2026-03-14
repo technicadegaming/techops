@@ -23,6 +23,7 @@ export function watchAuth(cb) {
 
 export async function resolveProfile(user) {
   let profile = await loadUserProfile(user.uid);
+  let isNewProfile = false;
   if (!profile) {
     const users = await listEntities('users').catch(() => []);
     const shouldBootstrapAdmin = users.length === 0 || appConfig.bootstrapAdmins.includes(user.email);
@@ -33,6 +34,7 @@ export async function resolveProfile(user) {
       enabled: true
     };
     await saveUserProfile(user.uid, profile, { uid: user.uid, email: user.email });
+    isNewProfile = true;
   }
-  return profile;
+  return { ...profile, isNewProfile };
 }

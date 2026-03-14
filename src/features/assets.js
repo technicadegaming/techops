@@ -157,7 +157,7 @@ export function renderAssets(el, state, actions) {
           ${renderPreviewPanel(state)}
         </div>
       </details>
-      ${state.assetDraft?.saveFeedback ? `<div class="tiny" style="grid-column:1/-1; color:#166534;">${state.assetDraft.saveFeedback}</div>` : ''}
+      ${state.assetDraft?.saveFeedback ? `<div class="tiny" style="grid-column:1/-1; color:${state.assetDraft?.saveFeedbackTone === 'error' ? '#b91c1c' : '#166534'};">${state.assetDraft.saveFeedback}</div>` : ''}
       <button type="submit" class="primary" ${editable && !state.assetDraft?.saving ? '' : 'disabled'}>${state.assetDraft?.saving ? 'Saving…' : 'Save asset'}</button>
     </form>
 

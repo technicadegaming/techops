@@ -34,7 +34,7 @@ export async function getCompanyByInviteCode(code) {
 export async function ensureBootstrapCompanyForLegacyUser(user, profile, hasLegacyData) {
   const memberships = await listMembershipsByUser(user.uid);
   if (memberships.length) return { membership: memberships[0], created: false };
-  if (!hasLegacyData) return { membership: null, created: false };
+  if (!hasLegacyData || !canAutoAdoptLegacyWorkspace(user, profile)) return { membership: null, created: false };
 
   const suggested = `${profile?.companyName || profile?.displayName || user.email?.split('@')[0] || 'WOW'} Workspace`;
   const companyId = `co-${slugify(suggested) || user.uid.slice(0, 8)}-${user.uid.slice(0, 4)}`;
@@ -60,6 +60,14 @@ export async function ensureBootstrapCompanyForLegacyUser(user, profile, hasLega
   }, { merge: true });
 
   return { membership: { id: `${companyId}_${user.uid}`, companyId, userId: user.uid, role: 'owner', status: 'active' }, created: true };
+}
+
+export function canAutoAdoptLegacyWorkspace(user, profile) {
+  const normalizedEmail = `${user?.email || ''}`.trim().toLowerCase();
+  if (!normalizedEmail) return false;
+  if (appConfig.bootstrapAdmins.map((email) => `${email || ''}`.trim().toLowerCase()).includes(normalizedEmail)) return true;
+  if (profile?.legacyBootstrapEligible === true) return true;
+  return profile?.role === 'admin' && profile?.isNewProfile !== true;
 }
 
 export async function createCompanyFromOnboarding(user, payload = {}) {
