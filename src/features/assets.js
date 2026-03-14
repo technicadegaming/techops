@@ -25,6 +25,14 @@ function renderStatusChip(status) {
   return `<span style="display:inline-flex; align-items:center; gap:6px; border-radius:999px; border:1px solid ${style.border}; background:${style.bg}; color:${style.text}; font-size:12px; padding:2px 10px; font-weight:600;">${ENRICHMENT_STATUS_LABELS[key] || key}</span>`;
 }
 
+function renderLinkChip(url, { label = '', removeAttr = '', removable = false } = {}) {
+  const text = label || url;
+  return `<span style="display:inline-flex; align-items:center; gap:6px; border:1px solid #d1d5db; border-radius:999px; padding:2px 8px; margin:2px 4px 2px 0;">
+    <a href="${url}" target="_blank" rel="noopener" class="tiny">${text}</a>
+    ${removable ? `<button type="button" ${removeAttr} style="border:none; background:transparent; padding:0 2px; font-size:11px; line-height:1; cursor:pointer;" aria-label="Remove link">x</button>` : ''}
+  </span>`;
+}
+
 function renderPreviewPanel(state) {
   const preview = state.assetDraft?.preview || null;
   const status = state.assetDraft?.previewStatus || 'idle';
@@ -88,18 +96,18 @@ function renderEnrichmentDetails(asset, manager) {
 
     <div style="margin-bottom:10px;">
       <div class="tiny" style="font-weight:700; margin-bottom:4px;">Suggested manuals</div>
-      ${suggestions.length ? suggestions.map((s) => {
+      ${suggestions.length ? suggestions.map((s, idx) => {
     const confidence = s.confidence ? ` · ${Math.round(Number(s.confidence) * 100)}%` : '';
     const score = Number.isFinite(Number(s.matchScore)) ? ` · score ${Math.round(Number(s.matchScore))}` : '';
     const source = s.isOfficial ? ' · official' : (s.isLikelyManual ? ' · manual' : '');
-    return `<div class="tiny" style="display:flex; justify-content:space-between; gap:8px; align-items:center; margin:2px 0;"><span><a href="${s.url}" target="_blank" rel="noopener">${s.title || s.url}</a>${confidence}${score}${source}</span></div>`;
+    return `<div class="tiny" style="display:flex; justify-content:space-between; gap:8px; align-items:center; margin:2px 0;"><span><a href="${s.url}" target="_blank" rel="noopener">${s.title || s.url}</a>${confidence}${score}${source}</span>${manager ? `<button data-apply-doc-item="${asset.id}" data-doc-index="${idx}" type="button">Apply</button>` : ''}</div>`;
   }).join('') : '<div class="tiny">No manual linked yet.</div>'}
       ${manager && suggestions.length ? `<div style="margin-top:6px;"><button data-apply-docs="${asset.id}" type="button">Apply top doc suggestions</button> <button data-apply-enrichment="manuals" data-asset-id="${asset.id}" type="button">Apply top manual</button></div>` : ''}
     </div>
 
     <div style="margin-bottom:10px;">
       <div class="tiny" style="font-weight:700; margin-bottom:4px;">Support links</div>
-      ${supportLinks.length ? supportLinks.map((s) => `<div class="tiny"><a href="${s.url || s}" target="_blank" rel="noopener">${s.label || s.title || s.url || s}</a></div>`).join('') : '<div class="tiny">No support link linked yet.</div>'}
+      ${supportLinks.length ? supportLinks.map((s, idx) => `<div class="tiny" style="display:flex; justify-content:space-between; gap:8px; align-items:center; margin:2px 0;"><span><a href="${s.url || s}" target="_blank" rel="noopener">${s.label || s.title || s.url || s}</a></span>${manager ? `<button data-apply-support-item="${asset.id}" data-support-index="${idx}" type="button">Apply</button>` : ''}</div>`).join('') : '<div class="tiny">No support link linked yet.</div>'}
       ${manager && supportLinks.length ? `<div style="margin-top:6px;"><button data-apply-enrichment="support" data-asset-id="${asset.id}" type="button">Apply support link(s)</button></div>` : ''}
     </div>
 
@@ -173,7 +181,21 @@ export function renderAssets(el, state, actions) {
       </div>
 
       <details><summary>Documentation / AI status (${docsStatus})</summary>
-        <div class="tiny" style="margin:8px 0;">Linked manuals: ${(a.manualLinks || []).concat(docs.map((d) => d.url || d.title)).filter(Boolean).join(' | ') || 'No manual linked yet'}</div>
+        <div class="tiny" style="margin:8px 0;">Linked manuals:</div>
+        <div style="margin:4px 0 8px;">${(a.manualLinks || []).length
+    ? (a.manualLinks || []).map((url) => renderLinkChip(url, { removable: manager, removeAttr: `data-remove-manual="${a.id}" data-url="${encodeURIComponent(url)}"` })).join('')
+    : '<span class="tiny">No manual linked yet</span>'}
+        </div>
+        <div class="tiny" style="margin:4px 0;">Linked support links:</div>
+        <div style="margin:4px 0 8px;">${(a.supportResourcesSuggestion || []).length
+    ? (a.supportResourcesSuggestion || []).map((entry) => {
+      const url = entry?.url || entry;
+      const label = entry?.label || entry?.title || url;
+      if (!url) return '';
+      return renderLinkChip(url, { label, removable: manager, removeAttr: `data-remove-support="${a.id}" data-url="${encodeURIComponent(url)}"` });
+    }).join('')
+    : '<span class="tiny">No support links linked</span>'}
+        </div>
         <div class="tiny">Last reviewed: ${a.docsLastReviewedAt || 'n/a'}</div>
         <div style="margin-top:8px; border-top:1px solid #e5e7eb; padding-top:8px;">
           ${renderEnrichmentDetails(a, manager)}
@@ -267,6 +289,10 @@ export function renderAssets(el, state, actions) {
     actions.submitEnrichmentFollowup(followupForm.dataset.enrichmentFollowupForm, `${fd.get('followupAnswer') || ''}`);
   }));
   el.querySelectorAll('[data-apply-docs]').forEach((btn) => btn.addEventListener('click', () => actions.applyDocSuggestions(btn.dataset.applyDocs)));
+  el.querySelectorAll('[data-apply-doc-item]').forEach((btn) => btn.addEventListener('click', () => actions.applySingleDocSuggestion(btn.dataset.applyDocItem, Number(btn.dataset.docIndex))));
+  el.querySelectorAll('[data-apply-support-item]').forEach((btn) => btn.addEventListener('click', () => actions.applySingleSupportSuggestion(btn.dataset.applySupportItem, Number(btn.dataset.supportIndex))));
+  el.querySelectorAll('[data-remove-manual]').forEach((btn) => btn.addEventListener('click', () => actions.removeManualLink(btn.dataset.removeManual, decodeURIComponent(btn.dataset.url || ''))));
+  el.querySelectorAll('[data-remove-support]').forEach((btn) => btn.addEventListener('click', () => actions.removeSupportLink(btn.dataset.removeSupport, decodeURIComponent(btn.dataset.url || ''))));
   el.querySelectorAll('[data-apply-enrichment]').forEach((btn) => btn.addEventListener('click', () => actions.applyEnrichmentSuggestions(btn.dataset.assetId, btn.dataset.applyEnrichment)));
   el.querySelectorAll('[data-edit]').forEach((assetForm) => assetForm.addEventListener('submit', (e) => {
     e.preventDefault();

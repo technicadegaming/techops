@@ -17,6 +17,80 @@ const DEFAULT_SETTINGS = {
   aiVerboseManagerMode: false
 };
 
+function stripText(input = '') {
+  return `${input || ''}`
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function compactExcerpt(text = '', maxLen = 380) {
+  return `${text || ''}`.slice(0, maxLen).trim();
+}
+
+async function fetchDocExcerpt(url) {
+  const response = await fetch(url, { method: 'GET' });
+  if (!response.ok) throw new Error(`Fetch failed with status ${response.status}`);
+  const contentType = `${response.headers.get('content-type') || ''}`.toLowerCase();
+  if (contentType.includes('pdf') || /\.pdf($|\?|#)/i.test(url)) {
+    return { excerpt: `PDF source linked: ${url}`, contentType: contentType || 'application/pdf' };
+  }
+  const body = await response.text();
+  const cleaned = stripText(body);
+  return { excerpt: compactExcerpt(cleaned), contentType: contentType || 'text/html' };
+}
+
+function pickApprovedSuggestions(asset = {}) {
+  const docs = Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : [];
+  return docs
+    .filter((s) => !!s?.verified)
+    .filter((s) => {
+      const score = Number(s?.matchScore || 0);
+      return score >= 70 || (s?.isOfficial && score >= 62) || s?.approved === true || s?.applied === true;
+    })
+    .sort((a, b) => Number(b?.matchScore || 0) - Number(a?.matchScore || 0))
+    .slice(0, 3)
+    .map((s) => ({ title: s.title || s.url, url: s.url, sourceType: 'approved_doc' }));
+}
+
+async function buildDocumentationContext(asset = null) {
+  if (!asset) return { mode: 'web_internal_only', items: [] };
+  const manualCandidates = (asset.manualLinks || []).filter(Boolean).slice(0, 3).map((url) => ({ title: url, url, sourceType: 'manual' }));
+  const fallbackCandidates = manualCandidates.length ? [] : pickApprovedSuggestions(asset);
+  const supportCandidates = manualCandidates.length ? [] : (Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion.slice(0, 2).map((s) => ({ title: s.label || s.title || s.url, url: s.url || s, sourceType: 'support' })) : []);
+
+  const selected = [...manualCandidates, ...fallbackCandidates, ...supportCandidates].filter((x) => !!x.url).slice(0, 4);
+  const items = [];
+  for (const source of selected) {
+    try {
+      const fetched = await fetchDocExcerpt(source.url);
+      if (!fetched.excerpt) continue;
+      items.push({
+        title: source.title || source.url,
+        url: source.url,
+        sourceType: source.sourceType,
+        excerpts: [fetched.excerpt],
+        contentType: fetched.contentType
+      });
+    } catch (error) {
+      items.push({
+        title: source.title || source.url,
+        url: source.url,
+        sourceType: source.sourceType,
+        excerpts: [],
+        fetchError: error.message
+      });
+    }
+  }
+
+  const mode = items.some((x) => x.sourceType === 'manual')
+    ? 'manual_backed'
+    : (items.some((x) => x.sourceType === 'approved_doc') ? 'approved_doc_backed' : (items.length ? 'support_backed' : 'web_internal_only'));
+  return { mode, items };
+}
+
 async function gatherContext(db, taskId) {
   const taskSnap = await db.collection('tasks').doc(taskId).get();
   if (!taskSnap.exists) throw new Error('Task not found');
@@ -38,6 +112,8 @@ async function gatherContext(db, taskId) {
     return [row.manufacturer, row.gameTitle, row.assetType].some((x) => x && [asset.manufacturer, asset.gameTitle, asset.type].includes(x));
   }).slice(0, 10);
 
+  const documentationContext = await buildDocumentationContext(asset).catch(() => ({ mode: 'web_internal_only', items: [] }));
+
   return {
     task,
     asset,
@@ -45,7 +121,8 @@ async function gatherContext(db, taskId) {
     relatedTasks,
     recentNotes,
     manuals: asset?.manualLinks || [],
-    troubleshootingLibrary: libraryRecords
+    troubleshootingLibrary: libraryRecords,
+    documentationContext
   };
 }
 
@@ -90,6 +167,7 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
             noteCount: context.recentNotes.length,
             libraryCount: context.troubleshootingLibrary.length
           },
+          documentationMode: context.documentationContext?.mode || 'web_internal_only',
           updatedAt: new Date().toISOString(),
           updatedBy: userId
         }, { merge: true });
@@ -134,6 +212,8 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
       safetyNotes: result.parsed.safetyNotes,
       confidence: result.parsed.confidence,
       citations: result.parsed.citations,
+      documentationMode: context.documentationContext?.mode || 'web_internal_only',
+      documentationSources: context.documentationContext?.items || [],
       rawResponseMeta: { ...result.responseMeta, traceId },
       shortFrontlineVersion: result.parsed.shortFrontlineVersion,
       detailedManagerVersion: result.parsed.detailedManagerVersion,
