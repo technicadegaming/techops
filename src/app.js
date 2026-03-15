@@ -13,7 +13,7 @@ import { previewLegacyImport, importLegacyData } from './migration.js';
 import { dryRunBackup, exportBackupJson, restoreBackup, validateBackup } from './backup.js';
 import { analyzeTaskTroubleshooting, answerTaskFollowup, enrichAssetDocumentation, previewAssetDocumentationLookup, regenerateTaskTroubleshooting, saveTaskFixToTroubleshootingLibrary } from './aiAdapter.js';
 import { buildCloseoutEvent, parseRouteState, pushRouteState } from './features/workflow.js';
-import { acceptInvite, createCompanyFromOnboarding, createCompanyInvite, ensureBootstrapCompanyForLegacyUser, getCompany, listMembershipsByUser, revokeInvite } from './company.js';
+import { acceptInvite, createCompanyFromOnboarding, createCompanyInvite, ensureBootstrapCompanyForLegacyUser, getCompany, listCompanyMembers, listMembershipsByUser, revokeInvite } from './company.js';
 import { buildLocationOptions, getLocationSelection, getLocationScopeLabel } from './features/locationContext.js';
 import { createOperationsActions } from './features/operationsActions.js';
 import { createAssetActions } from './features/assetActions.js';
@@ -63,7 +63,40 @@ function buildPreviewQueryKey(payload = {}) {
   return [assetName, manufacturer, serialNumber, assetId, followupAnswer].join('|');
 }
 
-const state = { user: null, profile: null, company: null, memberships: [], membershipCompanies: {}, activeMembership: null, permissions: buildPermissionContext(), onboardingRequired: false, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], workers: [], invites: [], companyLocations: [], importHistory: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], settings: {}, restorePayload: null, route: parseRouteState(), assetDraft: createEmptyAssetDraft(), operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0 }, adminSection: 'company' };
+const state = {
+  user: null,
+  profile: null,
+  company: null,
+  memberships: [],
+  membershipCompanies: {},
+  activeMembership: null,
+  permissions: buildPermissionContext(),
+  onboardingRequired: false,
+  tasks: [],
+  operations: [],
+  assets: [],
+  pmSchedules: [],
+  manuals: [],
+  notes: [],
+  users: [],
+  companyMembers: [],
+  workers: [],
+  invites: [],
+  companyLocations: [],
+  importHistory: [],
+  auditLogs: [],
+  taskAiRuns: [],
+  taskAiFollowups: [],
+  troubleshootingLibrary: [],
+  settings: {},
+  restorePayload: null,
+  route: parseRouteState(),
+  assetDraft: createEmptyAssetDraft(),
+  assetUi: { lastActionByAsset: {} },
+  adminUi: { tone: 'info', message: '', importPreview: '', importSummary: '', importTone: 'info' },
+  operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0 },
+  adminSection: 'company'
+};
 
 function isPermissionRelatedError(error) {
   const code = `${error?.code || ''}`.toLowerCase();
@@ -194,6 +227,7 @@ async function refreshData() {
   state.manuals = await listEntities('manuals').catch(() => []);
   state.notes = await listEntities('notes').catch(() => []);
   state.users = await listEntities('users').catch(() => []);
+  state.companyMembers = state.company?.id ? await listCompanyMembers(state.company.id).catch(() => []) : [];
   state.workers = await listEntities('workers').catch(() => []);
   state.invites = await listEntities('companyInvites').catch(() => []);
   state.companyLocations = await listEntities('companyLocations').catch(() => []);

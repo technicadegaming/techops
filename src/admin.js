@@ -42,14 +42,31 @@ export function renderAdmin(el, state, actions) {
   const activeSection = state.adminSection || 'company';
   const workers = state.workers || [];
   const invites = (state.invites || []).filter((invite) => invite.status === 'pending' && invite.companyId === state.company?.id);
-  const members = (state.users || []).filter((user) => !user.companyId || user.companyId === state.company?.id);
+  const members = (state.companyMembers || []).map((membership) => {
+    const profile = (state.users || []).find((user) => user.id === membership.userId) || {};
+    return {
+      ...membership,
+      displayName: profile.displayName || profile.email || membership.userId,
+      email: profile.email || '',
+      enabled: profile.enabled !== false,
+      profileRole: profile.role || ''
+    };
+  });
   const locations = state.companyLocations || [];
   const locationOptions = buildLocationOptions(state).filter((option) => option.id);
   const settings = { ...defaultAiSettings, ...(state.settings || {}) };
+  const adminUi = state.adminUi || {};
+  const workerEmailSet = new Set(workers.map((worker) => `${worker.email || ''}`.trim().toLowerCase()).filter(Boolean));
+  const memberEmailSet = new Set(members.map((member) => `${member.email || ''}`.trim().toLowerCase()).filter(Boolean));
+  const inviteEmailSet = new Set(invites.map((invite) => `${invite.email || ''}`.trim().toLowerCase()).filter(Boolean));
+  const renderBadgeList = (labels = []) => labels.length
+    ? `<div class="tiny" style="margin-top:4px;">${labels.map((label) => `<span style="display:inline-block; border:1px solid #d1d5db; border-radius:999px; padding:1px 8px; margin:0 4px 4px 0;">${label}</span>`).join('')}</div>`
+    : '';
 
   el.innerHTML = `
     <h2>Company Admin</h2>
     <p class="tiny">Structured workspace controls for ${state.company?.name || 'current workspace'}.</p>
+    ${adminUi.message ? `<div class="tiny" style="margin:8px 0; padding:8px 10px; border-radius:8px; border:1px solid ${adminUi.tone === 'error' ? '#fca5a5' : (adminUi.tone === 'success' ? '#86efac' : '#d1d5db')}; background:${adminUi.tone === 'error' ? '#fef2f2' : (adminUi.tone === 'success' ? '#f0fdf4' : '#f9fafb')}; color:${adminUi.tone === 'error' ? '#991b1b' : (adminUi.tone === 'success' ? '#166534' : '#374151')};">${adminUi.message}</div>` : ''}
     ${renderSectionTabs(activeSection)}
 
     <section class="item ${activeSection === 'company' ? '' : 'hide'}" data-admin-section="company">
@@ -79,7 +96,14 @@ export function renderAdmin(el, state, actions) {
     <section class="item ${activeSection === 'members' ? '' : 'hide'}" data-admin-section="members">
       <h3>Members</h3>
       <p class="tiny">Members are signed-in users with workspace access right now. This is the access list.</p>
-      ${members.length ? `<table class="table"><thead><tr><th>User</th><th>Email</th><th>Role</th></tr></thead><tbody>${members.map((user) => `<tr><td>${user.displayName || user.email || user.id}</td><td>${user.email || '-'}</td><td>${user.role || 'staff'}</td></tr>`).join('')}</tbody></table>` : '<p class="tiny">No active members found yet. Use Invites to grant access.</p>'}
+      <div class="tiny" style="margin-bottom:8px;">Active members: ${members.length} | Pending invites: ${invites.length} | Worker records: ${workers.length}</div>
+      ${members.length ? `<table class="table"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Status</th></tr></thead><tbody>${members.map((member) => {
+    const badges = [];
+    if (memberEmailSet.has(`${member.email || ''}`.trim().toLowerCase()) && workerEmailSet.has(`${member.email || ''}`.trim().toLowerCase())) badges.push('has worker record');
+    if (!member.enabled) badges.push('profile disabled');
+    if (!member.email) badges.push('no profile email');
+    return `<tr><td>${member.displayName || member.email || member.userId}</td><td>${member.email || '-'}</td><td>${member.role || 'staff'}</td><td>${badges.join(' | ') || 'active'}</td></tr>`;
+  }).join('')}</tbody></table>` : '<p class="tiny">No active members found yet. Use Invites to grant access.</p>'}
     </section>
 
     <section class="item ${activeSection === 'workers' ? '' : 'hide'}" data-admin-section="workers">
@@ -100,7 +124,14 @@ export function renderAdmin(el, state, actions) {
         <button class="primary">Add worker</button>
       </form>
       <datalist id="workerLocationNames">${locationOptions.map((option) => `<option value="${option.name}"></option>`).join('')}</datalist>
-      <div class="list mt">${workers.map((worker) => `<div class="item"><b>${worker.displayName || worker.id}</b><div class="tiny">${worker.email || 'No login email'} | ${worker.role || 'staff'} | ${worker.locationName || 'No location set'}</div><div class="tiny">${worker.accountStatus || 'directory_only'} ${worker.inviteStatus ? `| invite ${worker.inviteStatus}` : ''}</div></div>`).join('') || '<p class="tiny">No workers yet. Add staff records here even if they should not be able to sign in.</p>'}</div>
+      <div class="list mt">${workers.map((worker) => {
+    const normalizedEmail = `${worker.email || ''}`.trim().toLowerCase();
+    const badges = [];
+    if (normalizedEmail && memberEmailSet.has(normalizedEmail)) badges.push('is member');
+    if (normalizedEmail && inviteEmailSet.has(normalizedEmail)) badges.push('has pending invite');
+    if (!normalizedEmail) badges.push('directory only');
+    return `<div class="item"><b>${worker.displayName || worker.id}</b><div class="tiny">${worker.email || 'No login email'} | ${worker.role || 'staff'} | ${worker.locationName || 'No location set'}</div><div class="tiny">${worker.accountStatus || 'directory_only'} ${worker.inviteStatus ? `| invite ${worker.inviteStatus}` : ''}</div>${renderBadgeList(badges)}</div>`;
+  }).join('') || '<p class="tiny">No workers yet. Add staff records here even if they should not be able to sign in.</p>'}</div>
     </section>
 
     <section class="item ${activeSection === 'invites' ? '' : 'hide'}" data-admin-section="invites">
@@ -111,7 +142,13 @@ export function renderAdmin(el, state, actions) {
         <select name="role"><option value="staff">staff</option><option value="manager">manager</option><option value="admin">admin</option></select>
         <button class="primary" type="submit">Create invite</button>
       </form>
-      <div class="list mt">${invites.map((invite) => `<div class="item"><b>${invite.email}</b><div class="tiny">Pending access | role ${invite.role || 'staff'} | code ${invite.inviteCode || 'n/a'}</div><button data-revoke-invite="${invite.id}">Revoke invite</button></div>`).join('') || '<p class="tiny">No pending invites. Everyone with access is already a member.</p>'}</div>
+      <div class="list mt">${invites.map((invite) => {
+    const normalizedEmail = `${invite.email || ''}`.trim().toLowerCase();
+    const badges = [];
+    if (normalizedEmail && workerEmailSet.has(normalizedEmail)) badges.push('worker record exists');
+    if (normalizedEmail && memberEmailSet.has(normalizedEmail)) badges.push('already a member');
+    return `<div class="item"><b>${invite.email}</b><div class="tiny">Pending access | role ${invite.role || 'staff'} | code ${invite.inviteCode || 'n/a'}</div>${renderBadgeList(badges)}<button data-revoke-invite="${invite.id}">Revoke invite</button></div>`;
+  }).join('') || '<p class="tiny">No pending invites. Everyone with access is already a member.</p>'}</div>
     </section>
 
     <section class="item ${activeSection === 'imports' ? '' : 'hide'}" data-admin-section="imports">
@@ -126,7 +163,8 @@ export function renderAdmin(el, state, actions) {
         <label>Workers CSV<input id="employeeCsvInput" type="file" accept=".csv" /></label>
         <button id="applyEmployeeCsv" type="button">Import workers</button>
       </div>
-      <pre id="importPreview" class="tiny"></pre>
+      ${adminUi.importSummary ? `<div class="tiny" style="margin-top:8px; color:${adminUi.importTone === 'error' ? '#991b1b' : (adminUi.importTone === 'success' ? '#166534' : '#374151')};">${adminUi.importSummary}</div>` : '<div class="tiny" style="margin-top:8px;">Choose a CSV to preview the first rows before import.</div>'}
+      <pre id="importPreview" class="tiny">${adminUi.importPreview || ''}</pre>
     </section>
 
     <section class="item ${activeSection === 'tools' ? '' : 'hide'}" data-admin-section="tools">
@@ -185,16 +223,30 @@ export function renderAdmin(el, state, actions) {
 
   el.querySelector('#applyAssetCsv')?.addEventListener('click', async () => {
     const file = el.querySelector('#assetCsvInput')?.files?.[0];
-    if (!file) return;
+    if (!file) {
+      actions.setImportFeedback({ tone: 'error', summary: 'Select an assets CSV before importing.', preview: '' });
+      return;
+    }
     const rows = parseCsv(await file.text());
-    el.querySelector('#importPreview').textContent = JSON.stringify(rows.slice(0, 10), null, 2);
+    actions.setImportFeedback({
+      tone: rows.length ? 'info' : 'error',
+      summary: rows.length ? `Previewing ${Math.min(rows.length, 10)} of ${rows.length} asset rows.` : 'Assets CSV did not contain any data rows.',
+      preview: JSON.stringify(rows.slice(0, 10), null, 2)
+    });
     await actions.importAssets(rows);
   });
   el.querySelector('#applyEmployeeCsv')?.addEventListener('click', async () => {
     const file = el.querySelector('#employeeCsvInput')?.files?.[0];
-    if (!file) return;
+    if (!file) {
+      actions.setImportFeedback({ tone: 'error', summary: 'Select a workers CSV before importing.', preview: '' });
+      return;
+    }
     const rows = parseCsv(await file.text());
-    el.querySelector('#importPreview').textContent = JSON.stringify(rows.slice(0, 10), null, 2);
+    actions.setImportFeedback({
+      tone: rows.length ? 'info' : 'error',
+      summary: rows.length ? `Previewing ${Math.min(rows.length, 10)} of ${rows.length} worker rows.` : 'Workers CSV did not contain any data rows.',
+      preview: JSON.stringify(rows.slice(0, 10), null, 2)
+    });
     await actions.importEmployees(rows);
   });
 

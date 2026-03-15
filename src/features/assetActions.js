@@ -25,6 +25,16 @@ export function createAssetActions(deps) {
     isPermissionRelatedError
   } = deps;
 
+  const setAssetActionFeedback = (assetId, message, tone = 'info') => {
+    state.assetUi = {
+      ...(state.assetUi || {}),
+      lastActionByAsset: {
+        ...((state.assetUi && state.assetUi.lastActionByAsset) || {}),
+        [assetId]: { message, tone }
+      }
+    };
+  };
+
   const actions = {
     saveAsset: async (id, payload) => {
       const name = `${payload.name || ''}`.trim();
@@ -199,6 +209,7 @@ export function createAssetActions(deps) {
     },
     runAssetEnrichment: async (id) => {
       const current = state.assets.find((asset) => asset.id === id) || {};
+      setAssetActionFeedback(id, 'Documentation lookup started.', 'info');
       await upsertEntity('assets', id, {
         ...current,
         enrichmentStatus: 'in_progress',
@@ -211,10 +222,11 @@ export function createAssetActions(deps) {
       render();
       try {
         await enrichAssetDocumentation(id, { trigger: 'manual' });
+        setAssetActionFeedback(id, 'Documentation lookup finished. Review the suggestions below.', 'success');
       } catch (error) {
         console.error('[asset_manual_enrichment]', error);
         const failure = await markAssetEnrichmentFailure(id, error, true);
-        alert(failure.message);
+        setAssetActionFeedback(id, failure.message, 'error');
       }
       await refreshData();
       render();
@@ -237,10 +249,11 @@ export function createAssetActions(deps) {
       render();
       try {
         await enrichAssetDocumentation(id, { trigger: 'followup_answer', followupAnswer: trimmedAnswer });
+        setAssetActionFeedback(id, 'Follow-up submitted. Review the refreshed suggestions.', 'success');
       } catch (error) {
         console.error('[asset_followup_enrichment]', error);
         const failure = await markAssetEnrichmentFailure(id, error, true);
-        alert(failure.message);
+        setAssetActionFeedback(id, failure.message, 'error');
       }
       await refreshData();
       render();
@@ -260,11 +273,13 @@ export function createAssetActions(deps) {
       if (!links.length) {
         const weakQuestion = current.enrichmentFollowupQuestion || 'Can you confirm cabinet type/version from the manufacturer plate?';
         await upsertEntity('assets', id, { ...current, enrichmentStatus: 'followup_needed', enrichmentFollowupQuestion: weakQuestion }, state.user);
+        setAssetActionFeedback(id, 'No trusted documentation was applied. Added a follow-up prompt instead.', 'info');
         await refreshData();
         render();
         return;
       }
       await upsertEntity('assets', id, { ...current, manualLinks: dedupeUrls([...(current.manualLinks || []), ...links]), enrichmentStatus: 'verified_manual_found', enrichmentFollowupQuestion: '' }, state.user);
+      setAssetActionFeedback(id, `Applied ${links.length} trusted documentation link${links.length === 1 ? '' : 's'}.`, 'success');
       await refreshData();
       render();
     },
@@ -302,6 +317,7 @@ export function createAssetActions(deps) {
       }
       if (!Object.keys(patch).length) return;
       await upsertEntity('assets', id, { ...current, ...patch }, state.user);
+      setAssetActionFeedback(id, `Applied ${mode === 'all' ? 'documentation suggestions' : mode}.`, 'success');
       await refreshData();
       render();
     },
@@ -313,6 +329,7 @@ export function createAssetActions(deps) {
       const url = `${selected?.url || ''}`.trim();
       if (!url) return;
       await upsertEntity('assets', id, { ...current, manualLinks: dedupeUrls([...(current.manualLinks || []), url]), enrichmentStatus: 'verified_manual_found' }, state.user);
+      setAssetActionFeedback(id, 'Applied one documentation link.', 'success');
       await refreshData();
       render();
     },
@@ -325,6 +342,7 @@ export function createAssetActions(deps) {
       if (!url) return;
       const label = selected?.label || selected?.title || url;
       await upsertEntity('assets', id, { ...current, supportResourcesSuggestion: normalizeSupportEntries([...(current.supportResourcesSuggestion || []), { url, label }]) }, state.user);
+      setAssetActionFeedback(id, 'Applied one support link.', 'success');
       await refreshData();
       render();
     },
@@ -334,6 +352,7 @@ export function createAssetActions(deps) {
       if (!clean) return;
       const current = state.assets.find((asset) => asset.id === id) || {};
       await upsertEntity('assets', id, { ...current, manualLinks: (current.manualLinks || []).filter((entry) => `${entry}`.trim() !== clean) }, state.user);
+      setAssetActionFeedback(id, 'Removed linked manual.', 'success');
       await refreshData();
       render();
     },
@@ -346,6 +365,23 @@ export function createAssetActions(deps) {
         ...current,
         supportResourcesSuggestion: normalizeSupportEntries((current.supportResourcesSuggestion || []).filter((entry) => `${entry?.url || entry || ''}`.trim() !== clean))
       }, state.user);
+      setAssetActionFeedback(id, 'Removed linked support link.', 'success');
+      await refreshData();
+      render();
+    },
+    removeAllManualLinks: async (id) => {
+      if (!isAdmin(state.permissions)) return;
+      const current = state.assets.find((asset) => asset.id === id) || {};
+      await upsertEntity('assets', id, { ...current, manualLinks: [] }, state.user);
+      setAssetActionFeedback(id, 'Removed all linked manuals.', 'success');
+      await refreshData();
+      render();
+    },
+    removeAllSupportLinks: async (id) => {
+      if (!isAdmin(state.permissions)) return;
+      const current = state.assets.find((asset) => asset.id === id) || {};
+      await upsertEntity('assets', id, { ...current, supportResourcesSuggestion: [] }, state.user);
+      setAssetActionFeedback(id, 'Removed all linked support links.', 'success');
       await refreshData();
       render();
     },
@@ -371,6 +407,7 @@ export function createAssetActions(deps) {
     markDocsReviewed: async (id) => {
       const current = state.assets.find((asset) => asset.id === id) || {};
       await upsertEntity('assets', id, { ...current, docsLastReviewedAt: new Date().toISOString() }, state.user);
+      setAssetActionFeedback(id, 'Documentation review date updated.', 'success');
       await refreshData();
       render();
     },
@@ -384,6 +421,7 @@ export function createAssetActions(deps) {
         enrichmentFollowupAnswer: '',
         enrichmentRequestedAt: null
       }, state.user);
+      setAssetActionFeedback(id, 'Cleared stuck documentation lookup state.', 'success');
       await refreshData();
       render();
     },
