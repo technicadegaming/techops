@@ -22,6 +22,19 @@ import {
   getTaskLocationRecord
 } from './locationContext.js';
 
+const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1 };
+const PRIORITY_LABEL = { critical: 'P1 critical', high: 'P2 high', medium: 'P3 medium', low: 'P4 low' };
+const STATUS_LABEL = { open: 'Open', in_progress: 'In progress', completed: 'Completed' };
+
+function getTaskRun(taskId, state) {
+  return (state.taskAiRuns || []).find((entry) => entry.taskId === taskId) || null;
+}
+
+function getTaskFollowup(runId, state) {
+  if (!runId) return null;
+  return (state.taskAiFollowups || []).find((entry) => entry.runId === runId) || null;
+}
+
 function renderAiSourceLine(run) {
   const sourceList = Array.isArray(run?.documentationSources) ? run.documentationSources : [];
   const labels = new Set(sourceList.map((source) => source?.sourceType).filter(Boolean));
@@ -33,39 +46,182 @@ function renderAiSourceLine(run) {
   return `<div class="tiny">Sources used: ${mode}${names.length ? ` | ${names.join(' | ')}` : ''}</div>`;
 }
 
-function renderAiPanel(task, state) {
-  const run = (state.taskAiRuns || []).find((entry) => entry.taskId === task.id);
-  const followup = run ? (state.taskAiFollowups || []).find((entry) => entry.runId === run.id) : null;
-  return `<div class="item mt"><b>AI Troubleshooting</b>
-    <div class="tiny">Status: ${run?.status || 'not_started'} ${task.aiSummary?.summary ? `| ${task.aiSummary.summary}` : ''}</div>
-    ${run ? renderAiSourceLine(run) : ''}
-    ${run?.shortFrontlineVersion ? `<div class="tiny"><b>Frontline:</b> ${run.shortFrontlineVersion}</div>` : ''}
-    ${run?.diagnosticSteps?.length ? `<div class="tiny"><b>Steps:</b> ${run.diagnosticSteps.join(' | ')}</div>` : ''}
-    ${followup?.questions?.length ? `<form data-followup="${task.id}" data-run="${run.id}" class="grid">${followup.questions.map((question, index) => `<label class="tiny">${question}<input name="a${index}" placeholder="Answer" ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'} /></label>`).join('')}<button ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'}>Submit follow-up answers</button></form>` : ''}
-    <div class="row mt">
-      <button data-run-ai="${task.id}" ${canRunAiTroubleshooting(state.permissions) ? '' : 'disabled'}>Run AI</button>
+function formatDateTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'not set';
+  return date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function formatAgeLabel(hours) {
+  if (!Number.isFinite(hours) || hours < 1) return 'opened <1h ago';
+  if (hours < 24) return `opened ${Math.round(hours)}h ago`;
+  const days = Math.floor(hours / 24);
+  const remainder = Math.round(hours % 24);
+  if (!remainder) return `opened ${days}d ago`;
+  return `opened ${days}d ${remainder}h ago`;
+}
+
+function getOverdueThresholdHours(severity = 'medium') {
+  if (severity === 'critical') return 4;
+  if (severity === 'high') return 24;
+  if (severity === 'low') return 168;
+  return 72;
+}
+
+function getTaskStateMeta(task, state) {
+  const status = task.status || 'open';
+  const severity = task.severity || 'medium';
+  const assignedWorkers = task.assignedWorkers || [];
+  const run = getTaskRun(task.id, state);
+  const followup = getTaskFollowup(run?.id, state);
+  const unavailable = assignedWorkers.filter((worker) => state.users.some((user) => (
+    (user.id === worker || user.email === worker) && (user.enabled === false || user.available === false)
+  )));
+  const openedAt = new Date(task.openedAt || task.createdAtClient || task.updatedAt || task.updatedAtClient || 0);
+  const ageHours = Number.isNaN(openedAt.getTime()) ? 0 : (Date.now() - openedAt.getTime()) / (1000 * 60 * 60);
+  const overdueThresholdHours = getOverdueThresholdHours(severity);
+  const needsFollowup = run?.status === 'followup_required';
+  const awaitingAssignment = status !== 'completed' && assignedWorkers.length === 0;
+  const overdue = status !== 'completed' && ageHours >= overdueThresholdHours;
+  const blockedReasons = [];
+  if (needsFollowup) blockedReasons.push('waiting on follow-up answers');
+  if (unavailable.length) blockedReasons.push(`assigned unavailable: ${unavailable.join(', ')}`);
+  if (status === 'in_progress' && awaitingAssignment) blockedReasons.push('in progress without an assigned owner');
+  const blocked = blockedReasons.length > 0;
+  const readyForCloseout = status === 'in_progress' && !needsFollowup && assignedWorkers.length > 0 && unavailable.length === 0;
+  const closeout = task.closeout || {};
+  const resolutionSummary = closeout.bestFixSummary || closeout.fixPerformed || '';
+  return {
+    status,
+    severity,
+    statusLabel: STATUS_LABEL[status] || status,
+    priorityLabel: PRIORITY_LABEL[severity] || PRIORITY_LABEL.medium,
+    assignedWorkers,
+    run,
+    followup,
+    needsFollowup,
+    awaitingAssignment,
+    unavailable,
+    overdue,
+    overdueThresholdHours,
+    ageHours,
+    ageLabel: formatAgeLabel(ageHours),
+    blocked,
+    blockedReasons,
+    readyForCloseout,
+    resolutionSummary,
+    fullyResolved: closeout.fullyResolved === 'yes',
+    closeout
+  };
+}
+
+function getChipTone(kind, value) {
+  if (kind === 'severity') {
+    if (value === 'critical') return 'bad';
+    if (value === 'high') return 'warn';
+    return 'info';
+  }
+  if (kind === 'status') {
+    if (value === 'completed') return 'good';
+    if (value === 'in_progress') return 'info';
+    return 'muted';
+  }
+  if (kind === 'flag') {
+    if (value === 'blocked') return 'bad';
+    if (value === 'overdue') return 'warn';
+    if (value === 'followup') return 'warn';
+    if (value === 'ready') return 'good';
+  }
+  return 'muted';
+}
+
+function renderChip(label, tone = 'muted') {
+  return `<span class="state-chip ${tone}">${label}</span>`;
+}
+
+function renderTaskStateChips(meta) {
+  const chips = [
+    renderChip(meta.statusLabel, getChipTone('status', meta.status)),
+    renderChip(meta.priorityLabel, getChipTone('severity', meta.severity))
+  ];
+  if (meta.overdue) chips.push(renderChip('Overdue', getChipTone('flag', 'overdue')));
+  if (meta.blocked) chips.push(renderChip('Blocked', getChipTone('flag', 'blocked')));
+  if (meta.needsFollowup) chips.push(renderChip('Follow-up needed', getChipTone('flag', 'followup')));
+  if (meta.readyForCloseout) chips.push(renderChip('Ready to close', getChipTone('flag', 'ready')));
+  if (meta.awaitingAssignment) chips.push(renderChip('Unassigned', 'warn'));
+  return chips.join('');
+}
+
+function renderExceptionBanner(meta) {
+  const notes = [];
+  if (meta.overdue) notes.push(`Past ${meta.overdueThresholdHours}h target for ${meta.severity} priority.`);
+  if (meta.blockedReasons.length) notes.push(meta.blockedReasons.join(' | '));
+  if (meta.readyForCloseout) notes.push('Work is in progress with an active owner and no follow-up blocker.');
+  if (!notes.length) return '';
+  const tone = meta.blocked ? 'error' : (meta.overdue ? 'warn' : 'success');
+  return `<div class="inline-state ${tone} mt">${notes.join(' ')}</div>`;
+}
+
+function renderAiPanel(task, state, meta) {
+  const run = meta.run;
+  const followup = meta.followup;
+  return `<div class="item mt">
+    <div class="row space">
+      <b>AI Troubleshooting</b>
+      <div class="tiny">Status: ${run?.status || 'not_started'}</div>
+    </div>
+    ${task.aiSummary?.summary ? `<div class="tiny mt">${task.aiSummary.summary}</div>` : ''}
+    ${run ? renderAiSourceLine(run) : '<div class="tiny mt">No AI run yet for this task.</div>'}
+    ${run?.shortFrontlineVersion ? `<div class="tiny mt"><b>Frontline:</b> ${run.shortFrontlineVersion}</div>` : ''}
+    ${run?.diagnosticSteps?.length ? `<div class="tiny mt"><b>Next steps:</b> ${run.diagnosticSteps.join(' | ')}</div>` : ''}
+    ${followup?.questions?.length ? `<div class="inline-state warn mt">AI cannot advance until the follow-up answers below are submitted.</div>
+      <form data-followup="${task.id}" data-run="${run.id}" class="grid mt followup-form">${followup.questions.map((question, index) => `<label class="tiny">${question}<input name="a${index}" placeholder="Answer" ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'} /></label>`).join('')}<button class="primary" ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'}>Submit follow-up answers</button></form>` : ''}
+    <div class="action-row mt">
+      <button data-run-ai="${task.id}" ${canRunAiTroubleshooting(state.permissions) ? '' : 'disabled'}>${run ? 'Run AI again' : 'Run AI'}</button>
       <button data-rerun-ai="${task.id}" ${canRunAiTroubleshooting(state.permissions) ? '' : 'disabled'}>Regenerate</button>
       <button data-save-fix="${task.id}" ${canSaveFixToLibrary(state.permissions) ? '' : 'disabled'}>Save fix to library</button>
     </div>
   </div>`;
 }
 
-function renderCloseout(task, state) {
+function renderCloseoutSummary(task, meta) {
+  if (task.status !== 'completed') return '';
+  const closeout = meta.closeout || {};
+  return `<div class="item mt closeout-summary">
+    <div class="row space">
+      <b>Resolution summary</b>
+      <div class="tiny">${meta.fullyResolved ? 'Fully resolved' : 'Partially resolved'}</div>
+    </div>
+    <div class="kpi-line mt">
+      <span>Closed ${formatDateTime(closeout.completedAt)}</span>
+      <span>${Number(closeout.timeSpentMinutes || 0) || 0} min spent</span>
+      ${closeout.aiHelpfulness ? `<span>AI: ${closeout.aiHelpfulness.replaceAll('_', ' ')}</span>` : ''}
+    </div>
+    <div class="mt"><b>Fix:</b> ${meta.resolutionSummary || 'No concise closeout summary recorded.'}</div>
+    <div class="tiny mt">Root cause: ${closeout.rootCause || 'not captured'} | Verification: ${closeout.verification || 'not captured'}</div>
+  </div>`;
+}
+
+function renderCloseout(task, state, meta) {
   if (task.status === 'completed' || !canCloseTasks(state.permissions)) return '';
-  return `<details class="item mt"><summary><b>Close task workflow</b></summary>
-    <form data-closeout="${task.id}" class="grid grid-2 mt">
-      <input name="rootCause" placeholder="Root cause" required />
-      <input name="fixPerformed" placeholder="Fix performed" required />
-      <input name="partsUsed" placeholder="Parts used (comma-separated)" />
-      <input name="toolsUsed" placeholder="Tools used (comma-separated)" />
-      <input name="timeSpentMinutes" type="number" min="0" placeholder="Time spent (minutes)" />
-      <input name="verification" placeholder="Testing / verification" />
-      <select name="fullyResolved"><option value="yes">Fully resolved</option><option value="no">Partially resolved</option></select>
-      <select name="saveToLibrary"><option value="">Use default</option><option value="yes">Save to troubleshooting library</option><option value="no">Do not save</option></select>
-      <select name="aiHelpfulness"><option value="">AI helpfulness (optional)</option><option value="helpful">AI was helpful</option><option value="partial">AI partially helpful</option><option value="not_helpful">AI not helpful</option></select>
-      <input name="bestFixSummary" placeholder="Best concise fix summary (optional)" />
-      <input name="evidenceLink" placeholder="Photo/evidence URL (optional)" />
-      <button class="primary">Complete task</button>
+  return `<details class="item mt" data-closeout-panel="${task.id}">
+    <summary><b>Resolve and close task</b></summary>
+    <div class="tiny mt">Capture the fix, proof, and whether the issue is fully resolved before closing.</div>
+    <form data-closeout="${task.id}" class="grid grid-2 mt closeout-form">
+      <label>Root cause<input name="rootCause" placeholder="Example: ticket mech jammed by bent guide" required /></label>
+      <label>Fix performed<input name="fixPerformed" placeholder="Example: straightened guide and re-tested vend path" required /></label>
+      <label>Parts used<input name="partsUsed" placeholder="Comma-separated" /></label>
+      <label>Tools used<input name="toolsUsed" placeholder="Comma-separated" /></label>
+      <label>Time spent (minutes)<input name="timeSpentMinutes" type="number" min="0" placeholder="0" /></label>
+      <label>Verification<input name="verification" placeholder="What did you test before closeout?" /></label>
+      <label>Resolution status<select name="fullyResolved"><option value="yes">Fully resolved</option><option value="no">Partially resolved / monitor</option></select></label>
+      <label>Save to library<select name="saveToLibrary"><option value="">Use default</option><option value="yes">Save to troubleshooting library</option><option value="no">Do not save</option></select></label>
+      <label>AI helpfulness<select name="aiHelpfulness"><option value="">Optional</option><option value="helpful">AI was helpful</option><option value="partial">AI partially helpful</option><option value="not_helpful">AI not helpful</option></select></label>
+      <label>Best concise fix summary<input name="bestFixSummary" placeholder="One-line closeout summary for future reuse" /></label>
+      <label class="closeout-wide">Evidence link<input name="evidenceLink" placeholder="Photo / video / log URL (optional)" /></label>
+      <div class="closeout-actions closeout-wide">
+        <button class="primary">Complete task</button>
+      </div>
     </form>
   </details>`;
 }
@@ -78,6 +234,7 @@ function createDefaultOperationsUiState() {
     scrollY: 0,
     statusFilter: 'open',
     ownershipFilter: 'all',
+    exceptionFilter: 'all',
     lastSaveFeedback: '',
     lastSaveTone: 'info'
   };
@@ -91,9 +248,11 @@ function readFormDraft(form) {
 function filterTasks(tasks, state) {
   const statusFilter = state.operationsUi?.statusFilter || 'open';
   const ownershipFilter = state.operationsUi?.ownershipFilter || 'all';
+  const exceptionFilter = state.operationsUi?.exceptionFilter || 'all';
   const myIdentifiers = new Set([state.user?.uid, state.user?.email].filter(Boolean));
   return (tasks || []).filter((task) => {
-    const assigned = task.assignedWorkers || [];
+    const meta = getTaskStateMeta(task, state);
+    const assigned = meta.assignedWorkers;
     const statusMatch = statusFilter === 'all'
       ? true
       : statusFilter === 'open'
@@ -106,9 +265,20 @@ function filterTasks(tasks, state) {
         : ownershipFilter === 'unassigned'
           ? assigned.length === 0
           : ownershipFilter === 'followup'
-            ? (state.taskAiRuns || []).some((run) => run.taskId === task.id && run.status === 'followup_required')
+            ? meta.needsFollowup
             : true;
-    return statusMatch && ownershipMatch;
+    const exceptionMatch = exceptionFilter === 'all'
+      ? true
+      : exceptionFilter === 'priority'
+        ? SEVERITY_ORDER[meta.severity] >= SEVERITY_ORDER.high
+        : exceptionFilter === 'overdue'
+          ? meta.overdue
+          : exceptionFilter === 'blocked'
+            ? meta.blocked
+            : exceptionFilter === 'closeout'
+              ? meta.readyForCloseout
+              : true;
+    return statusMatch && ownershipMatch && exceptionMatch;
   });
 }
 
@@ -120,13 +290,22 @@ export function renderOperations(el, state, actions) {
   const assetByName = new Map((state.assets || []).map((asset) => [`${asset.name || asset.id}`.toLowerCase(), asset]));
   const locationOptions = buildLocationOptions(state);
   const scope = buildLocationSummary(state);
-  const scopedTasks = scope.scopedTasks;
+  const scopedTasks = [...scope.scopedTasks].sort((a, b) => {
+    const metaDiff = SEVERITY_ORDER[(b.severity || 'medium')] - SEVERITY_ORDER[(a.severity || 'medium')];
+    if (metaDiff) return metaDiff;
+    return `${b.openedAt || b.updatedAt || ''}`.localeCompare(`${a.openedAt || a.updatedAt || ''}`);
+  });
   const scopedAssets = scope.scopedAssets;
   const openTasks = scope.openTasks;
+  const openMeta = openTasks.map((task) => ({ task, meta: getTaskStateMeta(task, state) }));
   const visibleTasks = filterTasks(scopedTasks, state);
-  const unassignedOpen = openTasks.filter((task) => !(task.assignedWorkers || []).length).length;
-  const followupOpen = openTasks.filter((task) => (state.taskAiRuns || []).some((run) => run.taskId === task.id && run.status === 'followup_required')).length;
+  const unassignedOpen = openMeta.filter(({ meta }) => meta.awaitingAssignment).length;
+  const followupOpen = openMeta.filter(({ meta }) => meta.needsFollowup).length;
   const inProgress = scopedTasks.filter((task) => task.status === 'in_progress').length;
+  const highPriorityOpen = openMeta.filter(({ meta }) => SEVERITY_ORDER[meta.severity] >= SEVERITY_ORDER.high).length;
+  const overdueOpen = openMeta.filter(({ meta }) => meta.overdue).length;
+  const blockedOpen = openMeta.filter(({ meta }) => meta.blocked).length;
+  const readyForCloseout = openMeta.filter(({ meta }) => meta.readyForCloseout).length;
 
   el.innerHTML = `
     <div class="row space">
@@ -147,10 +326,30 @@ export function renderOperations(el, state, actions) {
         <strong>${openTasks.length}</strong>
         <div class="tiny">${scope.brokenAssets.length} broken assets tied to open work.</div>
       </div>
+      <div class="stat-card ${highPriorityOpen ? 'bad' : 'good'}">
+        <div class="tiny">High-priority work</div>
+        <strong>${highPriorityOpen}</strong>
+        <div class="tiny">${highPriorityOpen ? 'Critical and high-severity tasks need a first touch fast.' : 'No high-priority backlog.'}</div>
+      </div>
+      <div class="stat-card ${overdueOpen ? 'warn' : 'good'}">
+        <div class="tiny">Overdue tasks</div>
+        <strong>${overdueOpen}</strong>
+        <div class="tiny">${overdueOpen ? 'Past age targets for their current priority.' : 'No overdue tasks in scope.'}</div>
+      </div>
+      <div class="stat-card ${blockedOpen ? 'bad' : 'good'}">
+        <div class="tiny">Blocked tasks</div>
+        <strong>${blockedOpen}</strong>
+        <div class="tiny">${blockedOpen ? 'Unavailable owners or pending follow-up are slowing execution.' : 'No blocked task states detected.'}</div>
+      </div>
       <div class="stat-card ${unassignedOpen ? 'bad' : 'good'}">
         <div class="tiny">Unassigned open work</div>
         <strong>${unassignedOpen}</strong>
         <div class="tiny">${unassignedOpen ? 'Assign owners before this grows.' : 'Every open task has an owner.'}</div>
+      </div>
+      <div class="stat-card ${readyForCloseout ? 'warn' : 'good'}">
+        <div class="tiny">Ready for closeout</div>
+        <strong>${readyForCloseout}</strong>
+        <div class="tiny">${readyForCloseout ? 'Active work appears ready for resolution capture.' : 'No active tasks are ready to close yet.'}</div>
       </div>
       <div class="stat-card ${followupOpen ? 'warn' : 'good'}">
         <div class="tiny">AI follow-up queue</div>
@@ -159,13 +358,13 @@ export function renderOperations(el, state, actions) {
       </div>
     </div>
 
-    <div class="item" style="margin:12px 0;">
+    <div class="item ops-toolbar">
       <div class="row space">
         <div>
           <b>Location and quick filters</b>
-          <div class="tiny">Use this view to isolate status, ownership, and open-work exceptions.</div>
+          <div class="tiny">Use this view to isolate open-work exceptions, owner gaps, and closeout-ready tasks.</div>
         </div>
-        <label class="tiny" style="min-width:220px;">Location
+        <label class="tiny ops-location-field">Location
           <select data-location-filter>
             ${locationOptions.map((option) => `<option value="${option.key}" ${option.key === scope.selection?.key ? 'selected' : ''}>${option.label}</option>`).join('')}
           </select>
@@ -182,6 +381,13 @@ export function renderOperations(el, state, actions) {
         <button class="filter-chip ${state.operationsUi.ownershipFilter === 'mine' ? 'active' : ''}" data-ownership-filter="mine" type="button">My work</button>
         <button class="filter-chip ${state.operationsUi.ownershipFilter === 'unassigned' ? 'active' : ''}" data-ownership-filter="unassigned" type="button">Unassigned</button>
         <button class="filter-chip ${state.operationsUi.ownershipFilter === 'followup' ? 'active' : ''}" data-ownership-filter="followup" type="button">Needs follow-up</button>
+      </div>
+      <div class="filter-row mt">
+        <button class="filter-chip ${state.operationsUi.exceptionFilter === 'all' ? 'active' : ''}" data-exception-filter="all" type="button">All exceptions</button>
+        <button class="filter-chip ${state.operationsUi.exceptionFilter === 'priority' ? 'active' : ''}" data-exception-filter="priority" type="button">High priority</button>
+        <button class="filter-chip ${state.operationsUi.exceptionFilter === 'overdue' ? 'active' : ''}" data-exception-filter="overdue" type="button">Overdue</button>
+        <button class="filter-chip ${state.operationsUi.exceptionFilter === 'blocked' ? 'active' : ''}" data-exception-filter="blocked" type="button">Blocked</button>
+        <button class="filter-chip ${state.operationsUi.exceptionFilter === 'closeout' ? 'active' : ''}" data-exception-filter="closeout" type="button">Ready to close</button>
       </div>
     </div>
 
@@ -223,33 +429,56 @@ export function renderOperations(el, state, actions) {
       <datalist id="locationOptions">${locationOptions.filter((option) => option.name && !option.name.includes('Company-wide')).map((option) => `<option value="${option.name}"></option>`).join('')}</datalist>
     </form>
 
-    <h3>Workflow board</h3>
+    <div class="row space mt">
+      <h3>Workflow board</h3>
+      <div class="tiny">Cards are sorted with higher-priority work first.</div>
+    </div>
     ${visibleTasks.length
-      ? `<div class="list mt">
+      ? `<div class="list mt task-board">
         ${visibleTasks.map((task) => {
-          const unavailable = (task.assignedWorkers || []).filter((worker) => state.users.some((user) => (user.id === worker || user.email === worker) && (user.enabled === false || user.available === false)));
           const taskAsset = assetById.get(task.assetId);
           const friendlyAsset = taskAsset?.name || task.assetName || task.assetId || '-';
           const taskLocation = getTaskLocationRecord(state, task, assetById);
           const assetLocation = taskAsset ? getAssetLocationRecord(state, taskAsset) : null;
           const showTaskDetails = expanded.has(task.id);
-          const needsFollowup = (state.taskAiRuns || []).some((run) => run.taskId === task.id && run.status === 'followup_required');
-          return `<details class="item ${state.route?.taskId === task.id ? 'selected' : ''}" id="task-${task.id}" data-task-details="${task.id}" ${showTaskDetails ? 'open' : ''}>
-            <summary><b>${task.title || task.id}</b> | ${task.status || 'open'} | ${friendlyAsset}</summary>
-            <div class="kpi-line mt">
-              <span>${taskLocation.label}</span>
-              <span>${task.severity || 'medium'}</span>
-              <span>${(task.assignedWorkers || []).join(', ') || 'unassigned'}</span>
-              ${needsFollowup ? '<span>AI follow-up waiting</span>' : ''}
+          const meta = getTaskStateMeta(task, state);
+          return `<details class="item task-card ${state.route?.taskId === task.id ? 'selected' : ''}" id="task-${task.id}" data-task-details="${task.id}" ${showTaskDetails ? 'open' : ''}>
+            <summary class="task-summary">
+              <div class="task-summary-main">
+                <div class="task-title-row">
+                  <b>${task.title || task.id}</b>
+                  <span class="tiny">${task.id}</span>
+                </div>
+                <div class="state-chip-row">${renderTaskStateChips(meta)}</div>
+              </div>
+              <div class="task-summary-meta">
+                <span>${friendlyAsset}</span>
+                <span>${taskLocation.label}</span>
+                <span>${meta.ageLabel}</span>
+              </div>
+            </summary>
+            <div class="task-body">
+              ${renderExceptionBanner(meta)}
+              <div class="task-meta-grid mt">
+                <div><b>Owner</b><div class="tiny">${meta.assignedWorkers.join(', ') || 'unassigned'}</div></div>
+                <div><b>Reported</b><div class="tiny">${formatDateTime(task.openedAt || task.createdAtClient)}</div></div>
+                <div><b>Asset location</b><div class="tiny">${assetLocation?.label || taskLocation.label}${assetLocation && assetLocation.label !== taskLocation.label ? ` | task reported at ${taskLocation.label}` : ''}</div></div>
+                <div><b>Category</b><div class="tiny">${task.issueCategory || 'uncategorized'} | tags: ${(task.symptomTags || []).join(', ') || 'none'}</div></div>
+              </div>
+              <div class="mt"><b>Issue:</b> ${task.description || ''}</div>
+              ${meta.unavailable.length ? `<div class="tiny mt">Unavailable assignees: ${meta.unavailable.join(', ')}</div>` : ''}
+              <div class="action-row mt">
+                ${editable && task.status === 'open' ? `<button type="button" data-quick-status="${task.id}" data-next-status="in_progress" class="primary">Start now</button>` : ''}
+                ${editable && task.status === 'in_progress' ? `<button type="button" data-quick-status="${task.id}" data-next-status="open">Move back to open</button>` : ''}
+                ${task.status !== 'completed' && canCloseTasks(state.permissions) ? `<button type="button" data-open-closeout="${task.id}">Resolve / close</button>` : ''}
+                ${meta.needsFollowup ? `<button type="button" data-open-followup="${task.id}">Answer follow-up</button>` : ''}
+                ${(meta.awaitingAssignment || meta.unavailable.length) ? `<button type="button" data-reassign="${task.id}">Quick reassign</button>` : ''}
+                ${canDelete(state.permissions) ? `<button type="button" data-del="${task.id}" class="danger">Delete</button>` : ''}
+              </div>
+              ${renderCloseoutSummary(task, meta)}
+              ${renderCloseout(task, state, meta)}
+              ${renderAiPanel(task, state, meta)}
             </div>
-            <div class="tiny mt">Asset location: ${assetLocation?.label || taskLocation.label}${assetLocation && assetLocation.label !== taskLocation.label ? ` | task reported at ${taskLocation.label}` : ''}</div>
-            <div class="tiny">Assigned: ${(task.assignedWorkers || []).join(', ') || 'unassigned'} ${unavailable.length ? `| unavailable: ${unavailable.join(', ')}` : ''}</div>
-            <div><b>Issue:</b> ${task.description || ''}</div>
-            <div class="tiny">${task.issueCategory || 'uncategorized'} | tags: ${(task.symptomTags || []).join(', ') || 'none'}</div>
-            ${renderCloseout(task, state)}
-            ${renderAiPanel(task, state)}
-            ${unavailable.length ? `<button data-reassign="${task.id}">Quick reassign</button>` : ''}
-            ${canDelete(state.permissions) ? `<button data-del="${task.id}" class="danger">Delete</button>` : ''}
           </details>`;
         }).join('')}
       </div>`
@@ -360,6 +589,10 @@ export function renderOperations(el, state, actions) {
     state.operationsUi.ownershipFilter = button.dataset.ownershipFilter || 'all';
     rerender();
   }));
+  el.querySelectorAll('[data-exception-filter]').forEach((button) => button.addEventListener('click', () => {
+    state.operationsUi.exceptionFilter = button.dataset.exceptionFilter || 'all';
+    rerender();
+  }));
 
   el.querySelectorAll('[data-task-details]').forEach((taskDetails) => taskDetails.addEventListener('toggle', () => {
     const taskId = taskDetails.dataset.taskDetails;
@@ -377,6 +610,25 @@ export function renderOperations(el, state, actions) {
     actions.completeTask(taskId, closeout);
   }));
 
+  el.querySelectorAll('[data-quick-status]').forEach((button) => button.addEventListener('click', async () => {
+    state.operationsUi.scrollY = window.scrollY;
+    const task = state.tasks.find((entry) => entry.id === button.dataset.quickStatus);
+    const nextStatus = button.dataset.nextStatus;
+    if (!task || !nextStatus) return;
+    await actions.saveTask(task.id, { ...task, status: nextStatus, updatedAtClient: new Date().toISOString() });
+  }));
+  el.querySelectorAll('[data-open-closeout]').forEach((button) => button.addEventListener('click', () => {
+    const panel = el.querySelector(`[data-closeout-panel="${button.dataset.openCloseout}"]`);
+    if (!panel) return;
+    panel.open = true;
+    panel.scrollIntoView({ block: 'nearest' });
+  }));
+  el.querySelectorAll('[data-open-followup]').forEach((button) => button.addEventListener('click', () => {
+    const card = button.closest('[data-task-details]');
+    const followupInput = card?.querySelector('[data-followup] input');
+    followupInput?.focus();
+    followupInput?.scrollIntoView({ block: 'nearest' });
+  }));
   el.querySelectorAll('[data-reassign]').forEach((button) => button.addEventListener('click', () => {
     state.operationsUi.scrollY = window.scrollY;
     actions.reassignTask(button.dataset.reassign);
