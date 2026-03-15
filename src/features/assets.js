@@ -17,6 +17,8 @@ const ENRICHMENT_STATUS_LABELS = {
   needs_follow_up: 'needs follow-up',
   docs_found: 'docs found',
   no_match_yet: 'no reliable match yet',
+  docs_blocked: 'docs blocked',
+  docs_failed: 'docs lookup failed',
   idle: 'not started'
 };
 
@@ -26,6 +28,8 @@ const ENRICHMENT_STATUS_STYLES = {
   needs_follow_up: { bg: '#fef3c7', border: '#fbbf24', text: '#92400e' },
   docs_found: { bg: '#dcfce7', border: '#86efac', text: '#166534' },
   no_match_yet: { bg: '#fee2e2', border: '#fca5a5', text: '#991b1b' },
+  docs_blocked: { bg: '#fef3c7', border: '#fbbf24', text: '#92400e' },
+  docs_failed: { bg: '#fee2e2', border: '#fca5a5', text: '#991b1b' },
   idle: { bg: '#f3f4f6', border: '#d1d5db', text: '#4b5563' }
 };
 
@@ -113,6 +117,12 @@ function renderEnrichmentDetails(asset, manager) {
   const supportLinks = Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : [];
   const contacts = Array.isArray(asset.supportContactsSuggestion) ? asset.supportContactsSuggestion : [];
   const showFollowup = status === 'needs_follow_up' && asset.enrichmentFollowupQuestion;
+  const blockedMessage = status === 'docs_blocked'
+    ? (asset.enrichmentErrorMessage || 'Docs lookup was blocked by permissions. Ask a company owner/admin/manager or retry with updated access.')
+    : '';
+  const failedMessage = status === 'docs_failed'
+    ? (asset.enrichmentErrorMessage || 'Docs lookup failed. Retry when ready.')
+    : '';
 
   return `
     <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin:4px 0 8px;">
@@ -120,6 +130,8 @@ function renderEnrichmentDetails(asset, manager) {
       <span class="tiny">${stale ? 'Search is taking longer than expected.' : (status === 'in_progress' || status === 'searching_docs' ? 'Searching official/manual sources...' : '')}</span>
     </div>
     ${stale ? `<div style="border:1px solid #fbbf24; background:#fffbeb; border-radius:8px; padding:8px; margin-bottom:10px;"><div class="tiny" style="margin-bottom:6px;">Search is taking longer than expected.</div><div style="display:flex; gap:6px; flex-wrap:wrap;"><button data-enrich="${asset.id}" type="button">Retry docs search</button>${manager ? `<button data-clear-enrichment="${asset.id}" type="button">Clear stuck status</button>` : ''}</div></div>` : ''}
+    ${blockedMessage ? `<div style="border:1px solid #fbbf24; background:#fffbeb; border-radius:8px; padding:8px; margin-bottom:10px;"><div class="tiny" style="font-weight:700; margin-bottom:4px;">Docs lookup blocked</div><div class="tiny">${blockedMessage}</div></div>` : ''}
+    ${failedMessage ? `<div style="border:1px solid #fca5a5; background:#fef2f2; border-radius:8px; padding:8px; margin-bottom:10px;"><div class="tiny" style="font-weight:700; margin-bottom:4px;">Docs lookup failed</div><div class="tiny">${failedMessage}</div></div>` : ''}
 
     <div style="display:grid; gap:6px; margin-bottom:8px;">
       <div class="tiny"><b>Model suggestion:</b> ${asset.normalizedName || 'n/a'}${asset.enrichmentConfidence ? ` (${Math.round(Number(asset.enrichmentConfidence) * 100)}% confidence)` : ''}</div>

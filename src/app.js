@@ -68,6 +68,32 @@ function isPermissionRelatedError(error) {
   return code.includes('permission-denied') || message.includes('permission') || message.includes('missing or insufficient permissions');
 }
 
+function getEnrichmentFailureState(error) {
+  const blocked = isPermissionRelatedError(error);
+  return {
+    status: blocked ? 'docs_blocked' : 'docs_failed',
+    message: blocked
+      ? 'Asset saved. Docs lookup was blocked by permissions.'
+      : 'Asset saved. Docs lookup failed; you can retry.'
+  };
+}
+
+async function markAssetEnrichmentFailure(assetId, error, preserveFollowup = false) {
+  const current = state.assets.find((entry) => entry.id === assetId) || {};
+  const failure = getEnrichmentFailureState(error);
+  await upsertEntity('assets', assetId, {
+    ...current,
+    enrichmentStatus: failure.status,
+    enrichmentUpdatedAt: new Date().toISOString(),
+    enrichmentFailedAt: new Date().toISOString(),
+    enrichmentErrorCode: `${error?.code || ''}`.trim() || 'unknown',
+    enrichmentErrorMessage: `${error?.message || error || ''}`.trim().slice(0, 240),
+    enrichmentFollowupQuestion: preserveFollowup ? (current.enrichmentFollowupQuestion || '') : '',
+    enrichmentFollowupAnswer: preserveFollowup ? (current.enrichmentFollowupAnswer || '') : ''
+  }, state.user);
+  return failure;
+}
+
 function buildAssetSaveErrorMessage(error) {
   if (!isPermissionRelatedError(error)) return formatActionError(error, 'Unable to save asset.');
   return 'Unable to save asset due to company permissions. Verify your company access and try again.';
@@ -530,11 +556,12 @@ async function render() {
           })
           .catch(async (error) => {
             console.error('[asset_post_save_enrichment]', error);
+            const failure = await markAssetEnrichmentFailure(finalId, error);
             await refreshData();
             state.assetDraft = {
               ...(state.assetDraft || {}),
               saveFeedback: 'Asset saved.',
-              saveSecondaryFeedback: 'Docs lookup failed; you can retry.',
+              saveSecondaryFeedback: failure.message,
               saveFeedbackTone: 'success'
             };
             render();
@@ -658,9 +685,22 @@ async function render() {
     },
     runAssetEnrichment: async (id) => {
       const current = state.assets.find((a) => a.id === id) || {};
-      await upsertEntity('assets', id, { ...current, enrichmentStatus: 'in_progress', enrichmentRequestedAt: new Date().toISOString() }, state.user);
+      await upsertEntity('assets', id, {
+        ...current,
+        enrichmentStatus: 'in_progress',
+        enrichmentRequestedAt: new Date().toISOString(),
+        enrichmentErrorCode: '',
+        enrichmentErrorMessage: '',
+        enrichmentFailedAt: null
+      }, state.user);
       await refreshData(); render();
-      await enrichAssetDocumentation(id, { trigger: 'manual' });
+      try {
+        await enrichAssetDocumentation(id, { trigger: 'manual' });
+      } catch (error) {
+        console.error('[asset_manual_enrichment]', error);
+        const failure = await markAssetEnrichmentFailure(id, error, true);
+        alert(failure.message);
+      }
       await refreshData(); render();
     },
     submitEnrichmentFollowup: async (id, answer) => {
@@ -672,13 +712,22 @@ async function render() {
         enrichmentFollowupAnswer: trimmedAnswer,
         enrichmentFollowupAnsweredAt: new Date().toISOString(),
         enrichmentStatus: 'in_progress',
-        enrichmentRequestedAt: new Date().toISOString()
+        enrichmentRequestedAt: new Date().toISOString(),
+        enrichmentErrorCode: '',
+        enrichmentErrorMessage: '',
+        enrichmentFailedAt: null
       }, state.user);
       await refreshData(); render();
-      await enrichAssetDocumentation(id, {
-        trigger: 'followup_answer',
-        followupAnswer: trimmedAnswer
-      });
+      try {
+        await enrichAssetDocumentation(id, {
+          trigger: 'followup_answer',
+          followupAnswer: trimmedAnswer
+        });
+      } catch (error) {
+        console.error('[asset_followup_enrichment]', error);
+        const failure = await markAssetEnrichmentFailure(id, error, true);
+        alert(failure.message);
+      }
       await refreshData(); render();
     },
     applyDocSuggestions: async (id) => {

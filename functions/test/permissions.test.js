@@ -4,6 +4,7 @@ const { canRunAssetEnrichment, canRunManualAi, canAnswerFollowup, canSaveToTroub
 
 test('permissions by role', () => {
   assert.equal(canAnswerFollowup('staff'), true);
+  assert.equal(canRunAssetEnrichment('owner'), true);
   assert.equal(canRunAssetEnrichment('staff'), true);
   assert.equal(canRunManualAi('staff'), false);
   assert.equal(canRunManualAi('lead'), true);

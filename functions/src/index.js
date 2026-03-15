@@ -6,6 +6,7 @@ const { DEFAULT_SETTINGS, runPipeline } = require('./services/taskAiOrchestrator
 const { assertString, sanitizeFollowupAnswers } = require('./lib/validators');
 
 const { canAnswerFollowup, canRunAssetEnrichment, canRunManualAi, canSaveToTroubleshootingLibrary } = require('./lib/permissions');
+const { authorizeAssetEnrichment } = require('./lib/enrichmentAuthorization');
 
 
 
@@ -169,10 +170,18 @@ exports.regenerateTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, as
 exports.enrichAssetDocumentation = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
   assertString(request.data?.assetId, 'assetId');
-  const role = await getUserRole(request.auth.uid);
 
+  const authz = await authorizeAssetEnrichment({
+    db,
+    assetId: request.data.assetId,
+    uid: request.auth.uid,
+    getUserRole
+  });
 
-  if (!canRunAssetEnrichment(role)) throw new HttpsError('permission-denied', 'Insufficient role for asset enrichment');
+  if (!authz.allowed) {
+    if (authz.scope === 'asset_not_found') throw new HttpsError('not-found', 'Asset not found');
+    throw new HttpsError('permission-denied', 'Insufficient role for asset enrichment');
+  }
 
   const settings = await getAiSettings();
   if (!settings.aiEnabled) {
