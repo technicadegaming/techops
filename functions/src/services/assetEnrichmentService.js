@@ -499,11 +499,15 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
   await assetRef.set({
     enrichmentStatus: triggerSource === 'post_save' ? 'searching_docs' : 'in_progress',
     enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    enrichmentFailedAt: null,
+    enrichmentErrorCode: '',
+    enrichmentErrorMessage: '',
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedBy: userId
   }, { merge: true });
 
-  const preview = await runLookupPreview({
+  try {
+    const preview = await runLookupPreview({
     settings,
     traceId,
     draftAsset: { ...asset, assetId, followupAnswer }
@@ -550,6 +554,9 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     enrichmentConfidence: confidence,
     enrichmentFollowupQuestion: followupQuestion,
     enrichmentStatus: status,
+    enrichmentFailedAt: null,
+    enrichmentErrorCode: '',
+    enrichmentErrorMessage: '',
     enrichmentCandidates: [
       manufacturerSuggestion,
       preview?.likelyCategory,
@@ -596,6 +603,20 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     followupQuestion,
     suggestions
   };
+  } catch (error) {
+    const code = `${error?.code || ''}`.trim() || 'unknown';
+    const message = `${error?.message || error || 'Asset docs lookup failed.'}`.trim();
+    await assetRef.set({
+      enrichmentStatus: 'docs_failed',
+      enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      enrichmentFailedAt: admin.firestore.FieldValue.serverTimestamp(),
+      enrichmentErrorCode: code,
+      enrichmentErrorMessage: message.slice(0, 240),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedBy: userId
+    }, { merge: true });
+    throw error;
+  }
 }
 
 async function previewAssetDocumentationLookup({ settings, traceId, draftAsset }) {

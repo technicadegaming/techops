@@ -1,7 +1,19 @@
 const ROLE_ORDER = ['staff', 'lead', 'assistant_manager', 'manager', 'admin'];
 
+function normalizeRole(role) {
+  const normalized = `${role || ''}`.trim().toLowerCase();
+  if (normalized === 'owner') return 'admin';
+  return normalized;
+}
+
 function hasRoleAtLeast(role, minimum) {
-  return ROLE_ORDER.indexOf(role) >= ROLE_ORDER.indexOf(minimum);
+  const normalizedRole = normalizeRole(role);
+  const normalizedMinimum = normalizeRole(minimum);
+  const roleIndex = ROLE_ORDER.indexOf(normalizedRole);
+  const minimumIndex = ROLE_ORDER.indexOf(normalizedMinimum);
+  if (minimumIndex < 0) return false;
+  if (roleIndex < 0) return false;
+  return roleIndex >= minimumIndex;
 }
 
 function canRunManualAi(role) {
@@ -26,6 +38,7 @@ function canManageAiSettings(role) {
 }
 
 module.exports = {
+  normalizeRole,
   hasRoleAtLeast,
   canRunManualAi,
   canAnswerFollowup,
