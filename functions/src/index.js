@@ -6,7 +6,7 @@ const { DEFAULT_SETTINGS, runPipeline } = require('./services/taskAiOrchestrator
 const { assertString, sanitizeFollowupAnswers } = require('./lib/validators');
 
 const { canAnswerFollowup, canRunAssetEnrichment, canRunManualAi, canSaveToTroubleshootingLibrary } = require('./lib/permissions');
-const { authorizeAssetEnrichment } = require('./lib/enrichmentAuthorization');
+const { authorizeAssetEnrichment, getActiveMembershipForCompany, isGlobalAdminRole } = require('./lib/enrichmentAuthorization');
 
 
 
@@ -25,9 +25,40 @@ async function getUserRole(uid) {
   return snap.exists ? (snap.data().role || 'staff') : 'staff';
 }
 
-async function getAiSettings() {
+async function getAiSettings(companyId = null) {
+  const normalizedCompanyId = `${companyId || ''}`.trim();
+  if (normalizedCompanyId) {
+    const scopedSnap = await db.collection('appSettings').doc(`ai_${normalizedCompanyId}`).get();
+    if (scopedSnap.exists) return { ...DEFAULT_SETTINGS, ...scopedSnap.data() };
+  }
   const snap = await db.collection('appSettings').doc('ai').get();
   return { ...DEFAULT_SETTINGS, ...(snap.exists ? snap.data() : {}) };
+}
+
+async function loadTask(taskId) {
+  const taskSnap = await db.collection('tasks').doc(taskId).get();
+  if (!taskSnap.exists) throw new HttpsError('not-found', 'Task not found');
+  return { id: taskSnap.id, ...taskSnap.data() };
+}
+
+function normalizeCompanyId(companyId) {
+  return `${companyId || ''}`.trim() || null;
+}
+
+async function authorizeCompanyMember({ uid, companyId, checkAccess }) {
+  const globalRole = await getUserRole(uid);
+  if (isGlobalAdminRole(globalRole)) return { allowed: true, scope: 'global_admin', globalRole, companyId };
+
+  const normalizedCompanyId = normalizeCompanyId(companyId);
+  if (!normalizedCompanyId) {
+    const allowed = checkAccess(globalRole);
+    return { allowed, scope: 'legacy_no_company', globalRole, companyId: null };
+  }
+
+  const membership = await getActiveMembershipForCompany({ db, companyId: normalizedCompanyId, uid });
+  const companyRole = `${membership?.role || ''}`.trim().toLowerCase();
+  const allowed = checkAccess(companyRole);
+  return { allowed, scope: 'company_membership', companyRole, globalRole, companyId: normalizedCompanyId };
 }
 
 async function enforceRateLimit(taskId, userId) {
@@ -54,16 +85,22 @@ exports.analyzeTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async
 
     assertString(request.data?.taskId, 'taskId');
 
-    const role = await getUserRole(request.auth.uid);
+    const task = await loadTask(request.data.taskId);
+    const taskCompanyId = normalizeCompanyId(task.companyId);
+    const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
+    if (requestedCompanyId && taskCompanyId && requestedCompanyId !== taskCompanyId) {
+      throw new HttpsError('invalid-argument', 'taskId/companyId mismatch');
+    }
 
-    const canRun = canRunManualAi(role);
+    const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskCompanyId || requestedCompanyId, checkAccess: canRunManualAi });
+    const canRun = authz.allowed;
     if (!canRun) {
       throw new HttpsError('permission-denied', 'Insufficient role for AI run');
     }
 
     await enforceRateLimit(request.data.taskId, request.auth.uid);
 
-    const settings = await getAiSettings();
+    const settings = await getAiSettings(authz.companyId);
 
     if (!settings.aiEnabled) {
       throw new HttpsError('failed-precondition', 'AI is disabled by admin settings');
@@ -100,8 +137,15 @@ exports.answerTaskFollowup = onCall({ secrets: [OPENAI_API_KEY] }, async (reques
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
   assertString(request.data?.taskId, 'taskId');
   assertString(request.data?.runId, 'runId');
-  const role = await getUserRole(request.auth.uid);
-  if (!canAnswerFollowup(role)) throw new HttpsError('permission-denied', 'Insufficient role for follow-up answers');
+  const task = await loadTask(request.data.taskId);
+  const taskCompanyId = normalizeCompanyId(task.companyId);
+  const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
+  if (requestedCompanyId && taskCompanyId && requestedCompanyId !== taskCompanyId) {
+    throw new HttpsError('invalid-argument', 'taskId/companyId mismatch');
+  }
+
+  const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskCompanyId || requestedCompanyId, checkAccess: canAnswerFollowup });
+  if (!authz.allowed) throw new HttpsError('permission-denied', 'Insufficient role for follow-up answers');
 
   const answers = sanitizeFollowupAnswers(request.data.answers || []);
   await db.collection('taskAiFollowups').doc(request.data.runId).set({
@@ -111,7 +155,7 @@ exports.answerTaskFollowup = onCall({ secrets: [OPENAI_API_KEY] }, async (reques
     updatedBy: request.auth.uid
   }, { merge: true });
 
-  const settings = await getAiSettings();
+  const settings = await getAiSettings(authz.companyId);
   return runPipeline({ db, taskId: request.data.taskId, userId: request.auth.uid, triggerSource: 'followup', settings, traceId: request.rawRequest.headers['x-cloud-trace-context'] || `followup-${Date.now()}`, followupAnswers: answers });
 });
 
@@ -125,13 +169,19 @@ exports.regenerateTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, as
     if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
     assertString(request.data?.taskId, 'taskId');
 
-    const role = await getUserRole(request.auth.uid);
+    const task = await loadTask(request.data.taskId);
+    const taskCompanyId = normalizeCompanyId(task.companyId);
+    const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
+    if (requestedCompanyId && taskCompanyId && requestedCompanyId !== taskCompanyId) {
+      throw new HttpsError('invalid-argument', 'taskId/companyId mismatch');
+    }
 
-    if (!canRunManualAi(role)) {
+    const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskCompanyId || requestedCompanyId, checkAccess: canRunManualAi });
+    if (!authz.allowed) {
       throw new HttpsError('permission-denied', 'Insufficient role');
     }
 
-    const settings = await getAiSettings();
+    const settings = await getAiSettings(authz.companyId);
 
     if (!settings.aiAllowManualRerun) {
       throw new HttpsError('failed-precondition', 'Manual rerun disabled in settings');
@@ -183,7 +233,7 @@ exports.enrichAssetDocumentation = onCall({ secrets: [OPENAI_API_KEY] }, async (
     throw new HttpsError('permission-denied', 'Insufficient role for asset enrichment');
   }
 
-  const settings = await getAiSettings();
+  const settings = await getAiSettings(authz.companyId);
   if (!settings.aiEnabled) {
     return { ok: false, status: 'no_match_yet', message: 'AI is disabled by admin settings' };
   }
@@ -202,10 +252,11 @@ exports.enrichAssetDocumentation = onCall({ secrets: [OPENAI_API_KEY] }, async (
 exports.previewAssetDocumentationLookup = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
   assertString(request.data?.assetName, 'assetName');
-  const role = await getUserRole(request.auth.uid);
-  if (!canRunAssetEnrichment(role)) throw new HttpsError('permission-denied', 'Insufficient role for asset enrichment');
+  const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
+  const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: requestedCompanyId, checkAccess: canRunAssetEnrichment });
+  if (!authz.allowed) throw new HttpsError('permission-denied', 'Insufficient role for asset enrichment');
 
-  const settings = await getAiSettings();
+  const settings = await getAiSettings(authz.companyId);
   if (!settings.aiEnabled) {
     return { ok: false, status: 'no_strong_match', message: 'AI is disabled by admin settings' };
   }
@@ -226,21 +277,34 @@ exports.previewAssetDocumentationLookup = onCall({ secrets: [OPENAI_API_KEY] }, 
 exports.fetchWebContextForTask = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
   assertString(request.data?.taskId, 'taskId');
-  const settings = await getAiSettings();
+  const task = await loadTask(request.data.taskId);
+  const taskCompanyId = normalizeCompanyId(task.companyId);
+  const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
+  if (requestedCompanyId && taskCompanyId && requestedCompanyId !== taskCompanyId) {
+    throw new HttpsError('invalid-argument', 'taskId/companyId mismatch');
+  }
+  const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskCompanyId || requestedCompanyId, checkAccess: canAnswerFollowup });
+  if (!authz.allowed) throw new HttpsError('permission-denied', 'Insufficient role for web context preview');
+
+  const settings = await getAiSettings(authz.companyId);
   return { enabled: settings.aiUseWebSearch, message: 'Web context fetch runs as part of orchestration pipeline.' };
 });
 
 exports.saveTaskFixToTroubleshootingLibrary = onCall({}, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
   assertString(request.data?.taskId, 'taskId');
-  const role = await getUserRole(request.auth.uid);
-  if (!canSaveToTroubleshootingLibrary(role)) throw new HttpsError('permission-denied', 'Insufficient role');
-  const taskSnap = await db.collection('tasks').doc(request.data.taskId).get();
-  if (!taskSnap.exists) throw new HttpsError('not-found', 'Task not found');
-  const task = taskSnap.data();
+  const task = await loadTask(request.data.taskId);
+  const taskCompanyId = normalizeCompanyId(task.companyId);
+  const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
+  if (requestedCompanyId && taskCompanyId && requestedCompanyId !== taskCompanyId) {
+    throw new HttpsError('invalid-argument', 'taskId/companyId mismatch');
+  }
+  const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskCompanyId || requestedCompanyId, checkAccess: canSaveToTroubleshootingLibrary });
+  if (!authz.allowed) throw new HttpsError('permission-denied', 'Insufficient role');
   const libRef = db.collection('troubleshootingLibrary').doc();
   await libRef.set({
     id: libRef.id,
+    companyId: authz.companyId,
     assetType: request.data.assetType || task.assetType || null,
     manufacturer: request.data.manufacturer || null,
     gameTitle: request.data.gameTitle || null,
@@ -255,7 +319,7 @@ exports.saveTaskFixToTroubleshootingLibrary = onCall({}, async (request) => {
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedBy: request.auth.uid
   });
-  await db.collection('auditLogs').add({ action: 'ai_save_to_library', entityType: 'troubleshootingLibrary', entityId: libRef.id, summary: `Saved fix from task ${request.data.taskId}`, userUid: request.auth.uid, timestamp: admin.firestore.FieldValue.serverTimestamp() });
+  await db.collection('auditLogs').add({ action: 'ai_save_to_library', entityType: 'troubleshootingLibrary', entityId: libRef.id, companyId: authz.companyId, summary: `Saved fix from task ${request.data.taskId}`, userUid: request.auth.uid, timestamp: admin.firestore.FieldValue.serverTimestamp() });
   return { ok: true, id: libRef.id };
 });
 
@@ -263,9 +327,11 @@ exports.onTaskCreatedQueueAi = onDocumentCreated({
   document: 'tasks/{taskId}',
   secrets: [OPENAI_API_KEY]
 }, async (event) => {
-  const settings = await getAiSettings();
+  const taskData = event.data?.data?.() || {};
+  const companyId = normalizeCompanyId(taskData.companyId);
+  const settings = await getAiSettings(companyId);
   if (!settings.aiEnabled) return;
-  const createdBy = event.data?.data()?.createdBy || 'system';
+  const createdBy = taskData.createdBy || 'system';
   await runPipeline({ db, taskId: event.params.taskId, userId: createdBy, triggerSource: 'auto_create', settings, traceId: event.id || `create-${Date.now()}` });
 });
 

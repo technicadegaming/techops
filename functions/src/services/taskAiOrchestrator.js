@@ -95,14 +95,19 @@ async function gatherContext(db, taskId) {
   const taskSnap = await db.collection('tasks').doc(taskId).get();
   if (!taskSnap.exists) throw new Error('Task not found');
   const task = { id: taskSnap.id, ...taskSnap.data() };
+  const companyId = `${task.companyId || ''}`.trim();
   const assetId = task.assetId || null;
   const assetSnap = assetId ? await db.collection('assets').doc(assetId).get() : null;
   const asset = assetSnap?.exists ? { id: assetSnap.id, ...assetSnap.data() } : null;
 
+  const libraryQuery = companyId
+    ? db.collection('troubleshootingLibrary').where('companyId', '==', companyId).limit(30)
+    : db.collection('troubleshootingLibrary').where('companyId', '==', null).limit(30);
+
   const [relatedTasksSnap, notesSnap, librarySnap] = await Promise.all([
     assetId ? db.collection('tasks').where('assetId', '==', assetId).orderBy('updatedAt', 'desc').limit(8).get() : Promise.resolve({ docs: [] }),
     assetId ? db.collection('notes').where('assetId', '==', assetId).orderBy('updatedAt', 'desc').limit(10).get() : Promise.resolve({ docs: [] }),
-    db.collection('troubleshootingLibrary').limit(30).get()
+    libraryQuery.get()
   ]);
 
   const relatedTasks = relatedTasksSnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((row) => row.id !== taskId);
@@ -126,7 +131,7 @@ async function gatherContext(db, taskId) {
   };
 }
 
-async function createAiRun({ db, taskId, userId, triggerSource, model, settingsSnapshot }) {
+async function createAiRun({ db, taskId, userId, triggerSource, model, settingsSnapshot, companyId = null }) {
   const runRef = db.collection('taskAiRuns').doc();
   await runRef.set({
     id: runRef.id,
@@ -135,6 +140,7 @@ async function createAiRun({ db, taskId, userId, triggerSource, model, settingsS
     triggerSource,
     model,
     settingsSnapshot,
+    companyId: companyId || null,
     createdAt: new Date().toISOString(),
     createdBy: userId,
     updatedAt: new Date().toISOString(),
@@ -151,7 +157,9 @@ async function writeAudit(db, payload) {
 }
 
 async function runPipeline({ db, taskId, userId, triggerSource, settings, traceId, followupAnswers = [] }) {
-  const runRef = await createAiRun({ db, taskId, userId, triggerSource, model: settings.aiModel, settingsSnapshot: settings });
+  const taskSnap = await db.collection('tasks').doc(taskId).get();
+  const taskCompanyId = taskSnap.exists ? `${taskSnap.data()?.companyId || ''}`.trim() : null;
+  const runRef = await createAiRun({ db, taskId, userId, triggerSource, model: settings.aiModel, settingsSnapshot: settings, companyId: taskCompanyId || null });
   try {
     const context = await gatherContext(db, taskId);
 
@@ -178,12 +186,13 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
           questions: followup.questions,
           answers: [],
           status: 'pending',
+          companyId: context.task.companyId || null,
           createdAt: new Date().toISOString(),
           createdBy: userId,
           updatedAt: new Date().toISOString(),
           updatedBy: userId
         }, { merge: true });
-        await writeAudit(db, { action: 'ai_followup_required', entityType: 'taskAiRuns', entityId: runRef.id, summary: `Follow-up required for task ${taskId}`, userUid: userId, traceId });
+        await writeAudit(db, { action: 'ai_followup_required', entityType: 'taskAiRuns', entityId: runRef.id, companyId: context.task.companyId || null, summary: `Follow-up required for task ${taskId}`, userUid: userId, traceId });
         return { runId: runRef.id, status: 'followup_required' };
       }
     }
@@ -235,11 +244,11 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
       }, { merge: true });
     }
 
-    await writeAudit(db, { action: 'ai_run_completed', entityType: 'taskAiRuns', entityId: runRef.id, summary: `AI run completed for task ${taskId}`, userUid: userId, traceId });
+    await writeAudit(db, { action: 'ai_run_completed', entityType: 'taskAiRuns', entityId: runRef.id, companyId: context.task.companyId || null, summary: `AI run completed for task ${taskId}`, userUid: userId, traceId });
     return { runId: runRef.id, status: 'completed' };
   } catch (error) {
     await runRef.set({ status: 'failed', error: error.message, updatedAt: new Date().toISOString(), updatedBy: userId }, { merge: true });
-    await writeAudit(db, { action: 'ai_run_failed', entityType: 'taskAiRuns', entityId: runRef.id, summary: `AI run failed for task ${taskId}: ${error.message}`, userUid: userId, traceId });
+    await writeAudit(db, { action: 'ai_run_failed', entityType: 'taskAiRuns', entityId: runRef.id, companyId: taskCompanyId || null, summary: `AI run failed for task ${taskId}: ${error.message}`, userUid: userId, traceId });
     return { runId: runRef.id, status: 'failed', error: error.message };
   }
 }
