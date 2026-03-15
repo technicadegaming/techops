@@ -1,7 +1,14 @@
 import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.3/firebase-functions.js';
 import { functions } from './firebase.js';
+import { getActiveCompanyContext } from './companyScope.js';
 
-const call = (name, payload) => httpsCallable(functions, name)(payload).then((r) => r.data);
+function withCompanyScope(payload = {}) {
+  const scope = getActiveCompanyContext();
+  const companyId = `${scope?.companyId || ''}`.trim();
+  return companyId ? { ...payload, companyId } : payload;
+}
+
+const call = (name, payload) => httpsCallable(functions, name)(withCompanyScope(payload)).then((r) => r.data);
 
 export function analyzeTaskTroubleshooting(taskId) {
   return call('analyzeTaskTroubleshooting', { taskId });
