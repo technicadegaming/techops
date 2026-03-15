@@ -90,7 +90,7 @@ export async function saveUserProfile(uid, profile, actor) {
   await logAudit({ action: before ? 'update' : 'create', entityType: 'users', entityId: uid, summary: 'user profile changed', user: actor || { uid }, before, after: profile });
 }
 
-const defaultAiSettings = {
+export const defaultAiSettings = {
   aiEnabled: false,
   aiAutoAttach: false,
   aiUseInternalKnowledge: true,

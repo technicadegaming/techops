@@ -6,7 +6,7 @@ import { renderAssets } from './features/assets.js';
 import { renderCalendar } from './features/calendar.js';
 import { renderReports } from './features/reports.js';
 import { renderAdmin } from './admin.js';
-import { buildPermissionContext, canDelete, isAdmin, isGlobalAdmin } from './roles.js';
+import { buildPermissionContext, canDelete, isAdmin, isGlobalAdmin, isManager } from './roles.js';
 import { previewLegacyImport, importLegacyData } from './migration.js';
 import { dryRunBackup, exportBackupJson, restoreBackup, validateBackup } from './backup.js';
 import { analyzeTaskTroubleshooting, answerTaskFollowup, enrichAssetDocumentation, previewAssetDocumentationLookup, regenerateTaskTroubleshooting, saveTaskFixToTroubleshootingLibrary } from './aiAdapter.js';
@@ -273,18 +273,21 @@ function renderOnboarding(el) {
     <div class="grid grid-2">
       <form id="createCompanyForm" class="item">
         <h3>Create company</h3>
-        <input name="name" placeholder="Company name" required />
-        <input name="primaryEmail" type="email" placeholder="Primary contact email" value="${state.user?.email || ''}" />
-        <input name="primaryPhone" placeholder="Primary phone" />
-        <input name="address" placeholder="HQ address" />
-        <input name="timeZone" placeholder="Time zone" value="${Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'}" />
-        <div class="row"><input name="estimatedUsers" type="number" min="0" placeholder="Estimated users" /><input name="estimatedAssets" type="number" min="0" placeholder="Estimated assets" /></div>
-        <textarea name="locations" placeholder="Locations (one per line: Name | Address | Timezone | Notes)"></textarea>
+        <label>Company name<input name="name" placeholder="Example: WOW Technicade" required /></label>
+        <label>Contact email<input name="primaryEmail" type="email" placeholder="name@company.com" value="${state.user?.email || ''}" /></label>
+        <label>Primary phone<input name="primaryPhone" placeholder="Example: (555) 555-5555" /></label>
+        <label>HQ address<input name="address" placeholder="Street, city, state" /></label>
+        <label>Timezone<input name="timeZone" placeholder="Example: America/Chicago" value="${Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'}" /></label>
+        <div class="row">
+          <label style="flex:1;">Estimated users<input name="estimatedUsers" type="number" min="0" placeholder="Example: 25" /></label>
+          <label style="flex:1;">Estimated assets<input name="estimatedAssets" type="number" min="0" placeholder="Example: 150" /></label>
+        </div>
+        <label>First location / primary location notes<textarea name="locations" placeholder="One per line: Name | Address | Timezone | Notes"></textarea></label>
         <button class="primary">Create company workspace</button>
       </form>
       <form id="joinCompanyForm" class="item">
         <h3>Join existing company</h3>
-        <input name="inviteCode" placeholder="Invite code" required />
+        <label>Invite code<input name="inviteCode" placeholder="Paste the code from your admin" required /></label>
         <button class="primary">Accept invite & join</button>
         <p class="tiny">Ask your admin for an invite code from the Admin &gt; Users/Invites section.</p>
       </form>
@@ -441,6 +444,7 @@ async function render() {
           ownerWorkers: `${payload.ownerWorkers || ''}`.split(',').map((v) => v.trim()).filter(Boolean),
           manualLinks: `${payload.manualLinks || ''}`.split(',').map((v) => v.trim()).filter(Boolean).concat(Array.isArray(draft.manualLinks) ? draft.manualLinks : []).filter(Boolean).filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 5),
           enrichmentStatus: (payload.manualLinks || current.manualLinks?.length) ? (current.enrichmentStatus || 'idle') : 'searching_docs',
+          enrichmentRequestedAt: (payload.manualLinks || current.manualLinks?.length) ? (current.enrichmentRequestedAt || null) : new Date().toISOString(),
           history: payload.historyNote ? [...(current.history || []), { at: new Date().toISOString(), note: payload.historyNote }] : (current.history || []),
           supportResourcesSuggestion: Array.isArray(draft.supportResources) && draft.supportResources.length ? draft.supportResources : (current.supportResourcesSuggestion || []),
           supportContactsSuggestion: Array.isArray(draft.supportContacts) && draft.supportContacts.length ? draft.supportContacts : (current.supportContactsSuggestion || []),
@@ -566,7 +570,7 @@ async function render() {
     },
     runAssetEnrichment: async (id) => {
       const current = state.assets.find((a) => a.id === id) || {};
-      await upsertEntity('assets', id, { ...current, enrichmentStatus: 'in_progress' }, state.user);
+      await upsertEntity('assets', id, { ...current, enrichmentStatus: 'in_progress', enrichmentRequestedAt: new Date().toISOString() }, state.user);
       await refreshData(); render();
       await enrichAssetDocumentation(id, { trigger: 'manual' });
       await refreshData(); render();
@@ -579,7 +583,8 @@ async function render() {
         ...current,
         enrichmentFollowupAnswer: trimmedAnswer,
         enrichmentFollowupAnsweredAt: new Date().toISOString(),
-        enrichmentStatus: 'in_progress'
+        enrichmentStatus: 'in_progress',
+        enrichmentRequestedAt: new Date().toISOString()
       }, state.user);
       await refreshData(); render();
       await enrichAssetDocumentation(id, {
@@ -718,6 +723,18 @@ async function render() {
       await upsertEntity('assets', id, { ...current, docsLastReviewedAt: new Date().toISOString() }, state.user);
       await refreshData(); render();
     },
+    clearAssetEnrichmentState: async (id) => {
+      if (!isManager(state.permissions)) return;
+      const current = state.assets.find((a) => a.id === id) || {};
+      await upsertEntity('assets', id, {
+        ...current,
+        enrichmentStatus: 'idle',
+        enrichmentFollowupQuestion: '',
+        enrichmentFollowupAnswer: '',
+        enrichmentRequestedAt: null
+      }, state.user);
+      await refreshData(); render();
+    },
     deleteAsset: async (id) => { if (!canDelete(state.permissions)) return; await deleteEntity('assets', id, state.user); await refreshData(); render(); }
   };
   renderAssets(document.getElementById('assets'), state, assetActions);
@@ -749,6 +766,19 @@ async function render() {
     createInvite: async ({ email, role }) => {
       await runAction('create_invite', async () => {
         const invite = await createCompanyInvite({ companyId: state.company.id, email, role, user: state.user });
+        state.invites = [
+          {
+            id: invite.id,
+            companyId: state.company.id,
+            email: `${email || ''}`.trim().toLowerCase(),
+            role,
+            inviteCode: invite.inviteCode,
+            token: invite.token,
+            status: 'pending'
+          },
+          ...(state.invites || []).filter((entry) => entry.id !== invite.id)
+        ];
+        render();
         alert(`Invite created. Share code: ${invite.inviteCode}`);
         await refreshData();
         render();

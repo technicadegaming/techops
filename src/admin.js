@@ -1,8 +1,27 @@
+import { defaultAiSettings } from './data.js';
 import { Roles, canChangeAISettings, canManageBackups, isAdmin } from './roles.js';
 
 const aiBooleanFields = ['aiEnabled', 'aiAutoAttach', 'aiUseInternalKnowledge', 'aiUseWebSearch', 'aiAskFollowups', 'aiAllowManualRerun', 'aiSaveSuccessfulFixesToLibraryDefault', 'aiShortResponseMode', 'aiVerboseManagerMode', 'aiFeedbackCollectionEnabled', 'mobileConciseModeDefault'];
 const aiNumericFields = ['aiMaxWebSources', 'aiConfidenceThreshold'];
 const aiTextFields = ['aiModel', 'defaultTaskSeverity', 'taskIntakeRequiredFields'];
+const aiFieldMeta = {
+  aiEnabled: { label: 'Enable AI troubleshooting', help: 'Allow the workspace to use AI-assisted troubleshooting tools.' },
+  aiAutoAttach: { label: 'Auto-attach AI output', help: 'Attach successful AI troubleshooting notes to task records automatically.' },
+  aiUseInternalKnowledge: { label: 'Use internal knowledge base', help: 'Search saved fixes and company knowledge before external sources.' },
+  aiUseWebSearch: { label: 'Allow web search', help: 'Permit AI lookups against external web/manual sources when needed.' },
+  aiAskFollowups: { label: 'Ask follow-up questions', help: 'Prompt for missing details when the first pass is weak.' },
+  aiAllowManualRerun: { label: 'Allow manual reruns', help: 'Let managers rerun AI troubleshooting from the UI.' },
+  aiSaveSuccessfulFixesToLibraryDefault: { label: 'Save successful fixes by default', help: 'Default new closeouts to add confirmed fixes into the troubleshooting library.' },
+  aiShortResponseMode: { label: 'Short response mode', help: 'Prefer concise troubleshooting summaries for day-to-day use.' },
+  aiVerboseManagerMode: { label: 'Verbose manager mode', help: 'Show more detailed reasoning for manager/admin review.' },
+  aiFeedbackCollectionEnabled: { label: 'Collect AI feedback', help: 'Store AI feedback for future tuning.' },
+  mobileConciseModeDefault: { label: 'Use concise mobile mode', help: 'Keep mobile AI responses tighter by default.' },
+  aiModel: { label: 'AI model', help: 'Default model used for troubleshooting requests.' },
+  defaultTaskSeverity: { label: 'Default task severity', help: 'Used when a task is created without an explicit severity.' },
+  taskIntakeRequiredFields: { label: 'Required intake fields', help: 'Comma-separated fields that must be present for task intake.' },
+  aiMaxWebSources: { label: 'Max web sources', help: 'Maximum number of external sources the AI should consider.' },
+  aiConfidenceThreshold: { label: 'Confidence threshold', help: 'Minimum confidence before AI suggestions are treated as strong.' }
+};
 
 function parseCsv(text = '') {
   const lines = `${text}`.split(/\r?\n/).filter(Boolean);
@@ -23,8 +42,11 @@ export function renderAdmin(el, state, actions) {
   }
 
   const workers = state.workers || [];
-  const invites = (state.invites || []).filter((i) => i.status === 'pending');
+  const invites = (state.invites || []).filter((i) => i.status === 'pending' && i.companyId === state.company?.id);
   const locations = state.companyLocations || [];
+  const hasLocations = locations.length > 0;
+  const settings = { ...defaultAiSettings, ...(state.settings || {}) };
+  const renderFieldHelp = (key) => aiFieldMeta[key]?.help ? `<div class="tiny">${aiFieldMeta[key].help}</div>` : '';
 
   el.innerHTML = `
     <h2>Company Admin</h2>
@@ -43,15 +65,31 @@ export function renderAdmin(el, state, actions) {
     </section>
 
     <section class="item">
-      <h3>Locations</h3>
+      <h3>Current locations</h3>
       <div class="list">${locations.map((loc) => `<div class="item"><b>${loc.name}</b><div class="tiny">${loc.address || ''} ${loc.timeZone ? `• ${loc.timeZone}` : ''}</div></div>`).join('') || '<p class="tiny">No locations yet.</p>'}</div>
-      <form id="addLocationForm" class="grid grid-2 mt">
-        <input name="name" placeholder="Location name" required />
-        <input name="address" placeholder="Address" />
-        <input name="timeZone" placeholder="Timezone" />
-        <input name="notes" placeholder="Notes" />
-        <button class="primary" type="submit">Add location</button>
-      </form>
+      ${hasLocations ? `
+        <details class="mt">
+          <summary>Add another location</summary>
+          <form id="addLocationForm" class="grid grid-2 mt">
+            <label>Location name<input name="name" placeholder="Example: Dallas service hub" required /></label>
+            <label>Address<input name="address" placeholder="Street, city, state" /></label>
+            <label>Timezone<input name="timeZone" placeholder="Example: America/Chicago" /></label>
+            <label>Notes<input name="notes" placeholder="Optional notes for this location" /></label>
+            <button class="primary" type="submit">Add location</button>
+          </form>
+        </details>
+      ` : `
+        <div class="mt">
+          <h4>Add your first location</h4>
+          <form id="addLocationForm" class="grid grid-2">
+            <label>Location name<input name="name" placeholder="Example: Main office" required /></label>
+            <label>Address<input name="address" placeholder="Street, city, state" /></label>
+            <label>Timezone<input name="timeZone" placeholder="Example: America/Chicago" /></label>
+            <label>Notes<input name="notes" placeholder="Optional notes for this location" /></label>
+            <button class="primary" type="submit">Add location</button>
+          </form>
+        </div>
+      `}
     </section>
 
     <section class="item">
@@ -64,17 +102,17 @@ export function renderAdmin(el, state, actions) {
       <td><input data-skills="${u.id}" value="${(u.skills || u.specialties || []).join(', ')}" placeholder="pinball, redemption" /></td>
       <td><button data-save-worker="${u.id}">Save</button></td></tr>`).join('')}
       </tbody></table>
-      <form id="workerForm" class="row mt">
-        <input name="displayName" placeholder="Worker name" required />
-        <input name="email" type="email" placeholder="worker email (optional)" />
-        <select name="role">${Object.values(Roles).map((r) => `<option>${r}</option>`).join('')}</select>
+      <form id="workerForm" class="grid grid-2 mt">
+        <label>Worker name<input name="displayName" placeholder="Example: Alex Smith" required /></label>
+        <label>Worker email<input name="email" type="email" placeholder="Optional" /></label>
+        <label>Role<select name="role">${Object.values(Roles).map((r) => `<option>${r}</option>`).join('')}</select></label>
         <button class="primary" type="submit">Add worker record</button>
       </form>
 
       <h4>Invites</h4>
-      <form id="inviteForm" class="row">
-        <input name="email" type="email" placeholder="Invite email" required />
-        <select name="role">${Object.values(Roles).map((r) => `<option>${r}</option>`).join('')}</select>
+      <form id="inviteForm" class="grid grid-2">
+        <label>Invite email<input name="email" type="email" placeholder="name@company.com" required /></label>
+        <label>Role<select name="role">${Object.values(Roles).map((r) => `<option>${r}</option>`).join('')}</select></label>
         <button type="submit">Create invite</button>
       </form>
       <div class="list">${invites.map((i) => `<div class="item"><b>${i.email}</b> • ${i.role}<div class="tiny">Code: ${i.inviteCode}</div><button data-revoke-invite="${i.id}">Revoke</button></div>`).join('') || '<p class="tiny">No pending invites.</p>'}</div>
@@ -103,9 +141,9 @@ export function renderAdmin(el, state, actions) {
     <section class="item">
       <h3>Workspace tools</h3>
       <form id="aiSettingsForm" class="grid">
-        ${aiBooleanFields.map((k) => `<label><input type="checkbox" name="${k}" ${state.settings[k] ? 'checked' : ''} ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /> ${k}</label>`).join('')}
-        ${aiTextFields.map((k) => `<label>${k}<input name="${k}" value="${Array.isArray(state.settings[k]) ? state.settings[k].join(',') : (state.settings[k] || '')}" ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /></label>`).join('')}
-        ${aiNumericFields.map((k) => `<label>${k}<input type="number" step="0.01" name="${k}" value="${state.settings[k] ?? ''}" ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /></label>`).join('')}
+        ${aiBooleanFields.map((k) => `<label><input type="checkbox" name="${k}" ${settings[k] ? 'checked' : ''} ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /> ${aiFieldMeta[k]?.label || k}${renderFieldHelp(k)}</label>`).join('')}
+        ${aiTextFields.map((k) => `<label>${aiFieldMeta[k]?.label || k}${renderFieldHelp(k)}<input name="${k}" value="${Array.isArray(settings[k]) ? settings[k].join(',') : (settings[k] || '')}" placeholder="${k === 'taskIntakeRequiredFields' ? 'assetId, description, reporter' : ''}" ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /></label>`).join('')}
+        ${aiNumericFields.map((k) => `<label>${aiFieldMeta[k]?.label || k}${renderFieldHelp(k)}<input type="number" step="0.01" name="${k}" value="${settings[k] ?? ''}" ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /></label>`).join('')}
         <button ${canChangeAISettings(state.permissions) ? '' : 'disabled'}>Save settings</button>
       </form>
     </section>
