@@ -1,6 +1,34 @@
 import { detectRepeatIssues } from './workflow.js';
 import { buildLocationOptions, buildLocationSummary, getLocationSelection } from './locationContext.js';
 
+function getTaskAgeHours(task) {
+  const openedAt = new Date(task.openedAt || task.createdAtClient || task.updatedAt || task.updatedAtClient || 0);
+  if (Number.isNaN(openedAt.getTime())) return 0;
+  return (Date.now() - openedAt.getTime()) / (1000 * 60 * 60);
+}
+
+function getOverdueThresholdHours(severity = 'medium') {
+  if (severity === 'critical') return 4;
+  if (severity === 'high') return 24;
+  if (severity === 'low') return 168;
+  return 72;
+}
+
+function isTaskOverdue(task) {
+  if (task.status === 'completed') return false;
+  return getTaskAgeHours(task) >= getOverdueThresholdHours(task.severity || 'medium');
+}
+
+function isTaskBlocked(task, state) {
+  if (task.status === 'completed') return false;
+  const assigned = task.assignedWorkers || [];
+  const unavailable = assigned.filter((worker) => state.users.some((user) => (
+    (user.id === worker || user.email === worker) && (user.enabled === false || user.available === false)
+  )));
+  const needsFollowup = (state.taskAiRuns || []).some((run) => run.taskId === task.id && run.status === 'followup_required');
+  return needsFollowup || unavailable.length > 0 || (task.status === 'in_progress' && assigned.length === 0);
+}
+
 function createDefaultReportsUiState() {
   return {
     locationKey: '',
@@ -28,6 +56,9 @@ export function renderReports(el, state) {
   ));
   const completed = scopedTasks.filter((task) => task.status === 'completed');
   const unresolved = scopedTasks.filter((task) => task.status !== 'completed');
+  const overdueTasks = unresolved.filter((task) => isTaskOverdue(task));
+  const blockedTasks = unresolved.filter((task) => isTaskBlocked(task, state));
+  const followupTasks = unresolved.filter((task) => (state.taskAiRuns || []).some((run) => run.taskId === task.id && run.status === 'followup_required'));
   const unresolvedBySeverity = ['critical', 'high', 'medium', 'low'].map((severity) => ({
     severity,
     count: unresolved.filter((task) => (task.severity || 'medium') === severity).length
@@ -106,6 +137,21 @@ export function renderReports(el, state) {
     </div>
 
     ${scopedTasks.length ? '' : '<div class="inline-state success mt">No task data matches the current report filters yet.</div>'}
+
+    <div class="report-alert-grid mt">
+      <div class="report-alert-card">
+        <b>Overdue execution</b>
+        <div class="tiny mt">${overdueTasks.length} task${overdueTasks.length === 1 ? '' : 's'} past age target</div>
+      </div>
+      <div class="report-alert-card">
+        <b>Blocked work</b>
+        <div class="tiny mt">${blockedTasks.length} task${blockedTasks.length === 1 ? '' : 's'} slowed by owner or follow-up blockers</div>
+      </div>
+      <div class="report-alert-card">
+        <b>Follow-up queue</b>
+        <div class="tiny mt">${followupTasks.length} task${followupTasks.length === 1 ? '' : 's'} waiting on AI follow-up answers</div>
+      </div>
+    </div>
 
     <div class="grid grid-2 mt">
       <div class="item">
