@@ -232,6 +232,35 @@ function pickUniqueAssetId(desiredId, assets) {
   return `${root}-${i}`;
 }
 
+function normalizeFirstLocationPayload(formData, companyName, companyTimeZone) {
+  const nameInput = `${formData.get('firstLocationName') || ''}`.trim();
+  const addressInput = `${formData.get('firstLocationAddress') || ''}`.trim();
+  const timeZoneInput = `${formData.get('firstLocationTimeZone') || ''}`.trim();
+  const notesInput = `${formData.get('firstLocationNotes') || ''}`.trim();
+  if (!nameInput && !addressInput && !timeZoneInput && !notesInput) return null;
+  const fallbackName = `${companyName || ''}`.trim() ? `${`${companyName}`.trim()} Main` : 'Main location';
+  return {
+    name: nameInput || fallbackName,
+    address: addressInput,
+    timeZone: timeZoneInput || companyTimeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    notes: notesInput
+  };
+}
+
+async function withTimeout(promise, ms, timeoutMessage) {
+  let timeoutId;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), ms);
+      })
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 function downloadFile(filename, payload, type = 'application/json') {
   const content = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
   const blob = new Blob([content], { type });
@@ -276,13 +305,18 @@ function renderOnboarding(el) {
         <label>Company name<input name="name" placeholder="Example: WOW Technicade" required /></label>
         <label>Contact email<input name="primaryEmail" type="email" placeholder="name@company.com" value="${state.user?.email || ''}" /></label>
         <label>Primary phone<input name="primaryPhone" placeholder="Example: (555) 555-5555" /></label>
+        <p class="tiny" style="margin:0;">Company profile</p>
         <label>HQ address<input name="address" placeholder="Street, city, state" /></label>
         <label>Timezone<input name="timeZone" placeholder="Example: America/Chicago" value="${Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'}" /></label>
         <div class="row">
           <label style="flex:1;">Estimated users<input name="estimatedUsers" type="number" min="0" placeholder="Example: 25" /></label>
           <label style="flex:1;">Estimated assets<input name="estimatedAssets" type="number" min="0" placeholder="Example: 150" /></label>
         </div>
-        <label>First location / primary location notes<textarea name="locations" placeholder="One per line: Name | Address | Timezone | Notes"></textarea></label>
+        <p class="tiny" style="margin:8px 0 0;">First operational location</p>
+        <label>First location name<input name="firstLocationName" placeholder="Example: Main Plant" /></label>
+        <label>First location address<input name="firstLocationAddress" placeholder="Street, city, state" /></label>
+        <label>First location timezone<input name="firstLocationTimeZone" placeholder="Example: America/Chicago" /></label>
+        <label>First location notes (optional)<textarea name="firstLocationNotes" placeholder="Optional setup notes"></textarea></label>
         <button class="primary">Create company workspace</button>
       </form>
       <form id="joinCompanyForm" class="item">
@@ -296,20 +330,19 @@ function renderOnboarding(el) {
   el.querySelector('#createCompanyForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    const locations = `${fd.get('locations') || ''}`.split('\n').map((line) => {
-      const [name, address, timeZone, notes] = line.split('|').map((v) => `${v || ''}`.trim());
-      return { name, address, timeZone, notes };
-    }).filter((row) => row.name);
+    const companyName = `${fd.get('name') || ''}`.trim();
+    const companyTimeZone = `${fd.get('timeZone') || ''}`.trim();
+    const firstLocation = normalizeFirstLocationPayload(fd, companyName, companyTimeZone);
     await runAction('create_company', async () => {
       await createCompanyFromOnboarding(state.user, {
-        name: fd.get('name'),
+        name: companyName,
         primaryEmail: fd.get('primaryEmail'),
         primaryPhone: fd.get('primaryPhone'),
         address: fd.get('address'),
-        timeZone: fd.get('timeZone'),
+        timeZone: companyTimeZone,
         estimatedUsers: fd.get('estimatedUsers'),
         estimatedAssets: fd.get('estimatedAssets'),
-        locations
+        firstLocation
       });
       await bootstrapCompanyContext();
       await refreshData();
@@ -450,7 +483,11 @@ async function render() {
           supportContactsSuggestion: Array.isArray(draft.supportContacts) && draft.supportContacts.length ? draft.supportContacts : (current.supportContactsSuggestion || []),
           notes: `${payload.notes || ''}`.trim() || `${current.notes || ''}`.trim() || (draft.notes ? `${draft.notes}`.trim() : '')
         };
-        await upsertEntity('assets', finalId, withRequiredCompanyId(entityPayload, 'save an asset'), state.user);
+        await withTimeout(
+          upsertEntity('assets', finalId, withRequiredCompanyId(entityPayload, 'save an asset'), state.user),
+          20000,
+          'Asset save timed out. Please retry.'
+        );
         state.assetDraft = { ...createEmptyAssetDraft(), saveFeedback: 'Asset saved - documentation search running.', saveFeedbackTone: 'success' };
         await refreshData();
         render();
@@ -463,7 +500,7 @@ async function render() {
           });
         return;
       } catch (error) {
-        reportActionError('save_asset', error, 'Unable to save asset.');
+        console.error('[save_asset]', error);
         state.assetDraft = { ...(state.assetDraft || {}), saving: false, saveFeedback: formatActionError(error, 'Unable to save asset.'), saveFeedbackTone: 'error' };
         render();
         return;
