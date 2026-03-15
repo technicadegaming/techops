@@ -15,7 +15,9 @@
     input,select,textarea,button{font:inherit} input,select,textarea{width:100%;padding:10px;border-radius:12px;border:1px solid var(--line)} textarea{min-height:90px}
     button{padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:#fff;cursor:pointer} button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
     .badge{display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;background:var(--soft);border:1px solid var(--line);font-size:12px;font-weight:700}
-    .company-switcher{min-width:220px;max-width:320px}
+    .company-switcher,.location-switcher{min-width:220px;max-width:320px}
+    .app-context{display:grid;gap:8px;justify-items:end}
+    .scope-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
     .tiny{font-size:12px;color:var(--muted)} .list{display:grid;gap:8px} .item{background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px}
     .table{width:100%;border-collapse:collapse}.table th,.table td{border-bottom:1px solid var(--line);padding:8px;text-align:left;font-size:13px}
     .danger{color:var(--bad)} .selected{border:2px solid var(--accent-2)} details{margin-top:8px} summary{cursor:pointer} .mt{margin-top:8px}
@@ -54,10 +56,16 @@
           <h1>WOW Technicade Operations Portal</h1>
           <p class="tiny">Phase 1 foundation: auth, shared data, audit, role controls, migration, backup/restore.</p>
         </div>
-        <div class="row">
-          <span id="userBadge" class="badge"></span>
-          <select id="activeCompanySwitcher" class="company-switcher hide" aria-label="Active company"></select>
-          <button id="logoutBtn">Logout</button>
+        <div class="app-context">
+          <div class="row">
+            <span id="userBadge" class="badge"></span>
+            <button id="logoutBtn">Logout</button>
+          </div>
+          <div class="scope-bar">
+            <span id="locationScopeBadge" class="badge">Company-wide view</span>
+            <select id="activeLocationSwitcher" class="location-switcher" aria-label="Active location"></select>
+            <select id="activeCompanySwitcher" class="company-switcher hide" aria-label="Active company"></select>
+          </div>
         </div>
       </header>
 

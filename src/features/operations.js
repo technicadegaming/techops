@@ -13,27 +13,35 @@ import {
   getCurrentOpenedDateTimeValue,
   buildAssetKey
 } from './workflow.js';
+import {
+  buildLocationOptions,
+  buildLocationSummary,
+  getAssetLocationRecord,
+  getLocationEmptyState,
+  getLocationScopeLabel,
+  getTaskLocationRecord
+} from './locationContext.js';
 
 function renderAiSourceLine(run) {
   const sourceList = Array.isArray(run?.documentationSources) ? run.documentationSources : [];
-  const labels = new Set(sourceList.map((s) => s?.sourceType).filter(Boolean));
+  const labels = new Set(sourceList.map((source) => source?.sourceType).filter(Boolean));
   const mode = labels.has('manual')
     ? 'manual-backed'
     : (labels.has('approved_doc') ? 'approved-doc-backed' : 'web/internal only');
   if (!sourceList.length && !run?.citations?.length) return `<div class="tiny">Sources used: ${mode}</div>`;
-  const names = sourceList.slice(0, 3).map((s) => s.title || s.url).filter(Boolean);
-  return `<div class="tiny">Sources used: ${mode}${names.length ? ` · ${names.join(' | ')}` : ''}</div>`;
+  const names = sourceList.slice(0, 3).map((source) => source.title || source.url).filter(Boolean);
+  return `<div class="tiny">Sources used: ${mode}${names.length ? ` | ${names.join(' | ')}` : ''}</div>`;
 }
 
 function renderAiPanel(task, state) {
-  const run = (state.taskAiRuns || []).find((r) => r.taskId === task.id);
-  const followup = run ? (state.taskAiFollowups || []).find((f) => f.runId === run.id) : null;
+  const run = (state.taskAiRuns || []).find((entry) => entry.taskId === task.id);
+  const followup = run ? (state.taskAiFollowups || []).find((entry) => entry.runId === run.id) : null;
   return `<div class="item mt"><b>AI Troubleshooting</b>
-    <div class="tiny">Status: ${run?.status || 'not_started'} ${task.aiSummary?.summary ? `· ${task.aiSummary.summary}` : ''}</div>
+    <div class="tiny">Status: ${run?.status || 'not_started'} ${task.aiSummary?.summary ? `| ${task.aiSummary.summary}` : ''}</div>
     ${run ? renderAiSourceLine(run) : ''}
     ${run?.shortFrontlineVersion ? `<div class="tiny"><b>Frontline:</b> ${run.shortFrontlineVersion}</div>` : ''}
     ${run?.diagnosticSteps?.length ? `<div class="tiny"><b>Steps:</b> ${run.diagnosticSteps.join(' | ')}</div>` : ''}
-    ${followup?.questions?.length ? `<form data-followup="${task.id}" data-run="${run.id}" class="grid">${followup.questions.map((q, i) => `<label class="tiny">${q}<input name="a${i}" placeholder="Answer" ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'} /></label>`).join('')}<button ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'}>Submit follow-up answers</button></form>` : ''}
+    ${followup?.questions?.length ? `<form data-followup="${task.id}" data-run="${run.id}" class="grid">${followup.questions.map((question, index) => `<label class="tiny">${question}<input name="a${index}" placeholder="Answer" ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'} /></label>`).join('')}<button ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'}>Submit follow-up answers</button></form>` : ''}
     <div class="row mt">
       <button data-run-ai="${task.id}" ${canRunAiTroubleshooting(state.permissions) ? '' : 'disabled'}>Run AI</button>
       <button data-rerun-ai="${task.id}" ${canRunAiTroubleshooting(state.permissions) ? '' : 'disabled'}>Regenerate</button>
@@ -80,18 +88,36 @@ export function renderOperations(el, state, actions) {
   state.operationsUi = { ...createDefaultOperationsUiState(), ...(state.operationsUi || {}) };
   const editable = canEditTasks(state.permissions);
   const expanded = new Set(state.operationsUi.expandedTaskIds || []);
-  const assetById = new Map((state.assets || []).map((a) => [a.id, a]));
-  const assetByName = new Map((state.assets || []).map((a) => [`${a.name || a.id}`.toLowerCase(), a]));
+  const assetById = new Map((state.assets || []).map((asset) => [asset.id, asset]));
+  const assetByName = new Map((state.assets || []).map((asset) => [`${asset.name || asset.id}`.toLowerCase(), asset]));
+  const locationOptions = buildLocationOptions(state);
+  const scope = buildLocationSummary(state);
+  const scopedTasks = scope.scopedTasks;
+  const scopedAssets = scope.scopedAssets;
+  const openTasks = scope.openTasks;
 
   el.innerHTML = `
     <div class="row space"><h2>Operations & Tasks</h2><div class="tiny">Structured intake enabled</div></div>
+    <div class="item" style="margin-bottom:12px;">
+      <div class="row space">
+        <div>
+          <b>${getLocationScopeLabel(scope.selection)}</b>
+          <div class="tiny">Open work: ${openTasks.length} | Broken assets: ${scope.brokenAssets.length}</div>
+        </div>
+        <label class="tiny" style="min-width:220px;">Filter
+          <select data-location-filter>
+            ${locationOptions.map((option) => `<option value="${option.key}" ${option.key === scope.selection?.key ? 'selected' : ''}>${option.label}</option>`).join('')}
+          </select>
+        </label>
+      </div>
+    </div>
     <form id="taskForm" class="grid">
       <div class="grid grid-2">
         <label>Task ID<input name="id" readonly /></label>
         <label>Opened date/time<input name="openedAt" type="datetime-local" readonly /></label>
       </div>
       <label>Asset / game
-        <input name="assetSearch" list="assetOptions" placeholder="Search by asset name" required ${editable ? '' : 'disabled'} />
+        <input name="assetSearch" list="assetOptions" placeholder="${scopedAssets.length ? 'Search by asset name' : 'No assets in the current location yet'}" required ${editable ? '' : 'disabled'} />
       </label>
       <textarea name="description" placeholder="Describe the issue / concern" required ${editable ? '' : 'disabled'}></textarea>
       <input name="alreadyTried" placeholder="What has been tried so far?" ${editable ? '' : 'disabled'} />
@@ -104,7 +130,7 @@ export function renderOperations(el, state, actions) {
           <select name="severity" ${editable ? '' : 'disabled'}><option>critical</option><option>high</option><option selected>medium</option><option>low</option></select>
           <input name="symptomTags" placeholder="Symptoms / tags (comma-separated)" ${editable ? '' : 'disabled'} />
           <input name="symptomTagsExtra" placeholder="Additional symptom tags" ${editable ? '' : 'disabled'} />
-          <input name="location" placeholder="Location / zone / area" ${editable ? '' : 'disabled'} />
+          <input name="location" list="locationOptions" placeholder="Location / zone / area" ${editable ? '' : 'disabled'} />
           <input name="customerImpact" placeholder="Customer impact" ${editable ? '' : 'disabled'} />
           <input name="errorText" placeholder="Observed error text/code" ${editable ? '' : 'disabled'} />
           <select name="occurrence" ${editable ? '' : 'disabled'}><option value="constant">Constant</option><option value="intermittent">Intermittent</option></select>
@@ -117,25 +143,29 @@ export function renderOperations(el, state, actions) {
       </details>
 
       <button class="primary" ${editable ? '' : 'disabled'}>Save task</button>
-      <datalist id="assetOptions">${state.assets.map((a) => `<option value="${a.name || a.id}"></option>`).join('')}</datalist>
+      <datalist id="assetOptions">${scopedAssets.map((asset) => `<option value="${asset.name || asset.id}"></option>`).join('')}</datalist>
+      <datalist id="locationOptions">${locationOptions.filter((option) => option.name && !option.name.includes('Company-wide')).map((option) => `<option value="${option.name}"></option>`).join('')}</datalist>
     </form>
     <div class="list mt">
-      ${state.tasks.map((t) => {
-      const unavailable = (t.assignedWorkers || []).filter((w) => state.users.some((u) => (u.id === w || u.email === w) && (u.enabled === false || u.available === false)));
-      const taskAsset = assetById.get(t.assetId);
-      const friendlyAsset = taskAsset?.name || t.assetName || t.assetId || '-';
-      const showTaskDetails = expanded.has(t.id);
-      return `<details class="item ${state.route?.taskId === t.id ? 'selected' : ''}" id="task-${t.id}" data-task-details="${t.id}" ${showTaskDetails ? 'open' : ''}>
-        <summary><b>${t.title || t.id}</b> · ${t.status || 'open'} · ${friendlyAsset}</summary>
-        <div class="tiny">Assigned: ${(t.assignedWorkers || []).join(', ') || 'unassigned'} ${unavailable.length ? `· ⚠️ unavailable: ${unavailable.join(', ')}` : ''}</div>
-        <div><b>Issue:</b> ${t.description || ''}</div>
-        <div class="tiny">${t.issueCategory || 'uncategorized'} · ${t.severity || 'medium'} · tags: ${(t.symptomTags || []).join(', ') || 'none'}</div>
-        ${renderCloseout(t, state)}
-        ${renderAiPanel(t, state)}
-        ${unavailable.length ? `<button data-reassign="${t.id}">Quick reassign</button>` : ''}
-        ${canDelete(state.permissions) ? `<button data-del="${t.id}" class="danger">Delete</button>` : ''}
-      </details>`;
-    }).join('')}
+      ${scopedTasks.map((task) => {
+        const unavailable = (task.assignedWorkers || []).filter((worker) => state.users.some((user) => (user.id === worker || user.email === worker) && (user.enabled === false || user.available === false)));
+        const taskAsset = assetById.get(task.assetId);
+        const friendlyAsset = taskAsset?.name || task.assetName || task.assetId || '-';
+        const taskLocation = getTaskLocationRecord(state, task, assetById);
+        const assetLocation = taskAsset ? getAssetLocationRecord(state, taskAsset) : null;
+        const showTaskDetails = expanded.has(task.id);
+        return `<details class="item ${state.route?.taskId === task.id ? 'selected' : ''}" id="task-${task.id}" data-task-details="${task.id}" ${showTaskDetails ? 'open' : ''}>
+          <summary><b>${task.title || task.id}</b> | ${task.status || 'open'} | ${friendlyAsset}</summary>
+          <div class="tiny">Location: ${taskLocation.label}${assetLocation && assetLocation.label !== taskLocation.label ? ` | asset at ${assetLocation.label}` : ''}</div>
+          <div class="tiny">Assigned: ${(task.assignedWorkers || []).join(', ') || 'unassigned'} ${unavailable.length ? `| unavailable: ${unavailable.join(', ')}` : ''}</div>
+          <div><b>Issue:</b> ${task.description || ''}</div>
+          <div class="tiny">${task.issueCategory || 'uncategorized'} | ${task.severity || 'medium'} | tags: ${(task.symptomTags || []).join(', ') || 'none'}</div>
+          ${renderCloseout(task, state)}
+          ${renderAiPanel(task, state)}
+          ${unavailable.length ? `<button data-reassign="${task.id}">Quick reassign</button>` : ''}
+          ${canDelete(state.permissions) ? `<button data-del="${task.id}" class="danger">Delete</button>` : ''}
+        </details>`;
+      }).join('') || `<div class="tiny">${getLocationEmptyState(scope.selection, 'tasks', 'task')}</div>`}
     </div>`;
 
   const form = el.querySelector('#taskForm');
@@ -143,6 +173,7 @@ export function renderOperations(el, state, actions) {
   const openedAtInput = form?.querySelector('[name="openedAt"]');
   const assetInput = form?.querySelector('[name="assetSearch"]');
   const reporterInput = form?.querySelector('[name="reporter"]');
+  const locationInput = form?.querySelector('[name="location"]');
   const moreDetails = form?.querySelector('[data-more-details]');
 
   const getSelectedAsset = () => {
@@ -156,11 +187,13 @@ export function renderOperations(el, state, actions) {
     const nextId = generateTaskId({
       assetId: selectedAsset?.id,
       assetName: selectedAsset?.name,
-      existingIds: state.tasks.map((t) => t.id)
+      existingIds: state.tasks.map((task) => task.id)
     });
     if (idInput && !idInput.value) idInput.value = nextId;
     if (openedAtInput && !openedAtInput.value) openedAtInput.value = getCurrentOpenedDateTimeValue(new Date());
     if (reporterInput && !reporterInput.value) reporterInput.value = state.user?.email || '';
+    const scopedLocationName = scope.selection?.id ? scope.selection.name : '';
+    if (locationInput && !locationInput.value) locationInput.value = selectedAsset?.locationName || selectedAsset?.location || scopedLocationName;
   };
 
   const restoreDraft = () => {
@@ -195,12 +228,13 @@ export function renderOperations(el, state, actions) {
     state.operationsUi.moreDetailsOpen = !!moreDetails.open;
   });
 
-  form?.addEventListener('submit', async (e) => {
-    e.preventDefault();
+  form?.addEventListener('submit', async (event) => {
+    event.preventDefault();
     persistDraft();
     const fd = new FormData(form);
     const selectedAsset = getSelectedAsset();
     const openedAtRaw = `${fd.get('openedAt') || ''}`.trim();
+    const assetLocation = selectedAsset ? getAssetLocationRecord(state, selectedAsset) : null;
     const payload = normalizeTaskIntake({
       ...Object.fromEntries(fd.entries()),
       id: `${fd.get('id') || ''}`.trim(),
@@ -208,6 +242,8 @@ export function renderOperations(el, state, actions) {
       openedAt: openedAtRaw ? new Date(openedAtRaw).toISOString() : new Date().toISOString(),
       createdAtClient: new Date().toISOString(),
       assetName: selectedAsset?.name || `${fd.get('assetSearch') || ''}`,
+      locationId: assetLocation?.id || '',
+      location: `${fd.get('location') || ''}`.trim() || assetLocation?.name || '',
       assetKeySnapshot: buildAssetKey(selectedAsset?.id, selectedAsset?.name),
       reportedByUserId: state.user?.uid || '',
       reportedByEmail: state.user?.email || ''
@@ -221,6 +257,8 @@ export function renderOperations(el, state, actions) {
     state.operationsUi.moreDetailsOpen = false;
   });
 
+  el.querySelector('[data-location-filter]')?.addEventListener('change', (event) => actions.setLocationFilter(event.target.value));
+
   el.querySelectorAll('[data-task-details]').forEach((taskDetails) => taskDetails.addEventListener('toggle', () => {
     const taskId = taskDetails.dataset.taskDetails;
     const current = new Set(state.operationsUi.expandedTaskIds || []);
@@ -229,40 +267,43 @@ export function renderOperations(el, state, actions) {
     state.operationsUi.expandedTaskIds = [...current];
   }));
 
-  el.querySelectorAll('[data-closeout]').forEach((f) => f.addEventListener('submit', (e) => {
-    e.preventDefault();
+  el.querySelectorAll('[data-closeout]').forEach((taskForm) => taskForm.addEventListener('submit', (event) => {
+    event.preventDefault();
     state.operationsUi.scrollY = window.scrollY;
-    const taskId = f.dataset.closeout;
-    const closeout = Object.fromEntries(new FormData(f).entries());
+    const taskId = taskForm.dataset.closeout;
+    const closeout = Object.fromEntries(new FormData(taskForm).entries());
     actions.completeTask(taskId, closeout);
   }));
 
-  el.querySelectorAll('[data-reassign]').forEach((btn) => btn.addEventListener('click', () => {
+  el.querySelectorAll('[data-reassign]').forEach((button) => button.addEventListener('click', () => {
     state.operationsUi.scrollY = window.scrollY;
-    actions.reassignTask(btn.dataset.reassign);
+    actions.reassignTask(button.dataset.reassign);
   }));
-  el.querySelectorAll('[data-del]').forEach((btn) => btn.addEventListener('click', () => {
+  el.querySelectorAll('[data-del]').forEach((button) => button.addEventListener('click', () => {
     state.operationsUi.scrollY = window.scrollY;
-    actions.deleteTask(btn.dataset.del);
+    actions.deleteTask(button.dataset.del);
   }));
-  el.querySelectorAll('[data-run-ai]').forEach((btn) => btn.addEventListener('click', () => {
+  el.querySelectorAll('[data-run-ai]').forEach((button) => button.addEventListener('click', () => {
     state.operationsUi.scrollY = window.scrollY;
-    actions.runAi(btn.dataset.runAi);
+    actions.runAi(button.dataset.runAi);
   }));
-  el.querySelectorAll('[data-rerun-ai]').forEach((btn) => btn.addEventListener('click', () => {
+  el.querySelectorAll('[data-rerun-ai]').forEach((button) => button.addEventListener('click', () => {
     state.operationsUi.scrollY = window.scrollY;
-    actions.rerunAi(btn.dataset.rerunAi);
+    actions.rerunAi(button.dataset.rerunAi);
   }));
-  el.querySelectorAll('[data-save-fix]').forEach((btn) => btn.addEventListener('click', () => {
+  el.querySelectorAll('[data-save-fix]').forEach((button) => button.addEventListener('click', () => {
     state.operationsUi.scrollY = window.scrollY;
-    actions.saveFix(btn.dataset.saveFix);
+    actions.saveFix(button.dataset.saveFix);
   }));
-  el.querySelectorAll('[data-followup]').forEach((f) => f.addEventListener('submit', (e) => {
-    e.preventDefault();
+  el.querySelectorAll('[data-followup]').forEach((followupForm) => followupForm.addEventListener('submit', (event) => {
+    event.preventDefault();
     state.operationsUi.scrollY = window.scrollY;
-    const taskId = f.dataset.followup;
-    const runId = f.dataset.run;
-    const answers = [...new FormData(f).entries()].map(([, answer], idx) => ({ question: (state.taskAiFollowups.find((x) => x.runId === runId)?.questions || [])[idx] || `Question ${idx + 1}`, answer }));
+    const taskId = followupForm.dataset.followup;
+    const runId = followupForm.dataset.run;
+    const answers = [...new FormData(followupForm).entries()].map(([, answer], index) => ({
+      question: (state.taskAiFollowups.find((entry) => entry.runId === runId)?.questions || [])[index] || `Question ${index + 1}`,
+      answer
+    }));
     actions.submitFollowup(taskId, runId, answers);
   }));
 }
