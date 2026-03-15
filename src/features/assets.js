@@ -1,5 +1,15 @@
-import { canDelete, canEditAssets, isManager } from '../roles.js';
+import { canDelete, canEditAssets, isAdmin, isManager } from '../roles.js';
 import { detectRepeatIssues } from './workflow.js';
+
+function renderAssetCardFallback(asset, error) {
+  const id = `${asset?.id || 'unknown'}`;
+  const label = `${asset?.name || id}`;
+  console.error('[render_asset_card]', { assetId: id, error });
+  return `<div class="item" style="border:1px solid #fecaca; background:#fef2f2;">
+    <div><b>${label}</b></div>
+    <div class="tiny" style="color:#991b1b;">This asset has invalid data and could not be fully rendered.</div>
+  </div>`;
+}
 
 const ENRICHMENT_STATUS_LABELS = {
   searching_docs: 'searching docs',
@@ -180,10 +190,13 @@ export function renderAssets(el, state, actions) {
         </div>
       </details>
       ${state.assetDraft?.saveFeedback ? `<div class="tiny" style="grid-column:1/-1; color:${state.assetDraft?.saveFeedbackTone === 'error' ? '#b91c1c' : '#166534'};">${state.assetDraft.saveFeedback}</div>` : ''}
+      ${state.assetDraft?.saveSecondaryFeedback ? `<div class="tiny" style="grid-column:1/-1; color:#4b5563;">${state.assetDraft.saveSecondaryFeedback}</div>` : ''}
+      ${state.assetDraft?.saveDebugContext ? `<div class="tiny" style="grid-column:1/-1; color:#6b7280;">${state.assetDraft.saveDebugContext}</div>` : ''}
       <button type="submit" class="primary" ${editable && !state.assetDraft?.saving ? '' : 'disabled'}>${state.assetDraft?.saving ? 'Saving…' : 'Save asset'}</button>
     </form>
 
     <div class="list">${state.assets.map((a) => {
+      try {
       const openTasks = state.tasks.filter((t) => t.assetId === a.id && t.status !== 'completed');
       const completedTasks = state.tasks.filter((t) => t.assetId === a.id && t.status === 'completed').slice(0, 5);
       const aiRuns = state.taskAiRuns.filter((r) => r.assetId === a.id || state.tasks.find((t) => t.id === r.taskId)?.assetId === a.id).slice(0, 4);
@@ -235,6 +248,9 @@ export function renderAssets(el, state, actions) {
 
       ${canDelete(state.permissions) ? `<button data-del="${a.id}" class="danger" type="button">Delete</button>` : ''}
       </details>`;
+      } catch (error) {
+        return renderAssetCardFallback(a, error);
+      }
     }).join('')}</div>`;
 
   const form = el.querySelector('#assetForm');

@@ -39,6 +39,8 @@ function createEmptyAssetDraft() {
     previewMeta: { inFlightQuery: '', lastCompletedQuery: '' },
     draftNameNormalized: '',
     saveFeedback: '',
+    saveSecondaryFeedback: '',
+    saveDebugContext: '',
     saveFeedbackTone: 'success',
     saving: false
   };
@@ -58,6 +60,24 @@ const state = { user: null, profile: null, company: null, memberships: [], membe
 function formatActionError(error, fallbackMessage) {
   const detail = `${error?.message || error || ''}`.trim();
   return detail ? `${fallbackMessage} ${detail}` : fallbackMessage;
+}
+
+function isPermissionRelatedError(error) {
+  const code = `${error?.code || ''}`.toLowerCase();
+  const message = `${error?.message || error || ''}`.toLowerCase();
+  return code.includes('permission-denied') || message.includes('permission') || message.includes('missing or insufficient permissions');
+}
+
+function buildAssetSaveErrorMessage(error) {
+  if (!isPermissionRelatedError(error)) return formatActionError(error, 'Unable to save asset.');
+  return 'Unable to save asset due to company permissions. Verify your company access and try again.';
+}
+
+function buildAssetSaveDebugContext() {
+  return {
+    companyId: `${state.company?.id || state.activeMembership?.companyId || ''}`.trim() || 'unknown',
+    companyRole: state.permissions?.companyRole || 'unknown'
+  };
 }
 
 function reportActionError(label, error, fallbackMessage) {
@@ -460,7 +480,7 @@ async function render() {
       const manufacturer = `${payload.manufacturer || ''}`.trim();
       if (!name) return alert('Asset name is required.');
       if (!manufacturer) return alert('Manufacturer is required.');
-      state.assetDraft = { ...(state.assetDraft || {}), saving: true, saveFeedback: '', saveFeedbackTone: 'success' };
+      state.assetDraft = { ...(state.assetDraft || {}), saving: true, saveFeedback: '', saveFeedbackTone: 'success', saveDebugContext: '' };
       render();
       try {
         const desiredId = `${id || ''}`.trim() || normalizeAssetId(name);
@@ -488,20 +508,51 @@ async function render() {
           20000,
           'Asset save timed out. Please retry.'
         );
-        state.assetDraft = { ...createEmptyAssetDraft(), saveFeedback: 'Asset saved - documentation search running.', saveFeedbackTone: 'success' };
+        state.assetDraft = { ...createEmptyAssetDraft(), saveFeedback: 'Asset saved.', saveFeedbackTone: 'success', saveDebugContext: '' };
         await refreshData();
         render();
+        state.assetDraft = {
+          ...(state.assetDraft || {}),
+          saveSecondaryFeedback: 'Docs lookup is still pending.',
+          saveFeedbackTone: 'success'
+        };
+        render();
         enrichAssetDocumentation(finalId, { trigger: 'post_save' })
-          .then(async () => { await refreshData(); render(); })
+          .then(async () => {
+            await refreshData();
+            state.assetDraft = {
+              ...(state.assetDraft || {}),
+              saveFeedback: 'Asset saved.',
+              saveSecondaryFeedback: '',
+              saveFeedbackTone: 'success'
+            };
+            render();
+          })
           .catch(async (error) => {
             console.error('[asset_post_save_enrichment]', error);
             await refreshData();
+            state.assetDraft = {
+              ...(state.assetDraft || {}),
+              saveFeedback: 'Asset saved.',
+              saveSecondaryFeedback: 'Docs lookup failed; you can retry.',
+              saveFeedbackTone: 'success'
+            };
             render();
           });
         return;
       } catch (error) {
         console.error('[save_asset]', error);
-        state.assetDraft = { ...(state.assetDraft || {}), saving: false, saveFeedback: formatActionError(error, 'Unable to save asset.'), saveFeedbackTone: 'error' };
+        const role = `${state.permissions?.companyRole || ''}`.toLowerCase();
+        const showDebugContext = isPermissionRelatedError(error) && (isAdmin(state.permissions) || isManager(state.permissions) || role === 'owner');
+        const debug = showDebugContext ? buildAssetSaveDebugContext() : null;
+        state.assetDraft = {
+          ...(state.assetDraft || {}),
+          saving: false,
+          saveFeedback: buildAssetSaveErrorMessage(error),
+          saveSecondaryFeedback: '',
+          saveFeedbackTone: 'error',
+          saveDebugContext: debug ? `Debug — company: ${debug.companyId} · role: ${debug.companyRole}` : ''
+        };
         render();
         return;
       } finally {
