@@ -6,6 +6,8 @@ import { renderAssets } from './features/assets.js';
 import { renderCalendar } from './features/calendar.js';
 import { renderReports } from './features/reports.js';
 import { renderAdmin } from './admin.js';
+import { renderOnboarding } from './onboarding.js';
+import { formatActionError, runActionFactory } from './uiActions.js';
 import { buildPermissionContext, canDelete, isAdmin, isGlobalAdmin, isManager } from './roles.js';
 import { previewLegacyImport, importLegacyData } from './migration.js';
 import { dryRunBackup, exportBackupJson, restoreBackup, validateBackup } from './backup.js';
@@ -55,12 +57,7 @@ function buildPreviewQueryKey(payload = {}) {
   return [assetName, manufacturer, serialNumber, assetId, followupAnswer].join('|');
 }
 
-const state = { user: null, profile: null, company: null, memberships: [], membershipCompanies: {}, activeMembership: null, permissions: buildPermissionContext(), onboardingRequired: false, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], workers: [], invites: [], companyLocations: [], importHistory: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], settings: {}, restorePayload: null, route: parseRouteState(), assetDraft: createEmptyAssetDraft(), operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0 } };
-
-function formatActionError(error, fallbackMessage) {
-  const detail = `${error?.message || error || ''}`.trim();
-  return detail ? `${fallbackMessage} ${detail}` : fallbackMessage;
-}
+const state = { user: null, profile: null, company: null, memberships: [], membershipCompanies: {}, activeMembership: null, permissions: buildPermissionContext(), onboardingRequired: false, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], workers: [], invites: [], companyLocations: [], importHistory: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], settings: {}, restorePayload: null, route: parseRouteState(), assetDraft: createEmptyAssetDraft(), operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0 }, adminSection: 'company' };
 
 function isPermissionRelatedError(error) {
   const code = `${error?.code || ''}`.toLowerCase();
@@ -71,10 +68,10 @@ function isPermissionRelatedError(error) {
 function getEnrichmentFailureState(error) {
   const blocked = isPermissionRelatedError(error);
   return {
-    status: blocked ? 'docs_blocked' : 'docs_failed',
+    status: blocked ? 'permission_blocked' : 'lookup_failed',
     message: blocked
-      ? 'Asset saved. Docs lookup was blocked by permissions.'
-      : 'Asset saved. Docs lookup failed; you can retry.'
+      ? 'Asset saved. Access blocked while checking manuals/support links.'
+      : 'Asset saved. Lookup failed; retry when ready.'
   };
 }
 
@@ -147,17 +144,7 @@ function withRequiredCompanyId(payload = {}, actionLabel = 'continue') {
   return { ...payload, companyId: requireActiveCompanyId(actionLabel) };
 }
 
-async function runAction(label, work, options = {}) {
-  try {
-    return await work();
-  } catch (error) {
-    reportActionError(label, error, options.fallbackMessage || `${label} failed.`);
-    if (typeof options.onError === 'function') options.onError(error);
-    return null;
-  } finally {
-    if (typeof options.onFinally === 'function') options.onFinally();
-  }
-}
+const runAction = runActionFactory({ reportActionError });
 
 function tabVisible(tab) {
   if (state.onboardingRequired) return tab === 'dashboard';
@@ -278,21 +265,6 @@ function pickUniqueAssetId(desiredId, assets) {
   return `${root}-${i}`;
 }
 
-function normalizeFirstLocationPayload(formData, companyName, companyTimeZone) {
-  const nameInput = `${formData.get('firstLocationName') || ''}`.trim();
-  const addressInput = `${formData.get('firstLocationAddress') || ''}`.trim();
-  const timeZoneInput = `${formData.get('firstLocationTimeZone') || ''}`.trim();
-  const notesInput = `${formData.get('firstLocationNotes') || ''}`.trim();
-  if (!nameInput && !addressInput && !timeZoneInput && !notesInput) return null;
-  const fallbackName = `${companyName || ''}`.trim() ? `${`${companyName}`.trim()} Main` : 'Main location';
-  return {
-    name: nameInput || fallbackName,
-    address: addressInput,
-    timeZone: timeZoneInput || companyTimeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-    notes: notesInput
-  };
-}
-
 async function withTimeout(promise, ms, timeoutMessage) {
   let timeoutId;
   try {
@@ -341,77 +313,6 @@ function normalizeSupportEntries(values = []) {
 }
 
 
-function renderOnboarding(el) {
-  el.innerHTML = `
-    <h2>Welcome to WOW Technicade Operations</h2>
-    <p class="tiny">Set up your company workspace to continue. Existing legacy data can be adopted into your first company safely.</p>
-    <div class="grid grid-2">
-      <form id="createCompanyForm" class="item">
-        <h3>Create company</h3>
-        <label>Company name<input name="name" placeholder="Example: WOW Technicade" required /></label>
-        <label>Contact email<input name="primaryEmail" type="email" placeholder="name@company.com" value="${state.user?.email || ''}" /></label>
-        <label>Primary phone<input name="primaryPhone" placeholder="Example: (555) 555-5555" /></label>
-        <p class="tiny" style="margin:0;">Company profile</p>
-        <label>HQ address<input name="address" placeholder="Street, city, state" /></label>
-        <label>Timezone<input name="timeZone" placeholder="Example: America/Chicago" value="${Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'}" /></label>
-        <div class="row">
-          <label style="flex:1;">Estimated users<input name="estimatedUsers" type="number" min="0" placeholder="Example: 25" /></label>
-          <label style="flex:1;">Estimated assets<input name="estimatedAssets" type="number" min="0" placeholder="Example: 150" /></label>
-        </div>
-        <p class="tiny" style="margin:8px 0 0;">First operational location</p>
-        <label>First location name<input name="firstLocationName" placeholder="Example: Main Plant" /></label>
-        <label>First location address<input name="firstLocationAddress" placeholder="Street, city, state" /></label>
-        <label>First location timezone<input name="firstLocationTimeZone" placeholder="Example: America/Chicago" /></label>
-        <label>First location notes (optional)<textarea name="firstLocationNotes" placeholder="Optional setup notes"></textarea></label>
-        <button class="primary">Create company workspace</button>
-      </form>
-      <form id="joinCompanyForm" class="item">
-        <h3>Join existing company</h3>
-        <label>Invite code<input name="inviteCode" placeholder="Paste the code from your admin" required /></label>
-        <button class="primary">Accept invite & join</button>
-        <p class="tiny">Ask your admin for an invite code from the Admin &gt; Users/Invites section.</p>
-      </form>
-    </div>`;
-
-  el.querySelector('#createCompanyForm')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const fd = new FormData(e.currentTarget);
-    const companyName = `${fd.get('name') || ''}`.trim();
-    const companyTimeZone = `${fd.get('timeZone') || ''}`.trim();
-    const firstLocation = normalizeFirstLocationPayload(fd, companyName, companyTimeZone);
-    await runAction('create_company', async () => {
-      await createCompanyFromOnboarding(state.user, {
-        name: companyName,
-        primaryEmail: fd.get('primaryEmail'),
-        primaryPhone: fd.get('primaryPhone'),
-        address: fd.get('address'),
-        timeZone: companyTimeZone,
-        estimatedUsers: fd.get('estimatedUsers'),
-        estimatedAssets: fd.get('estimatedAssets'),
-        firstLocation
-      });
-      await bootstrapCompanyContext();
-      await refreshData();
-      render();
-    }, {
-      fallbackMessage: 'Unable to create company workspace.'
-    });
-  });
-
-  el.querySelector('#joinCompanyForm')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const fd = new FormData(e.currentTarget);
-    await runAction('accept_invite', async () => {
-      await acceptInvite({ inviteCode: fd.get('inviteCode'), user: state.user });
-      await bootstrapCompanyContext();
-      await refreshData();
-      render();
-    }, {
-      fallbackMessage: 'Unable to accept invite.'
-    });
-  });
-}
-
 async function bootstrapCompanyContext() {
   setActiveCompanyContext(null);
   const memberships = await listMembershipsByUser(state.user.uid);
@@ -441,7 +342,24 @@ async function render() {
   document.getElementById('userBadge').textContent = `${state.user.email} (${roleLabel})${state.company?.name ? ` • ${state.company.name}` : ''}`;
 
   if (state.onboardingRequired) {
-    renderOnboarding(document.getElementById('dashboard'));
+    renderOnboarding(document.getElementById('dashboard'), state, {
+      createCompany: async (payload) => {
+        await runAction('create_company', async () => {
+          await createCompanyFromOnboarding(state.user, payload);
+          await bootstrapCompanyContext();
+          await refreshData();
+          render();
+        }, { fallbackMessage: 'Unable to create company workspace.' });
+      },
+      acceptInvite: async (inviteCode) => {
+        await runAction('accept_invite', async () => {
+          await acceptInvite({ inviteCode, user: state.user });
+          await bootstrapCompanyContext();
+          await refreshData();
+          render();
+        }, { fallbackMessage: 'Unable to accept invite.' });
+      }
+    });
     openTab('dashboard');
     return;
   }
@@ -745,12 +663,12 @@ async function render() {
       const links = strongSuggestions.slice(0, 2).map((s) => s.url).filter(Boolean);
       if (!links.length) {
         const weakQuestion = current.enrichmentFollowupQuestion || 'Can you confirm cabinet type/version from the manufacturer plate?';
-        await upsertEntity('assets', id, { ...current, enrichmentStatus: 'needs_follow_up', enrichmentFollowupQuestion: weakQuestion }, state.user);
+        await upsertEntity('assets', id, { ...current, enrichmentStatus: 'followup_needed', enrichmentFollowupQuestion: weakQuestion }, state.user);
         await refreshData(); render();
         return;
       }
 
-      await upsertEntity('assets', id, { ...current, manualLinks: dedupeUrls([...(current.manualLinks || []), ...links]), enrichmentStatus: 'docs_found', enrichmentFollowupQuestion: '' }, state.user);
+      await upsertEntity('assets', id, { ...current, manualLinks: dedupeUrls([...(current.manualLinks || []), ...links]), enrichmentStatus: 'verified_manual_found', enrichmentFollowupQuestion: '' }, state.user);
       await refreshData(); render();
     },
     applyEnrichmentSuggestions: async (id, mode) => {
@@ -799,7 +717,7 @@ async function render() {
       await upsertEntity('assets', id, {
         ...current,
         manualLinks: dedupeUrls([...(current.manualLinks || []), url]),
-        enrichmentStatus: 'docs_found'
+        enrichmentStatus: 'verified_manual_found'
       }, state.user);
       await refreshData(); render();
     },
@@ -878,6 +796,7 @@ async function render() {
   renderCalendar(document.getElementById('calendar'), state);
   renderReports(document.getElementById('reports'), state);
   renderAdmin(document.getElementById('admin'), state, {
+    setAdminSection: (section) => { state.adminSection = section || 'company'; render(); },
     saveWorker: async (id, payload) => {
       const existing = state.workers.find((u) => u.id === id) || {};
       await upsertEntity('workers', id, { ...existing, ...payload, accountStatus: existing.accountStatus || (payload.email ? 'invited_or_unlinked' : 'directory_only') }, state.user);
