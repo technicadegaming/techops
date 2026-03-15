@@ -158,7 +158,8 @@ export function parseRouteState() {
   return {
     tab: params.get('tab') || 'dashboard',
     taskId: params.get('taskId') || null,
-    assetId: params.get('assetId') || null
+    assetId: params.get('assetId') || null,
+    locationKey: params.get('location') || null
   };
 }
 
