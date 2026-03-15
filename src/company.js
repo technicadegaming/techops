@@ -100,17 +100,27 @@ export async function createCompanyFromOnboarding(user, payload = {}) {
     createdBy: user.uid
   }, { merge: true });
 
-  const locations = Array.isArray(payload.locations) ? payload.locations : [];
+  const baseTimeZone = payload.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const legacyLocations = Array.isArray(payload.locations) ? payload.locations : [];
+  const normalizedFirstLocation = payload.firstLocation && typeof payload.firstLocation === 'object'
+    ? payload.firstLocation
+    : null;
+  const locations = [
+    ...(normalizedFirstLocation ? [normalizedFirstLocation] : []),
+    ...legacyLocations
+  ];
   for (const raw of locations) {
-    const name = `${raw?.name || ''}`.trim();
-    if (!name) continue;
+    const hasContent = [`${raw?.name || ''}`, `${raw?.address || ''}`, `${raw?.timeZone || ''}`, `${raw?.notes || ''}`].some((entry) => `${entry}`.trim());
+    if (!hasContent) continue;
+    const fallbackName = `${baseName || ''}`.trim() ? `${baseName} Main` : 'Main location';
+    const name = `${raw?.name || ''}`.trim() || fallbackName;
     const locId = `loc-${slugify(name)}-${Math.random().toString(36).slice(2, 6)}`;
     await setDoc(doc(db, C.companyLocations, locId), {
       id: locId,
       companyId,
       name,
       address: raw.address || '',
-      timeZone: raw.timeZone || payload.timeZone || '',
+      timeZone: raw.timeZone || baseTimeZone,
       notes: raw.notes || '',
       createdAt: serverTimestamp(),
       createdBy: user.uid,
