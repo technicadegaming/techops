@@ -100,17 +100,27 @@ function renderSuggestionSource(entry) {
   return provenance.join(' | ');
 }
 
+function renderInlineFeedback(message, tone = 'info') {
+  const palette = tone === 'error'
+    ? { border: '#fca5a5', background: '#fef2f2', text: '#991b1b' }
+    : tone === 'success'
+      ? { border: '#86efac', background: '#f0fdf4', text: '#166534' }
+      : { border: '#d1d5db', background: '#f9fafb', text: '#374151' };
+  return `<div class="tiny" style="margin:8px 0; padding:8px 10px; border-radius:8px; border:1px solid ${palette.border}; background:${palette.background}; color:${palette.text};">${message}</div>`;
+}
+
 function renderPreviewPanel(state) {
   const preview = state.assetDraft?.preview || null;
   const status = state.assetDraft?.previewStatus || 'idle';
-  if (!preview && status === 'idle') return '<div class="tiny">Preview assistant is idle. Use this only when you want to pre-check docs before saving.</div>';
-  if (!preview && ['searching', 'searching_refined'].includes(status)) return '<div class="tiny">Searching official/manual sources...</div>';
-  if (!preview && status === 'no_strong_match') return '<div class="tiny">No strong match yet. Verify manufacturer/model text and try again.</div>';
+  if (!preview && status === 'idle') return renderInlineFeedback('Preview assistant is idle. Use this only when you want to pre-check docs before saving.', 'info');
+  if (!preview && ['searching', 'searching_refined'].includes(status)) return renderInlineFeedback('Searching official/manual sources...', 'info');
+  if (!preview && status === 'no_strong_match') return renderInlineFeedback('No strong match yet. Verify manufacturer/model text and try again.', 'error');
 
   const docs = (preview?.documentationSuggestions || []).slice(0, 3);
   const support = (preview?.supportResourcesSuggestion || []).slice(0, 3);
+  const statusTone = docs.length || support.length ? 'success' : 'info';
   return `
-    <div class="tiny"><b>Preview status:</b> ${status}</div>
+    ${renderInlineFeedback(`Preview status: ${status}${docs.length || support.length ? ' with suggestions ready to apply.' : ' with no strong links yet.'}`, statusTone)}
     <div class="tiny">Best match: ${preview?.normalizedName || 'n/a'} (${Math.round(Number(preview?.confidence || 0) * 100)}%)</div>
     <div class="tiny">Suggested manufacturer: ${preview?.likelyManufacturer || 'n/a'} | Category: ${preview?.likelyCategory || 'n/a'}</div>
     <div class="tiny">Manual/docs: ${docs.map((entry) => `<a href="${entry.url}" target="_blank" rel="noopener">${entry.title || entry.url}</a>`).join(' | ') || 'none'}</div>
@@ -126,19 +136,30 @@ function renderPreviewPanel(state) {
   `;
 }
 
-function renderEnrichmentDetails(asset, manager) {
+function renderEnrichmentDetails(asset, manager, state) {
   const status = normalizeEnrichmentStatus(asset.enrichmentStatus || 'idle');
   const stale = isEnrichmentStale(asset);
   const suggestions = Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : [];
   const supportLinks = Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : [];
   const contacts = Array.isArray(asset.supportContactsSuggestion) ? asset.supportContactsSuggestion : [];
   const showFollowup = status === 'followup_needed' && asset.enrichmentFollowupQuestion;
+  const linkedManuals = Array.isArray(asset.manualLinks) ? asset.manualLinks : [];
+  const actionFeedback = state?.assetUi?.lastActionByAsset?.[asset.id] || null;
+  const statusHelp = status === 'permission_blocked'
+    ? 'Lookup could not verify docs because this role lacks access to the enrichment path.'
+    : status === 'lookup_failed'
+      ? (asset.enrichmentErrorMessage || 'Lookup failed before suggestions were returned.')
+      : status === 'no_match_yet'
+        ? 'No reliable documentation match has been found yet.'
+        : '';
 
   return `
     <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin:4px 0 8px;">
       ${renderStatusChip(status)}
       <span class="tiny">${stale ? 'Search is taking longer than expected.' : (status === 'in_progress' || status === 'searching_docs' ? 'Searching official/manual sources...' : '')}</span>
     </div>
+    ${actionFeedback?.message ? renderInlineFeedback(actionFeedback.message, actionFeedback.tone) : ''}
+    ${statusHelp ? renderInlineFeedback(statusHelp, status === 'lookup_failed' ? 'error' : 'info') : ''}
     <div class="tiny"><b>Model suggestion:</b> ${asset.normalizedName || 'n/a'}${asset.enrichmentConfidence ? ` (${Math.round(Number(asset.enrichmentConfidence) * 100)}% confidence)` : ''}</div>
     <div class="tiny" style="margin-bottom:8px;"><b>Inferred manufacturer:</b> ${asset.manufacturerSuggestion || asset.manufacturer || 'n/a'}${manager && asset.manufacturerSuggestion && asset.manufacturerSuggestion !== asset.manufacturer ? ` <button data-apply-enrichment="manufacturer" data-asset-id="${asset.id}" type="button">Apply manufacturer</button>` : ''}</div>
 
@@ -169,6 +190,8 @@ function renderEnrichmentDetails(asset, manager) {
     <div style="display:flex; gap:6px; flex-wrap:wrap;">
       <button data-enrich="${asset.id}" type="button">Run lookup</button>
       ${manager ? `<button data-docs="${asset.id}" type="button">Update docs review date</button>` : ''}
+      ${manager && linkedManuals.length ? `<button data-remove-all-manuals="${asset.id}" type="button">Remove all linked manuals</button>` : ''}
+      ${manager && supportLinks.length ? `<button data-remove-all-support="${asset.id}" type="button">Remove all support links</button>` : ''}
       ${manager && stale ? `<button data-clear-enrichment="${asset.id}" type="button">Clear stuck status</button>` : ''}
     </div>
   `;
@@ -182,6 +205,8 @@ export function renderAssets(el, state, actions) {
   const scope = buildLocationSummary(state);
   const scopedAssets = scope.scopedAssets;
   const assetTasks = scope.scopedTasks;
+  const docsReadyCount = scopedAssets.filter((asset) => (asset.manualLinks || []).length > 0).length;
+  const docsMissingCount = scope.assetsWithoutDocs.length;
 
   el.innerHTML = `
     <h2>Assets</h2>
@@ -190,6 +215,7 @@ export function renderAssets(el, state, actions) {
         <div>
           <b>${getLocationScopeLabel(scope.selection)}</b>
           <div class="tiny">Assets here: ${scopedAssets.length} | Broken assets: ${scope.brokenAssets.length} | Open work here: ${scope.openTasks.length}</div>
+          <div class="tiny">Documentation linked: ${docsReadyCount} | Missing docs: ${docsMissingCount}</div>
         </div>
         <label class="tiny" style="min-width:220px;">Filter
           <select data-location-filter>
@@ -257,16 +283,16 @@ export function renderAssets(el, state, actions) {
 
           <details><summary>Documentation / AI status (${docsStatus})</summary>
             <div class="tiny" style="margin:8px 0;">Linked manuals:</div>
-            <div style="margin:4px 0 8px;">${(asset.manualLinks || []).length ? (asset.manualLinks || []).map((url) => renderLinkChip(url, { removable: manager, removeAttr: `data-remove-manual="${asset.id}" data-url="${encodeURIComponent(url)}"` })).join('') : '<span class="tiny">No manual linked yet</span>'}</div>
+            <div style="margin:4px 0 8px;">${(asset.manualLinks || []).length ? (asset.manualLinks || []).map((url) => renderLinkChip(url, { removable: manager, removeAttr: `data-remove-manual="${asset.id}" data-url="${encodeURIComponent(url)}"` })).join('') : renderInlineFeedback('No manual linked yet. Run lookup or apply a suggested manual below.', 'info')}</div>
             <div class="tiny" style="margin:4px 0;">Linked support links:</div>
             <div style="margin:4px 0 8px;">${(asset.supportResourcesSuggestion || []).length ? (asset.supportResourcesSuggestion || []).map((entry) => {
           const url = entry?.url || entry;
           const label = entry?.label || entry?.title || url;
           if (!url) return '';
           return renderLinkChip(url, { label, removable: manager, removeAttr: `data-remove-support="${asset.id}" data-url="${encodeURIComponent(url)}"` });
-        }).join('') : '<span class="tiny">No support links linked</span>'}</div>
+        }).join('') : renderInlineFeedback('No support links linked.', 'info')}</div>
             <div class="tiny">Last reviewed: ${asset.docsLastReviewedAt || 'n/a'}</div>
-            <div style="margin-top:8px; border-top:1px solid #e5e7eb; padding-top:8px;">${renderEnrichmentDetails(asset, manager)}</div>
+            <div style="margin-top:8px; border-top:1px solid #e5e7eb; padding-top:8px;">${renderEnrichmentDetails(asset, manager, state)}</div>
           </details>
 
           <details><summary>Open tasks (${openTasks.length})</summary>${openTasks.map((task) => `<div class="tiny"><a href="?tab=operations&taskId=${task.id}&location=${encodeURIComponent(scope.selection?.key || '')}">${task.title || task.id}</a> | ${task.severity || 'medium'} | ${task.location || location.label}</div>`).join('') || '<div class="tiny">None</div>'}</details>
@@ -367,6 +393,8 @@ export function renderAssets(el, state, actions) {
   el.querySelectorAll('[data-apply-support-item]').forEach((button) => button.addEventListener('click', () => actions.applySingleSupportSuggestion(button.dataset.applySupportItem, Number(button.dataset.supportIndex))));
   el.querySelectorAll('[data-remove-manual]').forEach((button) => button.addEventListener('click', () => actions.removeManualLink(button.dataset.removeManual, decodeURIComponent(button.dataset.url || ''))));
   el.querySelectorAll('[data-remove-support]').forEach((button) => button.addEventListener('click', () => actions.removeSupportLink(button.dataset.removeSupport, decodeURIComponent(button.dataset.url || ''))));
+  el.querySelectorAll('[data-remove-all-manuals]').forEach((button) => button.addEventListener('click', () => actions.removeAllManualLinks(button.dataset.removeAllManuals)));
+  el.querySelectorAll('[data-remove-all-support]').forEach((button) => button.addEventListener('click', () => actions.removeAllSupportLinks(button.dataset.removeAllSupport)));
   el.querySelectorAll('[data-apply-enrichment]').forEach((button) => button.addEventListener('click', () => actions.applyEnrichmentSuggestions(button.dataset.assetId, button.dataset.applyEnrichment)));
   el.querySelectorAll('[data-clear-enrichment]').forEach((button) => button.addEventListener('click', () => actions.clearAssetEnrichmentState(button.dataset.clearEnrichment)));
   el.querySelectorAll('[data-edit]').forEach((assetForm) => assetForm.addEventListener('submit', (event) => {
