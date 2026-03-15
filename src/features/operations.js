@@ -75,13 +75,41 @@ function createDefaultOperationsUiState() {
     draft: {},
     moreDetailsOpen: false,
     expandedTaskIds: [],
-    scrollY: 0
+    scrollY: 0,
+    statusFilter: 'open',
+    ownershipFilter: 'all',
+    lastSaveFeedback: '',
+    lastSaveTone: 'info'
   };
 }
 
 function readFormDraft(form) {
   if (!form) return {};
   return Object.fromEntries(new FormData(form).entries());
+}
+
+function filterTasks(tasks, state) {
+  const statusFilter = state.operationsUi?.statusFilter || 'open';
+  const ownershipFilter = state.operationsUi?.ownershipFilter || 'all';
+  const myIdentifiers = new Set([state.user?.uid, state.user?.email].filter(Boolean));
+  return (tasks || []).filter((task) => {
+    const assigned = task.assignedWorkers || [];
+    const statusMatch = statusFilter === 'all'
+      ? true
+      : statusFilter === 'open'
+        ? task.status !== 'completed'
+        : task.status === statusFilter;
+    const ownershipMatch = ownershipFilter === 'all'
+      ? true
+      : ownershipFilter === 'mine'
+        ? assigned.some((worker) => myIdentifiers.has(worker))
+        : ownershipFilter === 'unassigned'
+          ? assigned.length === 0
+          : ownershipFilter === 'followup'
+            ? (state.taskAiRuns || []).some((run) => run.taskId === task.id && run.status === 'followup_required')
+            : true;
+    return statusMatch && ownershipMatch;
+  });
 }
 
 export function renderOperations(el, state, actions) {
@@ -95,23 +123,71 @@ export function renderOperations(el, state, actions) {
   const scopedTasks = scope.scopedTasks;
   const scopedAssets = scope.scopedAssets;
   const openTasks = scope.openTasks;
+  const visibleTasks = filterTasks(scopedTasks, state);
+  const unassignedOpen = openTasks.filter((task) => !(task.assignedWorkers || []).length).length;
+  const followupOpen = openTasks.filter((task) => (state.taskAiRuns || []).some((run) => run.taskId === task.id && run.status === 'followup_required')).length;
+  const inProgress = scopedTasks.filter((task) => task.status === 'in_progress').length;
 
   el.innerHTML = `
-    <div class="row space"><h2>Operations & Tasks</h2><div class="tiny">Structured intake enabled</div></div>
-    <div class="item" style="margin-bottom:12px;">
+    <div class="row space">
+      <div>
+        <h2>Operations & Tasks</h2>
+        <div class="tiny">${getLocationScopeLabel(scope.selection)} | Structured intake enabled</div>
+      </div>
+      <div class="kpi-line">
+        <span>Visible tasks: ${visibleTasks.length}</span>
+        <span>Open work: ${openTasks.length}</span>
+        <span>In progress: ${inProgress}</span>
+      </div>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card ${openTasks.length ? 'warn' : 'good'}">
+        <div class="tiny">Open work orders</div>
+        <strong>${openTasks.length}</strong>
+        <div class="tiny">${scope.brokenAssets.length} broken assets tied to open work.</div>
+      </div>
+      <div class="stat-card ${unassignedOpen ? 'bad' : 'good'}">
+        <div class="tiny">Unassigned open work</div>
+        <strong>${unassignedOpen}</strong>
+        <div class="tiny">${unassignedOpen ? 'Assign owners before this grows.' : 'Every open task has an owner.'}</div>
+      </div>
+      <div class="stat-card ${followupOpen ? 'warn' : 'good'}">
+        <div class="tiny">AI follow-up queue</div>
+        <strong>${followupOpen}</strong>
+        <div class="tiny">${followupOpen ? 'Frontline answers are blocking next-step guidance.' : 'No follow-up backlog.'}</div>
+      </div>
+    </div>
+
+    <div class="item" style="margin:12px 0;">
       <div class="row space">
         <div>
-          <b>${getLocationScopeLabel(scope.selection)}</b>
-          <div class="tiny">Open work: ${openTasks.length} | Broken assets: ${scope.brokenAssets.length}</div>
+          <b>Location and quick filters</b>
+          <div class="tiny">Use this view to isolate status, ownership, and open-work exceptions.</div>
         </div>
-        <label class="tiny" style="min-width:220px;">Filter
+        <label class="tiny" style="min-width:220px;">Location
           <select data-location-filter>
             ${locationOptions.map((option) => `<option value="${option.key}" ${option.key === scope.selection?.key ? 'selected' : ''}>${option.label}</option>`).join('')}
           </select>
         </label>
       </div>
+      <div class="filter-row mt">
+        <button class="filter-chip ${state.operationsUi.statusFilter === 'open' ? 'active' : ''}" data-status-filter="open" type="button">Open work</button>
+        <button class="filter-chip ${state.operationsUi.statusFilter === 'in_progress' ? 'active' : ''}" data-status-filter="in_progress" type="button">In progress</button>
+        <button class="filter-chip ${state.operationsUi.statusFilter === 'completed' ? 'active' : ''}" data-status-filter="completed" type="button">Completed</button>
+        <button class="filter-chip ${state.operationsUi.statusFilter === 'all' ? 'active' : ''}" data-status-filter="all" type="button">All statuses</button>
+      </div>
+      <div class="filter-row mt">
+        <button class="filter-chip ${state.operationsUi.ownershipFilter === 'all' ? 'active' : ''}" data-ownership-filter="all" type="button">All ownership</button>
+        <button class="filter-chip ${state.operationsUi.ownershipFilter === 'mine' ? 'active' : ''}" data-ownership-filter="mine" type="button">My work</button>
+        <button class="filter-chip ${state.operationsUi.ownershipFilter === 'unassigned' ? 'active' : ''}" data-ownership-filter="unassigned" type="button">Unassigned</button>
+        <button class="filter-chip ${state.operationsUi.ownershipFilter === 'followup' ? 'active' : ''}" data-ownership-filter="followup" type="button">Needs follow-up</button>
+      </div>
     </div>
-    <form id="taskForm" class="grid">
+
+    ${state.operationsUi.lastSaveFeedback ? `<div class="inline-state ${state.operationsUi.lastSaveTone || 'info'}">${state.operationsUi.lastSaveFeedback}</div>` : ''}
+
+    <form id="taskForm" class="grid mt">
       <div class="grid grid-2">
         <label>Task ID<input name="id" readonly /></label>
         <label>Opened date/time<input name="openedAt" type="datetime-local" readonly /></label>
@@ -146,28 +222,41 @@ export function renderOperations(el, state, actions) {
       <datalist id="assetOptions">${scopedAssets.map((asset) => `<option value="${asset.name || asset.id}"></option>`).join('')}</datalist>
       <datalist id="locationOptions">${locationOptions.filter((option) => option.name && !option.name.includes('Company-wide')).map((option) => `<option value="${option.name}"></option>`).join('')}</datalist>
     </form>
-    <div class="list mt">
-      ${scopedTasks.map((task) => {
-        const unavailable = (task.assignedWorkers || []).filter((worker) => state.users.some((user) => (user.id === worker || user.email === worker) && (user.enabled === false || user.available === false)));
-        const taskAsset = assetById.get(task.assetId);
-        const friendlyAsset = taskAsset?.name || task.assetName || task.assetId || '-';
-        const taskLocation = getTaskLocationRecord(state, task, assetById);
-        const assetLocation = taskAsset ? getAssetLocationRecord(state, taskAsset) : null;
-        const showTaskDetails = expanded.has(task.id);
-        return `<details class="item ${state.route?.taskId === task.id ? 'selected' : ''}" id="task-${task.id}" data-task-details="${task.id}" ${showTaskDetails ? 'open' : ''}>
-          <summary><b>${task.title || task.id}</b> | ${task.status || 'open'} | ${friendlyAsset}</summary>
-          <div class="tiny">Location: ${taskLocation.label}${assetLocation && assetLocation.label !== taskLocation.label ? ` | asset at ${assetLocation.label}` : ''}</div>
-          <div class="tiny">Assigned: ${(task.assignedWorkers || []).join(', ') || 'unassigned'} ${unavailable.length ? `| unavailable: ${unavailable.join(', ')}` : ''}</div>
-          <div><b>Issue:</b> ${task.description || ''}</div>
-          <div class="tiny">${task.issueCategory || 'uncategorized'} | ${task.severity || 'medium'} | tags: ${(task.symptomTags || []).join(', ') || 'none'}</div>
-          ${renderCloseout(task, state)}
-          ${renderAiPanel(task, state)}
-          ${unavailable.length ? `<button data-reassign="${task.id}">Quick reassign</button>` : ''}
-          ${canDelete(state.permissions) ? `<button data-del="${task.id}" class="danger">Delete</button>` : ''}
-        </details>`;
-      }).join('') || `<div class="tiny">${getLocationEmptyState(scope.selection, 'tasks', 'task')}</div>`}
-    </div>`;
 
+    <h3>Workflow board</h3>
+    ${visibleTasks.length
+      ? `<div class="list mt">
+        ${visibleTasks.map((task) => {
+          const unavailable = (task.assignedWorkers || []).filter((worker) => state.users.some((user) => (user.id === worker || user.email === worker) && (user.enabled === false || user.available === false)));
+          const taskAsset = assetById.get(task.assetId);
+          const friendlyAsset = taskAsset?.name || task.assetName || task.assetId || '-';
+          const taskLocation = getTaskLocationRecord(state, task, assetById);
+          const assetLocation = taskAsset ? getAssetLocationRecord(state, taskAsset) : null;
+          const showTaskDetails = expanded.has(task.id);
+          const needsFollowup = (state.taskAiRuns || []).some((run) => run.taskId === task.id && run.status === 'followup_required');
+          return `<details class="item ${state.route?.taskId === task.id ? 'selected' : ''}" id="task-${task.id}" data-task-details="${task.id}" ${showTaskDetails ? 'open' : ''}>
+            <summary><b>${task.title || task.id}</b> | ${task.status || 'open'} | ${friendlyAsset}</summary>
+            <div class="kpi-line mt">
+              <span>${taskLocation.label}</span>
+              <span>${task.severity || 'medium'}</span>
+              <span>${(task.assignedWorkers || []).join(', ') || 'unassigned'}</span>
+              ${needsFollowup ? '<span>AI follow-up waiting</span>' : ''}
+            </div>
+            <div class="tiny mt">Asset location: ${assetLocation?.label || taskLocation.label}${assetLocation && assetLocation.label !== taskLocation.label ? ` | task reported at ${taskLocation.label}` : ''}</div>
+            <div class="tiny">Assigned: ${(task.assignedWorkers || []).join(', ') || 'unassigned'} ${unavailable.length ? `| unavailable: ${unavailable.join(', ')}` : ''}</div>
+            <div><b>Issue:</b> ${task.description || ''}</div>
+            <div class="tiny">${task.issueCategory || 'uncategorized'} | tags: ${(task.symptomTags || []).join(', ') || 'none'}</div>
+            ${renderCloseout(task, state)}
+            ${renderAiPanel(task, state)}
+            ${unavailable.length ? `<button data-reassign="${task.id}">Quick reassign</button>` : ''}
+            ${canDelete(state.permissions) ? `<button data-del="${task.id}" class="danger">Delete</button>` : ''}
+          </details>`;
+        }).join('')}
+      </div>`
+      : `<div class="inline-state ${scopedTasks.length ? 'info' : 'success'} mt">${scopedTasks.length ? 'No tasks match the current quick filters.' : getLocationEmptyState(scope.selection, 'tasks', 'task')}</div>`}
+  `;
+
+  const rerender = () => renderOperations(el, state, actions);
   const form = el.querySelector('#taskForm');
   const idInput = form?.querySelector('[name="id"]');
   const openedAtInput = form?.querySelector('[name="openedAt"]');
@@ -249,7 +338,12 @@ export function renderOperations(el, state, actions) {
       reportedByEmail: state.user?.email || ''
     }, state.settings || {});
     const validation = validateTaskIntake(payload, ['assetId', 'description', 'reporter']);
-    if (!validation.ok) return alert(`Missing required fields: ${validation.missing.join(', ')}`);
+    if (!validation.ok) {
+      state.operationsUi.lastSaveFeedback = `Missing required fields: ${validation.missing.join(', ')}`;
+      state.operationsUi.lastSaveTone = 'error';
+      rerender();
+      return;
+    }
 
     const saved = await actions.saveTask(payload.id || `${fd.get('id') || ''}`.trim(), payload);
     if (!saved) return;
@@ -258,6 +352,14 @@ export function renderOperations(el, state, actions) {
   });
 
   el.querySelector('[data-location-filter]')?.addEventListener('change', (event) => actions.setLocationFilter(event.target.value));
+  el.querySelectorAll('[data-status-filter]').forEach((button) => button.addEventListener('click', () => {
+    state.operationsUi.statusFilter = button.dataset.statusFilter || 'open';
+    rerender();
+  }));
+  el.querySelectorAll('[data-ownership-filter]').forEach((button) => button.addEventListener('click', () => {
+    state.operationsUi.ownershipFilter = button.dataset.ownershipFilter || 'all';
+    rerender();
+  }));
 
   el.querySelectorAll('[data-task-details]').forEach((taskDetails) => taskDetails.addEventListener('toggle', () => {
     const taskId = taskDetails.dataset.taskDetails;

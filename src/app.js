@@ -94,7 +94,7 @@ const state = {
   assetDraft: createEmptyAssetDraft(),
   assetUi: { lastActionByAsset: {} },
   adminUi: { tone: 'info', message: '', importPreview: '', importSummary: '', importTone: 'info' },
-  operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0 },
+  operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0, statusFilter: 'open', ownershipFilter: 'all', lastSaveFeedback: '', lastSaveTone: 'info' },
   adminSection: 'company'
 };
 
@@ -432,10 +432,25 @@ async function render() {
       if (!taskId) return alert('Unable to save task: missing generated task ID.');
       const saved = await runAction('save_task', async () => {
         await upsertEntity('tasks', taskId, withRequiredCompanyId({ ...payload, id: taskId }, 'save a task'), state.user);
+        state.operationsUi = {
+          ...(state.operationsUi || {}),
+          lastSaveFeedback: `Task ${taskId} saved for ${payload.assetName || payload.assetId || 'the selected asset'}.`,
+          lastSaveTone: 'success'
+        };
         await refreshData();
         render();
         return true;
-      }, { fallbackMessage: 'Unable to save task.' });
+      }, {
+        fallbackMessage: 'Unable to save task.',
+        onError: (error) => {
+          state.operationsUi = {
+            ...(state.operationsUi || {}),
+            lastSaveFeedback: formatActionError(error, 'Unable to save task.'),
+            lastSaveTone: 'error'
+          };
+          render();
+        }
+      });
       return !!saved;
     },
     reassignTask: async (taskId) => {
