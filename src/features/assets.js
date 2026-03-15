@@ -12,28 +12,46 @@ function renderAssetCardFallback(asset, error) {
 }
 
 const ENRICHMENT_STATUS_LABELS = {
-  searching_docs: 'searching docs',
-  in_progress: 'searching docs',
-  needs_follow_up: 'needs follow-up',
-  docs_found: 'docs found',
-  no_match_yet: 'no reliable match yet',
-  docs_blocked: 'docs blocked',
-  docs_failed: 'docs lookup failed',
+  searching_docs: 'search in progress',
+  in_progress: 'search in progress',
+  verified_manual_found: 'verified manual found',
+  strong_suggestion_found: 'strong suggestion found',
+  support_resources_found: 'support resources found',
+  likely_manual_unreachable: 'manual likely unreachable',
+  followup_needed: 'follow-up needed',
+  no_match_yet: 'no match yet',
+  permission_blocked: 'permission blocked',
+  lookup_failed: 'lookup failed',
   idle: 'not started'
 };
 
 const ENRICHMENT_STATUS_STYLES = {
   searching_docs: { bg: '#dbeafe', border: '#93c5fd', text: '#1d4ed8' },
   in_progress: { bg: '#dbeafe', border: '#93c5fd', text: '#1d4ed8' },
-  needs_follow_up: { bg: '#fef3c7', border: '#fbbf24', text: '#92400e' },
-  docs_found: { bg: '#dcfce7', border: '#86efac', text: '#166534' },
+  verified_manual_found: { bg: '#dcfce7', border: '#86efac', text: '#166534' },
+  strong_suggestion_found: { bg: '#dcfce7', border: '#86efac', text: '#166534' },
+  support_resources_found: { bg: '#ccfbf1', border: '#5eead4', text: '#0f766e' },
+  likely_manual_unreachable: { bg: '#fef3c7', border: '#fbbf24', text: '#92400e' },
+  followup_needed: { bg: '#fef3c7', border: '#fbbf24', text: '#92400e' },
   no_match_yet: { bg: '#fee2e2', border: '#fca5a5', text: '#991b1b' },
-  docs_blocked: { bg: '#fef3c7', border: '#fbbf24', text: '#92400e' },
-  docs_failed: { bg: '#fee2e2', border: '#fca5a5', text: '#991b1b' },
+  permission_blocked: { bg: '#fef3c7', border: '#fbbf24', text: '#92400e' },
+  lookup_failed: { bg: '#fee2e2', border: '#fca5a5', text: '#991b1b' },
   idle: { bg: '#f3f4f6', border: '#d1d5db', text: '#4b5563' }
 };
 
 const STALE_ENRICHMENT_MS = 10 * 60 * 1000;
+
+const LEGACY_STATUS_MAP = {
+  needs_follow_up: 'followup_needed',
+  docs_found: 'verified_manual_found',
+  docs_blocked: 'permission_blocked',
+  docs_failed: 'lookup_failed'
+};
+
+function normalizeEnrichmentStatus(status) {
+  const key = `${status || 'idle'}`.trim();
+  return LEGACY_STATUS_MAP[key] || key || 'idle';
+}
 
 function getTimestampValue(value) {
   if (!value) return null;
@@ -43,7 +61,7 @@ function getTimestampValue(value) {
 }
 
 function isEnrichmentStale(asset) {
-  const status = asset.enrichmentStatus || 'idle';
+  const status = normalizeEnrichmentStatus(asset.enrichmentStatus || 'idle');
   if (!['searching_docs', 'in_progress'].includes(status)) return false;
   const lastTouchedAt = getTimestampValue(asset.enrichmentRequestedAt)
     || getTimestampValue(asset.enrichmentUpdatedAt)
@@ -54,7 +72,7 @@ function isEnrichmentStale(asset) {
 }
 
 function renderStatusChip(status) {
-  const key = status || 'idle';
+  const key = normalizeEnrichmentStatus(status || 'idle');
   const style = ENRICHMENT_STATUS_STYLES[key] || ENRICHMENT_STATUS_STYLES.idle;
   return `<span style="display:inline-flex; align-items:center; gap:6px; border-radius:999px; border:1px solid ${style.border}; background:${style.bg}; color:${style.text}; font-size:12px; padding:2px 10px; font-weight:600;">${ENRICHMENT_STATUS_LABELS[key] || key}</span>`;
 }
@@ -102,8 +120,8 @@ function renderPreviewPanel(state) {
     <div style="display:flex; gap:6px; flex-wrap:wrap; margin:6px 0;">
       <button type="button" data-apply-preview="manufacturer">Apply manufacturer</button>
       <button type="button" data-apply-preview="manuals">Apply top manual link(s)</button>
-      <button type="button" data-apply-preview="support">Apply support link(s)</button>
-      <button type="button" data-apply-preview="contacts">Apply contact info / notes</button>
+      <button type="button" data-apply-preview="support">Apply support resources</button>
+      <button type="button" data-apply-preview="contacts">Apply contacts and notes</button>
       <button type="button" data-apply-preview="all">Apply all safe suggestions</button>
       <button type="button" data-clear-preview="1">Clear preview</button>
     </div>
@@ -111,16 +129,16 @@ function renderPreviewPanel(state) {
 }
 
 function renderEnrichmentDetails(asset, manager) {
-  const status = asset.enrichmentStatus || 'idle';
+  const status = normalizeEnrichmentStatus(asset.enrichmentStatus || 'idle');
   const stale = isEnrichmentStale(asset);
   const suggestions = Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : [];
   const supportLinks = Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : [];
   const contacts = Array.isArray(asset.supportContactsSuggestion) ? asset.supportContactsSuggestion : [];
-  const showFollowup = status === 'needs_follow_up' && asset.enrichmentFollowupQuestion;
-  const blockedMessage = status === 'docs_blocked'
+  const showFollowup = status === 'followup_needed' && asset.enrichmentFollowupQuestion;
+  const blockedMessage = status === 'permission_blocked'
     ? (asset.enrichmentErrorMessage || 'Docs lookup was blocked by permissions. Ask a company owner/admin/manager or retry with updated access.')
     : '';
-  const failedMessage = status === 'docs_failed'
+  const failedMessage = status === 'lookup_failed'
     ? (asset.enrichmentErrorMessage || 'Docs lookup failed. Retry when ready.')
     : '';
 
@@ -146,25 +164,25 @@ function renderEnrichmentDetails(asset, manager) {
     const source = s.isOfficial ? ' · official' : (s.isLikelyManual ? ' · manual' : '');
     return `<div class="tiny" style="display:flex; justify-content:space-between; gap:8px; align-items:center; margin:2px 0;"><span><a href="${s.url}" target="_blank" rel="noopener">${s.title || s.url}</a>${confidence}${score}${source}</span>${manager ? `<button data-apply-doc-item="${asset.id}" data-doc-index="${idx}" type="button">Apply</button>` : ''}</div>`;
   }).join('') : '<div class="tiny">No manual linked yet.</div>'}
-      ${manager && suggestions.length ? `<div style="margin-top:6px;"><button data-apply-docs="${asset.id}" type="button">Apply top doc suggestions</button> <button data-apply-enrichment="manuals" data-asset-id="${asset.id}" type="button">Apply top manual</button></div>` : ''}
+      ${manager && suggestions.length ? `<div style="margin-top:6px;"><button data-apply-docs="${asset.id}" type="button">Apply top trusted docs</button> <button data-apply-enrichment="manuals" data-asset-id="${asset.id}" type="button">Apply best manual link</button></div>` : ''}
     </div>
 
     <div style="margin-bottom:10px;">
       <div class="tiny" style="font-weight:700; margin-bottom:4px;">Support links</div>
       ${supportLinks.length ? supportLinks.map((s, idx) => `<div class="tiny" style="display:flex; justify-content:space-between; gap:8px; align-items:center; margin:2px 0;"><span><a href="${s.url || s}" target="_blank" rel="noopener">${s.label || s.title || s.url || s}</a></span>${manager ? `<button data-apply-support-item="${asset.id}" data-support-index="${idx}" type="button">Apply</button>` : ''}</div>`).join('') : '<div class="tiny">No support link linked yet.</div>'}
-      ${manager && supportLinks.length ? `<div style="margin-top:6px;"><button data-apply-enrichment="support" data-asset-id="${asset.id}" type="button">Apply support link(s)</button></div>` : ''}
+      ${manager && supportLinks.length ? `<div style="margin-top:6px;"><button data-apply-enrichment="support" data-asset-id="${asset.id}" type="button">Apply support resources</button></div>` : ''}
     </div>
 
     <div style="margin-bottom:10px;">
       <div class="tiny" style="font-weight:700; margin-bottom:4px;">Notes / contacts</div>
       ${contacts.length ? `<div class="tiny">${contacts.map((c) => `${c.label || c.contactType}: ${c.value}`).join(' | ')}</div>` : '<div class="tiny">No contact suggestions yet.</div>'}
-      ${manager && contacts.length ? `<div style="margin-top:6px;"><button data-apply-enrichment="contacts" data-asset-id="${asset.id}" type="button">Apply contact info / notes</button></div>` : ''}
+      ${manager && contacts.length ? `<div style="margin-top:6px;"><button data-apply-enrichment="contacts" data-asset-id="${asset.id}" type="button">Apply contacts and notes</button></div>` : ''}
     </div>
 
     ${showFollowup ? `<div style="border:1px solid #fbbf24; background:#fffbeb; border-radius:8px; padding:8px; margin-bottom:10px;"><div class="tiny" style="font-weight:700; margin-bottom:4px;">Need one detail to improve the match</div><div class="tiny" style="margin-bottom:6px;">${asset.enrichmentFollowupQuestion}</div><form data-enrichment-followup-form="${asset.id}" class="grid" style="gap:4px;"><textarea name="followupAnswer" rows="2" placeholder="Add answer to improve match...">${asset.enrichmentFollowupAnswer || ''}</textarea><div style="display:flex; gap:6px; flex-wrap:wrap;"><button type="submit">Submit answer and retry</button><button data-enrich="${asset.id}" type="button">Retry without answer</button></div></form></div>` : ''}
 
     <div style="display:flex; gap:6px; flex-wrap:wrap;">
-      <button data-enrich="${asset.id}" type="button">Search AI/docs</button>
+      <button data-enrich="${asset.id}" type="button">Run lookup</button>
       ${manager ? `<button data-docs="${asset.id}" type="button">Update docs review date</button>` : ''}
     </div>
   `;

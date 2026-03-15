@@ -109,6 +109,14 @@ export async function createCompanyFromOnboarding(user, payload = {}) {
     ...(normalizedFirstLocation ? [normalizedFirstLocation] : []),
     ...legacyLocations
   ];
+  if (!locations.length) {
+    locations.push({
+      name: `${baseName} HQ`,
+      address: payload.address || '',
+      timeZone: baseTimeZone,
+      notes: 'Auto-created from company profile.'
+    });
+  }
   for (const raw of locations) {
     const hasContent = [`${raw?.name || ''}`, `${raw?.address || ''}`, `${raw?.timeZone || ''}`, `${raw?.notes || ''}`].some((entry) => `${entry}`.trim());
     if (!hasContent) continue;

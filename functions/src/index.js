@@ -12,10 +12,8 @@ const { authorizeAssetEnrichment, getActiveMembershipForCompany, isGlobalAdminRo
 
 const { enrichAssetDocumentation, previewAssetDocumentationLookup } = require('./services/assetEnrichmentService');
 
-const { onRequest } = require("firebase-functions/v2/https");
 const { defineSecret } = require("firebase-functions/params");
 const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
-const OpenAI = require("openai");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -336,27 +334,3 @@ exports.onTaskCreatedQueueAi = onDocumentCreated({
 });
 
 
-exports.askOpenAI = onRequest(
-  { secrets: [OPENAI_API_KEY] },
-  async (req, res) => {
-    try {
-      const client = new OpenAI({
-        apiKey: OPENAI_API_KEY.value(),
-      });
-
-      const prompt = req.body?.prompt || "Say hello";
-
-      const response = await client.responses.create({
-        model: "gpt-4.1-mini",
-        input: prompt,
-      });
-
-      res.status(200).json(response);
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({
-        error: error.message || "Server error",
-      });
-    }
-  }
-);
