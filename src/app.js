@@ -16,6 +16,8 @@ import { acceptInvite, createCompanyFromOnboarding, createCompanyInvite, ensureB
 const authView = document.getElementById('authView');
 const appView = document.getElementById('appView');
 const authMessage = document.getElementById('authMessage');
+const activeCompanySwitcher = document.getElementById('activeCompanySwitcher');
+const ACTIVE_MEMBERSHIP_STORAGE_KEY = 'techops.activeMembership';
 
 const sections = ['dashboard', 'operations', 'assets', 'calendar', 'reports', 'admin'];
 function createEmptyAssetDraft() {
@@ -51,7 +53,7 @@ function buildPreviewQueryKey(payload = {}) {
   return [assetName, manufacturer, serialNumber, assetId, followupAnswer].join('|');
 }
 
-const state = { user: null, profile: null, company: null, memberships: [], activeMembership: null, permissions: buildPermissionContext(), onboardingRequired: false, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], workers: [], invites: [], companyLocations: [], importHistory: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], settings: {}, restorePayload: null, route: parseRouteState(), assetDraft: createEmptyAssetDraft(), operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0 } };
+const state = { user: null, profile: null, company: null, memberships: [], membershipCompanies: {}, activeMembership: null, permissions: buildPermissionContext(), onboardingRequired: false, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], workers: [], invites: [], companyLocations: [], importHistory: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], settings: {}, restorePayload: null, route: parseRouteState(), assetDraft: createEmptyAssetDraft(), operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0 } };
 
 function formatActionError(error, fallbackMessage) {
   const detail = `${error?.message || error || ''}`.trim();
@@ -64,11 +66,35 @@ function reportActionError(label, error, fallbackMessage) {
 }
 
 function requireActiveCompanyId(actionLabel = 'continue') {
-  const companyId = `${state.company?.id || state.memberships?.[0]?.companyId || ''}`.trim();
+  const companyId = `${state.company?.id || state.activeMembership?.companyId || state.memberships?.[0]?.companyId || ''}`.trim();
   if (!companyId) {
     throw new Error(`No active company context is available. Complete onboarding before trying to ${actionLabel}.`);
   }
   return companyId;
+}
+
+function getStoredActiveMembershipId() {
+  const userId = `${state.user?.uid || ''}`.trim();
+  if (!userId) return '';
+  try {
+    return localStorage.getItem(`${ACTIVE_MEMBERSHIP_STORAGE_KEY}:${userId}`) || '';
+  } catch {
+    return '';
+  }
+}
+
+function storeActiveMembershipId(membershipId) {
+  const userId = `${state.user?.uid || ''}`.trim();
+  if (!userId) return;
+  try {
+    if (membershipId) {
+      localStorage.setItem(`${ACTIVE_MEMBERSHIP_STORAGE_KEY}:${userId}`, membershipId);
+      return;
+    }
+    localStorage.removeItem(`${ACTIVE_MEMBERSHIP_STORAGE_KEY}:${userId}`);
+  } catch {
+    // Ignore local storage failures and keep the selection in memory.
+  }
 }
 
 function withRequiredCompanyId(payload = {}, actionLabel = 'continue') {
@@ -125,6 +151,68 @@ async function refreshData() {
   state.taskAiRuns = await listEntities('taskAiRuns').catch(() => []);
   state.taskAiFollowups = await listEntities('taskAiFollowups').catch(() => []);
   state.troubleshootingLibrary = await listEntities('troubleshootingLibrary').catch(() => []);
+}
+
+async function hydrateMembershipCompanies(memberships = []) {
+  const companyEntries = await Promise.all((memberships || []).map(async (membership) => {
+    const company = await getCompany(membership.companyId).catch(() => null);
+    return [membership.id, company];
+  }));
+  state.membershipCompanies = Object.fromEntries(companyEntries);
+}
+
+async function setActiveMembership(nextMembership, options = {}) {
+  const membershipId = typeof nextMembership === 'string' ? nextMembership : nextMembership?.id;
+  const membership = (state.memberships || []).find((entry) => entry.id === membershipId) || (typeof nextMembership === 'object' ? nextMembership : null);
+  if (!membership) {
+    state.activeMembership = null;
+    state.company = null;
+    state.permissions = buildPermissionContext({ profile: state.profile, membership: null });
+    state.onboardingRequired = true;
+    storeActiveMembershipId('');
+    setActiveCompanyContext(null);
+    if (!options.skipRender) render();
+    return;
+  }
+
+  state.activeMembership = membership;
+  state.permissions = buildPermissionContext({ profile: state.profile, membership });
+  const company = state.membershipCompanies?.[membership.id] || await getCompany(membership.companyId);
+  state.membershipCompanies = { ...state.membershipCompanies, [membership.id]: company };
+  state.company = company;
+  state.onboardingRequired = false;
+  storeActiveMembershipId(membership.id);
+  setActiveCompanyContext(company?.id || membership.companyId, { allowLegacy: isGlobalAdmin(state.permissions) });
+
+  if (!options.skipRefresh) await refreshData();
+  if (!options.skipRender) render();
+}
+
+function renderActiveCompanySwitcher() {
+  if (!activeCompanySwitcher) return;
+  const memberships = state.memberships || [];
+  if (memberships.length <= 1 || state.onboardingRequired) {
+    activeCompanySwitcher.classList.add('hide');
+    activeCompanySwitcher.innerHTML = '';
+    activeCompanySwitcher.onchange = null;
+    return;
+  }
+
+  activeCompanySwitcher.classList.remove('hide');
+  activeCompanySwitcher.innerHTML = memberships.map((membership) => {
+    const companyName = state.membershipCompanies?.[membership.id]?.name || membership.companyId || 'Unknown company';
+    const role = membership.role || 'pending';
+    return `<option value="${membership.id}" ${membership.id === state.activeMembership?.id ? 'selected' : ''}>${companyName} (${role})</option>`;
+  }).join('');
+  activeCompanySwitcher.onchange = async (event) => {
+    const nextId = `${event.target.value || ''}`.trim();
+    if (!nextId || nextId === state.activeMembership?.id) return;
+    await runAction('switch_company', async () => {
+      await setActiveMembership(nextId);
+    }, {
+      fallbackMessage: 'Unable to switch company workspace.'
+    });
+  };
 }
 
 
@@ -254,25 +342,20 @@ async function bootstrapCompanyContext() {
     }
   }
 
-  const activeMembership = state.memberships[0] || null;
-  state.activeMembership = activeMembership;
-  state.permissions = buildPermissionContext({ profile: state.profile, membership: activeMembership });
-  if (!activeMembership) {
-    state.company = null;
-    state.onboardingRequired = true;
-    setActiveCompanyContext(null);
-    return;
-  }
-
-  const company = await getCompany(activeMembership.companyId);
-  state.company = company;
-  state.onboardingRequired = false;
-  setActiveCompanyContext(company?.id || activeMembership.companyId, { allowLegacy: isGlobalAdmin(state.permissions) });
+  await hydrateMembershipCompanies(state.memberships);
+  const currentMembershipId = `${state.activeMembership?.id || ''}`.trim();
+  const storedMembershipId = getStoredActiveMembershipId();
+  const activeMembership = state.memberships.find((membership) => membership.id === currentMembershipId)
+    || state.memberships.find((membership) => membership.id === storedMembershipId)
+    || state.memberships[0]
+    || null;
+  await setActiveMembership(activeMembership, { skipRefresh: true, skipRender: true });
 }
 
 async function render() {
   buildTabs();
   const roleLabel = state.permissions.companyRole || state.profile?.role || 'pending';
+  renderActiveCompanySwitcher();
   document.getElementById('userBadge').textContent = `${state.user.email} (${roleLabel})${state.company?.name ? ` • ${state.company.name}` : ''}`;
 
   if (state.onboardingRequired) {

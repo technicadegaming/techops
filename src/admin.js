@@ -112,14 +112,14 @@ export function renderAdmin(el, state, actions) {
 
     <section class="item">
       <h3 class="danger">Danger Zone</h3>
-      <p class="tiny">All actions are scoped to this company. Type the confirmation phrase shown before running.</p>
+      <p class="tiny">These actions only affect the current company workspace. Reset clears company-scoped operational data and does not delete the company account itself. Type the confirmation phrase shown before running.</p>
       <input id="dangerPhrase" placeholder="Type: ${state.company?.name || 'CONFIRM'}" />
       <div class="row">
         <button id="exportBackup" ${canManageBackups(state.permissions) ? '' : 'disabled'}>Export workspace data</button>
         <button id="clearTasks">Clear tasks/operations</button>
         <button id="clearAssets">Clear assets</button>
         <button id="clearWorkers">Clear workers (except current owner)</button>
-        <button id="resetWorkspace">Reset workspace</button>
+        <button id="resetWorkspace">Reset workspace data</button>
       </div>
     </section>`;
 
@@ -198,7 +198,7 @@ export function renderAdmin(el, state, actions) {
       aiMaxWebSources: Number(fd.get('aiMaxWebSources') || 3),
       aiConfidenceThreshold: Number(fd.get('aiConfidenceThreshold') || 0.45),
       defaultTaskSeverity: fd.get('defaultTaskSeverity') || 'medium',
-      taskIntakeRequiredFields: (fd.get('taskIntakeRequiredFields') || 'id,title,assetId,issueCategory,severity').split(',').map((v) => v.trim()).filter(Boolean)
+      taskIntakeRequiredFields: (fd.get('taskIntakeRequiredFields') || 'assetId,description,reporter').split(',').map((v) => v.trim()).filter(Boolean)
     };
     actions.saveAISettings(payload);
   });

@@ -106,7 +106,7 @@ const defaultAiSettings = {
   defaultTaskSeverity: 'medium',
   aiFeedbackCollectionEnabled: true,
   mobileConciseModeDefault: true,
-  taskIntakeRequiredFields: ['id', 'title', 'assetId', 'issueCategory', 'severity']
+  taskIntakeRequiredFields: ['assetId', 'description', 'reporter']
 };
 
 export async function getAppSettings() {
