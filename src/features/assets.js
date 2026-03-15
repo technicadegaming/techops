@@ -1,4 +1,4 @@
-import { canDelete, canEditAssets, isAdmin } from '../roles.js';
+import { canDelete, canEditAssets, isManager } from '../roles.js';
 import { detectRepeatIssues } from './workflow.js';
 
 const ENRICHMENT_STATUS_LABELS = {
@@ -18,6 +18,26 @@ const ENRICHMENT_STATUS_STYLES = {
   no_match_yet: { bg: '#fee2e2', border: '#fca5a5', text: '#991b1b' },
   idle: { bg: '#f3f4f6', border: '#d1d5db', text: '#4b5563' }
 };
+
+const STALE_ENRICHMENT_MS = 10 * 60 * 1000;
+
+function getTimestampValue(value) {
+  if (!value) return null;
+  if (typeof value?.toDate === 'function') return value.toDate().getTime();
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isEnrichmentStale(asset) {
+  const status = asset.enrichmentStatus || 'idle';
+  if (!['searching_docs', 'in_progress'].includes(status)) return false;
+  const lastTouchedAt = getTimestampValue(asset.enrichmentRequestedAt)
+    || getTimestampValue(asset.enrichmentUpdatedAt)
+    || getTimestampValue(asset.updatedAt)
+    || getTimestampValue(asset.createdAt);
+  if (!lastTouchedAt) return false;
+  return (Date.now() - lastTouchedAt) >= STALE_ENRICHMENT_MS;
+}
 
 function renderStatusChip(status) {
   const key = status || 'idle';
@@ -78,6 +98,7 @@ function renderPreviewPanel(state) {
 
 function renderEnrichmentDetails(asset, manager) {
   const status = asset.enrichmentStatus || 'idle';
+  const stale = isEnrichmentStale(asset);
   const suggestions = Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : [];
   const supportLinks = Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : [];
   const contacts = Array.isArray(asset.supportContactsSuggestion) ? asset.supportContactsSuggestion : [];
@@ -86,8 +107,9 @@ function renderEnrichmentDetails(asset, manager) {
   return `
     <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin:4px 0 8px;">
       ${renderStatusChip(status)}
-      <span class="tiny">${status === 'in_progress' || status === 'searching_docs' ? 'Searching official/manual sources…' : ''}</span>
+      <span class="tiny">${stale ? 'Search is taking longer than expected.' : (status === 'in_progress' || status === 'searching_docs' ? 'Searching official/manual sources...' : '')}</span>
     </div>
+    ${stale ? `<div style="border:1px solid #fbbf24; background:#fffbeb; border-radius:8px; padding:8px; margin-bottom:10px;"><div class="tiny" style="margin-bottom:6px;">Search is taking longer than expected.</div><div style="display:flex; gap:6px; flex-wrap:wrap;"><button data-enrich="${asset.id}" type="button">Retry docs search</button>${manager ? `<button data-clear-enrichment="${asset.id}" type="button">Clear stuck status</button>` : ''}</div></div>` : ''}
 
     <div style="display:grid; gap:6px; margin-bottom:8px;">
       <div class="tiny"><b>Model suggestion:</b> ${asset.normalizedName || 'n/a'}${asset.enrichmentConfidence ? ` (${Math.round(Number(asset.enrichmentConfidence) * 100)}% confidence)` : ''}</div>
@@ -128,7 +150,7 @@ function renderEnrichmentDetails(asset, manager) {
 
 export function renderAssets(el, state, actions) {
   const editable = canEditAssets(state.permissions);
-  const manager = isAdmin(state.permissions);
+  const manager = isManager(state.permissions);
   const repeatPatterns = detectRepeatIssues(state.tasks || []);
   el.innerHTML = `
     <h2>Assets (Operational source of truth)</h2>
@@ -294,6 +316,7 @@ export function renderAssets(el, state, actions) {
   el.querySelectorAll('[data-remove-manual]').forEach((btn) => btn.addEventListener('click', () => actions.removeManualLink(btn.dataset.removeManual, decodeURIComponent(btn.dataset.url || ''))));
   el.querySelectorAll('[data-remove-support]').forEach((btn) => btn.addEventListener('click', () => actions.removeSupportLink(btn.dataset.removeSupport, decodeURIComponent(btn.dataset.url || ''))));
   el.querySelectorAll('[data-apply-enrichment]').forEach((btn) => btn.addEventListener('click', () => actions.applyEnrichmentSuggestions(btn.dataset.assetId, btn.dataset.applyEnrichment)));
+  el.querySelectorAll('[data-clear-enrichment]').forEach((btn) => btn.addEventListener('click', () => actions.clearAssetEnrichmentState(btn.dataset.clearEnrichment)));
   el.querySelectorAll('[data-edit]').forEach((assetForm) => assetForm.addEventListener('submit', (e) => {
     e.preventDefault();
     const fd = new FormData(assetForm);
