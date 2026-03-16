@@ -1,4 +1,15 @@
-import { login, logout, register, resolveProfile, watchAuth } from './auth.js';
+import {
+  login,
+  loginWithGoogle,
+  logout,
+  refreshAuthUser,
+  register,
+  resendVerificationEmail,
+  resolveProfile,
+  sendForgotPasswordEmail,
+  syncSecuritySnapshot,
+  watchAuth
+} from './auth.js';
 import { clearEntitySet, countEntities, deleteEntity, getAppSettings, getEntity, listAudit, listEntities, saveAppSettings, saveUserProfile, setActiveCompanyContext, upsertEntity } from './data.js';
 import { renderDashboard } from './features/dashboard.js';
 import { renderOperations } from './features/operations.js';
@@ -22,6 +33,7 @@ import { createAdminActions } from './features/adminActions.js';
 import { getWorkspaceReadiness } from './features/workspaceReadiness.js';
 import { parseAssetCsv, parseBulkAssetList, normalizeAssetCandidate } from './features/assetIntake.js';
 import { logAudit } from './audit.js';
+import { renderAccount } from './account.js';
 
 const authView = document.getElementById('authView');
 const appView = document.getElementById('appView');
@@ -34,7 +46,7 @@ const notificationBadge = document.getElementById('notificationBadge');
 const notificationPanel = document.getElementById('notificationPanel');
 const ACTIVE_MEMBERSHIP_STORAGE_KEY = 'techops.activeMembership';
 
-const sections = ['dashboard', 'operations', 'assets', 'calendar', 'reports', 'admin'];
+const sections = ['dashboard', 'operations', 'assets', 'calendar', 'reports', 'account', 'admin'];
 function createEmptyAssetDraft() {
   return {
     name: '',
@@ -111,6 +123,25 @@ const state = {
   onboardingUi: { tone: 'info', message: '', pendingAction: '', handoffStatus: 'idle' },
   setupWizard: { active: false, step: 1, message: '', tone: 'info' }
 };
+
+function getAuthInviteCodeValue() {
+  const input = document.getElementById('authInviteCode');
+  return `${input?.value || ''}`.trim();
+}
+
+function syncPendingInviteCode() {
+  const inviteCode = getAuthInviteCodeValue();
+  state.onboardingUi = { ...(state.onboardingUi || {}), inviteCodePrefill: inviteCode };
+}
+
+function hydrateInviteCodeFromRoute() {
+  const params = new URLSearchParams(window.location.search || '');
+  const inviteCode = `${params.get('invite') || params.get('inviteCode') || ''}`.trim();
+  if (!inviteCode) return;
+  const input = document.getElementById('authInviteCode');
+  if (input && !input.value) input.value = inviteCode;
+  state.onboardingUi = { ...(state.onboardingUi || {}), inviteCodePrefill: inviteCode };
+}
 
 function setOnboardingFeedback(message = '', tone = 'info', extra = {}) {
   state.onboardingUi = { ...(state.onboardingUi || {}), message, tone, ...extra };
@@ -1440,6 +1471,23 @@ async function render() {
   renderAssets(document.getElementById('assets'), state, assetActions);
   renderCalendar(document.getElementById('calendar'), state);
   renderReports(document.getElementById('reports'), state);
+  renderAccount(document.getElementById('account'), state, {
+    resendVerification: async () => {
+      await resendVerificationEmail();
+      const refreshed = await refreshAuthUser();
+      state.profile = await syncSecuritySnapshot(refreshed || { uid: state.user?.uid, email: state.user?.email }, state.profile || {});
+      render();
+    },
+    refreshVerification: async () => {
+      const refreshed = await refreshAuthUser();
+      if (!refreshed) throw new Error('No authenticated user found.');
+      state.profile = await syncSecuritySnapshot(refreshed, state.profile || {});
+      render();
+    },
+    sendPasswordReset: async () => {
+      await sendForgotPasswordEmail(state.user?.email || '');
+    }
+  });
   renderAdmin(document.getElementById('admin'), state, createAdminActions({
     state,
     render,
@@ -1471,7 +1519,10 @@ window.addEventListener('popstate', () => {
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const fd = new FormData(e.currentTarget);
-  try { await login(fd.get('email'), fd.get('password')); } catch (err) { authMessage.textContent = err.message; }
+  syncPendingInviteCode();
+  try {
+    await login(fd.get('email'), fd.get('password'));
+  } catch (err) { authMessage.textContent = err.message; }
 });
 
 document.getElementById('registerForm').addEventListener('submit', async (e) => {
@@ -1494,11 +1545,44 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
     return;
   }
   try {
+    syncPendingInviteCode();
     setActiveCompanyContext(null);
     await register(fd.get('email'), password, { fullName });
     authMessage.textContent = 'Account created. Handing off to workspace setup...';
   } catch (err) { authMessage.textContent = err.message; }
 });
+
+document.getElementById('googleLoginBtn')?.addEventListener('click', async () => {
+  syncPendingInviteCode();
+  try {
+    await loginWithGoogle();
+    authMessage.textContent = 'Google sign-in successful. Finishing setup...';
+  } catch (error) {
+    authMessage.textContent = formatActionError(error, 'Google sign-in failed.');
+  }
+});
+
+document.getElementById('googleRegisterBtn')?.addEventListener('click', async () => {
+  syncPendingInviteCode();
+  try {
+    await loginWithGoogle();
+    authMessage.textContent = 'Google sign-in successful. Finishing setup...';
+  } catch (error) {
+    authMessage.textContent = formatActionError(error, 'Google sign-in failed.');
+  }
+});
+
+document.getElementById('forgotPasswordBtn')?.addEventListener('click', async () => {
+  const email = `${document.querySelector('#loginForm [name="email"]')?.value || ''}`.trim();
+  try {
+    await sendForgotPasswordEmail(email);
+    authMessage.textContent = 'Password reset email sent. Check your inbox.';
+  } catch (error) {
+    authMessage.textContent = formatActionError(error, 'Unable to start password reset.');
+  }
+});
+
+document.getElementById('authInviteCode')?.addEventListener('input', syncPendingInviteCode);
 
 const registerForm = document.getElementById('registerForm');
 const registerPasswordInput = registerForm?.querySelector('[name="password"]');
@@ -1529,6 +1613,8 @@ if (notificationBell && notificationPanel) {
   });
 }
 
+hydrateInviteCodeFromRoute();
+
 watchAuth(async (user) => {
   if (!user) {
     setActiveCompanyContext(null);
@@ -1549,6 +1635,7 @@ watchAuth(async (user) => {
     setOnboardingFeedback('', 'info', { pendingAction: '', handoffStatus: 'idle' });
     state.user = { uid: user.uid, email: user.email, displayName: user.displayName };
     state.profile = await resolveProfile(user);
+    state.profile = await syncSecuritySnapshot(user, state.profile);
     state.permissions = buildPermissionContext({ profile: state.profile, membership: null });
     if (state.profile.enabled === false) {
       await logout();
