@@ -1,23 +1,10 @@
 import { detectRepeatIssues } from './workflow.js';
 import { buildLocationSummary, getLocationEmptyState, getLocationScopeLabel } from './locationContext.js';
 import { formatRelativeTime } from './notifications.js';
+import { buildPmHealthSummary, summarizePmByField } from './reportingSummary.js';
 
 function statusChip(label, tone = 'muted') {
   return `<span class="state-chip ${tone}">${label}</span>`;
-}
-
-function isPmOverdue(schedule, now = new Date()) {
-  if (!schedule?.dueDate || schedule.status === 'completed') return false;
-  const due = new Date(schedule.dueDate);
-  return !Number.isNaN(due.getTime()) && due < now;
-}
-
-function isPmDueSoon(schedule, now = new Date()) {
-  if (!schedule?.dueDate || schedule.status === 'completed') return false;
-  const due = new Date(schedule.dueDate);
-  if (Number.isNaN(due.getTime())) return false;
-  const diffDays = (due.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
-  return diffDays >= 0 && diffDays <= 7;
 }
 
 export function renderDashboard(el, state, navigate, applyFocus = () => {}) {
@@ -34,9 +21,15 @@ export function renderDashboard(el, state, navigate, applyFocus = () => {}) {
     if (scope.selection.key === '__unassigned_location__') return !locationName;
     return locationName === `${scope.selection.name || ''}`.trim().toLowerCase();
   });
-  const overduePm = pmSchedules.filter((schedule) => isPmOverdue(schedule, now));
-  const dueSoonPm = pmSchedules.filter((schedule) => isPmDueSoon(schedule, now));
-  const openPm = pmSchedules.filter((schedule) => schedule.status !== 'completed');
+  const pmHealth = buildPmHealthSummary(pmSchedules, now);
+  const overduePm = pmHealth.overdue;
+  const dueSoonPm = pmHealth.dueSoon;
+  const openPm = pmHealth.open;
+  const assetById = new Map((scope.scopedAssets || []).map((asset) => [asset.id, asset]));
+  const pmByAssetGroup = summarizePmByField(pmSchedules, (schedule) => {
+    const linked = assetById.get(schedule.assetId);
+    return linked?.category || schedule.assetCategory || 'Uncategorized assets';
+  }, now).slice(0, 4);
   const pendingInvites = (state.invites || []).filter((invite) => invite.status === 'pending' && invite.companyId === state.company?.id);
   const blockedOpen = openTasks.filter((task) => {
     const assignedWorkers = task.assignedWorkers || [];
@@ -172,8 +165,9 @@ export function renderDashboard(el, state, navigate, applyFocus = () => {}) {
           <button class="filter-chip jump" data-tab="calendar" type="button">Open PM list</button>
         </div>
         ${openPm.length
-          ? `<div class="kpi-line mt"><span>Open PM: ${openPm.length}</span><span>Overdue: ${overduePm.length}</span><span>Due soon: ${dueSoonPm.length}</span></div>
-             <div class="list mt">${openPm.slice(0, 5).map((schedule) => `<div class="item tiny"><b>${schedule.title || schedule.id}</b> | due ${schedule.dueDate || 'not set'} | ${schedule.status || 'open'}</div>`).join('')}</div>`
+          ? `<div class="kpi-line mt"><span>Open PM: ${openPm.length}</span><span>Overdue: ${overduePm.length}</span><span>Due soon: ${dueSoonPm.length}</span><span>Compliance: ${pmHealth.compliance}%</span></div>
+             <div class="list mt">${openPm.slice(0, 5).map((schedule) => `<div class="item tiny"><b>${schedule.title || schedule.id}</b> | due ${schedule.dueDate || 'not set'} | ${schedule.status || 'open'}</div>`).join('')}</div>
+             ${pmByAssetGroup.length ? `<div class="list mt">${pmByAssetGroup.map((row) => `<button class="item jump" data-tab="calendar" data-focus="${row.overdue ? 'overdue_pm' : 'due_soon_pm'}"><b>${row.label}</b><div class="tiny">overdue ${row.overdue} · due soon ${row.dueSoon} · compliance ${row.compliance}%</div></button>`).join('')}</div>` : ''}`
           : `<div class="inline-state success mt">No open PM items in this scope.</div>`}
       </div>
       <div class="item">

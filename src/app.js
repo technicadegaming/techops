@@ -642,6 +642,10 @@ function applyActionCenterFocus(focus) {
     state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', ownershipFilter: 'unassigned' };
   } else if (focus === 'overdue_open') {
     state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', exceptionFilter: 'overdue' };
+  } else if (focus === 'overdue_pm') {
+    state.route = { ...(state.route || {}), pmFilter: 'overdue' };
+  } else if (focus === 'due_soon_pm') {
+    state.route = { ...(state.route || {}), pmFilter: 'due_soon' };
   }
 }
 
@@ -1033,6 +1037,9 @@ async function render() {
       state.adminSection = 'invites';
     } else if (focus === 'overdue_pm') {
       state.route = { ...(state.route || {}), pmFilter: 'overdue' };
+      pushRouteState(state.route);
+    } else if (focus === 'due_soon_pm') {
+      state.route = { ...(state.route || {}), pmFilter: 'due_soon' };
       pushRouteState(state.route);
     } else if (focus === 'missing_docs') {
       state.route = { ...(state.route || {}), assetFilter: 'missing_docs' };
@@ -1470,7 +1477,12 @@ async function render() {
   });
   renderAssets(document.getElementById('assets'), state, assetActions);
   renderCalendar(document.getElementById('calendar'), state);
-  renderReports(document.getElementById('reports'), state);
+  renderReports(document.getElementById('reports'), state, openTab, (focus) => {
+    if (focus) applyActionCenterFocus(focus);
+    if (focus === 'pending_invites') state.adminSection = 'invites';
+    if (focus === 'missing_docs') state.route = { ...(state.route || {}), assetFilter: 'missing_docs' };
+    if (focus === 'overdue_pm' || focus === 'due_soon_pm' || focus === 'missing_docs') pushRouteState(state.route);
+  });
   renderAccount(document.getElementById('account'), state, {
     resendVerification: async () => {
       await resendVerificationEmail();
