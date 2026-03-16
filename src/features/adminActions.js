@@ -194,7 +194,7 @@ export function createAdminActions(deps) {
       render();
     },
     saveAISettings: async (settings) => {
-      await saveAppSettings(settings, state.user);
+      await saveAppSettings({ ...settings, aiConfiguredExplicitly: true }, state.user);
       setAdminFeedback({ tone: 'success', message: 'AI settings saved.' });
       await refreshData();
       render();

@@ -1,3 +1,5 @@
+import { renderWorkspaceReadinessCard } from './features/workspaceReadiness.js';
+
 const SUPPORTED_TIMEZONES = [
   'UTC',
   'America/New_York',
@@ -60,7 +62,7 @@ function normalizeFirstLocationPayload(formData, companyName, companyTimeZone) {
   };
 }
 
-export function renderOnboarding(el, state, actions) {
+function renderInitialOnboarding(el, state, actions) {
   const selectedTimeZone = getDefaultTimeZone();
   const onboardingMessage = state.onboardingUi?.message || '';
   const onboardingTone = state.onboardingUi?.tone || 'info';
@@ -146,4 +148,92 @@ export function renderOnboarding(el, state, actions) {
     const fd = new FormData(e.currentTarget);
     await actions.acceptInvite(`${fd.get('inviteCode') || ''}`.trim());
   });
+}
+
+function renderSetupWizard(el, state, actions) {
+  const step = state.setupWizard?.step || 1;
+  const msg = state.setupWizard?.message || '';
+  const tone = state.setupWizard?.tone || 'info';
+  const workerDefaultName = state.user?.displayName || state.user?.email?.split('@')[0] || '';
+  const currentLocation = (state.companyLocations || [])[0] || {};
+
+  el.innerHTML = `
+    <h2>Setup wizard</h2>
+    <p class="tiny">Finish a few steps so your workspace is ready for daily operations.</p>
+    ${renderWorkspaceReadinessCard(state, { compact: true })}
+    ${msg ? `<div class="inline-state ${tone} mt">${msg}</div>` : ''}
+    <div class="item mt">
+      <div class="tiny">Step ${step} of 6</div>
+      <div class="kpi-line mt"><span>1. Company basics</span><span>2. First location</span><span>3. Team setup</span><span>4. Asset readiness</span><span>5. AI setup</span><span>6. Review</span></div>
+    </div>
+
+    <form id="wizardForm" class="item mt grid">
+      <div data-step="1" class="${step === 1 ? '' : 'hide'}">
+        <h3>Company basics</h3>
+        <label>Company name<input name="companyName" value="${state.company?.name || ''}" required /></label>
+        <label>Contact email<input name="primaryEmail" type="email" value="${state.company?.primaryEmail || state.user?.email || ''}" /></label>
+        <label>Primary phone<input name="primaryPhone" value="${state.company?.primaryPhone || ''}" /></label>
+        <label>Timezone<select name="timeZone">${renderTimeZoneOptions(state.company?.timeZone || getDefaultTimeZone())}</select></label>
+      </div>
+
+      <div data-step="2" class="${step === 2 ? '' : 'hide'}">
+        <h3>First operational location</h3>
+        <label>Name<input name="locationName" value="${currentLocation.name || ''}" required /></label>
+        <label>Address<input name="locationAddress" value="${currentLocation.address || state.company?.address || ''}" /></label>
+        <label>Timezone<select name="locationTimeZone">${renderTimeZoneOptions(currentLocation.timeZone || state.company?.timeZone || getDefaultTimeZone())}</select></label>
+      </div>
+
+      <div data-step="3" class="${step === 3 ? '' : 'hide'}">
+        <h3>Team setup</h3>
+        <div class="tiny">Members = signed-in users. Workers = assignable personnel records. Invites = pending access.</div>
+        <label>Owner worker display name<input name="ownerWorkerDisplayName" value="${workerDefaultName}" /></label>
+        <label>Add first worker name (optional)<input name="newWorkerName" placeholder="Example: Alex Smith" /></label>
+        <label>Add first worker email (optional)<input name="newWorkerEmail" type="email" placeholder="alex@company.com" /></label>
+        <label>Invite email (optional)<input name="inviteEmail" type="email" placeholder="person@company.com" /></label>
+        <label>Invite role<select name="inviteRole"><option value="staff">Staff</option><option value="lead">Lead</option><option value="assistant_manager">Assistant manager</option><option value="manager">Manager</option><option value="admin">Admin</option></select></label>
+      </div>
+
+      <div data-step="4" class="${step === 4 ? '' : 'hide'}">
+        <h3>Asset readiness</h3>
+        <div class="tiny">Operations tasks require a real asset record. Add one now or skip and add later.</div>
+        <label>First asset name (optional)<input name="assetName" placeholder="Example: Ticket Kiosk 01" /></label>
+        <label>Asset ID (optional)<input name="assetId" placeholder="Example: kiosk-01" /></label>
+        <label>Location name<input name="assetLocation" value="${currentLocation.name || ''}" /></label>
+      </div>
+
+      <div data-step="5" class="${step === 5 ? '' : 'hide'}">
+        <h3>AI setup</h3>
+        <div class="tiny">AI runs after task save (not before). Manual troubleshooting runs require Lead or higher.</div>
+        <label><input type="radio" name="aiEnabled" value="yes" ${state.settings?.aiEnabled ? 'checked' : ''} /> Enable AI troubleshooting for this company</label>
+        <label><input type="radio" name="aiEnabled" value="no" ${state.settings?.aiEnabled ? '' : 'checked'} /> Keep AI disabled for now</label>
+      </div>
+
+      <div data-step="6" class="${step === 6 ? '' : 'hide'}">
+        <h3>Review and launch</h3>
+        ${renderWorkspaceReadinessCard(state, { compact: true, title: 'Launch checklist' })}
+        <div class="tiny mt">You can launch now and continue optional steps anytime in Admin.</div>
+      </div>
+
+      <div class="row mt">
+        <button type="button" data-wizard-back ${step <= 1 ? 'disabled' : ''}>Back</button>
+        ${step < 6 ? '<button type="button" data-wizard-skip>Skip for now</button>' : ''}
+        <button class="primary">${step < 6 ? 'Save and continue' : 'Launch workspace'}</button>
+      </div>
+    </form>`;
+
+  el.querySelector('[data-wizard-back]')?.addEventListener('click', () => actions.setSetupStep(Math.max(1, step - 1)));
+  el.querySelector('[data-wizard-skip]')?.addEventListener('click', () => actions.skipSetupStep(step));
+  el.querySelector('#wizardForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+    await actions.submitSetupStep(step, payload);
+  });
+}
+
+export function renderOnboarding(el, state, actions) {
+  if (state.setupWizard?.active) {
+    renderSetupWizard(el, state, actions);
+    return;
+  }
+  renderInitialOnboarding(el, state, actions);
 }

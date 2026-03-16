@@ -113,8 +113,7 @@ export async function createCompanyFromOnboarding(user, payload = {}) {
     timeZone: payload.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     estimatedUsers: Number(payload.estimatedUsers || 0) || null,
     estimatedAssets: Number(payload.estimatedAssets || 0) || null,
-    onboardingCompleted: true,
-    onboardingCompletedAt: serverTimestamp(),
+    onboardingCompleted: false,
     createdAt: serverTimestamp(),
     createdBy: user.uid
   }, { merge: true });
@@ -138,6 +137,7 @@ export async function createCompanyFromOnboarding(user, payload = {}) {
     ...(normalizedFirstLocation ? [normalizedFirstLocation] : []),
     ...legacyLocations
   ];
+  let firstLocationId = '';
   if (!locations.length) {
     locations.push({
       name: `${baseName} HQ`,
@@ -164,7 +164,27 @@ export async function createCompanyFromOnboarding(user, payload = {}) {
       updatedAt: serverTimestamp(),
       updatedBy: user.uid
     }, { merge: true });
+    if (!firstLocationId) firstLocationId = locId;
   }
+
+  const ownerWorkerId = `worker-owner-${user.uid.slice(0, 12)}`;
+  const ownerWorkerName = `${payload.ownerDisplayName || user.displayName || user.email?.split('@')[0] || 'Owner'}`.trim();
+  await setDoc(doc(db, C.workers, ownerWorkerId), {
+    id: ownerWorkerId,
+    companyId,
+    displayName: ownerWorkerName,
+    email: `${user.email || payload.primaryEmail || ''}`.trim().toLowerCase(),
+    role: 'admin',
+    enabled: true,
+    available: true,
+    accountStatus: 'linked_owner',
+    defaultLocationId: firstLocationId || '',
+    locationName: `${locations[0]?.name || `${baseName} HQ`}`.trim(),
+    createdAt: serverTimestamp(),
+    createdBy: user.uid,
+    updatedAt: serverTimestamp(),
+    updatedBy: user.uid
+  }, { merge: true });
 
   return { companyId };
 }

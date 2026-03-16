@@ -125,7 +125,8 @@ export const defaultAiSettings = {
   defaultTaskSeverity: 'medium',
   aiFeedbackCollectionEnabled: true,
   mobileConciseModeDefault: true,
-  taskIntakeRequiredFields: ['assetId', 'description', 'reporter']
+  taskIntakeRequiredFields: ['assetId', 'description', 'reporter'],
+  aiConfiguredExplicitly: false
 };
 
 export async function getAppSettings() {

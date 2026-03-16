@@ -1,5 +1,6 @@
 import { detectRepeatIssues } from './workflow.js';
 import { buildLocationSummary, getLocationEmptyState, getLocationScopeLabel } from './locationContext.js';
+import { renderWorkspaceReadinessCard } from './workspaceReadiness.js';
 
 function isPmOverdue(schedule, now = new Date()) {
   if (!schedule?.dueDate || schedule.status === 'completed') return false;
@@ -53,6 +54,8 @@ export function renderDashboard(el, state, navigate) {
         <span>Open work: ${openTasks.length}</span>
       </div>
     </div>
+
+    ${renderWorkspaceReadinessCard(state, { compact: true })}
 
     <div class="stats-grid">
       <button class="stat-card ${critical.length ? 'bad' : 'good'} jump" data-tab="operations">
