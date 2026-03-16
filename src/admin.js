@@ -4,6 +4,7 @@ import { buildLocationOptions } from './features/locationContext.js';
 import { renderWorkspaceReadinessCard } from './features/workspaceReadiness.js';
 
 const WORKER_ROLE_OPTIONS = ['staff', 'lead', 'assistant_manager', 'manager', 'admin'];
+const ACCESS_ROLE_OPTIONS = ['owner', 'admin', 'manager', 'staff', 'viewer'];
 
 function getReadablePersonName(person = {}) {
   return person.fullName || person.displayName || person.email || person.userId || person.id || 'Unknown person';
@@ -18,9 +19,16 @@ function renderCompanyAddress(company = {}) {
   return [street, locality, zip].filter(Boolean).join(' ').trim() || company.address || '-';
 }
 
+function formatRoleLabel(value = '') {
+  return `${value || 'staff'}`.replace(/_/g, ' ');
+}
+
+function renderStatusChip(label, tone = 'muted') {
+  return `<span class="state-chip ${tone}">${label}</span>`;
+}
+
 const aiBooleanFields = ['aiEnabled', 'aiAutoAttach', 'aiUseInternalKnowledge', 'aiUseWebSearch', 'aiAskFollowups', 'aiAllowManualRerun', 'aiSaveSuccessfulFixesToLibraryDefault', 'aiShortResponseMode', 'aiVerboseManagerMode', 'aiFeedbackCollectionEnabled', 'mobileConciseModeDefault'];
 const aiNumericFields = ['aiMaxWebSources', 'aiConfidenceThreshold'];
-const aiTextFields = ['aiModel', 'defaultTaskSeverity', 'taskIntakeRequiredFields'];
 
 const AI_SETTINGS_SCHEMA = [
   { section: 'Enablement', fields: [{ key: 'aiEnabled', label: 'Enable Operations AI', help: 'When enabled, new saved tasks can trigger AI automatically.' }, { key: 'aiAllowManualRerun', label: 'Allow manual rerun', help: 'Lead-or-higher can rerun AI from the task panel.' }] },
@@ -74,8 +82,7 @@ export function renderAdmin(el, state, actions) {
       displayName: getReadablePersonName(profile),
       email: profile.email || profile.emailLower || '',
       enabled: profile.enabled !== false,
-      profileRole: profile.role || '',
-      memberLabel: profile.memberLabel || ''
+      isCurrentUser: membership.userId === state.user?.uid
     };
   });
   const locations = state.companyLocations || [];
@@ -85,19 +92,18 @@ export function renderAdmin(el, state, actions) {
   const workerEmailSet = new Set(workers.map((worker) => `${worker.email || ''}`.trim().toLowerCase()).filter(Boolean));
   const memberEmailSet = new Set(members.map((member) => `${member.email || ''}`.trim().toLowerCase()).filter(Boolean));
   const inviteEmailSet = new Set(invites.map((invite) => `${invite.email || ''}`.trim().toLowerCase()).filter(Boolean));
-  const renderBadgeList = (labels = []) => labels.length
-    ? `<div class="tiny" style="margin-top:4px;">${labels.map((label) => `<span style="display:inline-block; border:1px solid #d1d5db; border-radius:999px; padding:1px 8px; margin:0 4px 4px 0;">${label}</span>`).join('')}</div>`
-    : '';
+  const linkedCount = members.filter((member) => workerEmailSet.has(`${member.email || ''}`.trim().toLowerCase())).length;
 
   el.innerHTML = `
     <h2>Company Admin</h2>
-    <p class="tiny">Structured workspace controls for ${state.company?.name || 'current workspace'}.</p>
-    ${adminUi.message ? `<div class="tiny" style="margin:8px 0; padding:8px 10px; border-radius:8px; border:1px solid ${adminUi.tone === 'error' ? '#fca5a5' : (adminUi.tone === 'success' ? '#86efac' : '#d1d5db')}; background:${adminUi.tone === 'error' ? '#fef2f2' : (adminUi.tone === 'success' ? '#f0fdf4' : '#f9fafb')}; color:${adminUi.tone === 'error' ? '#991b1b' : (adminUi.tone === 'success' ? '#166534' : '#374151')};">${adminUi.message}</div>` : ''}
+    <p class="tiny">Organize company setup, people access, and worker directory records without mixing concerns.</p>
+    ${adminUi.message ? `<div class="inline-state ${adminUi.tone === 'error' ? 'error' : (adminUi.tone === 'success' ? 'success' : 'info')}">${adminUi.message}</div>` : ''}
     ${renderWorkspaceReadinessCard(state, { compact: true })}
     ${renderSectionTabs(activeSection)}
 
     <section class="item ${activeSection === 'company' ? '' : 'hide'}" data-admin-section="company">
-      <h3>Company profile</h3>
+      <h3>Company</h3>
+      <p class="tiny">Core workspace identity and setup state.</p>
       <div class="grid grid-2">
         <div><b>Name:</b> ${state.company?.name || '-'}</div>
         <div><b>Onboarding complete:</b> ${state.company?.onboardingCompleted ? 'Yes' : 'No'}</div>
@@ -106,114 +112,109 @@ export function renderAdmin(el, state, actions) {
         <div><b>HQ address:</b> ${renderCompanyAddress(state.company)}</div>
         <div><b>Timezone:</b> ${state.company?.timeZone || '-'}</div>
       </div>
+      <div class="tiny mt">Owner note: the company creator already has owner-level admin access.</div>
     </section>
 
     <section class="item ${activeSection === 'locations' ? '' : 'hide'}" data-admin-section="locations">
       <h3>Locations</h3>
-      <p class="tiny">Locations define where assets live, where work happens, and what the main workflow filters against.</p>
-      <div class="list">${locations.map((location) => `<div class="item"><b>${location.name}</b><div class="tiny">${location.address || 'No address'} ${location.timeZone ? `| ${location.timeZone}` : ''}</div><div class="tiny">${location.notes || 'Used for asset/task scoping and admin defaults.'}</div></div>`).join('') || '<p class="tiny">No locations yet. Add the first site to make company-wide vs single-location views obvious.</p>'}</div>
-      <form id="addLocationForm" class="grid grid-2 mt">
-        <label>Location name<input name="name" required /></label>
-        <label>Address<input name="address" /></label>
-        <label>Timezone<input name="timeZone" placeholder="America/Chicago" /></label>
-        <label>Notes<input name="notes" placeholder="What teams or assets belong here?" /></label>
-        <button class="primary" type="submit">Add location</button>
-      </form>
+      <p class="tiny">Where assets and work are scoped. Keep this list clean and easy to scan.</p>
+      <div class="list">${locations.map((location) => `<div class="item"><div class="row space"><b>${location.name}</b>${renderStatusChip('active', 'good')}</div><div class="tiny">${location.address || 'No address'} ${location.timeZone ? `| ${location.timeZone}` : ''}</div><div class="tiny">${location.notes || 'Used for asset/task filters and assignments.'}</div></div>`).join('') || '<div class="inline-state info">No additional locations yet. Add one when teams or assets operate outside HQ.</div>'}</div>
+      <details class="mt"><summary><b>Add location</b></summary>
+        <form id="addLocationForm" class="grid grid-2 mt">
+          <label>Location name<input name="name" required /></label>
+          <label>Address<input name="address" /></label>
+          <label>Timezone<input name="timeZone" placeholder="America/Chicago" /></label>
+          <label>Notes<input name="notes" placeholder="What teams or assets belong here?" /></label>
+          <button class="primary" type="submit">Save location</button>
+        </form>
+      </details>
     </section>
 
     <section class="item ${activeSection === 'members' ? '' : 'hide'}" data-admin-section="members">
       <h3>Members</h3>
-      <p class="tiny">Members are signed-in people with active workspace access. Use this list to confirm what a real user will see after accepting an invite.</p>
-      <div class="tiny" style="margin-bottom:8px;">Active members: ${members.length} | Pending invites: ${invites.length} | Worker records: ${workers.length}</div>
-      ${members.length ? `<table class="table"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Status</th></tr></thead><tbody>${members.map((member) => {
-    const badges = [];
-    if (memberEmailSet.has(`${member.email || ''}`.trim().toLowerCase()) && workerEmailSet.has(`${member.email || ''}`.trim().toLowerCase())) badges.push('has worker record');
-    if (!member.enabled) badges.push('profile disabled');
-    if (!member.email) badges.push('no profile email');
-    return `<tr><td>${member.displayName || member.email || member.userId}${member.userId && member.displayName !== member.userId ? `<div class="tiny">${member.userId}</div>` : ''}</td><td>${member.email || '-'}</td><td>${member.role || 'staff'}</td><td>${badges.join(' | ') || 'active'}</td></tr>`;
-  }).join('')}</tbody></table>` : '<p class="tiny">No active members found yet. Use Invites to grant access.</p>'}
+      <p class="tiny">Signed-in users with workspace access. Use this to manage role/access and verify who can log in.</p>
+      <div class="kpi-line"><span>Members: ${members.length}</span><span>Pending invites: ${invites.length}</span><span>Linked to worker records: ${linkedCount}</span></div>
+      <div class="list mt">${members.map((member) => {
+    const normalizedEmail = `${member.email || ''}`.trim().toLowerCase();
+    const chips = [renderStatusChip(formatRoleLabel(member.role || 'staff'), member.role === 'owner' ? 'bad' : 'muted')];
+    chips.push(renderStatusChip(member.enabled ? 'active' : 'inactive', member.enabled ? 'good' : 'warn'));
+    chips.push(renderStatusChip(workerEmailSet.has(normalizedEmail) ? 'linked worker' : 'unlinked worker', workerEmailSet.has(normalizedEmail) ? 'good' : 'warn'));
+    if (member.isCurrentUser) chips.push(renderStatusChip('you', 'info'));
+    return `<div class="item"><div class="row space"><b>${member.displayName || member.userId}</b><div class="state-chip-row">${chips.join('')}</div></div><div class="tiny">${member.email || '-'} ${member.userId ? `| ${member.userId}` : ''}</div><details class="mt"><summary>Edit role/access</summary><form data-member-form="${member.id}" class="grid grid-2 mt"><label>Role<select name="role" ${member.role === 'owner' ? 'disabled' : ''}>${ACCESS_ROLE_OPTIONS.map((role) => `<option value="${role}" ${role === (member.role || 'staff') ? 'selected' : ''}>${formatRoleLabel(role)}</option>`).join('')}</select></label><label>Status<select name="status"><option value="active" ${member.status !== 'inactive' ? 'selected' : ''}>active</option><option value="inactive" ${member.status === 'inactive' ? 'selected' : ''}>inactive</option></select></label><div class="tiny" style="grid-column:1/-1;">Use inactive for temporary access removal. Owner role cannot be changed here.</div><button type="submit" ${member.role === 'owner' ? 'disabled' : ''}>Save member access</button></form></details></div>`;
+  }).join('') || '<div class="inline-state info">No active members yet. Send an invite to grant workspace access.</div>'}</div>
     </section>
 
     <section class="item ${activeSection === 'workers' ? '' : 'hide'}" data-admin-section="workers">
       <h3>Workers</h3>
-      <p class="tiny">Workers are assignment and scheduling records. They can exist without login access, and an invite is optional when an email is present.</p>
-      <form id="workerForm" class="grid grid-2">
-        <label>Name<input name="displayName" required /></label>
-        <label>Email<input name="email" type="email" placeholder="Optional login email" /></label>
-        <label>Role<select name="role">${WORKER_ROLE_OPTIONS.map((role) => `<option value="${role}">${role}</option>`).join('')}</select></label>
-        <label>Skills<input name="skills" placeholder="Electrical, Mechanical" /></label>
-        <label>Default location
-          <select name="defaultLocationId">
-            <option value="">No default location</option>
-            ${locationOptions.map((option) => `<option value="${option.id}">${option.name}</option>`).join('')}
-          </select>
-        </label>
-        <label>Location label<input name="locationName" list="workerLocationNames" placeholder="Visible location label" /></label>
-        <label>Invite access
-          <select name="sendInvite">
-            <option value="no">Do not send invite</option>
-            <option value="yes">Create invite code now</option>
-          </select>
-        </label>
-        <div class="tiny" style="grid-column:1/-1;">Creating a worker does not make them a Member. Choose "Create invite code now" only if this worker should also get sign-in access.</div>
-        <button class="primary">Add worker</button>
-      </form>
+      <p class="tiny">Assignable people records for jobs, schedules, and operations. Workers can exist without login access.</p>
+      <details><summary><b>Add worker</b></summary>
+        <form id="workerForm" class="grid grid-2 mt">
+          <label>Name<input name="displayName" required /></label>
+          <label>Email<input name="email" type="email" placeholder="Optional login email" /></label>
+          <label>Role<select name="role">${WORKER_ROLE_OPTIONS.map((role) => `<option value="${role}">${formatRoleLabel(role)}</option>`).join('')}</select></label>
+          <label>Skills<input name="skills" placeholder="Electrical, Mechanical" /></label>
+          <label>Default location
+            <select name="defaultLocationId"><option value="">No default location</option>${locationOptions.map((option) => `<option value="${option.id}">${option.name}</option>`).join('')}</select>
+          </label>
+          <label>Location label<input name="locationName" list="workerLocationNames" placeholder="Visible location label" /></label>
+          <label>Invite access<select name="sendInvite"><option value="no">Do not send invite</option><option value="yes">Create invite code now</option></select></label>
+          <div class="tiny" style="grid-column:1/-1;">This creates a worker record. Invite only when this person should also become a Member.</div>
+          <button class="primary">Save worker</button>
+        </form>
+      </details>
       <datalist id="workerLocationNames">${locationOptions.map((option) => `<option value="${option.name}"></option>`).join('')}</datalist>
       <div class="list mt">${workers.map((worker) => {
     const normalizedEmail = `${worker.email || ''}`.trim().toLowerCase();
-    const badges = [];
-    if (normalizedEmail && memberEmailSet.has(normalizedEmail)) badges.push('is member');
-    if (normalizedEmail && inviteEmailSet.has(normalizedEmail)) badges.push('has pending invite');
-    if (!normalizedEmail) badges.push('directory only');
-    return `<div class="item"><b>${worker.displayName || worker.id}</b><div class="tiny">${worker.email || 'No login email'} | ${worker.role || 'staff'} | ${worker.locationName || 'No location set'}</div><div class="tiny">${worker.accountStatus || 'directory_only'} ${worker.inviteStatus ? `| invite ${worker.inviteStatus}` : ''}</div>${renderBadgeList(badges)}</div>`;
-  }).join('') || '<p class="tiny">No workers yet. Add staff records here even if they should not be able to sign in.</p>'}</div>
+    const isLinked = normalizedEmail && memberEmailSet.has(normalizedEmail);
+    const chips = [
+      renderStatusChip(formatRoleLabel(worker.role || 'staff'), 'muted'),
+      renderStatusChip(worker.enabled === false ? 'inactive' : 'active', worker.enabled === false ? 'warn' : 'good'),
+      renderStatusChip(isLinked ? 'linked member' : 'unlinked', isLinked ? 'good' : 'warn')
+    ];
+    if (normalizedEmail && inviteEmailSet.has(normalizedEmail)) chips.push(renderStatusChip('invited', 'info'));
+    if (!normalizedEmail) chips.push(renderStatusChip('no login email', 'muted'));
+    return `<div class="item"><div class="row space"><b>${worker.displayName || worker.id}</b><div class="state-chip-row">${chips.join('')}</div></div><div class="tiny">${worker.email || 'No login email'} | ${worker.locationName || 'No location set'}</div><details class="mt"><summary>Edit worker</summary><form data-worker-form="${worker.id}" class="grid grid-2 mt"><label>Name<input name="displayName" value="${worker.displayName || ''}" /></label><label>Email<input name="email" type="email" value="${worker.email || ''}" /></label><label>Role<select name="role">${WORKER_ROLE_OPTIONS.map((role) => `<option value="${role}" ${role === (worker.role || 'staff') ? 'selected' : ''}>${formatRoleLabel(role)}</option>`).join('')}</select></label><label>Location label<input name="locationName" value="${worker.locationName || ''}" /></label><button type="submit">Save worker updates</button></form></details></div>`;
+  }).join('') || '<div class="inline-state info">No workers yet. Add staff records for assignment even if they do not need login access.</div>'}</div>
     </section>
 
     <section class="item ${activeSection === 'invites' ? '' : 'hide'}" data-admin-section="invites">
       <h3>Invites</h3>
-      <p class="tiny">Invites are pending access grants. They are separate from Workers and do not become Members until accepted.</p>
-      <form id="inviteForm" class="row">
-        <input name="email" type="email" placeholder="person@company.com" required />
-        <select name="role"><option value="staff">staff</option><option value="manager">manager</option><option value="admin">admin</option></select>
-        <button class="primary" type="submit">Create invite</button>
-      </form>
+      <p class="tiny">Pending access grants. Invites become Members only when accepted.</p>
+      <details><summary><b>Invite member</b></summary>
+        <form id="inviteForm" class="row mt">
+          <input name="email" type="email" placeholder="person@company.com" required />
+          <select name="role"><option value="viewer">viewer</option><option value="staff">staff</option><option value="manager">manager</option><option value="admin">admin</option></select>
+          <button class="primary" type="submit">Create invite</button>
+        </form>
+      </details>
       <div class="list mt">${invites.map((invite) => {
     const normalizedEmail = `${invite.email || ''}`.trim().toLowerCase();
-    const badges = [];
-    if (normalizedEmail && workerEmailSet.has(normalizedEmail)) badges.push('worker record exists');
-    if (normalizedEmail && memberEmailSet.has(normalizedEmail)) badges.push('already a member');
-    return `<div class="item"><b>${invite.email}</b><div class="tiny">Pending access | role ${invite.role || 'staff'} | code ${invite.inviteCode || 'n/a'}</div>${renderBadgeList(badges)}<button data-revoke-invite="${invite.id}">Revoke invite</button></div>`;
-  }).join('') || '<p class="tiny">No pending invites. Everyone with access is already a member.</p>'}</div>
+    const chips = [renderStatusChip('invited', 'info'), renderStatusChip(formatRoleLabel(invite.role || 'staff'), 'muted')];
+    chips.push(renderStatusChip(workerEmailSet.has(normalizedEmail) ? 'worker exists' : 'no worker yet', workerEmailSet.has(normalizedEmail) ? 'good' : 'warn'));
+    return `<div class="item"><div class="row space"><b>${invite.email}</b><div class="state-chip-row">${chips.join('')}</div></div><div class="tiny">Invite code: ${invite.inviteCode || 'n/a'}</div><button data-revoke-invite="${invite.id}" class="mt">Revoke invite</button></div>`;
+  }).join('') || '<div class="inline-state info">No pending invites. Add an invite when someone needs workspace sign-in access.</div>'}</div>
     </section>
 
     <section class="item ${activeSection === 'imports' ? '' : 'hide'}" data-admin-section="imports">
-      <h3>Imports</h3>
-      <div class="row">
-        <button id="downloadAssetsTemplate" type="button">Download assets CSV template</button>
-        <button id="downloadEmployeesTemplate" type="button">Download workers CSV template</button>
-      </div>
-      <div class="grid grid-2 mt">
-        <label>Assets CSV<input id="assetCsvInput" type="file" accept=".csv" /></label>
-        <button id="applyAssetCsv" type="button">Import assets</button>
-        <label>Workers CSV<input id="employeeCsvInput" type="file" accept=".csv" /></label>
-        <button id="applyEmployeeCsv" type="button">Import workers</button>
-      </div>
-      ${adminUi.importSummary ? `<div class="tiny" style="margin-top:8px; color:${adminUi.importTone === 'error' ? '#991b1b' : (adminUi.importTone === 'success' ? '#166534' : '#374151')};">${adminUi.importSummary}</div>` : '<div class="tiny" style="margin-top:8px;">Choose a CSV to preview the first rows before import.</div>'}
+      <h3>Workspace tools</h3>
+      <div class="row"><button id="downloadAssetsTemplate" type="button">Download assets CSV template</button><button id="downloadEmployeesTemplate" type="button">Download workers CSV template</button></div>
+      <div class="grid grid-2 mt"><label>Assets CSV<input id="assetCsvInput" type="file" accept=".csv" /></label><button id="applyAssetCsv" type="button">Import assets</button><label>Workers CSV<input id="employeeCsvInput" type="file" accept=".csv" /></label><button id="applyEmployeeCsv" type="button">Import workers</button></div>
+      ${adminUi.importSummary ? `<div class="tiny mt">${adminUi.importSummary}</div>` : '<div class="tiny mt">Choose a CSV to preview rows before import.</div>'}
       <pre id="importPreview" class="tiny">${adminUi.importPreview || ''}</pre>
     </section>
 
     <section class="item ${activeSection === 'tools' ? '' : 'hide'}" data-admin-section="tools">
-      <h3>AI settings / Workspace tools</h3>
+      <h3>AI settings</h3>
       <div class="tiny">Effective state: AI is <b>${settings.aiEnabled ? 'enabled' : 'disabled'}</b> for this company.</div>
       <form id="aiSettingsForm" class="grid">
         ${AI_SETTINGS_SCHEMA.map((group) => `<fieldset class="onboarding-location-fieldset"><legend><b>${group.section}</b></legend>${group.fields.map((field) => {
-          const isNumber = field.type === 'number' || aiNumericFields.includes(field.key);
-          const isBoolean = aiBooleanFields.includes(field.key);
-          const value = Array.isArray(settings[field.key]) ? settings[field.key].join(',') : (settings[field.key] ?? '');
-          return isBoolean
-            ? `<label><input type="checkbox" name="${field.key}" ${settings[field.key] ? 'checked' : ''} ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /> ${field.label}<div class="tiny">${field.help}</div></label>`
-            : `<label>${field.label}<input name="${field.key}" ${isNumber ? 'type="number" step="0.01"' : ''} value="${value}" ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /><div class="tiny">${field.help}</div></label>`;
-        }).join('')}</fieldset>`).join('')}
+    const isNumber = field.type === 'number' || aiNumericFields.includes(field.key);
+    const isBoolean = aiBooleanFields.includes(field.key);
+    const value = Array.isArray(settings[field.key]) ? settings[field.key].join(',') : (settings[field.key] ?? '');
+    return isBoolean
+      ? `<label><input type="checkbox" name="${field.key}" ${settings[field.key] ? 'checked' : ''} ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /> ${field.label}<div class="tiny">${field.help}</div></label>`
+      : `<label>${field.label}<input name="${field.key}" ${isNumber ? 'type="number" step="0.01"' : ''} value="${value}" ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /><div class="tiny">${field.help}</div></label>`;
+  }).join('')}</fieldset>`).join('')}
         <button ${canChangeAISettings(state.permissions) ? '' : 'disabled'}>Save settings</button>
       </form>
     </section>
@@ -222,13 +223,7 @@ export function renderAdmin(el, state, actions) {
       <h3 class="danger">Danger Zone</h3>
       <p class="tiny">Destructive workspace actions are isolated here. Type the company name to confirm.</p>
       <input id="dangerPhrase" placeholder="Type: ${state.company?.name || 'CONFIRM'}" />
-      <div class="row mt">
-        <button id="exportBackup" ${canManageBackups(state.permissions) ? '' : 'disabled'} type="button">Export workspace data</button>
-        <button id="clearTasks" type="button">Clear tasks/operations</button>
-        <button id="clearAssets" type="button">Clear assets</button>
-        <button id="clearWorkers" type="button">Clear workers</button>
-        <button id="resetWorkspace" type="button">Reset workspace data</button>
-      </div>
+      <div class="row mt"><button id="exportBackup" ${canManageBackups(state.permissions) ? '' : 'disabled'} type="button">Export workspace data</button><button id="clearTasks" type="button">Clear tasks/operations</button><button id="clearAssets" type="button">Clear assets</button><button id="clearWorkers" type="button">Clear workers</button><button id="resetWorkspace" type="button">Reset workspace data</button></div>
     </section>`;
 
   el.querySelectorAll('[data-admin-tab]').forEach((button) => {
@@ -256,6 +251,18 @@ export function renderAdmin(el, state, actions) {
   el.querySelector('#inviteForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     await actions.createInvite(Object.fromEntries(new FormData(event.currentTarget).entries()));
+  });
+  el.querySelectorAll('[data-worker-form]').forEach((form) => {
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      await actions.saveWorker(form.dataset.workerForm, Object.fromEntries(new FormData(event.currentTarget).entries()));
+    });
+  });
+  el.querySelectorAll('[data-member-form]').forEach((form) => {
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      await actions.saveMemberAccess(form.dataset.memberForm, Object.fromEntries(new FormData(event.currentTarget).entries()));
+    });
   });
 
   el.querySelectorAll('[data-revoke-invite]').forEach((button) => button.addEventListener('click', () => actions.revokeInvite(button.dataset.revokeInvite)));
