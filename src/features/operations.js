@@ -26,6 +26,85 @@ const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1 };
 const PRIORITY_LABEL = { critical: 'P1 critical', high: 'P2 high', medium: 'P3 medium', low: 'P4 low' };
 const STATUS_LABEL = { open: 'Open', in_progress: 'In progress', completed: 'Completed' };
 
+function parseReferenceList(value = '') {
+  return `${value || ''}`
+    .split(/\r?\n|,/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function buildAttachments(input = {}) {
+  return {
+    images: parseReferenceList(input.imageRefs || input.images || ''),
+    videos: parseReferenceList(input.videoRefs || input.videos || ''),
+    evidence: parseReferenceList(input.evidenceRefs || input.evidence || '')
+  };
+}
+
+function attachmentCount(attachments = {}) {
+  return ['images', 'videos', 'evidence'].reduce((sum, key) => sum + ((attachments[key] || []).length), 0);
+}
+
+function renderReferenceGroup(label, values = []) {
+  if (!values.length) return '';
+  return `<div class="attachment-group"><b>${label}</b><div class="attachment-list">${values.map((value) => `<span class="state-chip muted">${value}</span>`).join('')}</div></div>`;
+}
+
+function renderAttachments(attachments = {}, emptyLabel = 'No references recorded yet.') {
+  const total = attachmentCount(attachments);
+  if (!total) return emptyLabel ? `<div class="inline-state info mt">${emptyLabel}</div>` : '';
+  return `<div class="attachment-block mt">
+    ${renderReferenceGroup('Images', attachments.images || [])}
+    ${renderReferenceGroup('Videos', attachments.videos || [])}
+    ${renderReferenceGroup('Evidence', attachments.evidence || [])}
+  </div>`;
+}
+
+function formatTimelineType(type = '') {
+  return ({
+    intake: 'Intake',
+    update: 'Update',
+    closeout: 'Closeout',
+    task_closeout: 'Closeout'
+  })[type] || 'Entry';
+}
+
+function normalizeTimeline(task = {}) {
+  const recorded = Array.isArray(task.timeline) ? task.timeline : [];
+  const seed = recorded.length ? [] : [{
+    at: task.openedAt || task.createdAtClient || task.updatedAt || task.updatedAtClient || '',
+    type: 'intake',
+    note: task.notes || 'Task created',
+    detail: task.description || '',
+    by: task.reportedByEmail || task.reporter || ''
+  }];
+  const merged = [...seed, ...recorded]
+    .filter((entry) => entry && (entry.note || entry.detail || entry.at))
+    .sort((a, b) => `${b.at || ''}`.localeCompare(`${a.at || ''}`));
+  const seen = new Set();
+  return merged.filter((entry) => {
+    const key = `${entry.at || ''}|${entry.type || ''}|${entry.note || ''}|${entry.detail || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function renderTimeline(task) {
+  const entries = normalizeTimeline(task);
+  if (!entries.length) return `<div class="inline-state info mt">No service history yet.</div>`;
+  return `<div class="timeline-list mt">${entries.map((entry) => `<div class="timeline-entry">
+      <div class="row space">
+        <b>${formatTimelineType(entry.type)}</b>
+        <span class="tiny">${formatDateTime(entry.at)}</span>
+      </div>
+      ${entry.note ? `<div class="mt">${entry.note}</div>` : ''}
+      ${entry.detail ? `<div class="tiny mt">${entry.detail}</div>` : ''}
+      ${entry.by ? `<div class="tiny mt">By ${entry.by}</div>` : ''}
+      ${attachmentCount(entry.attachments || {}) ? renderAttachments(entry.attachments || {}, '') : ''}
+    </div>`).join('')}</div>`;
+}
+
 function getWorkerOptionLabel(worker = {}) {
   const name = `${worker.displayName || worker.fullName || worker.email || worker.id || ''}`.trim();
   const email = `${worker.email || ''}`.trim();
@@ -248,7 +327,9 @@ function renderCloseout(task, state, meta) {
       <label>Save to library<select name="saveToLibrary"><option value="">Use default</option><option value="yes">Save to troubleshooting library</option><option value="no">Do not save</option></select></label>
       <label>AI helpfulness<select name="aiHelpfulness"><option value="">Optional</option><option value="helpful">AI was helpful</option><option value="partial">AI partially helpful</option><option value="not_helpful">AI not helpful</option></select></label>
       <label>Best concise fix summary<input name="bestFixSummary" placeholder="One-line closeout summary for future reuse" /></label>
-      <label class="closeout-wide">Evidence link<input name="evidenceLink" placeholder="Photo / video / log URL (optional)" /></label>
+      <label class="closeout-wide">Image references<textarea name="imageRefs" placeholder="Photo URLs, filenames, or shared-drive refs"></textarea></label>
+      <label class="closeout-wide">Video references<textarea name="videoRefs" placeholder="Video URLs or file refs"></textarea></label>
+      <label class="closeout-wide">Evidence references<textarea name="evidenceRefs" placeholder="Logs, tickets, measurements, or other evidence"></textarea></label>
       <div class="closeout-actions closeout-wide">
         <button class="primary">Complete task</button>
       </div>
@@ -464,9 +545,13 @@ export function renderOperations(el, state, actions) {
             </select>
           </label>
           <select name="status" ${editable ? '' : 'disabled'}><option>open</option><option>in_progress</option><option>completed</option></select>
-          <textarea name="notes" placeholder="Task notes (persist with the task)" ${editable ? '' : 'disabled'}></textarea>
+          <textarea name="notes" placeholder="Current summary / handoff notes" ${editable ? '' : 'disabled'}></textarea>
+          <textarea name="timelineEntry" placeholder="First service timeline entry" ${editable ? '' : 'disabled'}></textarea>
+          <textarea name="imageRefs" placeholder="Image references: URLs, filenames, drive refs" ${editable ? '' : 'disabled'}></textarea>
+          <textarea name="videoRefs" placeholder="Video references: URLs or filenames" ${editable ? '' : 'disabled'}></textarea>
+          <textarea name="evidenceRefs" placeholder="Evidence refs: logs, measurements, ticket links" ${editable ? '' : 'disabled'}></textarea>
         </div>
-        <div class="tiny mt">Use a worker assignment instead of free text so the board, reports, and reassignment actions stay consistent.</div>
+        <div class="tiny mt">Use timeline updates and reference fields to keep a service-history trail without requiring upload wiring.</div>
       </details>
 
       <button class="primary" ${editable ? '' : 'disabled'}>Save task</button>
@@ -511,7 +596,10 @@ export function renderOperations(el, state, actions) {
                 <div><b>Category</b><div class="tiny">${task.issueCategory || 'uncategorized'} | tags: ${(task.symptomTags || []).join(', ') || 'none'}</div></div>
               </div>
               <div class="mt"><b>Issue:</b> ${task.description || ''}</div>
-              ${task.notes ? `<div class="mt"><b>Notes:</b> ${task.notes}</div>` : ''}
+              ${task.notes ? `<div class="mt"><b>Current summary:</b> ${task.notes}</div>` : ''}
+              <div class="mt"><b>Asset link:</b> ${task.assetId ? `<a href="?tab=assets&assetId=${encodeURIComponent(task.assetId)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open asset record</a>` : 'No linked asset'}</div>
+              <div class="mt"><b>Service timeline</b>${renderTimeline(task)}</div>
+              <div class="mt"><b>Recorded references</b>${renderAttachments(task.attachments || {}, 'No image, video, or evidence references on this task yet.')}</div>
               ${meta.unavailable.length ? `<div class="tiny mt">Unavailable assignees: ${meta.unavailable.join(', ')}</div>` : ''}
               <div class="action-row mt">
                 ${editable && task.status === 'open' ? `<button type="button" data-quick-status="${task.id}" data-next-status="in_progress" class="primary" ${meta.assignedWorkers.length ? '' : 'disabled'}>Start now</button>` : ''}
@@ -521,6 +609,15 @@ export function renderOperations(el, state, actions) {
                 ${(meta.awaitingAssignment || meta.unavailable.length) ? `<button type="button" data-reassign="${task.id}">Quick reassign</button>` : ''}
                 ${canDelete(state.permissions) ? `<button type="button" data-del="${task.id}" class="danger">Delete</button>` : ''}
               </div>
+              ${editable ? `<form data-add-timeline="${task.id}" class="grid mt">
+                <label>Add timeline update<textarea name="note" placeholder="What happened on this visit, test, or handoff?"></textarea></label>
+                <div class="grid grid-2">
+                  <label>Image refs<textarea name="imageRefs" placeholder="Photos, filenames, links"></textarea></label>
+                  <label>Video refs<textarea name="videoRefs" placeholder="Videos or clips"></textarea></label>
+                </div>
+                <label>Evidence refs<textarea name="evidenceRefs" placeholder="Meter readings, logs, ticket links"></textarea></label>
+                <div class="action-row"><button type="submit">Add timeline update</button></div>
+              </form>` : ''}
               ${(meta.awaitingAssignment || meta.unavailable.length) ? `<div class="row mt"><select data-reassign-select="${task.id}"><option value="">Select worker</option>${workerOptions.map((worker) => `<option value="${worker.id || worker.email || ''}">${getWorkerOptionLabel(worker)}</option>`).join('')}</select><div class="tiny">Required before moving this task into progress.</div></div>` : ''}
               ${renderCloseoutSummary(task, meta)}
               ${renderCloseout(task, state, meta)}
@@ -664,6 +761,19 @@ export function renderOperations(el, state, actions) {
       reportedByUserId: state.user?.uid || '',
       reportedByEmail: state.user?.email || ''
     }, state.settings || {});
+    const attachments = buildAttachments(Object.fromEntries(fd.entries()));
+    const initialTimelineNote = `${fd.get('timelineEntry') || ''}`.trim();
+    payload.attachments = attachments;
+    if (initialTimelineNote || payload.notes || attachmentCount(attachments)) {
+      payload.timeline = [{
+        at: payload.openedAt,
+        type: 'intake',
+        note: initialTimelineNote || payload.notes || 'Task created',
+        detail: payload.notes && initialTimelineNote && payload.notes !== initialTimelineNote ? payload.notes : '',
+        by: state.user?.email || state.user?.uid || payload.reporter || 'unknown',
+        attachments
+      }];
+    }
     if (state.tasks.some((task) => task.id === payload.id)) payload.id = generateTaskId({
       assetId: payload.assetId,
       assetName: payload.assetName,
@@ -709,7 +819,17 @@ export function renderOperations(el, state, actions) {
     state.operationsUi.scrollY = window.scrollY;
     const taskId = taskForm.dataset.closeout;
     const closeout = Object.fromEntries(new FormData(taskForm).entries());
+    closeout.attachments = buildAttachments(closeout);
     actions.completeTask(taskId, closeout);
+  }));
+  el.querySelectorAll('[data-add-timeline]').forEach((timelineForm) => timelineForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    state.operationsUi.scrollY = window.scrollY;
+    const fd = new FormData(timelineForm);
+    actions.appendTaskTimeline(timelineForm.dataset.addTimeline, {
+      note: `${fd.get('note') || ''}`.trim(),
+      attachments: buildAttachments(Object.fromEntries(fd.entries()))
+    });
   }));
 
   el.querySelectorAll('[data-quick-status]').forEach((button) => button.addEventListener('click', async () => {

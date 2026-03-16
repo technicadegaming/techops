@@ -132,7 +132,8 @@ export function buildCloseoutEvent(taskId, closeout, actor) {
     verification: closeout.verification || '',
     fullyResolved: closeout.fullyResolved === 'yes',
     bestFixSummary: closeout.bestFixSummary || '',
-    by: actor?.uid || 'unknown'
+    by: actor?.uid || 'unknown',
+    attachments: closeout.attachments || {}
   };
 }
 

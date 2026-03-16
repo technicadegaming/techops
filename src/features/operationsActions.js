@@ -2,6 +2,7 @@ export function createOperationsActions({
   state,
   onLocationFilter,
   saveTask,
+  appendTaskTimeline,
   reassignTask,
   prepareAssetCreation,
   completeTask,
@@ -13,6 +14,7 @@ export function createOperationsActions({
 }) {
   return {
     saveTask,
+    appendTaskTimeline,
     reassignTask,
     prepareAssetCreation,
     completeTask,
