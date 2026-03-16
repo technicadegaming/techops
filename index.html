@@ -25,6 +25,10 @@
     .stat-card.good{background:linear-gradient(180deg,#f0fdf9,#dcfce7)}
     .stat-card.warn{background:linear-gradient(180deg,#fff7ed,#ffedd5)}
     .stat-card.bad{background:linear-gradient(180deg,#fff5f5,#fee2e2)}
+    .priority-band{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;border:1px solid #fecaca;background:linear-gradient(180deg,#fff7f7,#fef2f2);border-radius:16px;padding:12px 14px}
+    .priority-band h3{margin:4px 0}
+    .dashboard-priority-grid .priority-card{border-width:2px}
+    .dashboard-priority-grid .stat-card.good:not(.priority-card){opacity:.9}
     .filter-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
     .filter-chip{padding:8px 12px;border-radius:999px;border:1px solid var(--line);background:#fff;cursor:pointer}
     .filter-chip.active{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -76,6 +80,7 @@
     @media(max-width:640px){.wrap{padding:10px}.card{padding:12px;border-radius:14px} input,select,textarea,button{font-size:16px}}
     @media(max-width:640px){.kpi-line{gap:8px}.ops-location-field{min-width:0;width:100%}.task-summary{padding:12px}.task-body{padding:0 12px 12px}.action-row button{flex:1 1 calc(50% - 8px)}.closeout-actions button{width:100%}}
     @media(max-width:640px){.onboarding-row{display:grid;grid-template-columns:1fr;gap:10px}}
+    @media(max-width:640px){.stats-grid{grid-template-columns:1fr}.priority-band{padding:10px}.priority-band .kpi-line{width:100%}}
   </style>
 </head>
 <body>

@@ -271,9 +271,13 @@ export function renderAssets(el, state, actions) {
   const repeatPatterns = detectRepeatIssues(state.tasks || []);
   const locationOptions = buildLocationOptions(state);
   const scope = buildLocationSummary(state);
-  const scopedAssets = scope.scopedAssets;
+  const assetFilter = state.route?.assetFilter || 'all';
+  const scopedAssets = (scope.scopedAssets || []).filter((asset) => {
+    if (assetFilter !== 'missing_docs') return true;
+    return !(asset.manualLinks || []).length;
+  });
   const assetTasks = scope.scopedTasks;
-  const docsReadyCount = scopedAssets.filter((asset) => (asset.manualLinks || []).length > 0).length;
+  const docsReadyCount = (scope.scopedAssets || []).filter((asset) => (asset.manualLinks || []).length > 0).length;
   const docsMissingCount = scope.assetsWithoutDocs.length;
 
   el.innerHTML = `
@@ -292,6 +296,7 @@ export function renderAssets(el, state, actions) {
         </label>
       </div>
     </div>
+    ${assetFilter === 'missing_docs' ? '<div class="inline-state warn">Showing assets missing docs only.</div>' : ''}
     <form id="assetForm" class="grid grid-2" style="margin-bottom:12px; border:1px solid #e5e7eb; border-radius:10px; padding:10px;">
       <div class="tiny" style="grid-column:1/-1; font-weight:700;">Quick add asset</div>
       <input name="name" value="${state.assetDraft?.name || ''}" placeholder="Asset name *" required ${editable ? '' : 'disabled'} />
