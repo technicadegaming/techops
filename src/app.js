@@ -38,6 +38,9 @@ function createEmptyAssetDraft() {
     ownerWorkers: '',
     manualLinksText: '',
     historyNote: '',
+    imageRefsText: '',
+    videoRefsText: '',
+    evidenceRefsText: '',
     notes: '',
     manualLinks: [],
     supportResources: [],
@@ -476,6 +479,29 @@ async function render() {
       });
       return !!saved;
     },
+    appendTaskTimeline: async (taskId, entry = {}) => {
+      const task = state.tasks.find((row) => row.id === taskId);
+      if (!task) return;
+      if (!`${entry.note || ''}`.trim() && !Object.values(entry.attachments || {}).some((items) => (items || []).length)) return;
+      await upsertEntity('tasks', taskId, {
+        ...task,
+        timeline: [...(task.timeline || []), {
+          at: new Date().toISOString(),
+          type: 'update',
+          note: `${entry.note || ''}`.trim(),
+          by: state.user?.email || state.user?.uid || 'unknown',
+          attachments: entry.attachments || {}
+        }],
+        updatedAtClient: new Date().toISOString()
+      }, state.user);
+      state.operationsUi = {
+        ...(state.operationsUi || {}),
+        lastSaveFeedback: `Timeline updated for task ${taskId}.`,
+        lastSaveTone: 'success'
+      };
+      await refreshData();
+      render();
+    },
     reassignTask: async (taskId) => {
       const task = state.tasks.find((entry) => entry.id === taskId);
       if (!task) return;
@@ -502,7 +528,21 @@ async function render() {
       const task = state.tasks.find((entry) => entry.id === taskId);
       if (!task) return;
       const saveToLibrary = closeout.saveToLibrary === 'yes' || (closeout.saveToLibrary !== 'no' && state.settings.aiSaveSuccessfulFixesToLibraryDefault);
-      await upsertEntity('tasks', taskId, { ...task, status: 'completed', closeout: { ...closeout, completedAt: new Date().toISOString() } }, state.user);
+      const completedAt = new Date().toISOString();
+      const closeoutTimeline = {
+        at: completedAt,
+        type: 'closeout',
+        note: closeout.bestFixSummary || closeout.fixPerformed || 'Task closed',
+        detail: closeout.verification || closeout.rootCause || '',
+        by: state.user?.email || state.user?.uid || 'unknown',
+        attachments: closeout.attachments || {}
+      };
+      await upsertEntity('tasks', taskId, {
+        ...task,
+        status: 'completed',
+        closeout: { ...closeout, completedAt },
+        timeline: [...(task.timeline || []), closeoutTimeline]
+      }, state.user);
       if (task.assetId) {
         const asset = state.assets.find((entry) => entry.id === task.assetId) || { id: task.assetId };
         const event = buildCloseoutEvent(taskId, closeout, state.user);

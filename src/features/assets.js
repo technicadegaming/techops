@@ -109,6 +109,42 @@ function renderInlineFeedback(message, tone = 'info') {
   return `<div class="tiny" style="margin:8px 0; padding:8px 10px; border-radius:8px; border:1px solid ${palette.border}; background:${palette.background}; color:${palette.text};">${message}</div>`;
 }
 
+function getAttachmentGroups(asset = {}) {
+  const refs = asset.attachmentRefs || {};
+  return {
+    images: Array.isArray(refs.images) ? refs.images : [],
+    videos: Array.isArray(refs.videos) ? refs.videos : [],
+    evidence: Array.isArray(refs.evidence) ? refs.evidence : []
+  };
+}
+
+function renderAttachmentGroups(groups = {}, emptyLabel = 'No references recorded yet.') {
+  const rows = [
+    ['Images', groups.images || []],
+    ['Videos', groups.videos || []],
+    ['Evidence', groups.evidence || []]
+  ].filter(([, values]) => values.length);
+  if (!rows.length) return renderInlineFeedback(emptyLabel, 'info');
+  return rows.map(([label, values]) => `<div class="tiny" style="margin:6px 0;"><b>${label}:</b> ${values.map((value) => `<span class="state-chip muted" style="margin:2px 4px 2px 0;">${value}</span>`).join('')}</div>`).join('');
+}
+
+function renderHistoryTimeline(history = []) {
+  if (!history.length) return '<div class="tiny">No service history</div>';
+  return history
+    .slice()
+    .sort((a, b) => `${b.at || ''}`.localeCompare(`${a.at || ''}`))
+    .slice(0, 8)
+    .map((entry) => `<div class="item" style="padding:8px; margin:6px 0;">
+      <div class="row space">
+        <b>${entry.type === 'task_closeout' ? 'Task closeout' : 'Asset update'}</b>
+        <span class="tiny">${entry.at || 'n/a'}</span>
+      </div>
+      <div class="tiny" style="margin-top:4px;">${entry.note || entry.fixPerformed || entry.bestFixSummary || 'No summary recorded.'}</div>
+      ${entry.detail ? `<div class="tiny" style="margin-top:4px;">${entry.detail}</div>` : ''}
+      ${entry.attachments ? renderAttachmentGroups(entry.attachments, '') : ''}
+    </div>`).join('');
+}
+
 function renderPreviewPanel(state) {
   const preview = state.assetDraft?.preview || null;
   const status = state.assetDraft?.previewStatus || 'idle';
@@ -144,6 +180,7 @@ function renderEnrichmentDetails(asset, manager, state) {
   const contacts = Array.isArray(asset.supportContactsSuggestion) ? asset.supportContactsSuggestion : [];
   const showFollowup = status === 'followup_needed' && asset.enrichmentFollowupQuestion;
   const linkedManuals = Array.isArray(asset.manualLinks) ? asset.manualLinks : [];
+  const linkedSupport = Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : [];
   const actionFeedback = state?.assetUi?.lastActionByAsset?.[asset.id] || null;
   const statusHelp = status === 'permission_blocked'
     ? 'Lookup could not verify docs because this role lacks access to the enrichment path.'
@@ -160,22 +197,25 @@ function renderEnrichmentDetails(asset, manager, state) {
     </div>
     ${actionFeedback?.message ? renderInlineFeedback(actionFeedback.message, actionFeedback.tone) : ''}
     ${statusHelp ? renderInlineFeedback(statusHelp, status === 'lookup_failed' ? 'error' : 'info') : ''}
+    ${linkedManuals.length
+      ? renderInlineFeedback(`${linkedManuals.length} manual link${linkedManuals.length === 1 ? '' : 's'} already applied. Review suggestions below only if you need to replace or add coverage.`, 'success')
+      : renderInlineFeedback('No manual is applied yet. Start with the best verified manual action below.', 'info')}
     <div class="tiny"><b>Model suggestion:</b> ${asset.normalizedName || 'n/a'}${asset.enrichmentConfidence ? ` (${Math.round(Number(asset.enrichmentConfidence) * 100)}% confidence)` : ''}</div>
     <div class="tiny" style="margin-bottom:8px;"><b>Inferred manufacturer:</b> ${asset.manufacturerSuggestion || asset.manufacturer || 'n/a'}${manager && asset.manufacturerSuggestion && asset.manufacturerSuggestion !== asset.manufacturer ? ` <button data-apply-enrichment="manufacturer" data-asset-id="${asset.id}" type="button">Apply manufacturer</button>` : ''}</div>
 
     <div style="margin-bottom:10px;">
-      <div class="tiny" style="font-weight:700; margin-bottom:4px;">Suggested manuals</div>
+      <div class="tiny" style="font-weight:700; margin-bottom:4px;">Suggested manuals to review</div>
       ${suggestions.length ? suggestions.map((entry, index) => {
     const confidence = entry.confidence ? ` | ${Math.round(Number(entry.confidence) * 100)}%` : '';
     const score = Number.isFinite(Number(entry.matchScore)) ? ` | score ${Math.round(Number(entry.matchScore))}` : '';
-    return `<div class="tiny" style="display:flex; justify-content:space-between; gap:8px; align-items:center; margin:2px 0;"><span><a href="${entry.url}" target="_blank" rel="noopener">${entry.title || entry.url}</a>${confidence}${score} | ${renderSuggestionSource(entry)}</span>${manager ? `<button data-apply-doc-item="${asset.id}" data-doc-index="${index}" type="button">Apply</button>` : ''}</div>`;
+    return `<div class="tiny" style="display:flex; justify-content:space-between; gap:8px; align-items:center; margin:2px 0;"><span><a href="${entry.url}" target="_blank" rel="noopener">${entry.title || entry.url}</a>${confidence}${score} | trust: ${renderSuggestionSource(entry)}</span>${manager ? `<button data-apply-doc-item="${asset.id}" data-doc-index="${index}" type="button">Apply this manual</button>` : ''}</div>`;
   }).join('') : '<div class="tiny">No suggestion yet.</div>'}
-      ${manager && suggestions.length ? `<div style="margin-top:6px;"><button data-apply-docs="${asset.id}" type="button">Apply top trusted docs</button> <button data-apply-enrichment="manuals" data-asset-id="${asset.id}" type="button">Apply best manual link</button></div>` : ''}
+      ${manager && suggestions.length ? `<div style="margin-top:6px;"><button data-apply-enrichment="manuals" data-asset-id="${asset.id}" type="button" class="primary">Apply best verified manual</button> <button data-apply-docs="${asset.id}" type="button">Apply top trusted docs</button></div>` : ''}
     </div>
 
     <div style="margin-bottom:10px;">
-      <div class="tiny" style="font-weight:700; margin-bottom:4px;">Support links</div>
-      ${supportLinks.length ? supportLinks.map((entry, index) => `<div class="tiny" style="display:flex; justify-content:space-between; gap:8px; align-items:center; margin:2px 0;"><span><a href="${entry.url || entry}" target="_blank" rel="noopener">${entry.label || entry.title || entry.url || entry}</a> | ${renderSuggestionSource(entry)}</span>${manager ? `<button data-apply-support-item="${asset.id}" data-support-index="${index}" type="button">Apply</button>` : ''}</div>`).join('') : '<div class="tiny">No support suggestion yet.</div>'}
+      <div class="tiny" style="font-weight:700; margin-bottom:4px;">Support links and contacts</div>
+      ${supportLinks.length ? supportLinks.map((entry, index) => `<div class="tiny" style="display:flex; justify-content:space-between; gap:8px; align-items:center; margin:2px 0;"><span><a href="${entry.url || entry}" target="_blank" rel="noopener">${entry.label || entry.title || entry.url || entry}</a> | trust: ${renderSuggestionSource(entry)}</span>${manager ? `<button data-apply-support-item="${asset.id}" data-support-index="${index}" type="button">Apply this link</button>` : ''}</div>`).join('') : '<div class="tiny">No support suggestion yet.</div>'}
       ${manager && supportLinks.length ? `<div style="margin-top:6px;"><button data-apply-enrichment="support" data-asset-id="${asset.id}" type="button">Apply support resources</button></div>` : ''}
     </div>
 
@@ -188,8 +228,8 @@ function renderEnrichmentDetails(asset, manager, state) {
     ${showFollowup ? `<div style="border:1px solid #fbbf24; background:#fffbeb; border-radius:8px; padding:8px; margin-bottom:10px;"><div class="tiny" style="font-weight:700; margin-bottom:4px;">Need one detail to improve the match</div><div class="tiny" style="margin-bottom:6px;">${asset.enrichmentFollowupQuestion}</div><form data-enrichment-followup-form="${asset.id}" class="grid" style="gap:4px;"><textarea name="followupAnswer" rows="2" placeholder="Add answer to improve match...">${asset.enrichmentFollowupAnswer || ''}</textarea><div style="display:flex; gap:6px; flex-wrap:wrap;"><button type="submit">Submit answer and retry</button><button data-enrich="${asset.id}" type="button">Retry without answer</button></div></form></div>` : ''}
 
     <div style="display:flex; gap:6px; flex-wrap:wrap;">
-      <button data-enrich="${asset.id}" type="button">Run lookup</button>
-      ${manager ? `<button data-docs="${asset.id}" type="button">Update docs review date</button>` : ''}
+      <button data-enrich="${asset.id}" type="button" class="primary">${linkedManuals.length || linkedSupport.length ? 'Refresh documentation suggestions' : 'Find documentation'}</button>
+      ${manager ? `<button data-docs="${asset.id}" type="button">Mark docs reviewed</button>` : ''}
       ${manager && linkedManuals.length ? `<button data-remove-all-manuals="${asset.id}" type="button">Remove all linked manuals</button>` : ''}
       ${manager && supportLinks.length ? `<button data-remove-all-support="${asset.id}" type="button">Remove all support links</button>` : ''}
       ${manager && stale ? `<button data-clear-enrichment="${asset.id}" type="button">Clear stuck status</button>` : ''}
@@ -242,6 +282,9 @@ export function renderAssets(el, state, actions) {
           <input name="ownerWorkers" value="${state.assetDraft?.ownerWorkers || ''}" placeholder="Assigned workers / owners (comma-separated)" ${editable ? '' : 'disabled'} />
           <input name="manualLinks" value="${state.assetDraft?.manualLinksText || ''}" placeholder="Manual links (comma-separated URLs)" ${editable ? '' : 'disabled'} />
           <textarea name="historyNote" placeholder="Service note (added to timeline)" ${editable ? '' : 'disabled'}>${state.assetDraft?.historyNote || ''}</textarea>
+          <textarea name="imageRefsText" placeholder="Image references: URLs, filenames, shared-drive refs" ${editable ? '' : 'disabled'}>${state.assetDraft?.imageRefsText || ''}</textarea>
+          <textarea name="videoRefsText" placeholder="Video references: URLs or filenames" ${editable ? '' : 'disabled'}>${state.assetDraft?.videoRefsText || ''}</textarea>
+          <textarea name="evidenceRefsText" placeholder="Evidence refs: logs, measurements, ticket links" ${editable ? '' : 'disabled'}>${state.assetDraft?.evidenceRefsText || ''}</textarea>
         </div>
       </details>
       <details style="grid-column:1/-1;">
@@ -279,6 +322,10 @@ export function renderAssets(el, state, actions) {
             <div class="tiny">Location: ${location.label} | Manufacturer: ${asset.manufacturer || 'n/a'} | Serial: ${asset.serialNumber || 'n/a'}</div>
             <div class="tiny">Owners: ${(asset.ownerWorkers || []).join(', ') || 'unassigned'} | Urgency flags: ${openTasks.filter((task) => ['high', 'critical'].includes(task.severity)).length}</div>
             <div class="tiny">Quick stats: open ${openTasks.length} | overdue PM ${overduePm.length} | repeat failures ${recurring.reduce((sum, row) => sum + row.count, 0)} | recent repairs ${completedTasks.length}</div>
+            <div class="action-row">
+              ${openTasks[0] ? `<a href="?tab=operations&taskId=${encodeURIComponent(openTasks[0].id)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open active task</a>` : ''}
+              ${completedTasks[0] ? `<a href="?tab=operations&taskId=${encodeURIComponent(completedTasks[0].id)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open latest completed task</a>` : ''}
+            </div>
           </div>
 
           <details><summary>Documentation / AI status (${docsStatus})</summary>
@@ -298,7 +345,8 @@ export function renderAssets(el, state, actions) {
           <details><summary>Open tasks (${openTasks.length})</summary>${openTasks.map((task) => `<div class="tiny"><a href="?tab=operations&taskId=${task.id}&location=${encodeURIComponent(scope.selection?.key || '')}">${task.title || task.id}</a> | ${task.severity || 'medium'} | ${task.location || location.label}</div>`).join('') || '<div class="tiny">None</div>'}</details>
           <details><summary>Recent completed tasks (${completedTasks.length})</summary>${completedTasks.map((task) => `<div class="tiny">${task.title || task.id} | ${task.closeout?.bestFixSummary || task.closeout?.fixPerformed || 'completed'}</div>`).join('') || '<div class="tiny">None</div>'}</details>
           <details><summary>AI runs (${aiRuns.length})</summary>${aiRuns.map((run) => `<div class="tiny">${run.status}: ${run.finalSummary || 'no summary'}</div>`).join('') || '<div class="tiny">None</div>'}</details>
-          <details><summary>Service notes timeline (${(asset.history || []).length})</summary>${(asset.history || []).slice(0, 8).map((entry) => `<div class="tiny">${entry.at}: ${entry.note || entry.fixPerformed || ''}</div>`).join('') || '<div class="tiny">No history</div>'}</details>
+          <details><summary>Service notes timeline (${(asset.history || []).length})</summary>${renderHistoryTimeline(asset.history || [])}</details>
+          <details><summary>Image / video / evidence refs</summary>${renderAttachmentGroups(getAttachmentGroups(asset), 'No asset-level references recorded yet.')}</details>
           ${recurring.length ? `<div class="tiny"><b>Recurring patterns:</b> ${recurring.map((entry) => `${entry.issueCategory || 'uncategorized'} (${entry.count})`).join(', ')}</div>` : ''}
           ${library.length ? `<div class="tiny"><b>Troubleshooting library:</b> ${library.map((row) => row.successfulFix || row.title).join(' | ')}</div>` : ''}
 
@@ -321,6 +369,9 @@ export function renderAssets(el, state, actions) {
   const ownerWorkersInput = form?.querySelector('[name="ownerWorkers"]');
   const manualLinksInput = form?.querySelector('[name="manualLinks"]');
   const historyNoteInput = form?.querySelector('[name="historyNote"]');
+  const imageRefsInput = form?.querySelector('[name="imageRefsText"]');
+  const videoRefsInput = form?.querySelector('[name="videoRefsText"]');
+  const evidenceRefsInput = form?.querySelector('[name="evidenceRefsText"]');
 
   form?.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -334,7 +385,10 @@ export function renderAssets(el, state, actions) {
       status: `${state.assetDraft?.status || ''}`,
       ownerWorkers: `${state.assetDraft?.ownerWorkers || ''}`,
       manualLinks: `${state.assetDraft?.manualLinksText || ''}`,
-      historyNote: `${state.assetDraft?.historyNote || ''}`
+      historyNote: `${state.assetDraft?.historyNote || ''}`,
+      imageRefsText: `${state.assetDraft?.imageRefsText || ''}`,
+      videoRefsText: `${state.assetDraft?.videoRefsText || ''}`,
+      evidenceRefsText: `${state.assetDraft?.evidenceRefsText || ''}`
     };
     actions.saveAsset(payload.id, payload);
   });
@@ -364,6 +418,9 @@ export function renderAssets(el, state, actions) {
   ownerWorkersInput?.addEventListener('input', () => actions.updateAssetDraftField('ownerWorkers', ownerWorkersInput?.value || ''));
   manualLinksInput?.addEventListener('input', () => actions.updateAssetDraftField('manualLinksText', manualLinksInput?.value || ''));
   historyNoteInput?.addEventListener('input', () => actions.updateAssetDraftField('historyNote', historyNoteInput?.value || ''));
+  imageRefsInput?.addEventListener('input', () => actions.updateAssetDraftField('imageRefsText', imageRefsInput?.value || ''));
+  videoRefsInput?.addEventListener('input', () => actions.updateAssetDraftField('videoRefsText', videoRefsInput?.value || ''));
+  evidenceRefsInput?.addEventListener('input', () => actions.updateAssetDraftField('evidenceRefsText', evidenceRefsInput?.value || ''));
 
   form?.querySelector('[data-preview-lookup]')?.addEventListener('click', requestPreview);
   form?.querySelectorAll('[data-apply-preview]').forEach((button) => button.addEventListener('click', () => {

@@ -25,6 +25,11 @@ export function createAssetActions(deps) {
     isPermissionRelatedError
   } = deps;
 
+  const parseReferenceList = (value = '') => `${value || ''}`
+    .split(/\r?\n|,/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
   const setAssetActionFeedback = (assetId, message, tone = 'info') => {
     state.assetUi = {
       ...(state.assetUi || {}),
@@ -65,7 +70,21 @@ export function createAssetActions(deps) {
             .slice(0, 5),
           enrichmentStatus: (payload.manualLinks || current.manualLinks?.length) ? (current.enrichmentStatus || 'idle') : 'searching_docs',
           enrichmentRequestedAt: (payload.manualLinks || current.manualLinks?.length) ? (current.enrichmentRequestedAt || null) : new Date().toISOString(),
-          history: payload.historyNote ? [...(current.history || []), { at: new Date().toISOString(), note: payload.historyNote }] : (current.history || []),
+          history: payload.historyNote ? [...(current.history || []), {
+            at: new Date().toISOString(),
+            note: payload.historyNote,
+            type: 'update',
+            attachments: {
+              images: parseReferenceList(payload.imageRefsText),
+              videos: parseReferenceList(payload.videoRefsText),
+              evidence: parseReferenceList(payload.evidenceRefsText)
+            }
+          }] : (current.history || []),
+          attachmentRefs: {
+            images: parseReferenceList(payload.imageRefsText).length ? parseReferenceList(payload.imageRefsText) : ((current.attachmentRefs && current.attachmentRefs.images) || []),
+            videos: parseReferenceList(payload.videoRefsText).length ? parseReferenceList(payload.videoRefsText) : ((current.attachmentRefs && current.attachmentRefs.videos) || []),
+            evidence: parseReferenceList(payload.evidenceRefsText).length ? parseReferenceList(payload.evidenceRefsText) : ((current.attachmentRefs && current.attachmentRefs.evidence) || [])
+          },
           supportResourcesSuggestion: Array.isArray(draft.supportResources) && draft.supportResources.length ? draft.supportResources : (current.supportResourcesSuggestion || []),
           supportContactsSuggestion: Array.isArray(draft.supportContacts) && draft.supportContacts.length ? draft.supportContacts : (current.supportContactsSuggestion || []),
           notes: `${payload.notes || ''}`.trim() || `${current.notes || ''}`.trim() || (draft.notes ? `${draft.notes}`.trim() : '')
