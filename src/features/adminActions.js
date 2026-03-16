@@ -127,6 +127,54 @@ export function createAdminActions(deps) {
         render();
       }, { fallbackMessage: 'Unable to add company location.' });
     },
+    updateCompanyProfile: async (payload) => {
+      if (!state.company?.id) {
+        setAdminFeedback({ tone: 'error', message: 'No active company found.' });
+        render();
+        return;
+      }
+      await runAction('update_company_profile', async () => {
+        await upsertEntity('companies', state.company.id, withRequiredCompanyId({
+          ...state.company,
+          name: `${payload.name || state.company?.name || ''}`.trim(),
+          primaryEmail: `${payload.primaryEmail || ''}`.trim(),
+          primaryPhone: `${payload.primaryPhone || ''}`.trim(),
+          timeZone: `${payload.timeZone || state.company?.timeZone || 'UTC'}`.trim(),
+          businessType: `${payload.businessType || ''}`.trim(),
+          industry: `${payload.industry || ''}`.trim(),
+          logoUrl: `${payload.logoUrl || ''}`.trim(),
+          hqStreet: `${payload.hqStreet || ''}`.trim(),
+          hqCity: `${payload.hqCity || ''}`.trim(),
+          hqState: `${payload.hqState || ''}`.trim(),
+          hqZip: `${payload.hqZip || ''}`.trim()
+        }, 'update company profile'), state.user);
+        setAdminFeedback({ tone: 'success', message: 'Company profile settings saved.' });
+        await refreshData();
+        render();
+      }, { fallbackMessage: 'Unable to update company profile.' });
+    },
+    updateLocation: async (id, payload) => {
+      const existing = (state.companyLocations || []).find((location) => location.id === id);
+      if (!existing) {
+        setAdminFeedback({ tone: 'error', message: 'Location record not found.' });
+        render();
+        return;
+      }
+      await runAction('update_location', async () => {
+        await upsertEntity('companyLocations', id, withRequiredCompanyId({
+          ...existing,
+          name: `${payload.name || existing.name || ''}`.trim(),
+          address: `${payload.address || ''}`.trim(),
+          timeZone: `${payload.timeZone || existing.timeZone || state.company?.timeZone || 'UTC'}`.trim(),
+          managerName: `${payload.managerName || ''}`.trim(),
+          status: `${payload.status || 'active'}`.trim(),
+          notes: `${payload.notes || ''}`.trim()
+        }, 'update company location'), state.user);
+        setAdminFeedback({ tone: 'success', message: `Location updated: ${payload.name || existing.name || id}.` });
+        await refreshData();
+        render();
+      }, { fallbackMessage: 'Unable to update location settings.' });
+    },
     downloadAssetTemplate: () => downloadFile('asset-template.csv', 'asset name,assetId,manufacturer,model,serial,location,zone,notes,category,status\n', 'text/csv'),
     downloadEmployeeTemplate: () => downloadFile('employee-template.csv', 'name,email,role,enabled,available,shift start,skills,location,phone\n', 'text/csv'),
     importAssets: async (rows) => {
