@@ -10,7 +10,8 @@ export function createOperationsActions({
   runAi,
   rerunAi,
   submitFollowup,
-  saveFix
+  saveFix,
+  openAiSettings
 }) {
   return {
     saveTask,
@@ -23,6 +24,7 @@ export function createOperationsActions({
     rerunAi,
     submitFollowup,
     saveFix,
+    openAiSettings,
     setLocationFilter: (locationKey) => {
       state.route = { ...state.route, locationKey: locationKey || null };
       if (typeof onLocationFilter === 'function') onLocationFilter(locationKey || null);

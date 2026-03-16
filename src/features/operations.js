@@ -4,7 +4,8 @@ import {
   canRunAiTroubleshooting,
   canAnswerAiFollowups,
   canSaveFixToLibrary,
-  canCloseTasks
+  canCloseTasks,
+  canChangeAISettings
 } from '../roles.js';
 import {
   normalizeTaskIntake,
@@ -265,7 +266,7 @@ function getTaskAiState(task, state, run, followup) {
   }
   return {
     status: 'idle',
-    message: eligibility.autoRunExpected ? 'AI should auto-run after task save.' : 'No AI run has been recorded yet.',
+    message: eligibility.autoRunExpected ? 'Task is open and saved; AI will run automatically if enabled.' : 'No AI run has been recorded yet.',
     source: 'derived',
     details: '',
     eligibility
@@ -410,6 +411,16 @@ function renderExceptionBanner(meta) {
   return `<div class="inline-state ${tone} mt">${notes.join(' ')}</div>`;
 }
 
+
+function renderAiGuidance(aiState, eligibility, state) {
+  if (aiState.status === 'missing_company_context') return 'Task is missing company context. Save again from this workspace to attach company scope.';
+  if (aiState.status === 'disabled_by_settings') return canEditTasks(state.permissions) ? 'AI is disabled for this company. Go to Admin > AI settings to enable it.' : 'AI is disabled for this company.';
+  if (aiState.status === 'permission_blocked') return 'Manual AI runs require Lead or higher.';
+  if (aiState.status === 'followup_required') return 'Follow-up answers are required before AI can continue.';
+  if (aiState.status === 'idle') return 'Save the task first to trigger AI.';
+  return '';
+}
+
 function renderAiPanel(task, state, meta) {
   const run = meta.run;
   const followup = meta.followup;
@@ -435,6 +446,7 @@ function renderAiPanel(task, state, meta) {
   const actionHint = eligibility.aiEnabled && !run
     ? 'New tasks auto-run AI after save when company AI is enabled.'
     : (run && !eligibility.manualRerunAllowed ? 'Manual rerun is disabled for this company.' : '');
+  const guidance = renderAiGuidance(aiState, eligibility, state);
   return `<div class="item mt">
     <div class="row space">
       <b>AI Troubleshooting</b>
@@ -443,6 +455,7 @@ function renderAiPanel(task, state, meta) {
     <div class="inline-state ${statusTone} mt">${aiState.message}</div>
     <div class="tiny mt">${sourceLine}${aiState.source ? ` | source: ${aiState.source}` : ''}${aiState.details ? ` | ${aiState.details}` : ''}</div>
     ${actionHint ? `<div class="tiny mt">${actionHint}</div>` : ''}
+    ${guidance ? `<div class="tiny mt">${guidance}</div>` : ''}
     ${task.aiSummary?.summary ? `<div class="tiny mt">${task.aiSummary.summary}</div>` : ''}
     ${run ? renderAiSourceLine(run) : '<div class="tiny mt">No AI run yet for this task.</div>'}
     ${run?.shortFrontlineVersion ? `<div class="tiny mt"><b>Frontline:</b> ${run.shortFrontlineVersion}</div>` : ''}
@@ -454,6 +467,7 @@ function renderAiPanel(task, state, meta) {
     <div class="action-row mt">
       ${canShowRunNow ? `<button data-run-ai="${task.id}">Run AI now</button>` : ''}
       ${canShowRerun ? `<button data-rerun-ai="${task.id}">${rerunLabel}</button>` : ''}
+      ${aiState.status === 'disabled_by_settings' && canChangeAISettings(state.permissions) ? '<button type="button" data-open-ai-settings="1">Open AI settings</button>' : ''}
       <button data-save-fix="${task.id}" ${canSaveFixToLibrary(state.permissions) ? '' : 'disabled'}>Save fix to library</button>
     </div>
   </div>`;
@@ -679,6 +693,7 @@ export function renderOperations(el, state, actions) {
     </div>
 
     ${state.operationsUi.lastSaveFeedback ? `<div class="inline-state ${state.operationsUi.lastSaveTone || 'info'}">${state.operationsUi.lastSaveFeedback}</div>` : ''}
+    ${!scopedAssets.length ? '<div class="inline-state warn">No assets exist in this location scope yet. Create or import an asset in Assets/Admin before opening Operations intake.</div>' : ''}
 
     <form id="taskForm" class="grid mt">
       <div class="grid grid-2">
@@ -707,12 +722,14 @@ export function renderOperations(el, state, actions) {
           <select name="reproducible" ${editable ? '' : 'disabled'}><option value="yes">Reproducible</option><option value="no">Not reproducible</option><option value="unknown">Unknown</option></select>
           <input name="visibleCondition" placeholder="Visible condition notes" ${editable ? '' : 'disabled'} />
           <label>Assigned worker
+            <div class="tiny">Open tasks can be saved unassigned. Assignment is required before moving to in progress.</div>
             <select name="assignedWorker" ${editable ? '' : 'disabled'}>
               <option value="">Assign later</option>
               ${workerOptions.map((worker) => `<option value="${worker.id || worker.email || ''}">${getWorkerOptionLabel(worker)}</option>`).join('')}
             </select>
           </label>
-          <select name="status" ${editable ? '' : 'disabled'}><option>open</option><option>in_progress</option><option>completed</option></select>
+          <label>Status<div class="tiny">Open = intake allowed without assignment. In progress requires an assigned worker.</div><select name="status" ${editable ? '' : 'disabled'}><option>open</option><option>in_progress</option><option>completed</option></select></label>
+          <div id="assignmentStatusHint" class="tiny"></div>
           <textarea name="notes" placeholder="Current summary / handoff notes" ${editable ? '' : 'disabled'}></textarea>
           <textarea name="timelineEntry" placeholder="First service timeline entry" ${editable ? '' : 'disabled'}></textarea>
           <textarea name="imageRefs" placeholder="Image references: URLs, filenames, drive refs" ${editable ? '' : 'disabled'}></textarea>
@@ -831,6 +848,18 @@ export function renderOperations(el, state, actions) {
     if (locationInput && !locationInput.value) locationInput.value = selectedAsset?.locationName || selectedAsset?.location || scopedLocationName;
   };
 
+  const assignmentHintEl = form?.querySelector('#assignmentStatusHint');
+  const syncAssignmentHint = () => {
+    const status = `${form?.querySelector('[name="status"]')?.value || 'open'}`.trim();
+    const assigned = `${form?.querySelector('[name="assignedWorker"]')?.value || ''}`.trim();
+    if (assignmentHintEl) {
+      assignmentHintEl.textContent = status === 'in_progress' && !assigned
+        ? 'Cannot save as in progress without an assigned worker.'
+        : 'Open tasks can be saved without an assignee.';
+      assignmentHintEl.className = `tiny ${status === 'in_progress' && !assigned ? 'inline-state error' : 'inline-state info'}`;
+    }
+  };
+
   const syncMissingAssetPrompt = () => {
     if (!missingAssetPromptEl) return;
     const raw = `${assetInput?.value || ''}`.trim();
@@ -878,6 +907,7 @@ export function renderOperations(el, state, actions) {
 
   syncFormMeta();
   restoreDraft();
+  syncAssignmentHint();
   syncMissingAssetPrompt();
 
   form?.addEventListener('input', persistDraft);
@@ -887,6 +917,7 @@ export function renderOperations(el, state, actions) {
   });
   form?.addEventListener('change', () => {
     syncFormMeta();
+    syncAssignmentHint();
     persistDraft();
     syncMissingAssetPrompt();
   });
@@ -910,7 +941,7 @@ export function renderOperations(el, state, actions) {
       return;
     }
     if (requestedStatus === 'in_progress' && !assignedWorker) {
-      state.operationsUi.lastSaveFeedback = 'Assign a worker before starting a task.';
+      state.operationsUi.lastSaveFeedback = 'Cannot save: status is in progress but no worker is assigned.';
       state.operationsUi.lastSaveTone = 'error';
       rerender();
       return;

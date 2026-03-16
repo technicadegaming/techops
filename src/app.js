@@ -18,6 +18,7 @@ import { buildLocationOptions, getLocationSelection, getLocationScopeLabel } fro
 import { createOperationsActions } from './features/operationsActions.js';
 import { createAssetActions } from './features/assetActions.js';
 import { createAdminActions } from './features/adminActions.js';
+import { getWorkspaceReadiness } from './features/workspaceReadiness.js';
 
 const authView = document.getElementById('authView');
 const appView = document.getElementById('appView');
@@ -99,11 +100,27 @@ const state = {
   adminUi: { tone: 'info', message: '', importPreview: '', importSummary: '', importTone: 'info' },
   operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0, statusFilter: 'open', ownershipFilter: 'all', lastSaveFeedback: '', lastSaveTone: 'info', aiTaskStates: {}, lastSavedTaskId: null },
   adminSection: 'company',
-  onboardingUi: { tone: 'info', message: '' }
+  onboardingUi: { tone: 'info', message: '' },
+  setupWizard: { active: false, step: 1, message: '', tone: 'info' }
 };
 
 function setOnboardingFeedback(message = '', tone = 'info') {
   state.onboardingUi = { message, tone };
+}
+
+function setSetupWizardFeedback(message = '', tone = 'info') {
+  state.setupWizard = { ...(state.setupWizard || {}), message, tone };
+}
+
+function syncSetupWizardState() {
+  const readiness = getWorkspaceReadiness(state);
+  const shouldShow = !!state.company?.id && !state.onboardingRequired && readiness.needsSetupWizard;
+  state.setupWizard = {
+    ...(state.setupWizard || {}),
+    active: shouldShow,
+    step: state.setupWizard?.step || 1
+  };
+  if (!shouldShow) state.setupWizard = { ...(state.setupWizard || {}), active: false, message: '', tone: 'info' };
 }
 
 function isPermissionRelatedError(error) {
@@ -209,15 +226,15 @@ function buildPostSaveAiState({ taskId, isNewTask }) {
   if (!state.settings.aiEnabled) {
     return {
       status: 'disabled_by_settings',
-      message: 'Task saved. Company AI is disabled in settings.'
+      message: 'Task saved. AI is disabled for this company. Ask an admin/manager to enable it in Admin > AI settings.'
     };
   }
   if (isNewTask) {
     return {
       status: 'queued',
       message: state.settings.aiAllowManualRerun
-        ? 'Task saved. AI will auto-run for this task now. If needed later, use Rerun AI.'
-        : 'Task saved. AI will auto-run for this task now. Manual rerun is disabled by settings.'
+        ? 'Task is open and saved; AI will run automatically if enabled. Use Rerun AI later if needed.'
+        : 'Task is open and saved; AI will run automatically if enabled. Manual rerun is disabled by settings.'
     };
   }
   if (state.settings.aiAllowManualRerun) {
@@ -336,6 +353,7 @@ async function refreshData() {
   state.taskAiRuns = await listEntities('taskAiRuns').catch(() => []);
   state.taskAiFollowups = await listEntities('taskAiFollowups').catch(() => []);
   state.troubleshootingLibrary = await listEntities('troubleshootingLibrary').catch(() => []);
+  syncSetupWizardState();
 }
 
 async function hydrateMembershipCompanies(memberships = []) {
@@ -354,6 +372,7 @@ async function setActiveMembership(nextMembership, options = {}) {
     state.company = null;
     state.permissions = buildPermissionContext({ profile: state.profile, membership: null });
     state.onboardingRequired = true;
+  syncSetupWizardState();
     storeActiveMembershipId('');
     setActiveCompanyContext(null);
     if (!options.skipRender) render();
@@ -366,6 +385,7 @@ async function setActiveMembership(nextMembership, options = {}) {
   state.membershipCompanies = { ...state.membershipCompanies, [membership.id]: company };
   state.company = company;
   state.onboardingRequired = false;
+  syncSetupWizardState();
   storeActiveMembershipId(membership.id);
   setActiveCompanyContext(company?.id || membership.companyId, { allowLegacy: isGlobalAdmin(state.permissions) });
 
@@ -494,7 +514,7 @@ async function render() {
   renderActiveLocationSwitcher();
   document.getElementById('userBadge').textContent = `${state.user.email} (${roleLabel})${state.company?.name ? ` | ${state.company.name}` : ''}`;
 
-  if (state.onboardingRequired) {
+  if (state.onboardingRequired || state.setupWizard?.active) {
     renderOnboarding(document.getElementById('dashboard'), state, {
       createCompany: async (payload) => {
         await runAction('create_company', async () => {
@@ -525,6 +545,95 @@ async function render() {
             render();
           }
         });
+      },
+      setSetupStep: (step) => {
+        state.setupWizard = { ...(state.setupWizard || {}), step: Math.max(1, Math.min(6, Number(step) || 1)), message: '', tone: 'info' };
+        render();
+      },
+      skipSetupStep: async (step) => {
+        state.setupWizard = { ...(state.setupWizard || {}), step: Math.max(1, Math.min(6, (Number(step) || 1) + 1)), message: 'Skipped for now. You can return to Admin anytime.', tone: 'info' };
+        await refreshData();
+        render();
+      },
+      submitSetupStep: async (step, payload) => {
+        await runAction('setup_wizard_step', async () => {
+          setSetupWizardFeedback('');
+          const currentStep = Number(step) || 1;
+          if (currentStep === 1) {
+            await upsertEntity('companies', state.company.id, withRequiredCompanyId({
+              ...state.company,
+              name: `${payload.companyName || state.company?.name || ''}`.trim(),
+              primaryEmail: `${payload.primaryEmail || ''}`.trim(),
+              primaryPhone: `${payload.primaryPhone || ''}`.trim(),
+              timeZone: `${payload.timeZone || state.company?.timeZone || 'UTC'}`.trim()
+            }, 'save company basics'), state.user);
+          }
+          if (currentStep === 2) {
+            const firstLocation = (state.companyLocations || [])[0];
+            if (firstLocation?.id) {
+              await upsertEntity('companyLocations', firstLocation.id, withRequiredCompanyId({
+                ...firstLocation,
+                name: `${payload.locationName || firstLocation.name || ''}`.trim(),
+                address: `${payload.locationAddress || firstLocation.address || ''}`.trim(),
+                timeZone: `${payload.locationTimeZone || firstLocation.timeZone || state.company?.timeZone || 'UTC'}`.trim()
+              }, 'save first location'), state.user);
+            }
+          }
+          if (currentStep === 3) {
+            const ownerWorker = (state.workers || []).find((worker) => `${worker.email || ''}`.toLowerCase() === `${state.user?.email || ''}`.toLowerCase());
+            if (ownerWorker?.id) {
+              await upsertEntity('workers', ownerWorker.id, withRequiredCompanyId({
+                ...ownerWorker,
+                displayName: `${payload.ownerWorkerDisplayName || ownerWorker.displayName || ''}`.trim() || ownerWorker.displayName
+              }, 'update owner worker record'), state.user);
+            }
+            const name = `${payload.newWorkerName || ''}`.trim();
+            const email = `${payload.newWorkerEmail || ''}`.trim().toLowerCase();
+            if (name) {
+              await upsertEntity('workers', `worker-${Date.now().toString(36)}`, withRequiredCompanyId({
+                displayName: name,
+                email,
+                role: 'staff',
+                enabled: true,
+                available: true
+              }, 'create first worker'), state.user);
+            }
+            const inviteEmail = `${payload.inviteEmail || ''}`.trim().toLowerCase();
+            if (inviteEmail) await createCompanyInvite({ companyId: state.company.id, email: inviteEmail, role: payload.inviteRole || 'staff', user: state.user });
+          }
+          if (currentStep === 4) {
+            const assetName = `${payload.assetName || ''}`.trim();
+            if (assetName) {
+              const id = `${payload.assetId || ''}`.trim() || `asset-${assetName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now().toString(36).slice(-4)}`;
+              await upsertEntity('assets', id, withRequiredCompanyId({
+                id,
+                name: assetName,
+                locationName: `${payload.assetLocation || ''}`.trim(),
+                status: 'active'
+              }, 'create first asset'), state.user);
+            }
+          }
+          if (currentStep === 5) {
+            await saveAppSettings({ ...state.settings, aiEnabled: payload.aiEnabled === 'yes', aiConfiguredExplicitly: true }, state.user);
+          }
+          if (currentStep === 6) {
+            await upsertEntity('companies', state.company.id, withRequiredCompanyId({
+              ...state.company,
+              onboardingCompleted: true,
+              onboardingCompletedAt: new Date().toISOString()
+            }, 'launch workspace'), state.user);
+          }
+          await refreshData();
+          state.setupWizard = { ...(state.setupWizard || {}), step: Math.min(6, currentStep + 1), message: currentStep < 6 ? 'Saved. Continue to the next step.' : 'Workspace launched.', tone: 'success' };
+          syncSetupWizardState();
+          render();
+        }, {
+          fallbackMessage: 'Unable to save setup step.',
+          onError: (error) => {
+            setSetupWizardFeedback(formatActionError(error, 'Unable to save setup step.'), 'error');
+            render();
+          }
+        });
       }
     });
     openTab('dashboard');
@@ -548,8 +657,8 @@ async function render() {
         alert(`Task ID ${taskId} is already in use. Refresh the form to generate a new task ID.`);
         return false;
       }
-      if ((payload.status === 'in_progress' || payload.status === 'completed') && !(payload.assignedWorkers || []).length) {
-        alert('Assign a worker before moving a task into progress or completion.');
+      if (payload.status === 'in_progress' && !(payload.assignedWorkers || []).length) {
+        alert('Assign a worker before moving a task into progress.');
         return false;
       }
       const saved = await runAction('save_task', async () => {
@@ -706,6 +815,12 @@ async function render() {
       if (!successfulFix) return;
       await saveTaskFixToTroubleshootingLibrary({ taskId, successfulFix });
       await refreshData();
+      render();
+    },
+    openAiSettings: () => {
+      state.adminSection = 'tools';
+      state.route = { ...state.route, tab: 'admin' };
+      pushRouteState(state.route);
       render();
     }
   });

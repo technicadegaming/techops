@@ -1,6 +1,7 @@
 import { defaultAiSettings } from './data.js';
 import { canChangeAISettings, canManageBackups, isAdmin } from './roles.js';
 import { buildLocationOptions } from './features/locationContext.js';
+import { renderWorkspaceReadinessCard } from './features/workspaceReadiness.js';
 
 const WORKER_ROLE_OPTIONS = ['staff', 'lead', 'assistant_manager', 'manager', 'admin'];
 
@@ -20,6 +21,15 @@ function renderCompanyAddress(company = {}) {
 const aiBooleanFields = ['aiEnabled', 'aiAutoAttach', 'aiUseInternalKnowledge', 'aiUseWebSearch', 'aiAskFollowups', 'aiAllowManualRerun', 'aiSaveSuccessfulFixesToLibraryDefault', 'aiShortResponseMode', 'aiVerboseManagerMode', 'aiFeedbackCollectionEnabled', 'mobileConciseModeDefault'];
 const aiNumericFields = ['aiMaxWebSources', 'aiConfidenceThreshold'];
 const aiTextFields = ['aiModel', 'defaultTaskSeverity', 'taskIntakeRequiredFields'];
+
+const AI_SETTINGS_SCHEMA = [
+  { section: 'Enablement', fields: [{ key: 'aiEnabled', label: 'Enable Operations AI', help: 'When enabled, new saved tasks can trigger AI automatically.' }, { key: 'aiAllowManualRerun', label: 'Allow manual rerun', help: 'Lead-or-higher can rerun AI from the task panel.' }] },
+  { section: 'Sources', fields: [{ key: 'aiUseInternalKnowledge', label: 'Use internal knowledge', help: 'Use your saved docs and troubleshooting library.' }, { key: 'aiUseWebSearch', label: 'Use web search', help: 'Allow web lookup for additional context.' }, { key: 'aiMaxWebSources', label: 'Max web sources', type: 'number', help: 'Caps the number of web sources per run.' }] },
+  { section: 'Response style', fields: [{ key: 'aiModel', label: 'Model', help: 'Underlying model used by AI orchestrator.' }, { key: 'aiShortResponseMode', label: 'Short frontline responses', help: 'Favor concise guidance by default.' }, { key: 'aiVerboseManagerMode', label: 'Verbose manager responses', help: 'Allow deeper manager-oriented detail.' }] },
+  { section: 'Follow-up behavior', fields: [{ key: 'aiAskFollowups', label: 'Ask follow-up questions', help: 'AI can request missing context before final guidance.' }, { key: 'taskIntakeRequiredFields', label: 'Required intake fields', help: 'Comma-separated fields used for validation.' }] },
+  { section: 'Troubleshooting library', fields: [{ key: 'aiSaveSuccessfulFixesToLibraryDefault', label: 'Default save fixes to library', help: 'Default closeout behavior for successful fixes.' }, { key: 'aiFeedbackCollectionEnabled', label: 'Collect AI helpfulness feedback', help: 'Track whether AI guidance helped.' }] },
+  { section: 'Mobile defaults', fields: [{ key: 'mobileConciseModeDefault', label: 'Mobile concise mode default', help: 'Prefer compact wording on mobile layouts.' }, { key: 'defaultTaskSeverity', label: 'Default task severity', help: 'Pre-selected task severity for intake.' }, { key: 'aiConfidenceThreshold', label: 'Confidence threshold', type: 'number', help: 'Minimum confidence before stronger suggestions.' }] }
+];
 
 const ADMIN_SECTIONS = [
   { id: 'company', label: 'Company' },
@@ -83,6 +93,7 @@ export function renderAdmin(el, state, actions) {
     <h2>Company Admin</h2>
     <p class="tiny">Structured workspace controls for ${state.company?.name || 'current workspace'}.</p>
     ${adminUi.message ? `<div class="tiny" style="margin:8px 0; padding:8px 10px; border-radius:8px; border:1px solid ${adminUi.tone === 'error' ? '#fca5a5' : (adminUi.tone === 'success' ? '#86efac' : '#d1d5db')}; background:${adminUi.tone === 'error' ? '#fef2f2' : (adminUi.tone === 'success' ? '#f0fdf4' : '#f9fafb')}; color:${adminUi.tone === 'error' ? '#991b1b' : (adminUi.tone === 'success' ? '#166534' : '#374151')};">${adminUi.message}</div>` : ''}
+    ${renderWorkspaceReadinessCard(state, { compact: true })}
     ${renderSectionTabs(activeSection)}
 
     <section class="item ${activeSection === 'company' ? '' : 'hide'}" data-admin-section="company">
@@ -193,10 +204,16 @@ export function renderAdmin(el, state, actions) {
 
     <section class="item ${activeSection === 'tools' ? '' : 'hide'}" data-admin-section="tools">
       <h3>AI settings / Workspace tools</h3>
+      <div class="tiny">Effective state: AI is <b>${settings.aiEnabled ? 'enabled' : 'disabled'}</b> for this company.</div>
       <form id="aiSettingsForm" class="grid">
-        ${aiBooleanFields.map((key) => `<label><input type="checkbox" name="${key}" ${settings[key] ? 'checked' : ''} ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /> ${key}</label>`).join('')}
-        ${aiTextFields.map((key) => `<label>${key}<input name="${key}" value="${Array.isArray(settings[key]) ? settings[key].join(',') : (settings[key] || '')}" ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /></label>`).join('')}
-        ${aiNumericFields.map((key) => `<label>${key}<input type="number" step="0.01" name="${key}" value="${settings[key] ?? ''}" ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /></label>`).join('')}
+        ${AI_SETTINGS_SCHEMA.map((group) => `<fieldset class="onboarding-location-fieldset"><legend><b>${group.section}</b></legend>${group.fields.map((field) => {
+          const isNumber = field.type === 'number' || aiNumericFields.includes(field.key);
+          const isBoolean = aiBooleanFields.includes(field.key);
+          const value = Array.isArray(settings[field.key]) ? settings[field.key].join(',') : (settings[field.key] ?? '');
+          return isBoolean
+            ? `<label><input type="checkbox" name="${field.key}" ${settings[field.key] ? 'checked' : ''} ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /> ${field.label}<div class="tiny">${field.help}</div></label>`
+            : `<label>${field.label}<input name="${field.key}" ${isNumber ? 'type="number" step="0.01"' : ''} value="${value}" ${canChangeAISettings(state.permissions) ? '' : 'disabled'} /><div class="tiny">${field.help}</div></label>`;
+        }).join('')}</fieldset>`).join('')}
         <button ${canChangeAISettings(state.permissions) ? '' : 'disabled'}>Save settings</button>
       </form>
     </section>
