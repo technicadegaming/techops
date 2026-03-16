@@ -87,8 +87,11 @@
         <form id="registerForm" class="card">
           <h3>Create account</h3>
           <p class="tiny">First account can be auto-bootstrapped as admin if configured in `src/config.js`.</p>
+          <input name="fullName" type="text" placeholder="Full name" autocomplete="name" required />
           <input name="email" type="email" placeholder="Email" required />
-          <input name="password" type="password" placeholder="Password" required />
+          <input name="password" type="password" placeholder="Password" autocomplete="new-password" required />
+          <input name="confirmPassword" type="password" placeholder="Confirm password" autocomplete="new-password" required />
+          <div class="tiny" id="registerPasswordHelp">Use at least 8 characters with upper, lower, and a number.</div>
           <button class="primary" type="submit">Register</button>
         </form>
       </div>

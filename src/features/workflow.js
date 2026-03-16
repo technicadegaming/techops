@@ -54,6 +54,7 @@ export function generateTaskTitle(assetName = '', description = '') {
 export function normalizeTaskIntake(raw, settings = {}) {
   const nowIso = new Date().toISOString();
   const openedAt = raw.openedAt ? new Date(raw.openedAt).toISOString() : nowIso;
+  const assignedWorkers = [...new Set(toList(raw.assignedWorkers || raw.assignedWorker))];
   const fields = {
     id: (raw.id || '').trim(),
     assetId: (raw.assetId || '').trim(),
@@ -69,7 +70,7 @@ export function normalizeTaskIntake(raw, settings = {}) {
     reproducible: raw.reproducible || 'unknown',
     alreadyTried: (raw.alreadyTried || '').trim() || 'Nothing yet',
     visibleCondition: (raw.visibleCondition || '').trim(),
-    assignedWorkers: [...new Set(toList(raw.assignedWorkers))],
+    assignedWorkers,
     reporter: (raw.reporter || '').trim(),
     notes: (raw.notes || '').trim(),
     title: generateTaskTitle(raw.assetName || raw.assetId, raw.description || ''),

@@ -272,7 +272,7 @@ export function renderAssets(el, state, actions) {
         const library = state.troubleshootingLibrary?.filter((row) => row.assetId === asset.id).slice(0, 5) || [];
         const docsStatus = docs.length || (asset.manualLinks || []).length ? 'linked' : 'missing';
         const location = getAssetLocationRecord(state, asset);
-        return `<details class="item" id="asset-${asset.id}">
+        return `<details class="item" id="asset-${asset.id}" ${state.route?.assetId === asset.id ? 'open' : ''}>
           <summary><b>${asset.name || asset.id}</b> | ${asset.status || 'active'} | ${location.label}</summary>
           <div style="display:grid; gap:6px; margin:8px 0;">
             <div class="tiny"><b>Header</b></div>

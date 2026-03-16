@@ -3,6 +3,7 @@ export function createOperationsActions({
   onLocationFilter,
   saveTask,
   reassignTask,
+  prepareAssetCreation,
   completeTask,
   deleteTask,
   runAi,
@@ -13,6 +14,7 @@ export function createOperationsActions({
   return {
     saveTask,
     reassignTask,
+    prepareAssetCreation,
     completeTask,
     deleteTask,
     runAi,
