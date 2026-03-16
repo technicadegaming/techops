@@ -21,7 +21,7 @@ import { renderOnboarding } from './onboarding.js';
 import { formatActionError, runActionFactory } from './uiActions.js';
 import { buildPermissionContext, canDelete, isAdmin, isGlobalAdmin, isManager } from './roles.js';
 import { previewLegacyImport, importLegacyData } from './migration.js';
-import { dryRunBackup, exportBackupJson, restoreBackup, validateBackup } from './backup.js';
+import { buildAssetsCsv, buildAuditCsv, buildCompanyBackupBundle, buildInvitesCsv, buildLocationsCsv, buildMembersCsv, buildTasksCsv, buildWorkersCsv, dryRunBackup, exportBackupJson, restoreBackup, validateBackup } from './backup.js';
 import { analyzeTaskTroubleshooting, answerTaskFollowup, enrichAssetDocumentation, previewAssetDocumentationLookup, regenerateTaskTroubleshooting, saveTaskFixToTroubleshootingLibrary } from './aiAdapter.js';
 import { buildCloseoutEvent, parseRouteState, pushRouteState } from './features/workflow.js';
 import { buildNotificationCandidates, formatRelativeTime } from './features/notifications.js';
@@ -1510,6 +1510,14 @@ async function render() {
     clearEntitySet,
     saveAppSettings,
     exportBackupJson,
+    buildAssetsCsv,
+    buildTasksCsv,
+    buildAuditCsv,
+    buildWorkersCsv,
+    buildMembersCsv,
+    buildInvitesCsv,
+    buildLocationsCsv,
+    buildCompanyBackupBundle,
     downloadFile,
     downloadJson,
     normalizeAssetId,
