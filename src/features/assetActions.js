@@ -70,6 +70,7 @@ export function createAssetActions(deps) {
             .slice(0, 5),
           enrichmentStatus: (payload.manualLinks || current.manualLinks?.length) ? (current.enrichmentStatus || 'idle') : 'searching_docs',
           enrichmentRequestedAt: (payload.manualLinks || current.manualLinks?.length) ? (current.enrichmentRequestedAt || null) : new Date().toISOString(),
+          enrichmentLastRunAt: (payload.manualLinks || current.manualLinks?.length) ? (current.enrichmentLastRunAt || null) : new Date().toISOString(),
           history: payload.historyNote ? [...(current.history || []), {
             at: new Date().toISOString(),
             note: payload.historyNote,
@@ -200,6 +201,39 @@ export function createAssetActions(deps) {
         }
       }
     },
+    applyOnboardingReviewEdit: async (index, payload) => {
+      const queue = Array.isArray(state.assetUi?.onboardingReviewQueue) ? state.assetUi.onboardingReviewQueue : [];
+      const current = queue[index];
+      if (!current) return;
+      const next = {
+        ...current,
+        name: `${payload.name || current.name || ''}`.trim(),
+        manufacturer: `${payload.manufacturer || current.manufacturer || ''}`.trim(),
+        locationName: `${payload.locationName || current.locationName || ''}`.trim(),
+        category: `${payload.category || current.category || ''}`.trim(),
+        model: `${payload.model || current.model || ''}`.trim(),
+        serialNumber: `${payload.serialNumber || current.serialNumber || ''}`.trim(),
+        reviewNeeded: false
+      };
+      queue[index] = next;
+      state.assetUi = { ...(state.assetUi || {}), onboardingReviewQueue: [...queue] };
+      const target = (state.assets || []).find((asset) => (asset.name || '').toLowerCase() === (current.name || '').toLowerCase());
+      if (target?.id) {
+        await upsertEntity('assets', target.id, {
+          ...target,
+          name: next.name,
+          manufacturer: next.manufacturer,
+          locationName: next.locationName,
+          category: next.category,
+          model: next.model,
+          serialNumber: next.serialNumber,
+          reviewState: 'ready',
+          reviewReason: ''
+        }, state.user);
+        await refreshData();
+      }
+      render();
+    },
     updateAssetDraftField: (field, value) => {
       state.assetDraft = { ...state.assetDraft, [field]: value };
     },
@@ -233,6 +267,7 @@ export function createAssetActions(deps) {
         ...current,
         enrichmentStatus: 'in_progress',
         enrichmentRequestedAt: new Date().toISOString(),
+        enrichmentLastRunAt: new Date().toISOString(),
         enrichmentErrorCode: '',
         enrichmentErrorMessage: '',
         enrichmentFailedAt: null
@@ -260,6 +295,7 @@ export function createAssetActions(deps) {
         enrichmentFollowupAnsweredAt: new Date().toISOString(),
         enrichmentStatus: 'in_progress',
         enrichmentRequestedAt: new Date().toISOString(),
+        enrichmentLastRunAt: new Date().toISOString(),
         enrichmentErrorCode: '',
         enrichmentErrorMessage: '',
         enrichmentFailedAt: null

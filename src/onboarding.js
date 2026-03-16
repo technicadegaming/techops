@@ -1,4 +1,5 @@
 import { renderWorkspaceReadinessCard } from './features/workspaceReadiness.js';
+import { ASSET_CSV_TEMPLATE, ASSET_IMPORT_COLUMNS } from './features/assetIntake.js';
 
 const SUPPORTED_TIMEZONES = [
   'UTC',
@@ -209,14 +210,26 @@ function renderSetupWizard(el, state, actions) {
       </div>
 
       <div data-step="4" class="${step === 4 ? '' : 'hide'}">
-        <h3>Add assets</h3>
-        <div class="tiny">Add assets now (manual, CSV, or paste list). You can skip and continue later.</div>
-        <details><summary class="tiny">CSV template</summary><pre class="tiny">name,manufacturer,locationName\nTicket Kiosk 01,Betson,Main Floor\nRedemption Game 02,Raw Thrills,Arcade Zone</pre></details>
+        <h3>Asset readiness</h3>
+        <div class="tiny">Operations works best once assets exist. Add one manually, import CSV, or paste a bulk list. You can still skip for now.</div>
+        <div class="inline-state info mt">Expected CSV columns: ${ASSET_IMPORT_COLUMNS.map((column) => `<code>${column}</code>`).join(', ')}</div>
+        ${(state.assetUi?.onboardingValidationErrors || []).length ? `<div class="inline-state error mt"><b>Import issues to fix:</b><ul>${(state.assetUi.onboardingValidationErrors || []).slice(0, 6).map((error) => `<li>${error}</li>`).join('')}</ul></div>` : ''}
+        <details>
+          <summary class="tiny">CSV template and guidance</summary>
+          <div class="tiny" style="margin:8px 0;">Use UTF-8 CSV with a header row. Required: <b>name</b>. Optional: manufacturer, locationName, serialNumber, model, category.</div>
+          <textarea readonly rows="5">${ASSET_CSV_TEMPLATE}</textarea>
+          <a download="assets-template.csv" href="data:text/csv;charset=utf-8,${encodeURIComponent(ASSET_CSV_TEMPLATE)}">Download template</a>
+        </details>
         <label>First asset name (optional)<input name="assetName" placeholder="Example: Ticket Kiosk 01" /></label>
+        <label>Manufacturer (optional)<input name="assetManufacturer" placeholder="Example: Betson" /></label>
         <label>Asset ID (optional)<input name="assetId" placeholder="Example: kiosk-01" /></label>
         <label>Location name<input name="assetLocation" value="${currentLocation.name || ''}" /></label>
-        <label>Paste asset list (optional, one per line)<textarea name="assetBulkList" placeholder="Ticket Kiosk 02
-Air Hockey 01"></textarea></label>
+        <label>Upload assets CSV (optional)<input name="assetCsvFile" type="file" accept=".csv,text/csv" /></label>
+        <label>Or paste CSV rows (optional)<textarea name="assetCsvText" rows="4" placeholder="name,manufacturer,locationName\nTicket Kiosk 03,Betson,Main Floor"></textarea></label>
+        <label>Paste bulk asset list (optional, one per line)
+          <textarea name="assetBulkList" placeholder="Ticket Kiosk 02
+Raw Thrills | Jurassic Park Arcade | Arcade Zone | SN-455 | JP Deluxe"></textarea>
+        </label>
       </div>
 
       <div data-step="5" class="${step === 5 ? '' : 'hide'}">
@@ -244,7 +257,14 @@ Air Hockey 01"></textarea></label>
   el.querySelector('[data-dismiss-readiness]')?.addEventListener('click', () => actions.dismissReadiness?.());
   el.querySelector('#wizardForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const formData = new FormData(event.currentTarget);
+    const payload = Object.fromEntries(formData.entries());
+    if ((state.setupWizard?.step || 1) === 4) {
+      const csvFile = formData.get('assetCsvFile');
+      if (csvFile && typeof csvFile.text === 'function' && csvFile.size > 0) {
+        payload.assetCsvText = `${payload.assetCsvText || ''}`.trim() || await csvFile.text();
+      }
+    }
     await actions.submitSetupStep(step, payload);
   });
 }
