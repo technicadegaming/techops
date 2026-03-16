@@ -13,6 +13,7 @@ import { previewLegacyImport, importLegacyData } from './migration.js';
 import { dryRunBackup, exportBackupJson, restoreBackup, validateBackup } from './backup.js';
 import { analyzeTaskTroubleshooting, answerTaskFollowup, enrichAssetDocumentation, previewAssetDocumentationLookup, regenerateTaskTroubleshooting, saveTaskFixToTroubleshootingLibrary } from './aiAdapter.js';
 import { buildCloseoutEvent, parseRouteState, pushRouteState } from './features/workflow.js';
+import { buildNotificationCandidates, formatRelativeTime } from './features/notifications.js';
 import { acceptInvite, createCompanyFromOnboarding, createCompanyInvite, ensureBootstrapCompanyForLegacyUser, getCompany, listCompanyMembers, listMembershipsByUser, revokeInvite } from './company.js';
 import { buildLocationOptions, getLocationSelection, getLocationScopeLabel } from './features/locationContext.js';
 import { createOperationsActions } from './features/operationsActions.js';
@@ -27,6 +28,9 @@ const authMessage = document.getElementById('authMessage');
 const activeCompanySwitcher = document.getElementById('activeCompanySwitcher');
 const activeLocationSwitcher = document.getElementById('activeLocationSwitcher');
 const locationScopeBadge = document.getElementById('locationScopeBadge');
+const notificationBell = document.getElementById('notificationBell');
+const notificationBadge = document.getElementById('notificationBadge');
+const notificationPanel = document.getElementById('notificationPanel');
 const ACTIVE_MEMBERSHIP_STORAGE_KEY = 'techops.activeMembership';
 
 const sections = ['dashboard', 'operations', 'assets', 'calendar', 'reports', 'admin'];
@@ -93,6 +97,8 @@ const state = {
   taskAiRuns: [],
   taskAiFollowups: [],
   troubleshootingLibrary: [],
+  notifications: [],
+  notificationPrefs: { enabledTypes: [] },
   settings: {},
   restorePayload: null,
   route: parseRouteState(),
@@ -429,6 +435,184 @@ function renderActiveLocationSwitcher() {
   };
 }
 
+
+function getNotificationTypeLabel(type = '') {
+  return `${type || ''}`.replaceAll('_', ' ').trim() || 'notification';
+}
+
+function getEnabledNotificationTypes() {
+  const explicit = state.notificationPrefs?.enabledTypes;
+  if (Array.isArray(explicit) && explicit.length) return new Set(explicit);
+  return null;
+}
+
+function applyNotificationPreferences(items = []) {
+  const enabled = getEnabledNotificationTypes();
+  if (!enabled) return items;
+  return items.filter((item) => enabled.has(item.type));
+}
+
+async function syncNotifications() {
+  if (!state.company?.id || !state.user?.uid) {
+    state.notifications = [];
+    return;
+  }
+  const existingByKey = new Map((state.notifications || []).map((item) => [item.eventKey, item]));
+  const candidates = applyNotificationPreferences(buildNotificationCandidates(state));
+  const nowIso = new Date().toISOString();
+
+  for (const candidate of candidates) {
+    const current = existingByKey.get(candidate.eventKey);
+    if (!current) {
+      await upsertEntity('notifications', candidate.id, withRequiredCompanyId({
+        ...candidate,
+        userId: state.user.uid,
+        readAt: null,
+        dismissedAt: null,
+        status: 'active',
+        createdAtClient: nowIso,
+        updatedAtClient: nowIso
+      }, 'create notification'), state.user);
+      continue;
+    }
+    if (current.status === 'dismissed') continue;
+    const shouldRefreshUnread = !!candidate.happenedAt && `${candidate.happenedAt}` !== `${current.happenedAt || ''}`;
+    await upsertEntity('notifications', current.id, withRequiredCompanyId({
+      ...current,
+      title: candidate.title,
+      body: candidate.body,
+      level: candidate.level,
+      action: candidate.action,
+      happenedAt: candidate.happenedAt,
+      type: candidate.type,
+      eventKey: candidate.eventKey,
+      status: 'active',
+      readAt: shouldRefreshUnread ? null : (current.readAt || null),
+      updatedAtClient: nowIso
+    }, 'update notification'), state.user);
+  }
+}
+
+function unreadNotificationCount() {
+  return (state.notifications || []).filter((item) => item.status !== 'dismissed' && !item.readAt).length;
+}
+
+async function markNotificationRead(notificationId) {
+  const notification = (state.notifications || []).find((entry) => entry.id === notificationId);
+  if (!notification || notification.readAt) return;
+  await upsertEntity('notifications', notification.id, withRequiredCompanyId({
+    ...notification,
+    readAt: new Date().toISOString(),
+    updatedAtClient: new Date().toISOString()
+  }, 'mark notification read'), state.user);
+  await refreshData();
+  render();
+}
+
+async function dismissNotification(notificationId) {
+  const notification = (state.notifications || []).find((entry) => entry.id === notificationId);
+  if (!notification) return;
+  await upsertEntity('notifications', notification.id, withRequiredCompanyId({
+    ...notification,
+    dismissedAt: new Date().toISOString(),
+    status: 'dismissed',
+    updatedAtClient: new Date().toISOString()
+  }, 'dismiss notification'), state.user);
+  await refreshData();
+  render();
+}
+
+async function markAllNotificationsRead() {
+  const unread = (state.notifications || []).filter((entry) => entry.status !== 'dismissed' && !entry.readAt);
+  for (const notification of unread) {
+    await upsertEntity('notifications', notification.id, withRequiredCompanyId({
+      ...notification,
+      readAt: new Date().toISOString(),
+      updatedAtClient: new Date().toISOString()
+    }, 'mark all notifications read'), state.user);
+  }
+  await refreshData();
+  render();
+}
+
+function routeFromNotificationAction(action = {}) {
+  const nextRoute = {
+    tab: action.tab || state.route.tab || 'dashboard',
+    taskId: action.taskId || null,
+    assetId: action.assetId || null,
+    locationKey: state.route.locationKey || null,
+    pmFilter: action.pmFilter || null
+  };
+  return nextRoute;
+}
+
+async function openNotification(notificationId) {
+  const notification = (state.notifications || []).find((entry) => entry.id === notificationId);
+  if (!notification) return;
+  await markNotificationRead(notificationId);
+  if (notification.action?.adminSection) state.adminSection = notification.action.adminSection;
+  const nextRoute = routeFromNotificationAction(notification.action || {});
+  state.route = { ...state.route, ...nextRoute };
+  pushRouteState(state.route);
+  if (notification.action?.focus) applyActionCenterFocus(notification.action.focus);
+  openTab(nextRoute.tab, nextRoute.taskId, nextRoute.assetId);
+  if (notificationPanel) notificationPanel.classList.add('hide');
+}
+
+function renderNotificationCenter() {
+  if (!notificationBell || !notificationBadge || !notificationPanel) return;
+  const visible = (state.notifications || [])
+    .filter((entry) => entry.status !== 'dismissed' && entry.userId === state.user?.uid)
+    .sort((a, b) => `${b.happenedAt || b.updatedAt || ''}`.localeCompare(`${a.happenedAt || a.updatedAt || ''}`))
+    .slice(0, 30);
+  const unread = unreadNotificationCount();
+  notificationBadge.textContent = unread > 9 ? '9+' : `${unread}`;
+  notificationBadge.classList.toggle('hide', unread === 0);
+  notificationBell.setAttribute('aria-label', `Notifications (${unread} unread)`);
+
+  if (!visible.length) {
+    notificationPanel.innerHTML = `<div class="item"><b>Notifications</b><div class="tiny mt">No notifications yet. You're all caught up.</div></div>`;
+    return;
+  }
+
+  notificationPanel.innerHTML = `
+    <div class="item row space">
+      <b>Action center</b>
+      <button type="button" data-notif-read-all>Mark all read</button>
+    </div>
+    <div class="list mt">${visible.map((entry) => `
+      <div class="item ${entry.readAt ? '' : 'selected'}">
+        <div class="row space"><b>${entry.title || getNotificationTypeLabel(entry.type)}</b><span class="tiny">${formatRelativeTime(entry.happenedAt || entry.updatedAt)}</span></div>
+        <div class="tiny mt">${entry.body || ''}</div>
+        <div class="row mt">
+          <button type="button" data-notif-open="${entry.id}">Open</button>
+          ${entry.readAt ? '' : `<button type="button" data-notif-read="${entry.id}">Mark read</button>`}
+          <button type="button" data-notif-dismiss="${entry.id}">Dismiss</button>
+        </div>
+      </div>
+    `).join('')}</div>
+  `;
+
+  notificationPanel.querySelector('[data-notif-read-all]')?.addEventListener('click', () => { markAllNotificationsRead(); });
+  notificationPanel.querySelectorAll('[data-notif-open]').forEach((button) => button.addEventListener('click', () => { openNotification(button.dataset.notifOpen); }));
+  notificationPanel.querySelectorAll('[data-notif-read]').forEach((button) => button.addEventListener('click', () => { markNotificationRead(button.dataset.notifRead); }));
+  notificationPanel.querySelectorAll('[data-notif-dismiss]').forEach((button) => button.addEventListener('click', () => { dismissNotification(button.dataset.notifDismiss); }));
+}
+
+function applyActionCenterFocus(focus) {
+  if (focus === 'priority') {
+    state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', exceptionFilter: 'priority' };
+  } else if (focus === 'blocked') {
+    state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', exceptionFilter: 'blocked' };
+  } else if (focus === 'followup') {
+    state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', ownershipFilter: 'followup' };
+  } else if (focus === 'unassigned') {
+    state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', ownershipFilter: 'unassigned' };
+  } else if (focus === 'overdue_open') {
+    state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', exceptionFilter: 'overdue' };
+  }
+}
+
 async function refreshData() {
   state.tasks = await listEntities('tasks').catch(() => []);
   state.operations = await listEntities('operations').catch(() => []);
@@ -447,6 +631,10 @@ async function refreshData() {
   state.taskAiRuns = await listEntities('taskAiRuns').catch(() => []);
   state.taskAiFollowups = await listEntities('taskAiFollowups').catch(() => []);
   state.troubleshootingLibrary = await listEntities('troubleshootingLibrary').catch(() => []);
+  state.notifications = await listEntities('notifications').catch(() => []);
+  state.notificationPrefs = state.settings.notificationPrefs || { enabledTypes: [] };
+  await syncNotifications();
+  state.notifications = await listEntities('notifications').catch(() => []);
   syncSetupWizardState();
 }
 
@@ -607,6 +795,7 @@ async function render() {
   renderActiveCompanySwitcher();
   renderActiveLocationSwitcher();
   document.getElementById('userBadge').textContent = `${state.user.email} (${roleLabel})${state.company?.name ? ` | ${state.company.name}` : ''}`;
+  renderNotificationCenter();
 
   if (state.onboardingRequired || state.setupWizard?.active) {
     renderOnboarding(document.getElementById('dashboard'), state, {
@@ -1300,6 +1489,18 @@ registerConfirmInput?.addEventListener('input', syncRegisterPasswordHelp);
 
 document.getElementById('logoutBtn').addEventListener('click', () => logout());
 
+
+if (notificationBell && notificationPanel) {
+  notificationBell.addEventListener('click', () => {
+    notificationPanel.classList.toggle('hide');
+  });
+  document.addEventListener('click', (event) => {
+    if (notificationPanel.classList.contains('hide')) return;
+    if (notificationPanel.contains(event.target) || notificationBell.contains(event.target)) return;
+    notificationPanel.classList.add('hide');
+  });
+}
+
 watchAuth(async (user) => {
   if (!user) {
     setActiveCompanyContext(null);
@@ -1308,6 +1509,8 @@ watchAuth(async (user) => {
     state.company = null;
     state.memberships = [];
     state.activeMembership = null;
+    state.notifications = [];
+    if (notificationPanel) notificationPanel.classList.add('hide');
     setOnboardingFeedback('', 'info', { pendingAction: '', handoffStatus: 'idle' });
     authView.classList.remove('hide');
     appView.classList.add('hide');

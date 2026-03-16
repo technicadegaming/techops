@@ -287,6 +287,18 @@ service cloud.firestore {
       allow delete: if canDeleteScopedResource();
     }
 
+
+    match /notifications/{docId} {
+      allow read: if canReadScopedResource(resource.data);
+      allow create: if canCreateScopedResource();
+      allow update: if hasCompanyField(resource.data)
+        && hasCompanyField(request.resource.data)
+        && resource.data.companyId == request.resource.data.companyId
+        && isCompanyStaff(resource.data.companyId)
+        && request.resource.data.userId == resource.data.userId;
+      allow delete: if canDeleteScopedResource();
+    }
+
     match /auditLogs/{docId} {
       allow read: if (hasCompanyField(resource.data) && isCompanyElevated(resource.data.companyId)) || isAdmin();
       allow create: if (hasCompanyField(request.resource.data) && isCompanyStaff(request.resource.data.companyId))

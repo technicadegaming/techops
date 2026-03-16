@@ -1,19 +1,9 @@
 import { detectRepeatIssues } from './workflow.js';
 import { buildLocationSummary, getLocationEmptyState, getLocationScopeLabel } from './locationContext.js';
+import { formatRelativeTime } from './notifications.js';
 
 function statusChip(label, tone = 'muted') {
   return `<span class="state-chip ${tone}">${label}</span>`;
-}
-
-function formatRelativeTime(value) {
-  const timestamp = new Date(value || '').getTime();
-  if (!Number.isFinite(timestamp)) return 'time unknown';
-  const diff = Date.now() - timestamp;
-  const minutes = Math.max(1, Math.round(diff / (1000 * 60)));
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 48) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
 }
 
 function isPmOverdue(schedule, now = new Date()) {
