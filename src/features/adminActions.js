@@ -33,7 +33,34 @@ export function createAdminActions(deps) {
     },
     saveWorker: async (id, payload) => {
       const existing = state.workers.find((worker) => worker.id === id) || {};
-      await upsertEntity('workers', id, { ...existing, ...payload, accountStatus: existing.accountStatus || (payload.email ? 'invited_or_unlinked' : 'directory_only') }, state.user);
+      const workerEmail = `${payload.email || existing.email || ''}`.trim().toLowerCase();
+      await upsertEntity('workers', id, {
+        ...existing,
+        ...payload,
+        email: workerEmail,
+        accountStatus: workerEmail ? 'unlinked' : 'directory_only'
+      }, state.user);
+      await refreshData();
+      render();
+    },
+    saveMemberAccess: async (id, payload) => {
+      const existing = state.companyMembers.find((member) => member.id === id);
+      if (!existing) {
+        setAdminFeedback({ tone: 'error', message: 'Unable to find member record.' });
+        render();
+        return;
+      }
+      if ((existing.role || '') === 'owner') {
+        setAdminFeedback({ tone: 'error', message: 'Owner role cannot be changed from Admin.' });
+        render();
+        return;
+      }
+      await upsertEntity('companyMemberships', id, {
+        ...existing,
+        role: payload.role || existing.role || 'staff',
+        status: payload.status || existing.status || 'active'
+      }, state.user);
+      setAdminFeedback({ tone: 'success', message: 'Member access updated.' });
       await refreshData();
       render();
     },
