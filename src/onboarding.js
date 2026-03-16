@@ -17,8 +17,20 @@ function getDefaultTimeZone() {
   return SUPPORTED_TIMEZONES.includes(resolved) ? resolved : 'UTC';
 }
 
+const TIMEZONE_LABELS = {
+  UTC: 'Coordinated Universal Time (UTC)',
+  'America/New_York': 'Eastern Time (ET) — EST/EDT',
+  'America/Chicago': 'Central Time (CT) — CST/CDT',
+  'America/Denver': 'Mountain Time (MT) — MST/MDT',
+  'America/Los_Angeles': 'Pacific Time (PT) — PST/PDT',
+  'America/Phoenix': 'Arizona Time — MST',
+  'America/Anchorage': 'Alaska Time (AKT) — AKST/AKDT',
+  'Pacific/Honolulu': 'Hawaii Time (HT) — HST',
+  'Europe/London': 'UK Time — GMT/BST'
+};
+
 function renderTimeZoneOptions(selected) {
-  return SUPPORTED_TIMEZONES.map((tz) => `<option value="${tz}" ${tz === selected ? 'selected' : ''}>${tz}</option>`).join('');
+  return SUPPORTED_TIMEZONES.map((tz) => `<option value="${tz}" ${tz === selected ? 'selected' : ''}>${TIMEZONE_LABELS[tz] || tz}</option>`).join('');
 }
 
 function composeAddress({ street = '', city = '', state = '', zip = '' } = {}) {
@@ -66,10 +78,13 @@ function renderInitialOnboarding(el, state, actions) {
   const selectedTimeZone = getDefaultTimeZone();
   const onboardingMessage = state.onboardingUi?.message || '';
   const onboardingTone = state.onboardingUi?.tone || 'info';
+  const pendingAction = state.onboardingUi?.pendingAction || '';
+  const handoffStatus = state.onboardingUi?.handoffStatus || 'idle';
   el.innerHTML = `
     <h2>Welcome to WOW Technicade Operations</h2>
     <p class="tiny">Create your company workspace in under a minute, or join one with an invite code.</p>
     ${onboardingMessage ? `<div class="tiny" style="margin:0 0 12px; padding:8px 10px; border-radius:8px; border:1px solid ${onboardingTone === 'error' ? '#fca5a5' : (onboardingTone === 'success' ? '#86efac' : '#d1d5db')}; background:${onboardingTone === 'error' ? '#fef2f2' : (onboardingTone === 'success' ? '#f0fdf4' : '#f9fafb')}; color:${onboardingTone === 'error' ? '#991b1b' : (onboardingTone === 'success' ? '#166534' : '#374151')};">${onboardingMessage}</div>` : ''}
+    ${handoffStatus === 'working' ? '<div class="inline-state info mt">Finishing account handoff…</div>' : ''}
     <div class="grid grid-2">
       <form id="createCompanyForm" class="item onboarding-form">
         <h3>Create company</h3>
@@ -93,7 +108,7 @@ function renderInitialOnboarding(el, state, actions) {
         <fieldset class="onboarding-location-fieldset">
           <label class="row" style="align-items:center; gap:8px;">
             <input type="checkbox" name="useDifferentFirstLocation" style="width:auto;" />
-            <span>Use a different first operational location</span>
+            <span>My first location is different from HQ</span>
           </label>
           <div id="firstLocationFields" class="hide">
             <label>First location name<input name="firstLocationName" placeholder="Example: Main Plant" /></label>
@@ -104,12 +119,12 @@ function renderInitialOnboarding(el, state, actions) {
             <label>First location notes (optional)<textarea name="firstLocationNotes" placeholder="Optional setup notes"></textarea></label>
           </div>
         </fieldset>
-        <button class="primary">Create company workspace</button>
+        <button class="primary" ${pendingAction ? "disabled" : ""}>${pendingAction === "create_company" ? "Creating workspace..." : "Create company workspace"}</button>
       </form>
       <form id="joinCompanyForm" class="item onboarding-form">
         <h3>Join existing company</h3>
         <label>Invite code<input name="inviteCode" placeholder="Paste the code from your admin" required /></label>
-        <button class="primary">Accept invite & join</button>
+        <button class="primary" ${pendingAction ? "disabled" : ""}>${pendingAction === "accept_invite" ? "Joining..." : "Accept invite & join"}</button>
         <p class="tiny">Ask your admin for an invite code from Admin → Invites.</p>
       </form>
     </div>`;
@@ -160,11 +175,11 @@ function renderSetupWizard(el, state, actions) {
   el.innerHTML = `
     <h2>Setup wizard</h2>
     <p class="tiny">Finish a few steps so your workspace is ready for daily operations.</p>
-    ${renderWorkspaceReadinessCard(state, { compact: true })}
+    ${renderWorkspaceReadinessCard(state, { compact: true, dismissible: true })}
     ${msg ? `<div class="inline-state ${tone} mt">${msg}</div>` : ''}
     <div class="item mt">
-      <div class="tiny">Step ${step} of 6</div>
-      <div class="kpi-line mt"><span>1. Company basics</span><span>2. First location</span><span>3. Team setup</span><span>4. Asset readiness</span><span>5. AI setup</span><span>6. Review</span></div>
+      <div class="tiny">Step ${step} of 6 • Guided workspace setup</div>
+      <div class="kpi-line mt"><span>1. Company basics</span><span>2. First location</span><span>3. Team setup</span><span>4. Add assets</span><span>5. AI setup</span><span>6. Review and launch</span></div>
     </div>
 
     <form id="wizardForm" class="item mt grid">
@@ -177,7 +192,7 @@ function renderSetupWizard(el, state, actions) {
       </div>
 
       <div data-step="2" class="${step === 2 ? '' : 'hide'}">
-        <h3>First operational location</h3>
+        <h3>First location</h3>
         <label>Name<input name="locationName" value="${currentLocation.name || ''}" required /></label>
         <label>Address<input name="locationAddress" value="${currentLocation.address || state.company?.address || ''}" /></label>
         <label>Timezone<select name="locationTimeZone">${renderTimeZoneOptions(currentLocation.timeZone || state.company?.timeZone || getDefaultTimeZone())}</select></label>
@@ -185,20 +200,23 @@ function renderSetupWizard(el, state, actions) {
 
       <div data-step="3" class="${step === 3 ? '' : 'hide'}">
         <h3>Team setup</h3>
-        <div class="tiny">Members = signed-in users. Workers = assignable personnel records. Invites = pending access.</div>
-        <label>Owner worker display name<input name="ownerWorkerDisplayName" value="${workerDefaultName}" /></label>
-        <label>Add first worker name (optional)<input name="newWorkerName" placeholder="Example: Alex Smith" /></label>
-        <label>Add first worker email (optional)<input name="newWorkerEmail" type="email" placeholder="alex@company.com" /></label>
+        <div class="tiny">Members = signed-in users. Staff records = assignable technicians. Invites = optional next step.</div>
+        <label>Owner team member name<input name="ownerWorkerDisplayName" value="${workerDefaultName}" /></label>
+        <label>Add first assignable staff name (optional)<input name="newWorkerName" placeholder="Example: Alex Smith" /></label>
+        <label>Add first assignable staff email (optional)<input name="newWorkerEmail" type="email" placeholder="alex@company.com" /></label>
         <label>Invite email (optional)<input name="inviteEmail" type="email" placeholder="person@company.com" /></label>
         <label>Invite role<select name="inviteRole"><option value="staff">Staff</option><option value="lead">Lead</option><option value="assistant_manager">Assistant manager</option><option value="manager">Manager</option><option value="admin">Admin</option></select></label>
       </div>
 
       <div data-step="4" class="${step === 4 ? '' : 'hide'}">
-        <h3>Asset readiness</h3>
-        <div class="tiny">Operations tasks require a real asset record. Add one now or skip and add later.</div>
+        <h3>Add assets</h3>
+        <div class="tiny">Add assets now (manual, CSV, or paste list). You can skip and continue later.</div>
+        <details><summary class="tiny">CSV template</summary><pre class="tiny">name,manufacturer,locationName\nTicket Kiosk 01,Betson,Main Floor\nRedemption Game 02,Raw Thrills,Arcade Zone</pre></details>
         <label>First asset name (optional)<input name="assetName" placeholder="Example: Ticket Kiosk 01" /></label>
         <label>Asset ID (optional)<input name="assetId" placeholder="Example: kiosk-01" /></label>
         <label>Location name<input name="assetLocation" value="${currentLocation.name || ''}" /></label>
+        <label>Paste asset list (optional, one per line)<textarea name="assetBulkList" placeholder="Ticket Kiosk 02
+Air Hockey 01"></textarea></label>
       </div>
 
       <div data-step="5" class="${step === 5 ? '' : 'hide'}">
@@ -210,7 +228,7 @@ function renderSetupWizard(el, state, actions) {
 
       <div data-step="6" class="${step === 6 ? '' : 'hide'}">
         <h3>Review and launch</h3>
-        ${renderWorkspaceReadinessCard(state, { compact: true, title: 'Launch checklist' })}
+        ${renderWorkspaceReadinessCard(state, { compact: true, title: 'Launch checklist', dismissible: true })}
         <div class="tiny mt">You can launch now and continue optional steps anytime in Admin.</div>
       </div>
 
@@ -223,6 +241,7 @@ function renderSetupWizard(el, state, actions) {
 
   el.querySelector('[data-wizard-back]')?.addEventListener('click', () => actions.setSetupStep(Math.max(1, step - 1)));
   el.querySelector('[data-wizard-skip]')?.addEventListener('click', () => actions.skipSetupStep(step));
+  el.querySelector('[data-dismiss-readiness]')?.addEventListener('click', () => actions.dismissReadiness?.());
   el.querySelector('#wizardForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
