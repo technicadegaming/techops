@@ -1,5 +1,14 @@
 import {
-  createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut, updateProfile
+  GoogleAuthProvider,
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  reload,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+  updateProfile
 } from 'https://www.gstatic.com/firebasejs/10.12.3/firebase-auth.js';
 import { auth } from './firebase.js';
 import { appConfig } from './config.js';
@@ -12,6 +21,28 @@ function buildProfilePersistenceError(error) {
 
 export async function login(email, password) {
   return signInWithEmailAndPassword(auth, email, password);
+}
+
+export async function loginWithGoogle() {
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  return signInWithPopup(auth, provider);
+}
+
+export async function sendForgotPasswordEmail(email) {
+  if (!`${email || ''}`.trim()) throw new Error('Enter your email address first.');
+  await sendPasswordResetEmail(auth, `${email}`.trim());
+}
+
+export async function resendVerificationEmail() {
+  if (!auth.currentUser) throw new Error('No authenticated user found.');
+  await sendEmailVerification(auth.currentUser);
+}
+
+export async function refreshAuthUser() {
+  if (!auth.currentUser) return null;
+  await reload(auth.currentUser);
+  return auth.currentUser;
 }
 
 export async function register(email, password, profile = {}) {
@@ -39,6 +70,38 @@ export async function register(email, password, profile = {}) {
 
 export async function logout() {
   return signOut(auth);
+}
+
+function summarizeProviders(user) {
+  const providerIds = (user?.providerData || [])
+    .map((provider) => `${provider?.providerId || ''}`.trim())
+    .filter(Boolean);
+  if (!providerIds.length) return ['password'];
+  return Array.from(new Set(providerIds.map((providerId) => (providerId === 'google.com' ? 'google' : providerId))));
+}
+
+export async function syncSecuritySnapshot(user, profile = {}) {
+  if (!user?.uid) return profile;
+  const current = await loadUserProfile(user.uid);
+  const base = current || profile || {};
+  const history = Array.isArray(base.securityLoginHistory) ? base.securityLoginHistory : [];
+  const entry = {
+    at: new Date().toISOString(),
+    method: summarizeProviders(user).includes('google') ? 'google' : 'password',
+    providers: summarizeProviders(user)
+  };
+  const nextProfile = {
+    ...base,
+    email: `${base.email || user.email || ''}`.trim().toLowerCase(),
+    emailLower: `${base.emailLower || user.email || ''}`.trim().toLowerCase(),
+    emailVerified: !!user.emailVerified,
+    authProviders: summarizeProviders(user),
+    lastLoginAt: entry.at,
+    securityMfaEnrolled: Array.isArray(user.multiFactor?.enrolledFactors) && user.multiFactor.enrolledFactors.length > 0,
+    securityLoginHistory: [entry, ...history].slice(0, 10)
+  };
+  await saveUserProfile(user.uid, nextProfile, { uid: user.uid, email: user.email });
+  return nextProfile;
 }
 
 export function watchAuth(cb) {

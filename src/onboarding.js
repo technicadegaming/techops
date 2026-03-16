@@ -81,6 +81,7 @@ function renderInitialOnboarding(el, state, actions) {
   const onboardingTone = state.onboardingUi?.tone || 'info';
   const pendingAction = state.onboardingUi?.pendingAction || '';
   const handoffStatus = state.onboardingUi?.handoffStatus || 'idle';
+  const inviteCodePrefill = `${state.onboardingUi?.inviteCodePrefill || ''}`.trim();
   el.innerHTML = `
     <h2>Welcome to WOW Technicade Operations</h2>
     <p class="tiny">Create your company workspace in under a minute, or join one with an invite code.</p>
@@ -124,9 +125,9 @@ function renderInitialOnboarding(el, state, actions) {
       </form>
       <form id="joinCompanyForm" class="item onboarding-form">
         <h3>Join existing company</h3>
-        <label>Invite code<input name="inviteCode" placeholder="Paste the code from your admin" required /></label>
+        <label>Invite code<input name="inviteCode" placeholder="Paste the code from your admin" value="${inviteCodePrefill}" required /></label>
         <button class="primary" ${pendingAction ? "disabled" : ""}>${pendingAction === "accept_invite" ? "Joining..." : "Accept invite & join"}</button>
-        <p class="tiny">Ask your admin for an invite code from Admin → Invites.</p>
+        <p class="tiny">Use the same email as your invite, or Continue with Google from login. Ask your admin for an invite code from Admin → Invites.</p>
       </form>
     </div>`;
 

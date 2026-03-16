@@ -106,6 +106,8 @@
           <input name="email" type="email" placeholder="Email" required />
           <input name="password" type="password" placeholder="Password" required />
           <button class="primary" type="submit">Login</button>
+          <button type="button" id="forgotPasswordBtn">Forgot password?</button>
+          <button type="button" id="googleLoginBtn">Continue with Google</button>
         </form>
         <form id="registerForm" class="card">
           <h3>Create account</h3>
@@ -116,7 +118,13 @@
           <input name="confirmPassword" type="password" placeholder="Confirm password" autocomplete="new-password" required />
           <div class="tiny" id="registerPasswordHelp">Use at least 8 characters with upper, lower, and a number.</div>
           <button class="primary" type="submit">Register</button>
+          <button type="button" id="googleRegisterBtn">Continue with Google</button>
         </form>
+      </div>
+      <div class="item mt">
+        <label class="tiny">Invite code (optional, improves company handoff)
+          <input id="authInviteCode" placeholder="Paste invite code if you have one" />
+        </label>
       </div>
       <p id="authMessage" class="tiny"></p>
     </section>
@@ -151,6 +159,7 @@
       <section id="assets" class="section card"></section>
       <section id="calendar" class="section card"></section>
       <section id="reports" class="section card"></section>
+      <section id="account" class="section card"></section>
       <section id="admin" class="section card"></section>
     </main>
   </div>
