@@ -5,6 +5,11 @@ import { auth } from './firebase.js';
 import { appConfig } from './config.js';
 import { loadUserProfile, saveUserProfile } from './data.js';
 
+function buildProfilePersistenceError(error) {
+  const detail = `${error?.message || error || ''}`.trim();
+  return new Error(detail ? `Unable to save your profile. ${detail}` : 'Unable to save your profile.');
+}
+
 export async function login(email, password) {
   return signInWithEmailAndPassword(auth, email, password);
 }
@@ -15,16 +20,20 @@ export async function register(email, password, profile = {}) {
   if (fullName) {
     await updateProfile(credential.user, { displayName: fullName });
   }
-  await saveUserProfile(credential.user.uid, {
-    email: `${credential.user.email || email || ''}`.trim().toLowerCase(),
-    emailLower: `${credential.user.email || email || ''}`.trim().toLowerCase(),
-    fullName,
-    displayName: fullName || credential.user.email,
-    memberLabel: fullName ? `${fullName} <${`${credential.user.email || email || ''}`.trim().toLowerCase()}>` : `${credential.user.email || email || ''}`.trim().toLowerCase(),
-    enabled: true,
-    onboardingState: 'needs_company_setup',
-    suppressLegacyAutoAdopt: true
-  }, { uid: credential.user.uid, email: credential.user.email || email });
+  try {
+    await saveUserProfile(credential.user.uid, {
+      email: `${credential.user.email || email || ''}`.trim().toLowerCase(),
+      emailLower: `${credential.user.email || email || ''}`.trim().toLowerCase(),
+      fullName,
+      displayName: fullName || credential.user.email,
+      memberLabel: fullName ? `${fullName} <${`${credential.user.email || email || ''}`.trim().toLowerCase()}>` : `${credential.user.email || email || ''}`.trim().toLowerCase(),
+      enabled: true,
+      onboardingState: 'needs_company_setup',
+      suppressLegacyAutoAdopt: true
+    }, { uid: credential.user.uid, email: credential.user.email || email });
+  } catch (error) {
+    throw buildProfilePersistenceError(error);
+  }
   return credential;
 }
 
@@ -56,7 +65,11 @@ export async function resolveProfile(user) {
       legacyBootstrapEligible: shouldBootstrapAdmin,
       suppressLegacyAutoAdopt: !shouldBootstrapAdmin
     };
-    await saveUserProfile(user.uid, profile, { uid: user.uid, email: user.email });
+    try {
+      await saveUserProfile(user.uid, profile, { uid: user.uid, email: user.email });
+    } catch (error) {
+      throw buildProfilePersistenceError(error);
+    }
     isNewProfile = true;
   } else {
     const normalizedEmail = `${profile.email || user?.email || ''}`.trim().toLowerCase();
@@ -76,7 +89,11 @@ export async function resolveProfile(user) {
       || nextProfile.displayName !== profile.displayName
       || nextProfile.memberLabel !== profile.memberLabel
     ) {
-      await saveUserProfile(user.uid, nextProfile, { uid: user.uid, email: user.email });
+      try {
+        await saveUserProfile(user.uid, nextProfile, { uid: user.uid, email: user.email });
+      } catch (error) {
+        throw buildProfilePersistenceError(error);
+      }
       profile = nextProfile;
     }
   }

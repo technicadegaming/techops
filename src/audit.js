@@ -3,8 +3,8 @@ import { db, serverTimestamp } from './firebase.js';
 import { appConfig } from './config.js';
 import { buildCompanyScopedPayload } from './companyScope.js';
 
-export async function logAudit({ action, entityType, entityId, summary, user, before = null, after = null }) {
-  await addDoc(collection(db, appConfig.collections.auditLogs), buildCompanyScopedPayload('auditLogs', {
+export async function logAudit({ action, entityType, entityId, summary, user, before = null, after = null, scoped = true }) {
+  const payload = {
     action,
     entityType,
     entityId,
@@ -14,5 +14,9 @@ export async function logAudit({ action, entityType, entityId, summary, user, be
     before,
     after,
     timestamp: serverTimestamp()
-  }));
+  };
+  await addDoc(
+    collection(db, appConfig.collections.auditLogs),
+    scoped ? buildCompanyScopedPayload('auditLogs', payload) : payload
+  );
 }

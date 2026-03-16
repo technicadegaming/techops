@@ -98,8 +98,13 @@ const state = {
   assetUi: { lastActionByAsset: {} },
   adminUi: { tone: 'info', message: '', importPreview: '', importSummary: '', importTone: 'info' },
   operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0, statusFilter: 'open', ownershipFilter: 'all', lastSaveFeedback: '', lastSaveTone: 'info', aiTaskStates: {}, lastSavedTaskId: null },
-  adminSection: 'company'
+  adminSection: 'company',
+  onboardingUi: { tone: 'info', message: '' }
 };
+
+function setOnboardingFeedback(message = '', tone = 'info') {
+  state.onboardingUi = { message, tone };
+}
 
 function isPermissionRelatedError(error) {
   const code = `${error?.code || ''}`.toLowerCase();
@@ -493,19 +498,33 @@ async function render() {
     renderOnboarding(document.getElementById('dashboard'), state, {
       createCompany: async (payload) => {
         await runAction('create_company', async () => {
+          setOnboardingFeedback('');
           await createCompanyFromOnboarding(state.user, payload);
           await bootstrapCompanyContext();
           await refreshData();
           render();
-        }, { fallbackMessage: 'Unable to create company workspace.' });
+        }, {
+          fallbackMessage: 'Unable to create company workspace.',
+          onError: (error) => {
+            setOnboardingFeedback(formatActionError(error, 'Unable to create company workspace.'), 'error');
+            render();
+          }
+        });
       },
       acceptInvite: async (inviteCode) => {
         await runAction('accept_invite', async () => {
+          setOnboardingFeedback('');
           await acceptInvite({ inviteCode, user: state.user });
           await bootstrapCompanyContext();
           await refreshData();
           render();
-        }, { fallbackMessage: 'Unable to accept invite.' });
+        }, {
+          fallbackMessage: 'Unable to accept invite.',
+          onError: (error) => {
+            setOnboardingFeedback(formatActionError(error, 'Unable to accept invite.'), 'error');
+            render();
+          }
+        });
       }
     });
     openTab('dashboard');
@@ -779,8 +798,9 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
     return;
   }
   try {
+    setActiveCompanyContext(null);
     await register(fd.get('email'), password, { fullName });
-    authMessage.textContent = 'Account created. Continue with company setup or invite acceptance.';
+    authMessage.textContent = 'Account created. Finishing setup...';
   } catch (err) { authMessage.textContent = err.message; }
 });
 
@@ -804,21 +824,38 @@ document.getElementById('logoutBtn').addEventListener('click', () => logout());
 watchAuth(async (user) => {
   if (!user) {
     setActiveCompanyContext(null);
+    state.user = null;
+    state.profile = null;
+    state.company = null;
+    state.memberships = [];
+    state.activeMembership = null;
+    setOnboardingFeedback('');
     authView.classList.remove('hide');
     appView.classList.add('hide');
     return;
   }
-  state.user = { uid: user.uid, email: user.email, displayName: user.displayName };
-  state.profile = await resolveProfile(user);
-  state.permissions = buildPermissionContext({ profile: state.profile, membership: null });
-  if (state.profile.enabled === false) {
-    await logout();
-    authMessage.textContent = 'This account is disabled.';
-    return;
+  try {
+    setActiveCompanyContext(null);
+    setOnboardingFeedback('');
+    state.user = { uid: user.uid, email: user.email, displayName: user.displayName };
+    state.profile = await resolveProfile(user);
+    state.permissions = buildPermissionContext({ profile: state.profile, membership: null });
+    if (state.profile.enabled === false) {
+      await logout();
+      authMessage.textContent = 'This account is disabled.';
+      return;
+    }
+    authMessage.textContent = '';
+    authView.classList.add('hide');
+    appView.classList.remove('hide');
+    await bootstrapCompanyContext();
+    await refreshData();
+    await render();
+  } catch (error) {
+    console.error('[watchAuth]', error);
+    authMessage.textContent = formatActionError(error, 'Unable to finish account setup.');
+    authView.classList.remove('hide');
+    appView.classList.add('hide');
+    setActiveCompanyContext(null);
   }
-  authView.classList.add('hide');
-  appView.classList.remove('hide');
-  await bootstrapCompanyContext();
-  await refreshData();
-  await render();
 });
