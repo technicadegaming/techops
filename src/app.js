@@ -896,7 +896,17 @@ async function render() {
         alert('Select a worker before reassigning.');
         return;
       }
-      await upsertEntity('tasks', taskId, { ...task, assignedWorkers: [nextWorker], updatedAtClient: new Date().toISOString() }, state.user);
+      await upsertEntity('tasks', taskId, {
+        ...task,
+        assignedWorkers: [nextWorker],
+        timeline: [...(task.timeline || []), {
+          at: new Date().toISOString(),
+          type: 'assignment',
+          note: `Assigned to ${nextWorker}.`,
+          by: state.user?.email || state.user?.uid || 'unknown'
+        }],
+        updatedAtClient: new Date().toISOString()
+      }, state.user);
       await refreshData();
       render();
     },
@@ -936,6 +946,12 @@ async function render() {
       }
       if (saveToLibrary && closeout.fixPerformed) await saveTaskFixToTroubleshootingLibrary({ taskId, successfulFix: closeout.bestFixSummary || closeout.fixPerformed });
       await upsertEntity('auditLogs', `closeout-${taskId}-${Date.now()}`, { action: 'task_closeout', entityType: 'tasks', entityId: taskId, summary: `Task ${taskId} closeout saved` }, state.user);
+      state.operationsUi = {
+        ...(state.operationsUi || {}),
+        lastSaveFeedback: `Task ${taskId} closed successfully. ${saveToLibrary ? 'Fix saved to library settings path.' : 'Closeout recorded.'}`,
+        lastSaveTone: 'success',
+        expandedTaskIds: [...new Set([...(state.operationsUi?.expandedTaskIds || []), taskId])]
+      };
       await refreshData();
       render();
     },
@@ -947,6 +963,19 @@ async function render() {
     },
     runAi: async (taskId) => {
       setTaskAiUiState(taskId, { status: 'running', message: 'AI run started for this task.' });
+      const task = state.tasks.find((entry) => entry.id === taskId);
+      if (task) {
+        await upsertEntity('tasks', taskId, {
+          ...task,
+          timeline: [...(task.timeline || []), {
+            at: new Date().toISOString(),
+            type: 'ai_run',
+            note: 'AI troubleshooting run started.',
+            by: state.user?.email || state.user?.uid || 'unknown'
+          }],
+          updatedAtClient: new Date().toISOString()
+        }, state.user);
+      }
       render();
       let result = null;
       try {
@@ -1091,6 +1120,19 @@ async function render() {
       setTaskAiUiState(taskId, { status: 'running', message: 'Submitting follow-up answers to AI.' });
       try {
         await answerTaskFollowup(taskId, runId, answers);
+        const task = state.tasks.find((entry) => entry.id === taskId);
+        if (task) {
+          await upsertEntity('tasks', taskId, {
+            ...task,
+            timeline: [...(task.timeline || []), {
+              at: new Date().toISOString(),
+              type: 'followup',
+              note: 'AI follow-up answers submitted.',
+              by: state.user?.email || state.user?.uid || 'unknown'
+            }],
+            updatedAtClient: new Date().toISOString()
+          }, state.user);
+        }
         setTaskAiUiState(taskId, { status: 'queued', message: 'Follow-up answers submitted. AI is continuing the run.' });
       } catch (error) {
         setTaskAiUiState(taskId, getTaskAiFailureState(error, 'submit AI follow-up answers'));
@@ -1105,6 +1147,25 @@ async function render() {
       const successfulFix = prompt('Summarize the successful fix for the troubleshooting library:');
       if (!successfulFix) return;
       await saveTaskFixToTroubleshootingLibrary({ taskId, successfulFix });
+      const task = state.tasks.find((entry) => entry.id === taskId);
+      if (task) {
+        await upsertEntity('tasks', taskId, {
+          ...task,
+          timeline: [...(task.timeline || []), {
+            at: new Date().toISOString(),
+            type: 'library',
+            note: 'Fix saved to troubleshooting library.',
+            detail: successfulFix,
+            by: state.user?.email || state.user?.uid || 'unknown'
+          }],
+          updatedAtClient: new Date().toISOString()
+        }, state.user);
+      }
+      state.operationsUi = {
+        ...(state.operationsUi || {}),
+        lastSaveFeedback: `Saved task ${taskId} fix to troubleshooting library.`,
+        lastSaveTone: 'success'
+      };
       await refreshData();
       render();
     },

@@ -86,10 +86,23 @@ function renderAttachments(attachments = {}, emptyLabel = 'No references recorde
 function formatTimelineType(type = '') {
   return ({
     intake: 'Intake',
+    assignment: 'Assignment',
+    start_work: 'Work started',
+    ai_run: 'AI run',
+    ai_result: 'AI result',
+    followup: 'Follow-up',
+    library: 'Saved fix',
     update: 'Update',
     closeout: 'Closeout',
     task_closeout: 'Closeout'
   })[type] || 'Entry';
+}
+
+function getTimelineTone(type = '') {
+  if (['closeout', 'task_closeout'].includes(type)) return 'good';
+  if (['ai_run', 'ai_result', 'followup'].includes(type)) return 'info';
+  if (['assignment', 'start_work', 'library'].includes(type)) return 'warn';
+  return 'muted';
 }
 
 function normalizeTimeline(task = {}) {
@@ -118,14 +131,26 @@ function renderTimeline(task) {
   if (!entries.length) return `<div class="inline-state info mt">No service history yet.</div>`;
   return `<div class="timeline-list mt">${entries.map((entry) => `<div class="timeline-entry">
       <div class="row space">
-        <b>${formatTimelineType(entry.type)}</b>
+        <span class="state-chip ${getTimelineTone(entry.type)}">${formatTimelineType(entry.type)}</span>
         <span class="tiny">${formatDateTime(entry.at)}</span>
       </div>
-      ${entry.note ? `<div class="mt">${entry.note}</div>` : ''}
+      ${entry.note ? `<div class="timeline-note mt">${entry.note}</div>` : ''}
       ${entry.detail ? `<div class="tiny mt">${entry.detail}</div>` : ''}
-      ${entry.by ? `<div class="tiny mt">By ${entry.by}</div>` : ''}
+      ${entry.by ? `<div class="tiny mt">Technician: ${entry.by}</div>` : ''}
       ${attachmentCount(entry.attachments || {}) ? renderAttachments(entry.attachments || {}, '') : ''}
     </div>`).join('')}</div>`;
+}
+
+function renderPostSaveActions(state) {
+  const taskId = `${state.operationsUi?.lastSavedTaskId || ''}`.trim();
+  if (!taskId) return '';
+  return `<div class="item mt post-save-guide">
+    <div class="row space">
+      <b>Next steps for ${taskId}</b>
+      <button type="button" data-jump-task="${taskId}">Open task card</button>
+    </div>
+    <div class="tiny mt">Suggested order: assign/start work → run AI → add timeline update → resolve/close → save fix to library.</div>
+  </div>`;
 }
 
 function getWorkerOptionLabel(worker = {}) {
@@ -579,23 +604,27 @@ function renderCloseout(task, state, meta) {
   if (task.status === 'completed' || !canCloseTasks(state.permissions)) return '';
   return `<details class="item mt" data-closeout-panel="${task.id}">
     <summary><b>Resolve and close task</b></summary>
-    <div class="tiny mt">Capture the fix, proof, and whether the issue is fully resolved before closing.</div>
+    <div class="tiny mt">Capture what fixed it, what was used, and how it was verified before closeout.</div>
     <form data-closeout="${task.id}" class="grid grid-2 mt closeout-form">
-      <label>Root cause<input name="rootCause" placeholder="Example: ticket mech jammed by bent guide" required /></label>
-      <label>Fix performed<input name="fixPerformed" placeholder="Example: straightened guide and re-tested vend path" required /></label>
-      <label>Parts used<input name="partsUsed" placeholder="Comma-separated" /></label>
-      <label>Tools used<input name="toolsUsed" placeholder="Comma-separated" /></label>
+      <label>What fixed it? <span class="tiny">Required</span><input name="fixPerformed" placeholder="Example: straightened guide and re-tested vend path" required /></label>
+      <label>Root cause <span class="tiny">Required</span><input name="rootCause" placeholder="Example: ticket mech jammed by bent guide" required /></label>
+      <label>Parts used <span class="tiny">Optional</span><input name="partsUsed" placeholder="Comma-separated" /></label>
+      <label>Tools used <span class="tiny">Optional</span><input name="toolsUsed" placeholder="Comma-separated" /></label>
       <label>Time spent (minutes)<input name="timeSpentMinutes" type="number" min="0" placeholder="0" /></label>
-      <label>Verification<input name="verification" placeholder="What did you test before closeout?" /></label>
+      <label>Verification / tested outcome<input name="verification" placeholder="What did you test before closeout?" /></label>
       <label>Resolution status<select name="fullyResolved"><option value="yes">Fully resolved</option><option value="no">Partially resolved / monitor</option></select></label>
       <label>Save to library<select name="saveToLibrary"><option value="">Use default</option><option value="yes">Save to troubleshooting library</option><option value="no">Do not save</option></select></label>
       <label>AI helpfulness<select name="aiHelpfulness"><option value="">Optional</option><option value="helpful">AI was helpful</option><option value="partial">AI partially helpful</option><option value="not_helpful">AI not helpful</option></select></label>
-      <label>Best concise fix summary<input name="bestFixSummary" placeholder="One-line closeout summary for future reuse" /></label>
-      <label class="closeout-wide">Image references<textarea name="imageRefs" placeholder="Photo URLs, filenames, or shared-drive refs"></textarea></label>
-      <label class="closeout-wide">Video references<textarea name="videoRefs" placeholder="Video URLs or file refs"></textarea></label>
-      <label class="closeout-wide">Evidence references<textarea name="evidenceRefs" placeholder="Logs, tickets, measurements, or other evidence"></textarea></label>
+      <label class="closeout-wide">Notes for future reference<input name="bestFixSummary" placeholder="One-line closeout summary for future reuse" /></label>
+      <div class="closeout-wide evidence-group">
+        <b>Evidence references (optional)</b>
+        <div class="tiny">Reference photos, videos, and logs using URLs, filenames, or ticket IDs.</div>
+        <label>Image references<textarea name="imageRefs" placeholder="Photo URLs, filenames, or shared-drive refs"></textarea></label>
+        <label>Video references<textarea name="videoRefs" placeholder="Video URLs or file refs"></textarea></label>
+        <label>Evidence references<textarea name="evidenceRefs" placeholder="Logs, tickets, measurements, or other evidence"></textarea></label>
+      </div>
       <div class="closeout-actions closeout-wide">
-        <button class="primary">Complete task</button>
+        <button class="primary">Resolve and close task</button>
       </div>
     </form>
   </details>`;
@@ -778,23 +807,40 @@ export function renderOperations(el, state, actions) {
     </div>
 
     ${state.operationsUi.lastSaveFeedback ? `<div class="inline-state ${state.operationsUi.lastSaveTone || 'info'}">${state.operationsUi.lastSaveFeedback}</div>` : ''}
+    ${renderPostSaveActions(state)}
     ${!scopedAssets.length ? '<div class="inline-state warn">No assets exist in this location scope yet. Create or import an asset in Assets/Admin before opening Operations intake.</div>' : ''}
 
-    <form id="taskForm" class="grid mt">
+    <form id="taskForm" class="grid mt ops-intake-form">
       <div class="grid grid-2">
         <label>Task ID<input name="id" readonly /></label>
         <label>Opened date/time<input name="openedAt" type="datetime-local" readonly /></label>
       </div>
-      <label>Asset / game
-        <input name="assetSearch" list="assetOptions" placeholder="${scopedAssets.length ? 'Search by asset name' : 'No assets in the current location yet'}" required ${editable ? '' : 'disabled'} />
-      </label>
-      <div id="missingAssetPrompt" class="inline-state error ${missingAssetPrompt ? '' : 'hide'}">${missingAssetPrompt ? renderMissingAssetPrompt(typedAssetName) : ''}</div>
-      <textarea name="description" placeholder="Describe the issue / concern" required ${editable ? '' : 'disabled'}></textarea>
-      <input name="alreadyTried" placeholder="What has been tried so far?" ${editable ? '' : 'disabled'} />
-      <input name="reporter" placeholder="Reported by" required ${editable ? '' : 'disabled'} />
+      <section class="item ops-intake-step">
+        <h3>Step 1 · Asset / game <span class="tiny">Required</span></h3>
+        <div class="tiny">Choose the affected asset in this location scope.</div>
+        <label class="mt">Asset / game
+          <input name="assetSearch" list="assetOptions" placeholder="${scopedAssets.length ? 'Search by asset name' : 'No assets in the current location yet'}" required ${editable ? '' : 'disabled'} />
+        </label>
+        <div id="missingAssetPrompt" class="inline-state error mt ${missingAssetPrompt ? '' : 'hide'}">${missingAssetPrompt ? renderMissingAssetPrompt(typedAssetName) : ''}</div>
+      </section>
 
-      <details data-more-details ${state.operationsUi.moreDetailsOpen ? 'open' : ''}>
-        <summary>More details (optional)</summary>
+      <section class="item ops-intake-step">
+        <h3>Step 2 · Problem description <span class="tiny">Required</span></h3>
+        <div class="tiny">Describe what is wrong so the next technician can reproduce quickly.</div>
+        <label class="mt">Issue details
+          <textarea name="description" placeholder="Describe the issue / concern" required ${editable ? '' : 'disabled'}></textarea>
+        </label>
+        <label>Reported by <span class="tiny">Required</span><input name="reporter" placeholder="Reported by" required ${editable ? '' : 'disabled'} /></label>
+      </section>
+
+      <section class="item ops-intake-step">
+        <h3>Step 3 · What has been tried</h3>
+        <div class="tiny">Capture prior troubleshooting so work is not repeated.</div>
+        <input class="mt" name="alreadyTried" placeholder="What has been tried so far?" ${editable ? '' : 'disabled'} />
+      </section>
+
+      <details data-more-details ${state.operationsUi.moreDetailsOpen ? 'open' : ''} class="item ops-intake-step">
+        <summary><b>Step 4 · Optional details</b> <span class="tiny">Expand for severity, assignment, timeline seed, and evidence refs.</span></summary>
         <div class="grid grid-2 mt">
           <input name="issueCategory" placeholder="Issue category" ${editable ? '' : 'disabled'} />
           <select name="severity" ${editable ? '' : 'disabled'}><option>critical</option><option>high</option><option selected>medium</option><option>low</option></select>
@@ -817,14 +863,22 @@ export function renderOperations(el, state, actions) {
           <div id="assignmentStatusHint" class="tiny"></div>
           <textarea name="notes" placeholder="Current summary / handoff notes" ${editable ? '' : 'disabled'}></textarea>
           <textarea name="timelineEntry" placeholder="First service timeline entry" ${editable ? '' : 'disabled'}></textarea>
-          <textarea name="imageRefs" placeholder="Image references: URLs, filenames, drive refs" ${editable ? '' : 'disabled'}></textarea>
-          <textarea name="videoRefs" placeholder="Video references: URLs or filenames" ${editable ? '' : 'disabled'}></textarea>
-          <textarea name="evidenceRefs" placeholder="Evidence refs: logs, measurements, ticket links" ${editable ? '' : 'disabled'}></textarea>
+          <div class="closeout-wide evidence-group">
+            <b>Evidence references</b>
+            <div class="tiny">Optional. Keep references concise: URL, filename, or ticket number per line.</div>
+            <textarea name="imageRefs" placeholder="Image references: URLs, filenames, drive refs" ${editable ? '' : 'disabled'}></textarea>
+            <textarea name="videoRefs" placeholder="Video references: URLs or filenames" ${editable ? '' : 'disabled'}></textarea>
+            <textarea name="evidenceRefs" placeholder="Evidence refs: logs, measurements, ticket links" ${editable ? '' : 'disabled'}></textarea>
+          </div>
         </div>
         <div class="tiny mt">Use timeline updates and reference fields to keep a service-history trail without requiring upload wiring.</div>
       </details>
 
-      <button class="primary" ${editable ? '' : 'disabled'}>Save task</button>
+      <section class="item ops-intake-step">
+        <h3>Step 5 · Save and next actions</h3>
+        <div class="tiny">Save now, then use the task card actions to assign/start work, run AI, update timeline, and close out.</div>
+        <button class="primary mt" ${editable ? '' : 'disabled'}>Save task</button>
+      </section>
       <datalist id="assetOptions">${scopedAssets.map((asset) => `<option value="${asset.name || asset.id}"></option>`).join('')}</datalist>
       <datalist id="locationOptions">${locationOptions.filter((option) => option.name && !option.name.includes('Company-wide')).map((option) => `<option value="${option.name}"></option>`).join('')}</datalist>
     </form>
@@ -854,6 +908,8 @@ export function renderOperations(el, state, actions) {
               <div class="task-summary-meta">
                 <span>${task.assetId ? `<a href="?tab=assets&assetId=${encodeURIComponent(task.assetId)}&location=${encodeURIComponent(scope.selection?.key || '')}">${friendlyAsset}</a>` : friendlyAsset}</span>
                 <span>${taskLocation.label}</span>
+                <span>Owner: ${meta.assignedWorkers.map((worker) => resolveAssignmentLabel(worker, state)).join(', ') || 'unassigned'}</span>
+                <span>Reporter: ${resolveReporterLabel(task, state)}</span>
                 <span>${meta.ageLabel}</span>
               </div>
             </summary>
@@ -871,16 +927,21 @@ export function renderOperations(el, state, actions) {
               <div class="mt"><b>Service timeline</b>${renderTimeline(task)}</div>
               <div class="mt"><b>Recorded references</b>${renderAttachments(task.attachments || {}, 'No image, video, or evidence references on this task yet.')}</div>
               ${meta.unavailable.length ? `<div class="tiny mt">Unavailable assignees: ${meta.unavailable.join(', ')}</div>` : ''}
-              <div class="action-row mt">
+              <div class="task-actions mt">
+                <div class="tiny"><b>Next actions</b></div>
+                <div class="action-row task-primary-actions mt">
                 ${editable && task.status === 'open' ? `<button type="button" data-quick-status="${task.id}" data-next-status="in_progress" class="primary" ${meta.assignedWorkers.length ? '' : 'disabled'}>Start now</button>` : ''}
                 ${editable && task.status === 'in_progress' ? `<button type="button" data-quick-status="${task.id}" data-next-status="open">Move back to open</button>` : ''}
                 ${task.status !== 'completed' && canCloseTasks(state.permissions) ? `<button type="button" data-open-closeout="${task.id}">Resolve / close</button>` : ''}
                 ${meta.needsFollowup ? `<button type="button" data-open-followup="${task.id}">Answer follow-up</button>` : ''}
+                </div>
+                <div class="action-row mt">
                 ${(meta.awaitingAssignment || meta.unavailable.length) ? `<button type="button" data-reassign="${task.id}">Quick reassign</button>` : ''}
                 ${canDelete(state.permissions) ? `<button type="button" data-del="${task.id}" class="danger">Delete</button>` : ''}
+                </div>
               </div>
               ${editable ? `<form data-add-timeline="${task.id}" class="grid mt">
-                <label>Add timeline update<textarea name="note" placeholder="What happened on this visit, test, or handoff?"></textarea></label>
+                <label>Add timeline update<div class="tiny">Keep this focused on what changed since the last service step.</div><textarea name="note" placeholder="What happened on this visit, test, or handoff?"></textarea></label>
                 <div class="grid grid-2">
                   <label>Image refs<textarea name="imageRefs" placeholder="Photos, filenames, links"></textarea></label>
                   <label>Video refs<textarea name="videoRefs" placeholder="Videos or clips"></textarea></label>
@@ -1127,13 +1188,27 @@ export function renderOperations(el, state, actions) {
       rerender();
       return;
     }
-    await actions.saveTask(task.id, { ...task, status: nextStatus, updatedAtClient: new Date().toISOString() });
+    const timelineEntry = nextStatus === 'in_progress'
+      ? { at: new Date().toISOString(), type: 'start_work', note: 'Work started from Operations board.', by: state.user?.email || state.user?.uid || 'unknown' }
+      : { at: new Date().toISOString(), type: 'update', note: 'Moved back to open status.', by: state.user?.email || state.user?.uid || 'unknown' };
+    await actions.saveTask(task.id, {
+      ...task,
+      status: nextStatus,
+      timeline: [...(task.timeline || []), timelineEntry],
+      updatedAtClient: new Date().toISOString()
+    });
   }));
   el.querySelectorAll('[data-open-closeout]').forEach((button) => button.addEventListener('click', () => {
     const panel = el.querySelector(`[data-closeout-panel="${button.dataset.openCloseout}"]`);
     if (!panel) return;
     panel.open = true;
     panel.scrollIntoView({ block: 'nearest' });
+  }));
+  el.querySelectorAll('[data-jump-task]').forEach((button) => button.addEventListener('click', () => {
+    const card = el.querySelector(`#task-${button.dataset.jumpTask}`);
+    if (!card) return;
+    card.open = true;
+    card.scrollIntoView({ block: 'center' });
   }));
   el.querySelectorAll('[data-open-followup]').forEach((button) => button.addEventListener('click', () => {
     const card = button.closest('[data-task-details]');
