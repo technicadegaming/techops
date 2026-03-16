@@ -43,6 +43,35 @@ function normalizeCompanyId(companyId) {
   return `${companyId || ''}`.trim() || null;
 }
 
+async function resolveTaskCompanyContext({ task, requestedCompanyId, userId }) {
+  const taskCompanyId = normalizeCompanyId(task.companyId);
+  const normalizedRequestedCompanyId = normalizeCompanyId(requestedCompanyId);
+
+  if (taskCompanyId && normalizedRequestedCompanyId && taskCompanyId !== normalizedRequestedCompanyId) {
+    throw new HttpsError('invalid-argument', 'taskId/companyId mismatch');
+  }
+
+  if (taskCompanyId) {
+    return { companyId: taskCompanyId, source: 'task' };
+  }
+
+  if (!normalizedRequestedCompanyId) {
+    throw new HttpsError('failed-precondition', 'Task is missing company context required for AI.');
+  }
+
+  await db.collection('tasks').doc(task.id).set({
+    companyId: normalizedRequestedCompanyId,
+    aiDebug: {
+      companyContextRecoveredAt: admin.firestore.FieldValue.serverTimestamp(),
+      companyContextRecoveredBy: userId || 'system'
+    },
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: userId || 'system'
+  }, { merge: true });
+
+  return { companyId: normalizedRequestedCompanyId, source: 'request_backfill' };
+}
+
 async function authorizeCompanyMember({ uid, companyId, checkAccess }) {
   const globalRole = await getUserRole(uid);
   if (isGlobalAdminRole(globalRole)) return { allowed: true, scope: 'global_admin', globalRole, companyId };
@@ -84,16 +113,13 @@ exports.analyzeTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async
     assertString(request.data?.taskId, 'taskId');
 
     const task = await loadTask(request.data.taskId);
-    const taskCompanyId = normalizeCompanyId(task.companyId);
     const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
-    if (requestedCompanyId && taskCompanyId && requestedCompanyId !== taskCompanyId) {
-      throw new HttpsError('invalid-argument', 'taskId/companyId mismatch');
-    }
+    const taskContext = await resolveTaskCompanyContext({ task, requestedCompanyId, userId: request.auth.uid });
 
-    const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskCompanyId || requestedCompanyId, checkAccess: canRunManualAi });
+    const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskContext.companyId, checkAccess: canRunManualAi });
     const canRun = authz.allowed;
     if (!canRun) {
-      throw new HttpsError('permission-denied', 'Insufficient role for AI run');
+      throw new HttpsError('permission-denied', `Insufficient role for AI run in company ${authz.companyId || 'unknown'}`);
     }
 
     await enforceRateLimit(request.data.taskId, request.auth.uid);
@@ -136,13 +162,10 @@ exports.answerTaskFollowup = onCall({ secrets: [OPENAI_API_KEY] }, async (reques
   assertString(request.data?.taskId, 'taskId');
   assertString(request.data?.runId, 'runId');
   const task = await loadTask(request.data.taskId);
-  const taskCompanyId = normalizeCompanyId(task.companyId);
   const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
-  if (requestedCompanyId && taskCompanyId && requestedCompanyId !== taskCompanyId) {
-    throw new HttpsError('invalid-argument', 'taskId/companyId mismatch');
-  }
+  const taskContext = await resolveTaskCompanyContext({ task, requestedCompanyId, userId: request.auth.uid });
 
-  const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskCompanyId || requestedCompanyId, checkAccess: canAnswerFollowup });
+  const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskContext.companyId, checkAccess: canAnswerFollowup });
   if (!authz.allowed) throw new HttpsError('permission-denied', 'Insufficient role for follow-up answers');
 
   const answers = sanitizeFollowupAnswers(request.data.answers || []);
@@ -168,15 +191,12 @@ exports.regenerateTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, as
     assertString(request.data?.taskId, 'taskId');
 
     const task = await loadTask(request.data.taskId);
-    const taskCompanyId = normalizeCompanyId(task.companyId);
     const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
-    if (requestedCompanyId && taskCompanyId && requestedCompanyId !== taskCompanyId) {
-      throw new HttpsError('invalid-argument', 'taskId/companyId mismatch');
-    }
+    const taskContext = await resolveTaskCompanyContext({ task, requestedCompanyId, userId: request.auth.uid });
 
-    const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskCompanyId || requestedCompanyId, checkAccess: canRunManualAi });
+    const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskContext.companyId, checkAccess: canRunManualAi });
     if (!authz.allowed) {
-      throw new HttpsError('permission-denied', 'Insufficient role');
+      throw new HttpsError('permission-denied', `Insufficient role for AI rerun in company ${authz.companyId || 'unknown'}`);
     }
 
     const settings = await getAiSettings(authz.companyId);
@@ -276,12 +296,9 @@ exports.fetchWebContextForTask = onCall({ secrets: [OPENAI_API_KEY] }, async (re
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
   assertString(request.data?.taskId, 'taskId');
   const task = await loadTask(request.data.taskId);
-  const taskCompanyId = normalizeCompanyId(task.companyId);
   const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
-  if (requestedCompanyId && taskCompanyId && requestedCompanyId !== taskCompanyId) {
-    throw new HttpsError('invalid-argument', 'taskId/companyId mismatch');
-  }
-  const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskCompanyId || requestedCompanyId, checkAccess: canAnswerFollowup });
+  const taskContext = await resolveTaskCompanyContext({ task, requestedCompanyId, userId: request.auth.uid });
+  const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskContext.companyId, checkAccess: canAnswerFollowup });
   if (!authz.allowed) throw new HttpsError('permission-denied', 'Insufficient role for web context preview');
 
   const settings = await getAiSettings(authz.companyId);
@@ -292,12 +309,9 @@ exports.saveTaskFixToTroubleshootingLibrary = onCall({}, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
   assertString(request.data?.taskId, 'taskId');
   const task = await loadTask(request.data.taskId);
-  const taskCompanyId = normalizeCompanyId(task.companyId);
   const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
-  if (requestedCompanyId && taskCompanyId && requestedCompanyId !== taskCompanyId) {
-    throw new HttpsError('invalid-argument', 'taskId/companyId mismatch');
-  }
-  const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskCompanyId || requestedCompanyId, checkAccess: canSaveToTroubleshootingLibrary });
+  const taskContext = await resolveTaskCompanyContext({ task, requestedCompanyId, userId: request.auth.uid });
+  const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskContext.companyId, checkAccess: canSaveToTroubleshootingLibrary });
   if (!authz.allowed) throw new HttpsError('permission-denied', 'Insufficient role');
   const libRef = db.collection('troubleshootingLibrary').doc();
   await libRef.set({
@@ -328,7 +342,19 @@ exports.onTaskCreatedQueueAi = onDocumentCreated({
   const taskData = event.data?.data?.() || {};
   const companyId = normalizeCompanyId(taskData.companyId);
   const settings = await getAiSettings(companyId);
-  if (!settings.aiEnabled) return;
+  if (!companyId) {
+    console.warn('onTaskCreatedQueueAi:missing_company_context', {
+      taskId: event.params.taskId,
+      createdBy: taskData.createdBy || null
+    });
+  }
+  if (!settings.aiEnabled) {
+    console.log('onTaskCreatedQueueAi:disabled_by_settings', {
+      taskId: event.params.taskId,
+      companyId
+    });
+    return;
+  }
   const createdBy = taskData.createdBy || 'system';
   await runPipeline({ db, taskId: event.params.taskId, userId: createdBy, triggerSource: 'auto_create', settings, traceId: event.id || `create-${Date.now()}` });
 });

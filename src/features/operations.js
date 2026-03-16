@@ -25,6 +25,21 @@ import {
 const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1 };
 const PRIORITY_LABEL = { critical: 'P1 critical', high: 'P2 high', medium: 'P3 medium', low: 'P4 low' };
 const STATUS_LABEL = { open: 'Open', in_progress: 'In progress', completed: 'Completed' };
+const AI_STATUS_LABEL = {
+  idle: 'AI idle',
+  disabled_by_settings: 'AI disabled',
+  missing_company_context: 'AI missing context',
+  queued: 'AI queued',
+  running: 'AI running',
+  followup_required: 'AI follow-up needed',
+  permission_blocked: 'AI permission blocked',
+  failed: 'AI failed',
+  completed: 'AI completed'
+};
+
+function getAiStatusLabel(status = 'idle') {
+  return AI_STATUS_LABEL[status] || `AI ${`${status || 'idle'}`.replaceAll('_', ' ')}`;
+}
 
 function parseReferenceList(value = '') {
   return `${value || ''}`
@@ -136,12 +151,125 @@ function renderMissingAssetPrompt(assetName = '') {
 }
 
 function getTaskRun(taskId, state) {
-  return (state.taskAiRuns || []).find((entry) => entry.taskId === taskId) || null;
+  return (state.taskAiRuns || [])
+    .filter((entry) => entry.taskId === taskId)
+    .sort((a, b) => `${b.updatedAt || b.createdAt || ''}`.localeCompare(`${a.updatedAt || a.createdAt || ''}`))[0] || null;
 }
 
 function getTaskFollowup(runId, state) {
   if (!runId) return null;
   return (state.taskAiFollowups || []).find((entry) => entry.runId === runId) || null;
+}
+
+function getTaskAiLocalState(taskId, state) {
+  return state.operationsUi?.aiTaskStates?.[taskId] || null;
+}
+
+function getTaskAiEligibility(task, state, run = null) {
+  const taskCompanyId = `${task.companyId || ''}`.trim();
+  const activeCompanyId = `${state.company?.id || state.activeMembership?.companyId || ''}`.trim();
+  const hasTaskCompanyContext = !!taskCompanyId;
+  const canRun = canRunAiTroubleshooting(state.permissions);
+  const canAnswer = canAnswerAiFollowups(state.permissions);
+  const aiEnabled = !!state.settings?.aiEnabled;
+  const manualRerunAllowed = !!state.settings?.aiAllowManualRerun;
+  const autoRunExpected = aiEnabled && !run;
+
+  let reason = '';
+  if (!hasTaskCompanyContext) {
+    reason = activeCompanyId
+      ? `Task is missing company context. Active company is ${activeCompanyId}.`
+      : 'Task is missing company context.';
+  } else if (!aiEnabled) {
+    reason = 'Company AI is disabled in settings.';
+  } else if (!canRun) {
+    reason = 'Manual AI run requires lead or higher.';
+  } else if (run && !manualRerunAllowed) {
+    reason = 'Manual rerun is disabled in company AI settings.';
+  }
+
+  return {
+    taskCompanyId,
+    hasTaskCompanyContext,
+    canRun,
+    canAnswer,
+    aiEnabled,
+    manualRerunAllowed,
+    autoRunExpected,
+    reason
+  };
+}
+
+function getTaskAiState(task, state, run, followup) {
+  const localState = getTaskAiLocalState(task.id, state);
+  const eligibility = getTaskAiEligibility(task, state, run);
+  if (run?.status === 'followup_required') {
+    return {
+      status: 'followup_required',
+      message: 'AI is waiting on follow-up answers before it can continue.',
+      source: 'run',
+      details: run.error || '',
+      eligibility
+    };
+  }
+  if (run?.status) {
+    return {
+      status: run.status,
+      message: run.status === 'failed'
+        ? (run.error || 'AI run failed.')
+        : run.status === 'completed'
+          ? 'AI troubleshooting completed.'
+          : run.status === 'running'
+            ? 'AI troubleshooting is currently running.'
+            : 'AI troubleshooting is queued.',
+      source: 'run',
+      details: run.failureCode ? `failure code: ${run.failureCode}` : '',
+      eligibility
+    };
+  }
+  if (localState?.status) {
+    return {
+      status: localState.status,
+      message: localState.message || getAiStatusLabel(localState.status),
+      source: 'ui',
+      details: '',
+      eligibility
+    };
+  }
+  if (!eligibility.hasTaskCompanyContext) {
+    return {
+      status: 'missing_company_context',
+      message: eligibility.reason,
+      source: 'derived',
+      details: '',
+      eligibility
+    };
+  }
+  if (!eligibility.aiEnabled) {
+    return {
+      status: 'disabled_by_settings',
+      message: eligibility.reason,
+      source: 'derived',
+      details: '',
+      eligibility
+    };
+  }
+  if (!eligibility.canRun && !followup?.questions?.length) {
+    return {
+      status: 'permission_blocked',
+      message: eligibility.reason,
+      source: 'derived',
+      details: '',
+      eligibility
+    };
+  }
+  return {
+    status: 'idle',
+    message: eligibility.autoRunExpected ? 'AI should auto-run after task save.' : 'No AI run has been recorded yet.',
+    source: 'derived',
+    details: '',
+    eligibility
+  };
 }
 
 function renderAiSourceLine(run) {
@@ -183,6 +311,7 @@ function getTaskStateMeta(task, state) {
   const assignedWorkers = task.assignedWorkers || [];
   const run = getTaskRun(task.id, state);
   const followup = getTaskFollowup(run?.id, state);
+  const aiState = getTaskAiState(task, state, run, followup);
   const unavailable = assignedWorkers.filter((worker) => state.users.some((user) => (
     (user.id === worker || user.email === worker) && (user.enabled === false || user.available === false)
   )));
@@ -208,6 +337,7 @@ function getTaskStateMeta(task, state) {
     assignedWorkers,
     run,
     followup,
+    aiState,
     needsFollowup,
     awaitingAssignment,
     unavailable,
@@ -241,6 +371,12 @@ function getChipTone(kind, value) {
     if (value === 'followup') return 'warn';
     if (value === 'ready') return 'good';
   }
+  if (kind === 'ai') {
+    if (['failed', 'permission_blocked', 'missing_company_context'].includes(value)) return 'bad';
+    if (['disabled_by_settings', 'followup_required'].includes(value)) return 'warn';
+    if (value === 'completed') return 'good';
+    if (['queued', 'running'].includes(value)) return 'info';
+  }
   return 'muted';
 }
 
@@ -258,6 +394,9 @@ function renderTaskStateChips(meta) {
   if (meta.needsFollowup) chips.push(renderChip('Follow-up needed', getChipTone('flag', 'followup')));
   if (meta.readyForCloseout) chips.push(renderChip('Ready to close', getChipTone('flag', 'ready')));
   if (meta.awaitingAssignment) chips.push(renderChip('Unassigned', 'warn'));
+  if (meta.aiState?.status && meta.aiState.status !== 'idle') {
+    chips.push(renderChip(getAiStatusLabel(meta.aiState.status), getChipTone('ai', meta.aiState.status)));
+  }
   return chips.join('');
 }
 
@@ -274,20 +413,47 @@ function renderExceptionBanner(meta) {
 function renderAiPanel(task, state, meta) {
   const run = meta.run;
   const followup = meta.followup;
+  const aiState = meta.aiState;
+  const eligibility = aiState.eligibility;
+  const canShowRunNow = eligibility.hasTaskCompanyContext
+    && eligibility.aiEnabled
+    && eligibility.canRun
+    && !run
+    && !['queued', 'running'].includes(aiState.status);
+  const canShowRerun = eligibility.hasTaskCompanyContext && eligibility.aiEnabled && eligibility.canRun && !!run && eligibility.manualRerunAllowed;
+  const rerunLabel = run?.status === 'failed' ? 'Retry AI' : 'Rerun AI';
+  const statusTone = ({
+    bad: 'error',
+    warn: 'warn',
+    good: 'success',
+    info: 'info',
+    muted: 'info'
+  })[getChipTone('ai', aiState.status)] || 'info';
+  const sourceLine = eligibility.taskCompanyId
+    ? `Company scope: ${eligibility.taskCompanyId}`
+    : 'Company scope missing on this task';
+  const actionHint = eligibility.aiEnabled && !run
+    ? 'New tasks auto-run AI after save when company AI is enabled.'
+    : (run && !eligibility.manualRerunAllowed ? 'Manual rerun is disabled for this company.' : '');
   return `<div class="item mt">
     <div class="row space">
       <b>AI Troubleshooting</b>
-      <div class="tiny">Status: ${run?.status || 'not_started'}</div>
+      <div class="tiny">Status: ${getAiStatusLabel(aiState.status)}</div>
     </div>
+    <div class="inline-state ${statusTone} mt">${aiState.message}</div>
+    <div class="tiny mt">${sourceLine}${aiState.source ? ` | source: ${aiState.source}` : ''}${aiState.details ? ` | ${aiState.details}` : ''}</div>
+    ${actionHint ? `<div class="tiny mt">${actionHint}</div>` : ''}
     ${task.aiSummary?.summary ? `<div class="tiny mt">${task.aiSummary.summary}</div>` : ''}
     ${run ? renderAiSourceLine(run) : '<div class="tiny mt">No AI run yet for this task.</div>'}
     ${run?.shortFrontlineVersion ? `<div class="tiny mt"><b>Frontline:</b> ${run.shortFrontlineVersion}</div>` : ''}
     ${run?.diagnosticSteps?.length ? `<div class="tiny mt"><b>Next steps:</b> ${run.diagnosticSteps.join(' | ')}</div>` : ''}
     ${followup?.questions?.length ? `<div class="inline-state warn mt">AI cannot advance until the follow-up answers below are submitted.</div>
       <form data-followup="${task.id}" data-run="${run.id}" class="grid mt followup-form">${followup.questions.map((question, index) => `<label class="tiny">${question}<input name="a${index}" placeholder="Answer" ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'} /></label>`).join('')}<button class="primary" ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'}>Submit follow-up answers</button></form>` : ''}
+    ${!canAnswerAiFollowups(state.permissions) && followup?.questions?.length ? `<div class="tiny mt">Follow-up answers require staff or higher.</div>` : ''}
+    ${!eligibility.canRun && aiState.status !== 'completed' ? `<div class="tiny mt">${eligibility.reason}</div>` : ''}
     <div class="action-row mt">
-      <button data-run-ai="${task.id}" ${canRunAiTroubleshooting(state.permissions) ? '' : 'disabled'}>${run ? 'Run AI again' : 'Run AI'}</button>
-      <button data-rerun-ai="${task.id}" ${canRunAiTroubleshooting(state.permissions) ? '' : 'disabled'}>Regenerate</button>
+      ${canShowRunNow ? `<button data-run-ai="${task.id}">Run AI now</button>` : ''}
+      ${canShowRerun ? `<button data-rerun-ai="${task.id}">${rerunLabel}</button>` : ''}
       <button data-save-fix="${task.id}" ${canSaveFixToLibrary(state.permissions) ? '' : 'disabled'}>Save fix to library</button>
     </div>
   </div>`;
@@ -348,7 +514,9 @@ function createDefaultOperationsUiState() {
     exceptionFilter: 'all',
     lastSaveFeedback: '',
     lastSaveTone: 'info',
-    reassignSelections: {}
+    reassignSelections: {},
+    aiTaskStates: {},
+    lastSavedTaskId: null
   };
 }
 
