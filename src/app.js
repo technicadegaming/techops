@@ -169,6 +169,11 @@ function isPermissionRelatedError(error) {
   return code.includes('permission-denied') || message.includes('permission') || message.includes('missing or insufficient permissions');
 }
 
+function buildBootstrapErrorMessage(error) {
+  if (!isPermissionRelatedError(error)) return formatActionError(error, 'Unable to finish account setup.');
+  return 'Unable to finish account setup due to a workspace permission check. Your account was created, but bootstrap could not complete. Please retry in a moment or contact support if it keeps happening.';
+}
+
 function getEnrichmentFailureState(error) {
   const blocked = isPermissionRelatedError(error);
   return {
@@ -1651,8 +1656,11 @@ watchAuth(async (user) => {
     return;
   }
   try {
+    authMessage.textContent = 'Finishing workspace setup…';
+    authView.classList.remove('hide');
+    appView.classList.add('hide');
     setActiveCompanyContext(null);
-    setOnboardingFeedback('', 'info', { pendingAction: '', handoffStatus: 'idle' });
+    setOnboardingFeedback('', 'info', { pendingAction: '', handoffStatus: 'working' });
     state.user = { uid: user.uid, email: user.email, displayName: user.displayName };
     state.profile = await resolveProfile(user);
     state.profile = await syncSecuritySnapshot(user, state.profile);
@@ -1670,7 +1678,8 @@ watchAuth(async (user) => {
     await render();
   } catch (error) {
     console.error('[watchAuth]', error);
-    authMessage.textContent = formatActionError(error, 'Unable to finish account setup.');
+    authMessage.textContent = buildBootstrapErrorMessage(error);
+    setOnboardingFeedback(authMessage.textContent, 'error', { pendingAction: '', handoffStatus: 'error' });
     authView.classList.remove('hide');
     appView.classList.add('hide');
     setActiveCompanyContext(null);

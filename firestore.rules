@@ -124,7 +124,15 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
       allow create: if isAdmin() || (signedIn() && request.auth.uid == uid);
-      allow update: if isAdmin() || (signedIn() && request.auth.uid == uid && request.resource.data.role == resource.data.role);
+      allow update: if isAdmin()
+        || (
+          signedIn()
+          && request.auth.uid == uid
+          && (
+            request.resource.data.role == resource.data.role
+            || (!resource.data.keys().hasAny(['role']) && request.resource.data.role == 'pending')
+          )
+        );
       allow delete: if isAdmin();
     }
 
