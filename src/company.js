@@ -2,6 +2,7 @@ import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, qu
 import { db } from './firebase.js';
 import { appConfig } from './config.js';
 import { logAudit } from './audit.js';
+import { buildInitialBillingScaffold } from './billing.js';
 
 const C = appConfig.collections;
 
@@ -67,6 +68,7 @@ export async function ensureBootstrapCompanyForLegacyUser(user, profile, hasLega
   await setDoc(companyRef, {
     id: companyId,
     name: suggested,
+    ...buildInitialBillingScaffold({ primaryEmail: user.email, displayName: profile?.displayName || user.displayName || '' }),
     createdAt: serverTimestamp(),
     createdBy: user.uid,
     onboardingCompleted: false,
@@ -104,6 +106,7 @@ export async function createCompanyFromOnboarding(user, payload = {}) {
   await setDoc(doc(db, C.companies, companyId), {
     id: companyId,
     name: baseName,
+    ...buildInitialBillingScaffold({ primaryEmail: payload.primaryEmail || user.email, displayName: payload.ownerDisplayName || user.displayName || '' }),
     primaryEmail: payload.primaryEmail || user.email,
     primaryPhone: payload.primaryPhone || '',
     address: headquarters.address,

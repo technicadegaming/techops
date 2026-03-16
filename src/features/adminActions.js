@@ -1,3 +1,5 @@
+import { buildUsageSummary, normalizeBillingAddress } from '../billing.js';
+
 export function createAdminActions(deps) {
   const {
     state,
@@ -134,6 +136,46 @@ export function createAdminActions(deps) {
         await refreshData();
         render();
       }, { fallbackMessage: 'Unable to add company location.' });
+    },
+    updateCompanyBilling: async (payload) => {
+      if (!state.company?.id) {
+        setAdminFeedback({ tone: 'error', message: 'No active company found.' });
+        render();
+        return;
+      }
+      await runAction('update_company_billing', async () => {
+        const seatLimitRaw = Number(payload.seatLimit);
+        const seatLimit = Number.isFinite(seatLimitRaw) && seatLimitRaw > 0 ? Math.round(seatLimitRaw) : null;
+        const usageSummary = buildUsageSummary({
+          members: state.companyMembers || [],
+          workers: state.workers || [],
+          locations: state.companyLocations || [],
+          assets: state.assets || [],
+          seatLimit
+        });
+        await upsertEntity('companies', state.company.id, withRequiredCompanyId({
+          ...state.company,
+          trialStatus: `${payload.trialStatus || state.company?.trialStatus || 'active'}`.trim(),
+          trialEndsAt: `${payload.trialEndsAt || state.company?.trialEndsAt || ''}`.trim(),
+          subscriptionStatus: `${payload.subscriptionStatus || state.company?.subscriptionStatus || 'trialing'}`.trim(),
+          planKey: `${payload.planKey || state.company?.planKey || 'starter_trial'}`.trim(),
+          billingEmail: `${payload.billingEmail || ''}`.trim().toLowerCase(),
+          billingContactName: `${payload.billingContactName || ''}`.trim(),
+          seatLimit,
+          billingAddress: normalizeBillingAddress({
+            line1: payload.billingAddressLine1,
+            line2: payload.billingAddressLine2,
+            city: payload.billingAddressCity,
+            state: payload.billingAddressState,
+            postalCode: payload.billingAddressPostalCode,
+            country: payload.billingAddressCountry
+          }),
+          usageSummary
+        }, 'update company billing'), state.user);
+        setAdminFeedback({ tone: 'success', message: 'Billing and plan settings saved.' });
+        await refreshData();
+        render();
+      }, { fallbackMessage: 'Unable to update billing settings.' });
     },
     updateCompanyProfile: async (payload) => {
       if (!state.company?.id) {
