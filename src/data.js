@@ -29,6 +29,15 @@ export async function listEntities(name) {
     .map(({ __collection, ...rest }) => rest);
 }
 
+export async function getEntity(name, id, options = {}) {
+  const ref = doc(db, C[name], id);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  const entity = { id: snap.id, ...snap.data() };
+  if (options.bypassCompanyFilter) return entity;
+  return includeRecordForActiveCompany(name, entity) ? entity : null;
+}
+
 export async function listAudit(filters = {}) {
   const scope = getActiveCompanyContext();
   const constraints = [];

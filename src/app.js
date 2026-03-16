@@ -1,5 +1,5 @@
 import { login, logout, register, resolveProfile, watchAuth } from './auth.js';
-import { clearEntitySet, countEntities, deleteEntity, getAppSettings, listAudit, listEntities, saveAppSettings, saveUserProfile, setActiveCompanyContext, upsertEntity } from './data.js';
+import { clearEntitySet, countEntities, deleteEntity, getAppSettings, getEntity, listAudit, listEntities, saveAppSettings, saveUserProfile, setActiveCompanyContext, upsertEntity } from './data.js';
 import { renderDashboard } from './features/dashboard.js';
 import { renderOperations } from './features/operations.js';
 import { renderAssets } from './features/assets.js';
@@ -200,26 +200,66 @@ function mapCallableRunStatus(status = '') {
   return 'queued';
 }
 
+function mergeRunIntoState(run) {
+  if (!run?.id) return;
+  const existing = (state.taskAiRuns || []).filter((entry) => entry.id !== run.id);
+  state.taskAiRuns = [run, ...existing]
+    .sort((a, b) => `${b.updatedAt || b.createdAt || ''}`.localeCompare(`${a.updatedAt || a.createdAt || ''}`));
+}
+
 async function pollForTaskAiRunRecord(taskId, runId, options = {}) {
-  const timeoutMs = Number(options.timeoutMs || 12000);
+  const timeoutMs = Number(options.timeoutMs || 20000);
   const intervalMs = Number(options.intervalMs || 900);
   const startedAt = Date.now();
   const expectedRunId = `${runId || ''}`.trim();
+  const task = (state.tasks || []).find((entry) => entry.id === taskId) || null;
+  const taskCompanyId = `${task?.companyId || ''}`.trim();
   let latestRuns = [];
 
   while (Date.now() - startedAt <= timeoutMs) {
-    latestRuns = await listEntities('taskAiRuns').catch(() => []);
-    state.taskAiRuns = latestRuns;
-    const match = latestRuns.find((entry) => entry.id === expectedRunId && entry.taskId === taskId);
-    if (match) {
-      state.taskAiFollowups = await listEntities('taskAiFollowups').catch(() => state.taskAiFollowups || []);
-      return { found: true, run: match, timedOut: false };
+    let directRun = null;
+    try {
+      directRun = await getEntity('taskAiRuns', expectedRunId, { bypassCompanyFilter: true });
+    } catch (error) {
+      return { found: false, run: null, timedOut: false, errorType: 'read_failed', error };
     }
+
+    if (directRun) {
+      const runTaskId = `${directRun.taskId || ''}`.trim();
+      const runCompanyId = `${directRun.companyId || ''}`.trim();
+      if (runTaskId && runTaskId !== `${taskId}`) {
+        return { found: false, run: directRun, timedOut: false, errorType: 'task_mismatch' };
+      }
+      if (taskCompanyId && runCompanyId && runCompanyId !== taskCompanyId) {
+        return { found: false, run: directRun, timedOut: false, errorType: 'company_mismatch' };
+      }
+      mergeRunIntoState(directRun);
+      state.taskAiFollowups = await listEntities('taskAiFollowups').catch(() => state.taskAiFollowups || []);
+      return { found: true, run: directRun, timedOut: false, source: 'direct' };
+    }
+
+    try {
+      latestRuns = await listEntities('taskAiRuns');
+      state.taskAiRuns = latestRuns;
+    } catch (error) {
+      return { found: false, run: null, timedOut: false, errorType: 'query_failed', error };
+    }
+
+    const match = latestRuns.find((entry) => entry.id === expectedRunId && `${entry.taskId || ''}`.trim() === `${taskId}`);
+    if (match) {
+      const runCompanyId = `${match.companyId || ''}`.trim();
+      if (taskCompanyId && runCompanyId && runCompanyId !== taskCompanyId) {
+        return { found: false, run: match, timedOut: false, errorType: 'company_mismatch' };
+      }
+      state.taskAiFollowups = await listEntities('taskAiFollowups').catch(() => state.taskAiFollowups || []);
+      return { found: true, run: match, timedOut: false, source: 'query' };
+    }
+
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 
   state.taskAiRuns = latestRuns;
-  return { found: false, run: null, timedOut: true };
+  return { found: false, run: null, timedOut: true, errorType: 'not_found_yet' };
 }
 
 function getTaskAiFailureState(error, fallbackAction = 'run AI') {
@@ -853,7 +893,28 @@ async function render() {
           setTaskAiUiState(taskId, {
             status: `${pollResult.run.status || 'completed'}`,
             runId,
-            message: `AI run ${runId} is now visible with status ${pollResult.run.status || 'completed'}.`
+            message: `AI run ${runId} is now visible with status ${pollResult.run.status || 'completed'} (${pollResult.source || 'sync'} read).`
+          });
+        } else if (pollResult.errorType === 'company_mismatch') {
+          const runCompanyId = `${pollResult.run?.companyId || 'none'}`.trim();
+          const taskCompanyId = `${state.tasks.find((entry) => entry.id === taskId)?.companyId || 'none'}`.trim();
+          setTaskAiUiState(taskId, {
+            status: 'failed',
+            runId,
+            message: `AI run ${runId} exists but company mismatch was detected (run company: ${runCompanyId}, task company: ${taskCompanyId}).`
+          });
+        } else if (pollResult.errorType === 'task_mismatch') {
+          setTaskAiUiState(taskId, {
+            status: 'failed',
+            runId,
+            message: `AI run ${runId} exists but is linked to task ${pollResult.run?.taskId || 'unknown'} instead of ${taskId}.`
+          });
+        } else if (pollResult.errorType === 'read_failed' || pollResult.errorType === 'query_failed') {
+          const reason = `${pollResult.error?.message || 'Unable to read AI run records.'}`.trim();
+          setTaskAiUiState(taskId, {
+            status: 'failed',
+            runId,
+            message: `AI run ${runId} started, but readback failed: ${reason}`
           });
         } else {
           setTaskAiUiState(taskId, {
@@ -901,7 +962,28 @@ async function render() {
           setTaskAiUiState(taskId, {
             status: `${pollResult.run.status || 'completed'}`,
             runId,
-            message: `AI rerun ${runId} is now visible with status ${pollResult.run.status || 'completed'}.`
+            message: `AI rerun ${runId} is now visible with status ${pollResult.run.status || 'completed'} (${pollResult.source || 'sync'} read).`
+          });
+        } else if (pollResult.errorType === 'company_mismatch') {
+          const runCompanyId = `${pollResult.run?.companyId || 'none'}`.trim();
+          const taskCompanyId = `${state.tasks.find((entry) => entry.id === taskId)?.companyId || 'none'}`.trim();
+          setTaskAiUiState(taskId, {
+            status: 'failed',
+            runId,
+            message: `AI rerun ${runId} exists but company mismatch was detected (run company: ${runCompanyId}, task company: ${taskCompanyId}).`
+          });
+        } else if (pollResult.errorType === 'task_mismatch') {
+          setTaskAiUiState(taskId, {
+            status: 'failed',
+            runId,
+            message: `AI rerun ${runId} exists but is linked to task ${pollResult.run?.taskId || 'unknown'} instead of ${taskId}.`
+          });
+        } else if (pollResult.errorType === 'read_failed' || pollResult.errorType === 'query_failed') {
+          const reason = `${pollResult.error?.message || 'Unable to read AI run records.'}`.trim();
+          setTaskAiUiState(taskId, {
+            status: 'failed',
+            runId,
+            message: `AI rerun ${runId} started, but readback failed: ${reason}`
           });
         } else {
           setTaskAiUiState(taskId, {
