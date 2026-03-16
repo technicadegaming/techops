@@ -21,6 +21,7 @@ import { createAssetActions } from './features/assetActions.js';
 import { createAdminActions } from './features/adminActions.js';
 import { getWorkspaceReadiness } from './features/workspaceReadiness.js';
 import { parseAssetCsv, parseBulkAssetList, normalizeAssetCandidate } from './features/assetIntake.js';
+import { logAudit } from './audit.js';
 
 const authView = document.getElementById('authView');
 const appView = document.getElementById('appView');
@@ -1133,8 +1134,22 @@ async function render() {
         const event = buildCloseoutEvent(taskId, closeout, state.user);
         await upsertEntity('assets', task.assetId, { ...asset, history: [...(asset.history || []), event] }, state.user);
       }
-      if (saveToLibrary && closeout.fixPerformed) await saveTaskFixToTroubleshootingLibrary({ taskId, successfulFix: closeout.bestFixSummary || closeout.fixPerformed });
-      await upsertEntity('auditLogs', `closeout-${taskId}-${Date.now()}`, { action: 'task_closeout', entityType: 'tasks', entityId: taskId, summary: `Task ${taskId} closeout saved` }, state.user);
+      if (saveToLibrary && closeout.fixPerformed) {
+        await saveTaskFixToTroubleshootingLibrary({ taskId, successfulFix: closeout.bestFixSummary || closeout.fixPerformed });
+        await logAudit({
+          action: 'create',
+          actionType: 'ai_fix_saved_to_library',
+          category: 'operations_tasks',
+          entityType: 'tasks',
+          entityId: taskId,
+          targetType: 'task',
+          targetId: taskId,
+          targetLabel: task.title || taskId,
+          summary: `AI fix saved to library from task ${task.title || taskId}`,
+          user: state.user,
+          metadata: { source: 'task_closeout', taskId }
+        });
+      }
       state.operationsUi = {
         ...(state.operationsUi || {}),
         lastSaveFeedback: `Task ${taskId} closed successfully. ${saveToLibrary ? 'Fix saved to library settings path.' : 'Closeout recorded.'}`,
@@ -1335,8 +1350,21 @@ async function render() {
     saveFix: async (taskId) => {
       const successfulFix = prompt('Summarize the successful fix for the troubleshooting library:');
       if (!successfulFix) return;
-      await saveTaskFixToTroubleshootingLibrary({ taskId, successfulFix });
       const task = state.tasks.find((entry) => entry.id === taskId);
+      await saveTaskFixToTroubleshootingLibrary({ taskId, successfulFix });
+      await logAudit({
+        action: 'create',
+        actionType: 'ai_fix_saved_to_library',
+        category: 'operations_tasks',
+        entityType: 'tasks',
+        entityId: taskId,
+        targetType: 'task',
+        targetId: taskId,
+        targetLabel: task?.title || taskId,
+        summary: `AI fix saved to library from task ${task?.title || taskId}`,
+        user: state.user,
+        metadata: { source: 'manual_save_fix', fixLength: `${successfulFix}`.length }
+      });
       if (task) {
         await upsertEntity('tasks', taskId, {
           ...task,

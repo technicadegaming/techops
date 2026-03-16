@@ -2,6 +2,7 @@ import { defaultAiSettings } from './data.js';
 import { canChangeAISettings, canManageBackups, isAdmin } from './roles.js';
 import { buildLocationOptions } from './features/locationContext.js';
 import { renderWorkspaceReadinessCard } from './features/workspaceReadiness.js';
+import { formatRelativeTime } from './features/notifications.js';
 
 const WORKER_ROLE_OPTIONS = ['staff', 'lead', 'assistant_manager', 'manager', 'admin'];
 const ACCESS_ROLE_OPTIONS = ['owner', 'admin', 'manager', 'staff', 'viewer'];
@@ -51,6 +52,7 @@ const ADMIN_SECTIONS = [
   { id: 'members', label: 'Members' },
   { id: 'workers', label: 'Workers' },
   { id: 'invites', label: 'Invites' },
+  { id: 'audit', label: 'Audit log' },
   { id: 'imports', label: 'Imports' },
   { id: 'tools', label: 'AI settings / Workspace tools' },
   { id: 'danger', label: 'Danger zone' }
@@ -70,6 +72,13 @@ function parseCsv(text = '') {
 
 function renderSectionTabs(activeSection) {
   return `<div class="tabs">${ADMIN_SECTIONS.map((section) => `<button type="button" class="tab ${section.id === activeSection ? 'active' : ''}" data-admin-tab="${section.id}">${section.label}</button>`).join('')}</div>`;
+}
+
+function renderAuditLine(entry = {}) {
+  const actor = entry.actorName || entry.userIdentity || 'Someone';
+  const target = entry.targetLabel || entry.entityId || 'record';
+  const action = `${entry.actionType || entry.action || 'updated'}`.replace(/_/g, ' ');
+  return `${actor} ${action} ${target}`;
 }
 
 export function renderAdmin(el, state, actions) {
@@ -100,6 +109,17 @@ export function renderAdmin(el, state, actions) {
   const memberEmailSet = new Set(members.map((member) => `${member.email || ''}`.trim().toLowerCase()).filter(Boolean));
   const inviteEmailSet = new Set(invites.map((invite) => `${invite.email || ''}`.trim().toLowerCase()).filter(Boolean));
   const linkedCount = members.filter((member) => workerEmailSet.has(`${member.email || ''}`.trim().toLowerCase())).length;
+  const auditCategory = adminUi.auditCategory || 'all';
+  const categoryOptions = [
+    { id: 'all', label: 'All activity' },
+    { id: 'people_access', label: 'People / access' },
+    { id: 'assets_docs', label: 'Assets / docs' },
+    { id: 'operations_tasks', label: 'Operations / tasks' },
+    { id: 'settings', label: 'Settings' }
+  ];
+  const auditEntries = (state.auditLogs || [])
+    .filter((entry) => auditCategory === 'all' || entry.category === auditCategory)
+    .slice(0, 80);
 
   el.innerHTML = `
     <h2>Company Admin</h2>
@@ -202,6 +222,13 @@ export function renderAdmin(el, state, actions) {
   }).join('') || '<div class="inline-state info">No pending invites. Add an invite when someone needs workspace sign-in access.</div>'}</div>
     </section>
 
+    <section class="item ${activeSection === 'audit' ? '' : 'hide'}" data-admin-section="audit">
+      <h3>Audit log</h3>
+      <p class="tiny">Company activity history: who changed what and when.</p>
+      <div class="row mt">${categoryOptions.map((option) => `<button type="button" data-audit-filter="${option.id}" class="filter-chip ${auditCategory === option.id ? 'active' : ''}">${option.label}</button>`).join('')}</div>
+      <div class="list mt">${auditEntries.map((entry) => `<div class="item tiny"><div class="row space"><b>${renderAuditLine(entry)}</b>${renderStatusChip(formatRelativeTime(entry.timestamp), 'muted')}</div><div>${entry.summary || ''}</div></div>`).join('') || '<div class="inline-state info">No audit entries in this view yet.</div>'}</div>
+    </section>
+
     <section class="item ${activeSection === 'imports' ? '' : 'hide'}" data-admin-section="imports">
       <h3>Workspace tools</h3>
       <div class="row"><button id="downloadAssetsTemplate" type="button">Download assets CSV template</button><button id="downloadEmployeesTemplate" type="button">Download workers CSV template</button></div>
@@ -242,6 +269,9 @@ export function renderAdmin(el, state, actions) {
 
   el.querySelectorAll('[data-admin-tab]').forEach((button) => {
     button.addEventListener('click', () => actions.setAdminSection(button.dataset.adminTab));
+  });
+  el.querySelectorAll('[data-audit-filter]').forEach((button) => {
+    button.addEventListener('click', () => actions.setAuditFilter(button.dataset.auditFilter));
   });
 
   const requiredPhrase = state.company?.name || 'CONFIRM';
