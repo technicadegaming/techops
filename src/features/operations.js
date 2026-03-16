@@ -35,7 +35,8 @@ const AI_STATUS_LABEL = {
   followup_required: 'AI follow-up needed',
   permission_blocked: 'AI permission blocked',
   failed: 'AI failed',
-  completed: 'AI completed'
+  completed: 'AI completed',
+  waiting_for_refresh: 'AI waiting for refresh'
 };
 
 function getAiStatusLabel(status = 'idle') {
@@ -151,9 +152,15 @@ function renderMissingAssetPrompt(assetName = '') {
   return `No existing asset matches "${clean}". Create the asset first, then save the task. <button type="button" data-create-missing-asset="${clean}">Create asset</button>`;
 }
 
-function getTaskRun(taskId, state) {
+function getTaskRun(task, state) {
+  const taskId = task?.id || '';
+  const taskCompanyId = `${task?.companyId || ''}`.trim();
   return (state.taskAiRuns || [])
     .filter((entry) => entry.taskId === taskId)
+    .filter((entry) => {
+      if (!taskCompanyId) return true;
+      return `${entry.companyId || ''}`.trim() === taskCompanyId;
+    })
     .sort((a, b) => `${b.updatedAt || b.createdAt || ''}`.localeCompare(`${a.updatedAt || a.createdAt || ''}`))[0] || null;
 }
 
@@ -310,7 +317,7 @@ function getTaskStateMeta(task, state) {
   const status = task.status || 'open';
   const severity = task.severity || 'medium';
   const assignedWorkers = task.assignedWorkers || [];
-  const run = getTaskRun(task.id, state);
+  const run = getTaskRun(task, state);
   const followup = getTaskFollowup(run?.id, state);
   const aiState = getTaskAiState(task, state, run, followup);
   const unavailable = assignedWorkers.filter((worker) => state.users.some((user) => (
@@ -374,7 +381,7 @@ function getChipTone(kind, value) {
   }
   if (kind === 'ai') {
     if (['failed', 'permission_blocked', 'missing_company_context'].includes(value)) return 'bad';
-    if (['disabled_by_settings', 'followup_required'].includes(value)) return 'warn';
+    if (['disabled_by_settings', 'followup_required', 'waiting_for_refresh'].includes(value)) return 'warn';
     if (value === 'completed') return 'good';
     if (['queued', 'running'].includes(value)) return 'info';
   }
@@ -417,6 +424,7 @@ function renderAiGuidance(aiState, eligibility, state) {
   if (aiState.status === 'disabled_by_settings') return canEditTasks(state.permissions) ? 'AI is disabled for this company. Go to Admin > AI settings to enable it.' : 'AI is disabled for this company.';
   if (aiState.status === 'permission_blocked') return 'Manual AI runs require Lead or higher.';
   if (aiState.status === 'followup_required') return 'Follow-up answers are required before AI can continue.';
+  if (aiState.status === 'waiting_for_refresh') return 'AI run was accepted and is syncing into the task run list. Results should appear shortly.';
   if (aiState.status === 'idle') return 'Save the task first to trigger AI.';
   return '';
 }
@@ -457,7 +465,7 @@ function renderAiPanel(task, state, meta) {
     ${actionHint ? `<div class="tiny mt">${actionHint}</div>` : ''}
     ${guidance ? `<div class="tiny mt">${guidance}</div>` : ''}
     ${task.aiSummary?.summary ? `<div class="tiny mt">${task.aiSummary.summary}</div>` : ''}
-    ${run ? renderAiSourceLine(run) : '<div class="tiny mt">No AI run yet for this task.</div>'}
+    ${run ? renderAiSourceLine(run) : (aiState.status === 'waiting_for_refresh' ? `<div class="tiny mt">${aiState.message}</div>` : '<div class="tiny mt">No AI run yet for this task.</div>')}
     ${run?.shortFrontlineVersion ? `<div class="tiny mt"><b>Frontline:</b> ${run.shortFrontlineVersion}</div>` : ''}
     ${run?.diagnosticSteps?.length ? `<div class="tiny mt"><b>Next steps:</b> ${run.diagnosticSteps.join(' | ')}</div>` : ''}
     ${followup?.questions?.length ? `<div class="inline-state warn mt">AI cannot advance until the follow-up answers below are submitted.</div>

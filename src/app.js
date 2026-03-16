@@ -187,6 +187,41 @@ function setTaskAiUiState(taskId, nextState = null) {
   };
 }
 
+function buildAiPendingRecordMessage(runId) {
+  const safeRunId = `${runId || ''}`.trim();
+  return safeRunId
+    ? `AI callable succeeded (run ${safeRunId}), but the run record is still syncing. Waiting for refresh.`
+    : 'AI callable succeeded, but the run record is still syncing. Waiting for refresh.';
+}
+
+function mapCallableRunStatus(status = '') {
+  const normalized = `${status || ''}`.trim().toLowerCase();
+  if (['queued', 'running', 'completed', 'failed', 'followup_required'].includes(normalized)) return normalized;
+  return 'queued';
+}
+
+async function pollForTaskAiRunRecord(taskId, runId, options = {}) {
+  const timeoutMs = Number(options.timeoutMs || 12000);
+  const intervalMs = Number(options.intervalMs || 900);
+  const startedAt = Date.now();
+  const expectedRunId = `${runId || ''}`.trim();
+  let latestRuns = [];
+
+  while (Date.now() - startedAt <= timeoutMs) {
+    latestRuns = await listEntities('taskAiRuns').catch(() => []);
+    state.taskAiRuns = latestRuns;
+    const match = latestRuns.find((entry) => entry.id === expectedRunId && entry.taskId === taskId);
+    if (match) {
+      state.taskAiFollowups = await listEntities('taskAiFollowups').catch(() => state.taskAiFollowups || []);
+      return { found: true, run: match, timedOut: false };
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  state.taskAiRuns = latestRuns;
+  return { found: false, run: null, timedOut: true };
+}
+
 function getTaskAiFailureState(error, fallbackAction = 'run AI') {
   const code = `${error?.code || ''}`.toLowerCase();
   const message = `${error?.message || error || ''}`.trim();
@@ -786,29 +821,97 @@ async function render() {
     },
     runAi: async (taskId) => {
       setTaskAiUiState(taskId, { status: 'running', message: 'AI run started for this task.' });
+      render();
+      let result = null;
       try {
-        await analyzeTaskTroubleshooting(taskId);
-        setTaskAiUiState(taskId, { status: 'queued', message: 'AI run queued. Refreshing task results.' });
+        result = await analyzeTaskTroubleshooting(taskId);
       } catch (error) {
         setTaskAiUiState(taskId, getTaskAiFailureState(error, 'run AI'));
         render();
         reportActionError('run_ai', error, 'Unable to run task AI.');
         return;
       }
+
+      const runId = `${result?.runId || ''}`.trim() || null;
+      const callableStatus = mapCallableRunStatus(result?.status);
+      setTaskAiUiState(taskId, {
+        status: callableStatus,
+        runId,
+        message: runId ? `AI run ${runId} ${callableStatus.replaceAll('_', ' ')}.` : `AI run ${callableStatus.replaceAll('_', ' ')}.`
+      });
+      render();
+
+      if (runId) {
+        setTaskAiUiState(taskId, {
+          status: 'waiting_for_refresh',
+          runId,
+          message: buildAiPendingRecordMessage(runId)
+        });
+        render();
+        const pollResult = await pollForTaskAiRunRecord(taskId, runId);
+        if (pollResult.found && pollResult.run) {
+          setTaskAiUiState(taskId, {
+            status: `${pollResult.run.status || 'completed'}`,
+            runId,
+            message: `AI run ${runId} is now visible with status ${pollResult.run.status || 'completed'}.`
+          });
+        } else {
+          setTaskAiUiState(taskId, {
+            status: 'waiting_for_refresh',
+            runId,
+            message: `${buildAiPendingRecordMessage(runId)} This can happen briefly under normal load.`
+          });
+        }
+      }
+
       await refreshData();
       render();
     },
     rerunAi: async (taskId) => {
       setTaskAiUiState(taskId, { status: 'running', message: 'AI rerun started for this task.' });
+      render();
+      let result = null;
       try {
-        await regenerateTaskTroubleshooting(taskId);
-        setTaskAiUiState(taskId, { status: 'queued', message: 'AI rerun queued. Refreshing task results.' });
+        result = await regenerateTaskTroubleshooting(taskId);
       } catch (error) {
         setTaskAiUiState(taskId, getTaskAiFailureState(error, 'rerun AI'));
         render();
         reportActionError('rerun_ai', error, 'Unable to rerun task AI.');
         return;
       }
+
+      const runId = `${result?.runId || ''}`.trim() || null;
+      const callableStatus = mapCallableRunStatus(result?.status);
+      setTaskAiUiState(taskId, {
+        status: callableStatus,
+        runId,
+        message: runId ? `AI rerun ${runId} ${callableStatus.replaceAll('_', ' ')}.` : `AI rerun ${callableStatus.replaceAll('_', ' ')}.`
+      });
+      render();
+
+      if (runId) {
+        setTaskAiUiState(taskId, {
+          status: 'waiting_for_refresh',
+          runId,
+          message: buildAiPendingRecordMessage(runId)
+        });
+        render();
+        const pollResult = await pollForTaskAiRunRecord(taskId, runId);
+        if (pollResult.found && pollResult.run) {
+          setTaskAiUiState(taskId, {
+            status: `${pollResult.run.status || 'completed'}`,
+            runId,
+            message: `AI rerun ${runId} is now visible with status ${pollResult.run.status || 'completed'}.`
+          });
+        } else {
+          setTaskAiUiState(taskId, {
+            status: 'waiting_for_refresh',
+            runId,
+            message: `${buildAiPendingRecordMessage(runId)} This can happen briefly under normal load.`
+          });
+        }
+      }
+
       await refreshData();
       render();
     },
