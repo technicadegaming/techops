@@ -97,7 +97,7 @@ const state = {
   assetDraft: createEmptyAssetDraft(),
   assetUi: { lastActionByAsset: {} },
   adminUi: { tone: 'info', message: '', importPreview: '', importSummary: '', importTone: 'info' },
-  operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0, statusFilter: 'open', ownershipFilter: 'all', lastSaveFeedback: '', lastSaveTone: 'info' },
+  operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0, statusFilter: 'open', ownershipFilter: 'all', lastSaveFeedback: '', lastSaveTone: 'info', aiTaskStates: {}, lastSavedTaskId: null },
   adminSection: 'company'
 };
 
@@ -148,6 +148,83 @@ function buildAssetSaveDebugContext() {
 function reportActionError(label, error, fallbackMessage) {
   console.error(`[${label}]`, error);
   alert(formatActionError(error, fallbackMessage));
+}
+
+function setTaskAiUiState(taskId, nextState = null) {
+  if (!taskId) return;
+  const currentStates = { ...(state.operationsUi?.aiTaskStates || {}) };
+  if (!nextState) {
+    delete currentStates[taskId];
+  } else {
+    currentStates[taskId] = { ...nextState, updatedAt: new Date().toISOString() };
+  }
+  state.operationsUi = {
+    ...(state.operationsUi || {}),
+    aiTaskStates: currentStates
+  };
+}
+
+function getTaskAiFailureState(error, fallbackAction = 'run AI') {
+  const code = `${error?.code || ''}`.toLowerCase();
+  const message = `${error?.message || error || ''}`.trim();
+  const normalizedMessage = message.toLowerCase();
+
+  if (normalizedMessage.includes('missing company context')) {
+    return {
+      status: 'missing_company_context',
+      message: 'Task is missing company context required for AI.'
+    };
+  }
+  if (normalizedMessage.includes('disabled')) {
+    return {
+      status: 'disabled_by_settings',
+      message: message || 'Company AI is disabled in settings.'
+    };
+  }
+  if (code.includes('permission-denied') || normalizedMessage.includes('insufficient role')) {
+    return {
+      status: 'permission_blocked',
+      message: message || 'Your company role does not allow this AI action.'
+    };
+  }
+  return {
+    status: 'failed',
+    message: message || `Unable to ${fallbackAction}.`
+  };
+}
+
+function buildPostSaveAiState({ taskId, isNewTask }) {
+  const companyId = `${state.company?.id || state.activeMembership?.companyId || ''}`.trim();
+  if (!companyId) {
+    return {
+      status: 'missing_company_context',
+      message: 'Task saved, but company context is missing so AI cannot run yet.'
+    };
+  }
+  if (!state.settings.aiEnabled) {
+    return {
+      status: 'disabled_by_settings',
+      message: 'Task saved. Company AI is disabled in settings.'
+    };
+  }
+  if (isNewTask) {
+    return {
+      status: 'queued',
+      message: state.settings.aiAllowManualRerun
+        ? 'Task saved. AI will auto-run for this task now. If needed later, use Rerun AI.'
+        : 'Task saved. AI will auto-run for this task now. Manual rerun is disabled by settings.'
+    };
+  }
+  if (state.settings.aiAllowManualRerun) {
+    return {
+      status: 'idle',
+      message: 'Task updated. Use Rerun AI to generate a fresh troubleshooting pass if needed.'
+    };
+  }
+  return {
+    status: 'idle',
+    message: 'Task updated. AI does not rerun manually for this company.'
+  };
 }
 
 function evaluatePassword(password = '') {
@@ -458,11 +535,15 @@ async function render() {
       }
       const saved = await runAction('save_task', async () => {
         await upsertEntity('tasks', taskId, withRequiredCompanyId({ ...payload, id: taskId }, 'save a task'), state.user);
+        setTaskAiUiState(taskId, buildPostSaveAiState({ taskId, isNewTask: !existing }));
         state.operationsUi = {
           ...(state.operationsUi || {}),
+          expandedTaskIds: [...new Set([...(state.operationsUi?.expandedTaskIds || []), taskId])],
+          lastSavedTaskId: taskId,
           lastSaveFeedback: `Task ${taskId} saved for ${payload.assetName || payload.assetId || 'the selected asset'}.`,
           lastSaveTone: 'success'
         };
+        state.route = { ...state.route, tab: 'operations', taskId };
         await refreshData();
         render();
         return true;
@@ -559,9 +640,48 @@ async function render() {
       await refreshData();
       render();
     },
-    runAi: async (taskId) => { await analyzeTaskTroubleshooting(taskId); await refreshData(); render(); },
-    rerunAi: async (taskId) => { await regenerateTaskTroubleshooting(taskId); await refreshData(); render(); },
-    submitFollowup: async (taskId, runId, answers) => { await answerTaskFollowup(taskId, runId, answers); await refreshData(); render(); },
+    runAi: async (taskId) => {
+      setTaskAiUiState(taskId, { status: 'running', message: 'AI run started for this task.' });
+      try {
+        await analyzeTaskTroubleshooting(taskId);
+        setTaskAiUiState(taskId, { status: 'queued', message: 'AI run queued. Refreshing task results.' });
+      } catch (error) {
+        setTaskAiUiState(taskId, getTaskAiFailureState(error, 'run AI'));
+        render();
+        reportActionError('run_ai', error, 'Unable to run task AI.');
+        return;
+      }
+      await refreshData();
+      render();
+    },
+    rerunAi: async (taskId) => {
+      setTaskAiUiState(taskId, { status: 'running', message: 'AI rerun started for this task.' });
+      try {
+        await regenerateTaskTroubleshooting(taskId);
+        setTaskAiUiState(taskId, { status: 'queued', message: 'AI rerun queued. Refreshing task results.' });
+      } catch (error) {
+        setTaskAiUiState(taskId, getTaskAiFailureState(error, 'rerun AI'));
+        render();
+        reportActionError('rerun_ai', error, 'Unable to rerun task AI.');
+        return;
+      }
+      await refreshData();
+      render();
+    },
+    submitFollowup: async (taskId, runId, answers) => {
+      setTaskAiUiState(taskId, { status: 'running', message: 'Submitting follow-up answers to AI.' });
+      try {
+        await answerTaskFollowup(taskId, runId, answers);
+        setTaskAiUiState(taskId, { status: 'queued', message: 'Follow-up answers submitted. AI is continuing the run.' });
+      } catch (error) {
+        setTaskAiUiState(taskId, getTaskAiFailureState(error, 'submit AI follow-up answers'));
+        render();
+        reportActionError('submit_followup', error, 'Unable to submit AI follow-up answers.');
+        return;
+      }
+      await refreshData();
+      render();
+    },
     saveFix: async (taskId) => {
       const successfulFix = prompt('Summarize the successful fix for the troubleshooting library:');
       if (!successfulFix) return;

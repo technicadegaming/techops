@@ -161,6 +161,13 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
   const taskCompanyId = taskSnap.exists ? `${taskSnap.data()?.companyId || ''}`.trim() : null;
   const runRef = await createAiRun({ db, taskId, userId, triggerSource, model: settings.aiModel, settingsSnapshot: settings, companyId: taskCompanyId || null });
   try {
+    await runRef.set({
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      updatedBy: userId
+    }, { merge: true });
+
     const context = await gatherContext(db, taskId);
 
     if (settings.aiAskFollowups && triggerSource !== 'followup' && isWeakTaskDescription(context.task)) {
@@ -247,7 +254,13 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
     await writeAudit(db, { action: 'ai_run_completed', entityType: 'taskAiRuns', entityId: runRef.id, companyId: context.task.companyId || null, summary: `AI run completed for task ${taskId}`, userUid: userId, traceId });
     return { runId: runRef.id, status: 'completed' };
   } catch (error) {
-    await runRef.set({ status: 'failed', error: error.message, updatedAt: new Date().toISOString(), updatedBy: userId }, { merge: true });
+    await runRef.set({
+      status: 'failed',
+      error: error.message,
+      failureCode: `${error?.code || 'unknown'}`.trim() || 'unknown',
+      updatedAt: new Date().toISOString(),
+      updatedBy: userId
+    }, { merge: true });
     await writeAudit(db, { action: 'ai_run_failed', entityType: 'taskAiRuns', entityId: runRef.id, companyId: taskCompanyId || null, summary: `AI run failed for task ${taskId}: ${error.message}`, userUid: userId, traceId });
     return { runId: runRef.id, status: 'failed', error: error.message };
   }
