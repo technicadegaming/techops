@@ -19,8 +19,9 @@ function renderAssetCardFallback(asset, error) {
 }
 
 const ENRICHMENT_STATUS_LABELS = {
-  searching_docs: 'search in progress',
-  in_progress: 'search in progress',
+  queued: 'queued',
+  searching_docs: 'searching',
+  in_progress: 'searching',
   verified_manual_found: 'verified manual found',
   strong_suggestion_found: 'strong suggestion found',
   support_resources_found: 'support resources found',
@@ -29,10 +30,12 @@ const ENRICHMENT_STATUS_LABELS = {
   no_match_yet: 'no match yet',
   permission_blocked: 'permission blocked',
   lookup_failed: 'lookup failed',
+  unavailable_disabled: 'unavailable / disabled',
   idle: 'not started'
 };
 
 const ENRICHMENT_STATUS_STYLES = {
+  queued: { bg: '#e0e7ff', border: '#a5b4fc', text: '#3730a3' },
   searching_docs: { bg: '#dbeafe', border: '#93c5fd', text: '#1d4ed8' },
   in_progress: { bg: '#dbeafe', border: '#93c5fd', text: '#1d4ed8' },
   verified_manual_found: { bg: '#dcfce7', border: '#86efac', text: '#166534' },
@@ -43,6 +46,7 @@ const ENRICHMENT_STATUS_STYLES = {
   no_match_yet: { bg: '#fee2e2', border: '#fca5a5', text: '#991b1b' },
   permission_blocked: { bg: '#fef3c7', border: '#fbbf24', text: '#92400e' },
   lookup_failed: { bg: '#fee2e2', border: '#fca5a5', text: '#991b1b' },
+  unavailable_disabled: { bg: '#f3f4f6', border: '#d1d5db', text: '#4b5563' },
   idle: { bg: '#f3f4f6', border: '#d1d5db', text: '#4b5563' }
 };
 
@@ -81,6 +85,30 @@ function renderStatusChip(status) {
   const key = normalizeEnrichmentStatus(status || 'idle');
   const style = ENRICHMENT_STATUS_STYLES[key] || ENRICHMENT_STATUS_STYLES.idle;
   return `<span style="display:inline-flex; align-items:center; gap:6px; border-radius:999px; border:1px solid ${style.border}; background:${style.bg}; color:${style.text}; font-size:12px; padding:2px 10px; font-weight:600;">${ENRICHMENT_STATUS_LABELS[key] || key}</span>`;
+}
+
+
+function renderAuditChip(label, tone = 'muted') {
+  const tones = {
+    good: { bg: '#dcfce7', border: '#86efac', text: '#166534' },
+    warn: { bg: '#fef3c7', border: '#fbbf24', text: '#92400e' },
+    bad: { bg: '#fee2e2', border: '#fca5a5', text: '#991b1b' },
+    info: { bg: '#dbeafe', border: '#93c5fd', text: '#1d4ed8' },
+    muted: { bg: '#f3f4f6', border: '#d1d5db', text: '#4b5563' }
+  };
+  const style = tones[tone] || tones.muted;
+  return `<span style="display:inline-flex; align-items:center; border-radius:999px; border:1px solid ${style.border}; background:${style.bg}; color:${style.text}; font-size:11px; padding:2px 8px; font-weight:700;">${label}</span>`;
+}
+
+function renderAssetScanChips(asset, { docsStatus = 'missing', openTasks = [], overduePm = [] } = {}) {
+  const chips = [];
+  chips.push(docsStatus === 'linked' ? renderAuditChip('docs found', 'good') : renderAuditChip('docs missing', 'warn'));
+  if ((asset.reviewState || '') === 'needs_review') chips.push(renderAuditChip('review needed', 'warn'));
+  if (['queued', 'searching_docs', 'in_progress'].includes(normalizeEnrichmentStatus(asset.enrichmentStatus))) chips.push(renderAuditChip('enrichment running', 'info'));
+  if (openTasks.length) chips.push(renderAuditChip('open issue', 'bad'));
+  if (overduePm.length) chips.push(renderAuditChip('PM due', 'warn'));
+  if (!openTasks.length && !overduePm.length) chips.push(renderAuditChip('healthy', 'good'));
+  return `<div style="display:flex; gap:6px; flex-wrap:wrap;">${chips.join('')}</div>`;
 }
 
 function renderLinkChip(url, { label = '', removeAttr = '', removable = false } = {}) {
@@ -304,6 +332,9 @@ export function renderAssets(el, state, actions) {
       <datalist id="assetLocationNames">${locationOptions.filter((option) => option.name && option.id).map((option) => `<option value="${option.name}"></option>`).join('')}</datalist>
     </form>
 
+    ${(state.assetUi?.onboardingValidationErrors || []).length ? `<div class="item" style="border:1px solid #fca5a5; background:#fef2f2;"><b>Import validation issues</b><ul>${(state.assetUi?.onboardingValidationErrors || []).slice(0, 8).map((error) => `<li class="tiny">${error}</li>`).join('')}</ul></div>` : ''}
+    ${(state.assetUi?.onboardingReviewQueue || []).length ? `<div class="item" style="margin-bottom:10px;"><b>Imported asset review queue</b><div class="tiny">Confirm/edit core fields after onboarding import.</div>${(state.assetUi.onboardingReviewQueue || []).slice(0, 15).map((row, index) => `<details><summary>${row.name} ${row.reviewNeeded ? '(needs review)' : ''}</summary><form data-onboarding-review-row="${index}" class="grid grid-2" style="margin-top:8px;"><input name="name" value="${row.name || ''}" /><input name="manufacturer" value="${row.manufacturer || row.manufacturerSuggestion || ''}" /><input name="locationName" value="${row.locationName || ''}" /><input name="category" value="${row.category || row.categorySuggestion || ''}" /><input name="model" value="${row.model || ''}" /><input name="serialNumber" value="${row.serialNumber || ''}" /><button type="submit">Apply review edits</button></form></details>`).join('')}</div>` : ''}
+
     <div class="list">${scopedAssets.map((asset) => {
       try {
         const openTasks = assetTasks.filter((task) => task.assetId === asset.id && task.status !== 'completed');
@@ -316,12 +347,13 @@ export function renderAssets(el, state, actions) {
         const docsStatus = docs.length || (asset.manualLinks || []).length ? 'linked' : 'missing';
         const location = getAssetLocationRecord(state, asset);
         return `<details class="item" id="asset-${asset.id}" ${state.route?.assetId === asset.id ? 'open' : ''}>
-          <summary><b>${asset.name || asset.id}</b> | ${asset.status || 'active'} | ${location.label}</summary>
+          <summary><b>${asset.name || asset.id}</b> | ${asset.status || 'active'} | ${location.label} | ${renderStatusChip(asset.enrichmentStatus || 'idle')}</summary>
           <div style="display:grid; gap:6px; margin:8px 0;">
             <div class="tiny"><b>Header</b></div>
             <div class="tiny">Location: ${location.label} | Manufacturer: ${asset.manufacturer || 'n/a'} | Serial: ${asset.serialNumber || 'n/a'}</div>
             <div class="tiny">Owners: ${(asset.ownerWorkers || []).join(', ') || 'unassigned'} | Urgency flags: ${openTasks.filter((task) => ['high', 'critical'].includes(task.severity)).length}</div>
             <div class="tiny">Quick stats: open ${openTasks.length} | overdue PM ${overduePm.length} | repeat failures ${recurring.reduce((sum, row) => sum + row.count, 0)} | recent repairs ${completedTasks.length}</div>
+            ${renderAssetScanChips(asset, { docsStatus, openTasks, overduePm })}
             <div class="action-row">
               ${openTasks[0] ? `<a href="?tab=operations&taskId=${encodeURIComponent(openTasks[0].id)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open active task</a>` : ''}
               ${completedTasks[0] ? `<a href="?tab=operations&taskId=${encodeURIComponent(completedTasks[0].id)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open latest completed task</a>` : ''}
@@ -338,7 +370,7 @@ export function renderAssets(el, state, actions) {
           if (!url) return '';
           return renderLinkChip(url, { label, removable: manager, removeAttr: `data-remove-support="${asset.id}" data-url="${encodeURIComponent(url)}"` });
         }).join('') : renderInlineFeedback('No support links linked.', 'info')}</div>
-            <div class="tiny">Last reviewed: ${asset.docsLastReviewedAt || 'n/a'}</div>
+            <div class="tiny">Last reviewed: ${asset.docsLastReviewedAt || 'n/a'} | Last enrichment run: ${asset.enrichmentLastRunAt || asset.enrichmentUpdatedAt || 'n/a'}</div>
             <div style="margin-top:8px; border-top:1px solid #e5e7eb; padding-top:8px;">${renderEnrichmentDetails(asset, manager, state)}</div>
           </details>
 
@@ -436,6 +468,11 @@ export function renderAssets(el, state, actions) {
   }));
 
   form?.querySelector('[data-clear-preview]')?.addEventListener('click', () => actions.clearPreview());
+  el.querySelectorAll('[data-onboarding-review-row]').forEach((reviewForm) => reviewForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const fd = new FormData(reviewForm);
+    actions.applyOnboardingReviewEdit(Number(reviewForm.dataset.onboardingReviewRow), Object.fromEntries(fd.entries()));
+  }));
   el.querySelector('[data-location-filter]')?.addEventListener('change', (event) => actions.setLocationFilter(event.target.value));
   el.querySelectorAll('[data-docs]').forEach((button) => button.addEventListener('click', () => actions.markDocsReviewed(button.dataset.docs)));
   el.querySelectorAll('[data-del]').forEach((button) => button.addEventListener('click', () => actions.deleteAsset(button.dataset.del)));

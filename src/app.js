@@ -19,6 +19,7 @@ import { createOperationsActions } from './features/operationsActions.js';
 import { createAssetActions } from './features/assetActions.js';
 import { createAdminActions } from './features/adminActions.js';
 import { getWorkspaceReadiness } from './features/workspaceReadiness.js';
+import { parseAssetCsv, parseBulkAssetList, normalizeAssetCandidate } from './features/assetIntake.js';
 
 const authView = document.getElementById('authView');
 const appView = document.getElementById('appView');
@@ -96,7 +97,7 @@ const state = {
   restorePayload: null,
   route: parseRouteState(),
   assetDraft: createEmptyAssetDraft(),
-  assetUi: { lastActionByAsset: {} },
+  assetUi: { lastActionByAsset: {}, onboardingReviewQueue: [], onboardingValidationErrors: [] },
   adminUi: { tone: 'info', message: '', importPreview: '', importSummary: '', importTone: 'info' },
   operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0, statusFilter: 'open', ownershipFilter: 'all', lastSaveFeedback: '', lastSaveTone: 'info', aiTaskStates: {}, lastSavedTaskId: null },
   adminSection: 'company',
@@ -702,19 +703,60 @@ async function render() {
             if (inviteEmail) await createCompanyInvite({ companyId: state.company.id, email: inviteEmail, role: payload.inviteRole || 'staff', user: state.user });
           }
           if (currentStep === 4) {
-            const assetName = `${payload.assetName || ''}`.trim();
-            const bulkNames = `${payload.assetBulkList || ''}`.split(/\r?\n/).map((entry) => `${entry || ''}`.trim()).filter(Boolean);
-            const namesToCreate = [assetName, ...bulkNames].filter(Boolean);
-            for (const [index, name] of namesToCreate.entries()) {
+            const defaultLocationName = `${payload.assetLocation || ''}`.trim();
+            const manualCandidate = normalizeAssetCandidate({
+              name: `${payload.assetName || ''}`.trim(),
+              manufacturer: `${payload.assetManufacturer || ''}`.trim(),
+              locationName: defaultLocationName
+            }, { defaultLocationName });
+            const csvResult = parseAssetCsv(`${payload.assetCsvText || ''}`, { defaultLocationName });
+            const bulkResult = parseBulkAssetList(`${payload.assetBulkList || ''}`, { defaultLocationName });
+            const validationErrors = [...csvResult.errors, ...bulkResult.errors];
+            const intakeRows = [
+              ...(manualCandidate.name ? [{ ...manualCandidate, source: 'manual', sourceRow: 1 }] : []),
+              ...csvResult.rows,
+              ...bulkResult.rows
+            ];
+            if (!intakeRows.length) {
+              throw new Error('Add at least one asset manually, CSV, or paste list before continuing (or click Skip for now).');
+            }
+            if (validationErrors.length) {
+              state.assetUi = {
+                ...(state.assetUi || {}),
+                onboardingValidationErrors: validationErrors,
+                onboardingReviewQueue: intakeRows
+              };
+              throw new Error(`Please fix import errors before continuing: ${validationErrors[0]}`);
+            }
+            state.assetUi = {
+              ...(state.assetUi || {}),
+              onboardingValidationErrors: [],
+              onboardingReviewQueue: intakeRows
+            };
+            for (const [index, row] of intakeRows.entries()) {
               const requestedId = index === 0 ? `${payload.assetId || ''}`.trim() : '';
-              const id = requestedId || `asset-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${(Date.now() + index).toString(36).slice(-4)}`;
+              const id = requestedId || `asset-${row.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${(Date.now() + index).toString(36).slice(-4)}`;
+              const manufacturer = row.manufacturer || row.manufacturerSuggestion || '';
+              const category = row.category || row.categorySuggestion || '';
+              const shouldReview = row.reviewNeeded || !!row.manufacturerSuggestion || !!row.categorySuggestion;
               await upsertEntity('assets', id, withRequiredCompanyId({
                 id,
-                name,
-                locationName: `${payload.assetLocation || ''}`.trim(),
+                name: row.name,
+                manufacturer,
+                model: row.model || '',
+                category,
+                locationName: row.locationName || defaultLocationName,
+                serialNumber: row.serialNumber || '',
                 status: 'active',
-                enrichmentStatus: 'searching_docs',
-                enrichmentRequestedAt: new Date().toISOString()
+                reviewState: shouldReview ? 'needs_review' : 'ready',
+                reviewReason: shouldReview ? 'onboarding_normalization' : '',
+                enrichmentStatus: state.settings.aiEnabled ? 'queued' : 'unavailable_disabled',
+                enrichmentRequestedAt: state.settings.aiEnabled ? new Date().toISOString() : null,
+                enrichmentLastRunAt: null,
+                manufacturerSuggestion: row.manufacturerSuggestion || '',
+                categorySuggestion: row.categorySuggestion || '',
+                normalizationConfidence: row.normalizationConfidence || 'low',
+                importSource: row.source || 'manual'
               }, 'create first asset'), state.user);
               if (state.settings.aiEnabled) {
                 enrichAssetDocumentation(id, { trigger: 'onboarding_asset_step' }).catch(() => {});
@@ -732,6 +774,13 @@ async function render() {
             }, 'launch workspace'), state.user);
           }
           await refreshData();
+          if (currentStep === 4) {
+            state.route = { ...(state.route || {}), tab: 'assets', assetId: null };
+            state.setupWizard = { ...(state.setupWizard || {}), step: 5, message: 'Assets added. Review normalization and documentation suggestions in Assets.', tone: 'success' };
+            syncSetupWizardState();
+            render();
+            return;
+          }
           state.setupWizard = { ...(state.setupWizard || {}), step: Math.min(6, currentStep + 1), message: currentStep < 6 ? 'Saved. Continue to the next step.' : 'Workspace launched.', tone: 'success' };
           syncSetupWizardState();
           render();
