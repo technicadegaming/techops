@@ -58,6 +58,7 @@ export async function register(email, password, profile = {}) {
       fullName,
       displayName: fullName || credential.user.email,
       memberLabel: fullName ? `${fullName} <${`${credential.user.email || email || ''}`.trim().toLowerCase()}>` : `${credential.user.email || email || ''}`.trim().toLowerCase(),
+      role: 'pending',
       enabled: true,
       onboardingState: 'needs_company_setup',
       suppressLegacyAutoAdopt: true
@@ -141,6 +142,7 @@ export async function resolveProfile(user) {
       ...profile,
       email: normalizedEmail,
       emailLower: normalizedEmail,
+      role: `${profile.role || ''}`.trim() || 'pending',
       fullName,
       displayName: `${profile.displayName || fullName || user?.email || ''}`.trim(),
       memberLabel: fullName ? `${fullName} <${normalizedEmail}>` : normalizedEmail
@@ -148,6 +150,7 @@ export async function resolveProfile(user) {
     if (
       nextProfile.email !== profile.email
       || nextProfile.emailLower !== profile.emailLower
+      || nextProfile.role !== profile.role
       || nextProfile.fullName !== profile.fullName
       || nextProfile.displayName !== profile.displayName
       || nextProfile.memberLabel !== profile.memberLabel
