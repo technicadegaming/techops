@@ -3,6 +3,7 @@ import { canChangeAISettings, canManageBackups, isAdmin } from './roles.js';
 import { buildLocationOptions } from './features/locationContext.js';
 import { renderWorkspaceReadinessCard } from './features/workspaceReadiness.js';
 import { formatRelativeTime } from './features/notifications.js';
+import { buildUsageSummary, getTrialDaysRemaining, isTrialExpired, normalizeBillingAddress } from './billing.js';
 
 const WORKER_ROLE_OPTIONS = ['staff', 'lead', 'assistant_manager', 'manager', 'admin'];
 const ACCESS_ROLE_OPTIONS = ['owner', 'admin', 'manager', 'staff', 'viewer'];
@@ -48,6 +49,7 @@ const ADMIN_SECTIONS = [
   { id: 'company', label: 'Company settings' },
   { id: 'locations', label: 'Location settings' },
   { id: 'members', label: 'Members' },
+  { id: 'billing', label: 'Billing & plan' },
   { id: 'workers', label: 'Workers' },
   { id: 'invites', label: 'Invites' },
   { id: 'audit', label: 'Audit log' },
@@ -67,6 +69,23 @@ function renderCompanyAddress(company = {}) {
 
 function formatRoleLabel(value = '') { return `${value || 'staff'}`.replace(/_/g, ' '); }
 function renderStatusChip(label, tone = 'muted') { return `<span class="state-chip ${tone}">${label}</span>`; }
+
+
+
+function formatDateLabel(value) {
+  if (!value) return 'Not set';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString();
+}
+
+function renderBillingStatusChip(company = {}) {
+  const subscriptionStatus = `${company.subscriptionStatus || 'trialing'}`.trim();
+  if (subscriptionStatus === 'active') return renderStatusChip('subscription active', 'good');
+  if (subscriptionStatus === 'past_due') return renderStatusChip('payment past due', 'warn');
+  if (subscriptionStatus === 'canceled') return renderStatusChip('subscription canceled', 'bad');
+  return renderStatusChip('trialing', 'info');
+}
 
 function parseCsv(text = '') {
   const lines = `${text}`.split(/\r?\n/).filter(Boolean);
@@ -158,6 +177,75 @@ export function renderAdmin(el, state, actions) {
         </fieldset>
         <div class="row"><button class="primary" type="submit">Save company settings</button></div>
       </form>
+    </section>
+
+
+
+    <section class="item ${activeSection === 'billing' ? '' : 'hide'}" data-admin-section="billing">
+      <h3>Billing and plan</h3>
+      <p class="tiny">Subscription and billing contacts are kept separate from HQ/location operations data.</p>
+      ${(() => {
+        const billingAddress = normalizeBillingAddress(state.company?.billingAddress || {});
+        const usageSummary = buildUsageSummary({
+          members,
+          workers,
+          locations,
+          assets: state.assets || [],
+          seatLimit: state.company?.seatLimit
+        });
+        const trialDaysRemaining = getTrialDaysRemaining(state.company?.trialEndsAt);
+        const trialExpired = isTrialExpired(state.company?.trialEndsAt) || `${state.company?.trialStatus || ''}`.trim() === 'expired';
+        const seatLimit = Number.isFinite(Number(state.company?.seatLimit)) && Number(state.company?.seatLimit) > 0 ? Number(state.company.seatLimit) : null;
+        const trialWarning = trialExpired
+          ? '<div class="inline-state warn mt">Trial has ended. Access remains available in this soft-gating phase; please choose a paid plan soon.</div>'
+          : (trialDaysRemaining !== null && trialDaysRemaining <= 7
+            ? `<div class="inline-state warn mt">Trial ends in <b>${Math.max(trialDaysRemaining, 0)} day${Math.max(trialDaysRemaining, 0) === 1 ? '' : 's'}</b>. Billing checkout is coming soon.</div>`
+            : '<div class="inline-state info mt">Free trial-first flow is active. Billing collection is intentionally not enforced in this scaffold pass.</div>');
+        return `<div class="grid grid-2 settings-stack">
+          <div class="item">
+            <h4 style="margin:0 0 8px;">Subscription summary</h4>
+            <div class="state-chip-row">${renderStatusChip(`plan: ${state.company?.planKey || 'starter_trial'}`, 'muted')}${renderBillingStatusChip(state.company || {})}${renderStatusChip(`trial: ${state.company?.trialStatus || 'active'}`, trialExpired ? 'bad' : 'info')}</div>
+            <div class="tiny mt">Trial ends: <b>${formatDateLabel(state.company?.trialEndsAt)}</b></div>
+            <div class="tiny">Seat usage: <b>${usageSummary.seatsUsed}</b>${seatLimit ? ` / <b>${seatLimit}</b>` : ' (no limit set yet)'}</div>
+            <div class="tiny">Usage snapshot: members ${usageSummary.members}, workers ${usageSummary.workers}, locations ${usageSummary.locations}, assets ${usageSummary.assets}.</div>
+            ${trialWarning}
+            <div class="tiny mt">Checkout/customer portal integration placeholders:</div>
+            <div class="row mt"><button type="button" disabled>Start checkout (coming soon)</button><button type="button" disabled>Open billing portal (coming soon)</button></div>
+          </div>
+          <div class="item">
+            <h4 style="margin:0 0 8px;">Billing contact details</h4>
+            <form id="billingSettingsForm" class="grid mt">
+              <label>Plan key
+                <select name="planKey">
+                  <option value="starter_trial" ${(state.company?.planKey || 'starter_trial') === 'starter_trial' ? 'selected' : ''}>Starter trial</option>
+                  <option value="starter" ${state.company?.planKey === 'starter' ? 'selected' : ''}>Starter</option>
+                  <option value="growth" ${state.company?.planKey === 'growth' ? 'selected' : ''}>Growth</option>
+                  <option value="enterprise" ${state.company?.planKey === 'enterprise' ? 'selected' : ''}>Enterprise</option>
+                </select>
+              </label>
+              <div class="grid grid-2">
+                <label>Subscription status<select name="subscriptionStatus"><option value="trialing" ${(state.company?.subscriptionStatus || 'trialing') === 'trialing' ? 'selected' : ''}>trialing</option><option value="active" ${state.company?.subscriptionStatus === 'active' ? 'selected' : ''}>active</option><option value="past_due" ${state.company?.subscriptionStatus === 'past_due' ? 'selected' : ''}>past_due</option><option value="canceled" ${state.company?.subscriptionStatus === 'canceled' ? 'selected' : ''}>canceled</option></select></label>
+                <label>Trial status<select name="trialStatus"><option value="active" ${(state.company?.trialStatus || 'active') === 'active' ? 'selected' : ''}>active</option><option value="expired" ${state.company?.trialStatus === 'expired' ? 'selected' : ''}>expired</option><option value="converted" ${state.company?.trialStatus === 'converted' ? 'selected' : ''}>converted</option></select></label>
+                <label>Trial end date<input type="date" name="trialEndsAt" value="${(state.company?.trialEndsAt || '').slice(0, 10)}" /></label>
+                <label>Seat limit<input type="number" min="1" name="seatLimit" value="${seatLimit || ''}" placeholder="Optional" /></label>
+              </div>
+              <label>Billing email<input name="billingEmail" type="email" value="${state.company?.billingEmail || state.company?.primaryEmail || ''}" /></label>
+              <label>Billing contact name<input name="billingContactName" value="${state.company?.billingContactName || ''}" /></label>
+              <fieldset class="onboarding-location-fieldset"><legend><b>Billing address (separate from HQ)</b></legend>
+                <div class="grid grid-2">
+                  <label>Address line 1<input name="billingAddressLine1" value="${billingAddress.line1}" /></label>
+                  <label>Address line 2<input name="billingAddressLine2" value="${billingAddress.line2}" /></label>
+                  <label>City<input name="billingAddressCity" value="${billingAddress.city}" /></label>
+                  <label>State/Province<input name="billingAddressState" value="${billingAddress.state}" /></label>
+                  <label>Postal code<input name="billingAddressPostalCode" value="${billingAddress.postalCode}" /></label>
+                  <label>Country<input name="billingAddressCountry" value="${billingAddress.country}" /></label>
+                </div>
+              </fieldset>
+              <button type="submit">Save billing and plan settings</button>
+            </form>
+          </div>
+        </div>`;
+      })()}
     </section>
 
     <section class="item ${activeSection === 'locations' ? '' : 'hide'}" data-admin-section="locations">
@@ -257,6 +345,11 @@ export function renderAdmin(el, state, actions) {
   el.querySelector('#companySettingsForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     await actions.updateCompanyProfile(Object.fromEntries(new FormData(event.currentTarget).entries()));
+  });
+
+  el.querySelector('#billingSettingsForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    await actions.updateCompanyBilling(Object.fromEntries(new FormData(event.currentTarget).entries()));
   });
   el.querySelector('#addLocationForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();

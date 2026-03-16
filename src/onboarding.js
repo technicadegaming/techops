@@ -84,7 +84,7 @@ function renderInitialOnboarding(el, state, actions) {
   const inviteCodePrefill = `${state.onboardingUi?.inviteCodePrefill || ''}`.trim();
   el.innerHTML = `
     <h2>Welcome to WOW Technicade Operations</h2>
-    <p class="tiny">Create your company workspace in under a minute, or join one with an invite code.</p>
+    <p class="tiny">Create your company workspace in under a minute, or join one with an invite code. New workspaces begin on a free trial; billing setup comes later in Admin.</p>
     ${onboardingMessage ? `<div class="tiny" style="margin:0 0 12px; padding:8px 10px; border-radius:8px; border:1px solid ${onboardingTone === 'error' ? '#fca5a5' : (onboardingTone === 'success' ? '#86efac' : '#d1d5db')}; background:${onboardingTone === 'error' ? '#fef2f2' : (onboardingTone === 'success' ? '#f0fdf4' : '#f9fafb')}; color:${onboardingTone === 'error' ? '#991b1b' : (onboardingTone === 'success' ? '#166534' : '#374151')};">${onboardingMessage}</div>` : ''}
     ${handoffStatus === 'working' ? '<div class="inline-state info mt">Finishing account handoff…</div>' : ''}
     <div class="grid grid-2">
