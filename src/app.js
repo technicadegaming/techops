@@ -1108,6 +1108,18 @@ async function render() {
       await refreshData();
       render();
     },
+    setAiFixState: async (taskId, aiFixState) => {
+      const task = state.tasks.find((entry) => entry.id === taskId);
+      if (!task) return;
+      const nextFixState = ['pending_review', 'approved', 'rejected'].includes(`${aiFixState || ''}`.trim()) ? aiFixState : 'pending_review';
+      await upsertEntity('tasks', taskId, {
+        ...task,
+        aiFixState: nextFixState,
+        aiUpdatedAt: new Date().toISOString()
+      }, state.user);
+      await refreshData();
+      render();
+    },
     openAiSettings: () => {
       state.adminSection = 'tools';
       state.route = { ...state.route, tab: 'admin' };
