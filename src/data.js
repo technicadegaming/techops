@@ -45,6 +45,7 @@ export async function listAudit(filters = {}) {
     constraints.push(where('companyId', '==', scope.companyId));
   }
   if (filters.action) constraints.push(where('action', '==', filters.action));
+  if (filters.category) constraints.push(where('category', '==', filters.category));
   constraints.push(orderBy('timestamp', 'desc'));
   const q = query(collection(db, C.auditLogs), ...constraints);
   const snap = await getDocs(q);
@@ -54,6 +55,40 @@ export async function listAudit(filters = {}) {
     .map(({ __collection, ...rest }) => rest)
     .filter((i) => !filters.entityType || i.entityType === filters.entityType)
     .filter((i) => !filters.userUid || i.userUid === filters.userUid);
+}
+
+function classifyAuditEvent(name, action, id, before = null, after = null) {
+  const label = after?.name || after?.title || after?.email || id;
+  if (name === 'assets') {
+    if (action === 'create') return { actionType: 'asset_created', category: 'assets_docs', summary: `Asset created: ${label}` };
+    const beforeManuals = Array.isArray(before?.manualLinks) ? before.manualLinks : [];
+    const afterManuals = Array.isArray(after?.manualLinks) ? after.manualLinks : [];
+    if (afterManuals.length > beforeManuals.length) return { actionType: 'docs_applied', category: 'assets_docs', summary: `Manual applied to ${label}` };
+    if (afterManuals.length < beforeManuals.length) return { actionType: 'docs_removed', category: 'assets_docs', summary: `Manual removed from ${label}` };
+    return { actionType: 'asset_edited', category: 'assets_docs', summary: `Asset updated: ${label}` };
+  }
+  if (name === 'tasks') {
+    if (action === 'create') return { actionType: 'task_created', category: 'operations_tasks', summary: `Task created: ${label}` };
+    const beforeAssigned = (before?.assignedWorkers || []).join('|');
+    const afterAssigned = (after?.assignedWorkers || []).join('|');
+    if (beforeAssigned !== afterAssigned) {
+      return {
+        actionType: beforeAssigned ? 'task_reassigned' : 'task_assigned',
+        category: 'operations_tasks',
+        summary: `${beforeAssigned ? 'Task reassigned' : 'Task assigned'}: ${label}`
+      };
+    }
+    if (`${before?.status || ''}` !== `${after?.status || ''}`) {
+      if (`${after?.status || ''}` === 'completed') return { actionType: 'task_closed', category: 'operations_tasks', summary: `Task closed: ${label}` };
+      return { actionType: 'task_status_changed', category: 'operations_tasks', summary: `Task status changed: ${label}` };
+    }
+    return { actionType: 'task_edited', category: 'operations_tasks', summary: `Task updated: ${label}` };
+  }
+  if (name === 'companyMemberships') return { actionType: action === 'create' ? 'membership_created' : 'membership_role_status_changed', category: 'people_access', summary: `Membership updated: ${label}` };
+  if (name === 'companyLocations') return { actionType: action === 'create' ? 'location_created' : 'location_edited', category: 'settings', summary: `${action === 'create' ? 'Location created' : 'Location updated'}: ${label}` };
+  if (name === 'appSettings') return { actionType: 'settings_updated', category: 'settings', summary: 'Workspace settings updated' };
+  if (name === 'troubleshootingLibrary' && action === 'create') return { actionType: 'ai_fix_saved_to_library', category: 'settings', summary: 'AI fix saved to troubleshooting library' };
+  return { actionType: `${name}_${action}`, category: 'settings', summary: `${action} ${name}/${id}` };
 }
 
 export async function upsertEntity(name, id, payload, user) {
@@ -77,7 +112,25 @@ export async function upsertEntity(name, id, payload, user) {
   }
   await setDoc(ref, nextPayload, { merge: true });
   const after = { ...(before || {}), ...nextPayload };
-  await logAudit({ action, entityType: name, entityId: id, summary: `${action} ${name}/${id}`, user, before, after: { ...after, companyId: nextPayload.companyId || after?.companyId || null } });
+  const audit = classifyAuditEvent(name, action, id, before, after);
+  await logAudit({
+    action,
+    actionType: audit.actionType,
+    category: audit.category,
+    entityType: name,
+    entityId: id,
+    targetType: name,
+    targetId: id,
+    targetLabel: after?.name || after?.title || after?.email || id,
+    summary: audit.summary,
+    user,
+    metadata: {
+      status: after?.status || '',
+      beforeStatus: before?.status || '',
+      assignedWorkers: (after?.assignedWorkers || []).join(', '),
+      companyId: nextPayload.companyId || after?.companyId || null
+    }
+  });
 }
 
 export async function deleteEntity(name, id, user) {

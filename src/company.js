@@ -1,6 +1,7 @@
 import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from 'https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore.js';
 import { db } from './firebase.js';
 import { appConfig } from './config.js';
+import { logAudit } from './audit.js';
 
 const C = appConfig.collections;
 
@@ -207,16 +208,45 @@ export async function createCompanyInvite({ companyId, email, role = 'staff', us
     updatedBy: user.uid,
     expiresAt: null
   }, { merge: true });
+  await logAudit({
+    action: 'create',
+    actionType: 'invite_sent',
+    category: 'people_access',
+    entityType: 'companyInvites',
+    entityId: ref.id,
+    targetType: 'invite',
+    targetId: ref.id,
+    targetLabel: `${email || ''}`.trim().toLowerCase(),
+    summary: `Invite sent to ${`${email || ''}`.trim().toLowerCase()}`,
+    user,
+    metadata: { role, companyId }
+  });
   return { id: ref.id, inviteCode, token };
 }
 
 export async function revokeInvite(inviteId, user) {
+  const ref = doc(db, C.companyInvites, inviteId);
+  const before = await getDoc(ref);
+  const invite = before.exists() ? before.data() : {};
   await updateDoc(doc(db, C.companyInvites, inviteId), {
     status: 'revoked',
     revokedAt: serverTimestamp(),
     revokedBy: user.uid,
     updatedAt: serverTimestamp(),
     updatedBy: user.uid
+  });
+  await logAudit({
+    action: 'update',
+    actionType: 'invite_revoked',
+    category: 'people_access',
+    entityType: 'companyInvites',
+    entityId: inviteId,
+    targetType: 'invite',
+    targetId: inviteId,
+    targetLabel: invite.email || inviteId,
+    summary: `Invite revoked for ${invite.email || inviteId}`,
+    user,
+    metadata: { role: invite.role || '', status: 'revoked' }
   });
 }
 
@@ -243,6 +273,19 @@ export async function acceptInvite({ inviteCode, user }) {
     acceptedBy: user.uid,
     updatedAt: serverTimestamp(),
     updatedBy: user.uid
+  });
+  await logAudit({
+    action: 'update',
+    actionType: 'invite_accepted',
+    category: 'people_access',
+    entityType: 'companyInvites',
+    entityId: invite.id,
+    targetType: 'invite',
+    targetId: invite.id,
+    targetLabel: invite.email || invite.id,
+    summary: `Invite accepted by ${user.displayName || user.email || user.uid}`,
+    user,
+    metadata: { companyId: invite.companyId, role: invite.role || 'staff' }
   });
   return invite.companyId;
 }

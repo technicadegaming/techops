@@ -7,6 +7,7 @@ import {
   getLocationEmptyState,
   getLocationScopeLabel
 } from './locationContext.js';
+import { formatRelativeTime } from './notifications.js';
 
 function renderAssetCardFallback(asset, error) {
   const id = `${asset?.id || 'unknown'}`;
@@ -350,6 +351,7 @@ export function renderAssets(el, state, actions) {
         const recurring = repeatPatterns.filter((pattern) => pattern.assetId === asset.id);
         const library = state.troubleshootingLibrary?.filter((row) => row.assetId === asset.id).slice(0, 5) || [];
         const docsStatus = docs.length || (asset.manualLinks || []).length ? 'linked' : 'missing';
+        const auditEntries = (state.auditLogs || []).filter((entry) => entry.entityType === 'assets' && entry.entityId === asset.id).slice(0, 6);
         const location = getAssetLocationRecord(state, asset);
         return `<details class="item" id="asset-${asset.id}" ${state.route?.assetId === asset.id ? 'open' : ''}>
           <summary><b>${asset.name || asset.id}</b> | ${asset.status || 'active'} | ${location.label} | ${renderStatusChip(asset.enrichmentStatus || 'idle')}</summary>
@@ -383,6 +385,7 @@ export function renderAssets(el, state, actions) {
           <details><summary>Recent completed tasks (${completedTasks.length})</summary>${completedTasks.map((task) => `<div class="tiny">${task.title || task.id} | ${task.closeout?.bestFixSummary || task.closeout?.fixPerformed || 'completed'}</div>`).join('') || '<div class="tiny">None</div>'}</details>
           <details><summary>AI runs (${aiRuns.length})</summary>${aiRuns.map((run) => `<div class="tiny">${run.status}: ${run.finalSummary || 'no summary'}</div>`).join('') || '<div class="tiny">None</div>'}</details>
           <details><summary>Service notes timeline (${(asset.history || []).length})</summary>${renderHistoryTimeline(asset.history || [])}</details>
+          <details><summary>Audit history (${auditEntries.length})</summary>${auditEntries.map((entry) => `<div class="tiny">${entry.summary || entry.actionType || entry.action} · ${entry.actorName || entry.userIdentity || 'unknown'} · ${formatRelativeTime(entry.timestamp)}</div>`).join('') || '<div class="tiny">No audit history yet.</div>'}</details>
           <details><summary>Image / video / evidence refs</summary>${renderAttachmentGroups(getAttachmentGroups(asset), 'No asset-level references recorded yet.')}</details>
           ${recurring.length ? `<div class="tiny"><b>Recurring patterns:</b> ${recurring.map((entry) => `${entry.issueCategory || 'uncategorized'} (${entry.count})`).join(', ')}</div>` : ''}
           ${library.length ? `<div class="tiny"><b>Troubleshooting library:</b> ${library.map((row) => row.successfulFix || row.title).join(' | ')}</div>` : ''}

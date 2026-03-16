@@ -31,6 +31,10 @@ export function createAdminActions(deps) {
       state.adminSection = section || 'company';
       render();
     },
+    setAuditFilter: (category) => {
+      state.adminUi = { ...(state.adminUi || {}), auditCategory: category || 'all' };
+      render();
+    },
     saveWorker: async (id, payload) => {
       const existing = state.workers.find((worker) => worker.id === id) || {};
       const workerEmail = `${payload.email || existing.email || ''}`.trim().toLowerCase();
