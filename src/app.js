@@ -100,12 +100,12 @@ const state = {
   adminUi: { tone: 'info', message: '', importPreview: '', importSummary: '', importTone: 'info' },
   operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0, statusFilter: 'open', ownershipFilter: 'all', lastSaveFeedback: '', lastSaveTone: 'info', aiTaskStates: {}, lastSavedTaskId: null },
   adminSection: 'company',
-  onboardingUi: { tone: 'info', message: '' },
+  onboardingUi: { tone: 'info', message: '', pendingAction: '', handoffStatus: 'idle' },
   setupWizard: { active: false, step: 1, message: '', tone: 'info' }
 };
 
-function setOnboardingFeedback(message = '', tone = 'info') {
-  state.onboardingUi = { message, tone };
+function setOnboardingFeedback(message = '', tone = 'info', extra = {}) {
+  state.onboardingUi = { ...(state.onboardingUi || {}), message, tone, ...extra };
 }
 
 function setSetupWizardFeedback(message = '', tone = 'info') {
@@ -114,7 +114,8 @@ function setSetupWizardFeedback(message = '', tone = 'info') {
 
 function syncSetupWizardState() {
   const readiness = getWorkspaceReadiness(state);
-  const shouldShow = !!state.company?.id && !state.onboardingRequired && readiness.needsSetupWizard;
+  const dismissed = !!state.settings?.workspaceReadinessDismissedAt;
+  const shouldShow = !!state.company?.id && !state.onboardingRequired && readiness.needsSetupWizard && !dismissed;
   state.setupWizard = {
     ...(state.setupWizard || {}),
     active: shouldShow,
@@ -518,7 +519,8 @@ async function render() {
     renderOnboarding(document.getElementById('dashboard'), state, {
       createCompany: async (payload) => {
         await runAction('create_company', async () => {
-          setOnboardingFeedback('');
+          setOnboardingFeedback('Creating your workspace…', 'info', { pendingAction: 'create_company', handoffStatus: 'working' });
+          render();
           await createCompanyFromOnboarding(state.user, payload);
           await bootstrapCompanyContext();
           await refreshData();
@@ -526,14 +528,15 @@ async function render() {
         }, {
           fallbackMessage: 'Unable to create company workspace.',
           onError: (error) => {
-            setOnboardingFeedback(formatActionError(error, 'Unable to create company workspace.'), 'error');
+            setOnboardingFeedback(formatActionError(error, 'Unable to create company workspace.'), 'error', { pendingAction: '', handoffStatus: 'error' });
             render();
           }
         });
       },
       acceptInvite: async (inviteCode) => {
         await runAction('accept_invite', async () => {
-          setOnboardingFeedback('');
+          setOnboardingFeedback('Joining company…', 'info', { pendingAction: 'accept_invite', handoffStatus: 'working' });
+          render();
           await acceptInvite({ inviteCode, user: state.user });
           await bootstrapCompanyContext();
           await refreshData();
@@ -541,7 +544,7 @@ async function render() {
         }, {
           fallbackMessage: 'Unable to accept invite.',
           onError: (error) => {
-            setOnboardingFeedback(formatActionError(error, 'Unable to accept invite.'), 'error');
+            setOnboardingFeedback(formatActionError(error, 'Unable to accept invite.'), 'error', { pendingAction: '', handoffStatus: 'error' });
             render();
           }
         });
@@ -552,6 +555,11 @@ async function render() {
       },
       skipSetupStep: async (step) => {
         state.setupWizard = { ...(state.setupWizard || {}), step: Math.max(1, Math.min(6, (Number(step) || 1) + 1)), message: 'Skipped for now. You can return to Admin anytime.', tone: 'info' };
+        await refreshData();
+        render();
+      },
+      dismissReadiness: async () => {
+        await saveAppSettings({ ...state.settings, workspaceReadinessDismissedAt: new Date().toISOString() }, state.user);
         await refreshData();
         render();
       },
@@ -603,14 +611,22 @@ async function render() {
           }
           if (currentStep === 4) {
             const assetName = `${payload.assetName || ''}`.trim();
-            if (assetName) {
-              const id = `${payload.assetId || ''}`.trim() || `asset-${assetName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now().toString(36).slice(-4)}`;
+            const bulkNames = `${payload.assetBulkList || ''}`.split(/\r?\n/).map((entry) => `${entry || ''}`.trim()).filter(Boolean);
+            const namesToCreate = [assetName, ...bulkNames].filter(Boolean);
+            for (const [index, name] of namesToCreate.entries()) {
+              const requestedId = index === 0 ? `${payload.assetId || ''}`.trim() : '';
+              const id = requestedId || `asset-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${(Date.now() + index).toString(36).slice(-4)}`;
               await upsertEntity('assets', id, withRequiredCompanyId({
                 id,
-                name: assetName,
+                name,
                 locationName: `${payload.assetLocation || ''}`.trim(),
-                status: 'active'
+                status: 'active',
+                enrichmentStatus: 'searching_docs',
+                enrichmentRequestedAt: new Date().toISOString()
               }, 'create first asset'), state.user);
+              if (state.settings.aiEnabled) {
+                enrichAssetDocumentation(id, { trigger: 'onboarding_asset_step' }).catch(() => {});
+              }
             }
           }
           if (currentStep === 5) {
@@ -915,7 +931,7 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
   try {
     setActiveCompanyContext(null);
     await register(fd.get('email'), password, { fullName });
-    authMessage.textContent = 'Account created. Finishing setup...';
+    authMessage.textContent = 'Account created. Handing off to workspace setup...';
   } catch (err) { authMessage.textContent = err.message; }
 });
 
@@ -944,14 +960,14 @@ watchAuth(async (user) => {
     state.company = null;
     state.memberships = [];
     state.activeMembership = null;
-    setOnboardingFeedback('');
+    setOnboardingFeedback('', 'info', { pendingAction: '', handoffStatus: 'idle' });
     authView.classList.remove('hide');
     appView.classList.add('hide');
     return;
   }
   try {
     setActiveCompanyContext(null);
-    setOnboardingFeedback('');
+    setOnboardingFeedback('', 'info', { pendingAction: '', handoffStatus: 'idle' });
     state.user = { uid: user.uid, email: user.email, displayName: user.displayName };
     state.profile = await resolveProfile(user);
     state.permissions = buildPermissionContext({ profile: state.profile, membership: null });

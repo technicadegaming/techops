@@ -15,15 +15,26 @@ export function getWorkspaceReadiness(state = {}) {
     aiConfigured: settings.aiConfiguredExplicitly === true
   };
 
-  const requiredComplete = checks.company && checks.location && checks.worker && checks.aiConfigured;
-  const completionCount = Object.values(checks).filter(Boolean).length;
+  const requiredKeys = ['company', 'location', 'worker', 'aiConfigured'];
+  const optionalKeys = ['invite', 'asset'];
+  const requiredComplete = requiredKeys.every((key) => checks[key]);
+  const requiredCompleteCount = requiredKeys.filter((key) => checks[key]).length;
+  const optionalCompleteCount = optionalKeys.filter((key) => checks[key]).length;
+  const completionCount = requiredCompleteCount + optionalCompleteCount;
 
   return {
     checks,
+    requiredKeys,
+    optionalKeys,
     requiredComplete,
+    requiredCompleteCount,
+    optionalCompleteCount,
     completionCount,
     totalCount: Object.keys(checks).length,
-    needsSetupWizard: !!company?.id && !requiredComplete
+    requiredTotalCount: requiredKeys.length,
+    optionalTotalCount: optionalKeys.length,
+    needsSetupWizard: !!company?.id && !requiredComplete,
+    hasRequiredGaps: !!company?.id && !requiredComplete
   };
 }
 
@@ -34,7 +45,7 @@ function renderCheckRow(label, ok, { optional = false, recommended = false } = {
   return `<div class="tiny"><span class="state-chip ${tone}">${icon}</span> ${label}${suffix}</div>`;
 }
 
-export function renderWorkspaceReadinessCard(state = {}, { title = 'Workspace readiness', compact = false } = {}) {
+export function renderWorkspaceReadinessCard(state = {}, { title = 'Workspace readiness', compact = false, dismissible = false } = {}) {
   const readiness = getWorkspaceReadiness(state);
   const rows = [
     renderCheckRow('Company profile', readiness.checks.company),
@@ -48,8 +59,9 @@ export function renderWorkspaceReadinessCard(state = {}, { title = 'Workspace re
   return `<div class="item ${compact ? '' : 'mt'}">
     <div class="row space">
       <b>${title}</b>
-      <div class="tiny">${readiness.completionCount}/${readiness.totalCount} complete</div>
+      <div class="tiny">Required ${readiness.requiredCompleteCount}/${readiness.requiredTotalCount} | Optional ${readiness.optionalCompleteCount}/${readiness.optionalTotalCount}</div>
     </div>
+    ${dismissible ? '<div class="tiny mt"><button type="button" data-dismiss-readiness="1">Dismiss</button></div>' : ''}
     <div class="mt">${rows}</div>
     ${readiness.requiredComplete
       ? '<div class="inline-state success mt">Core setup complete. Your workspace is operationally ready.</div>'
