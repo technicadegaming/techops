@@ -9,6 +9,14 @@ export function createAdminActions(deps) {
     clearEntitySet,
     saveAppSettings,
     exportBackupJson,
+    buildAssetsCsv,
+    buildTasksCsv,
+    buildAuditCsv,
+    buildWorkersCsv,
+    buildMembersCsv,
+    buildInvitesCsv,
+    buildLocationsCsv,
+    buildCompanyBackupBundle,
     downloadFile,
     downloadJson,
     normalizeAssetId,
@@ -239,6 +247,23 @@ export function createAdminActions(deps) {
       await refreshData();
       render();
     },
+    exportAssetsCsv: async () => downloadFile(`assets-export-${Date.now()}.csv`, buildAssetsCsv(state.assets || []), 'text/csv'),
+    exportTasksCsv: async () => downloadFile(`tasks-export-${Date.now()}.csv`, buildTasksCsv(state.tasks || []), 'text/csv'),
+    exportAuditCsv: async () => downloadFile(`audit-log-export-${Date.now()}.csv`, buildAuditCsv(state.auditEntries || []), 'text/csv'),
+    exportWorkersCsv: async () => downloadFile(`workers-export-${Date.now()}.csv`, buildWorkersCsv(state.workers || []), 'text/csv'),
+    exportMembersCsv: async () => downloadFile(`members-export-${Date.now()}.csv`, buildMembersCsv(state.companyMembers || []), 'text/csv'),
+    exportInvitesCsv: async () => downloadFile(`invites-export-${Date.now()}.csv`, buildInvitesCsv(state.invites || []), 'text/csv'),
+    exportLocationsCsv: async () => downloadFile(`locations-export-${Date.now()}.csv`, buildLocationsCsv(state.companyLocations || []), 'text/csv'),
+    exportCompanyBundle: async () => downloadJson(`company-backup-${Date.now()}.json`, buildCompanyBackupBundle({
+      company: state.company || {},
+      assets: state.assets || [],
+      tasks: state.tasks || [],
+      auditEntries: state.auditEntries || [],
+      companyMembers: state.companyMembers || [],
+      workers: state.workers || [],
+      invites: state.invites || [],
+      locations: state.companyLocations || []
+    })),
     exportBackup: async () => downloadJson(`wow-backup-${Date.now()}.json`, await exportBackupJson()),
     clearTasks: async () => {
       const tasksCleared = await clearEntitySet('tasks', state.user);
