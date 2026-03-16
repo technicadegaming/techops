@@ -153,20 +153,40 @@ function renderMissingAssetPrompt(assetName = '') {
 }
 
 function getTaskRun(task, state) {
-  const taskId = task?.id || '';
+  const taskId = `${task?.id || ''}`.trim();
   const taskCompanyId = `${task?.companyId || ''}`.trim();
-  return (state.taskAiRuns || [])
-    .filter((entry) => entry.taskId === taskId)
+  const fromList = (state.taskAiRuns || [])
+    .filter((entry) => `${entry.taskId || ''}`.trim() === taskId)
     .filter((entry) => {
       if (!taskCompanyId) return true;
       return `${entry.companyId || ''}`.trim() === taskCompanyId;
     })
     .sort((a, b) => `${b.updatedAt || b.createdAt || ''}`.localeCompare(`${a.updatedAt || a.createdAt || ''}`))[0] || null;
+  const displayRun = state.operationsUi?.aiDisplayRunsByTask?.[taskId] || null;
+  const displayTaskId = `${displayRun?.taskId || ''}`.trim();
+  const displayCompanyId = `${displayRun?.companyId || ''}`.trim();
+  const validDisplayRun = displayRun && displayTaskId === taskId && (!taskCompanyId || !displayCompanyId || displayCompanyId === taskCompanyId)
+    ? displayRun
+    : null;
+  if (fromList && validDisplayRun) {
+    return `${validDisplayRun.updatedAt || validDisplayRun.createdAt || ''}`.localeCompare(`${fromList.updatedAt || fromList.createdAt || ''}`) > 0
+      ? validDisplayRun
+      : fromList;
+  }
+  return fromList || validDisplayRun || null;
 }
 
-function getTaskFollowup(runId, state) {
+function getTaskFollowup(runId, state, run = null) {
   if (!runId) return null;
-  return (state.taskAiFollowups || []).find((entry) => entry.runId === runId) || null;
+  const followup = (state.taskAiFollowups || []).find((entry) => entry.runId === runId) || null;
+  if (followup) return followup;
+  const runQuestions = Array.isArray(run?.followupQuestions)
+    ? run.followupQuestions
+    : Array.isArray(run?.followup?.questions)
+      ? run.followup.questions
+      : [];
+  if (!runQuestions.length) return null;
+  return { runId, questions: runQuestions };
 }
 
 function getTaskAiLocalState(taskId, state) {
@@ -318,7 +338,7 @@ function getTaskStateMeta(task, state) {
   const severity = task.severity || 'medium';
   const assignedWorkers = task.assignedWorkers || [];
   const run = getTaskRun(task, state);
-  const followup = getTaskFollowup(run?.id, state);
+  const followup = getTaskFollowup(run?.id, state, run);
   const aiState = getTaskAiState(task, state, run, followup);
   const unavailable = assignedWorkers.filter((worker) => state.users.some((user) => (
     (user.id === worker || user.email === worker) && (user.enabled === false || user.available === false)
@@ -538,6 +558,7 @@ function createDefaultOperationsUiState() {
     lastSaveTone: 'info',
     reassignSelections: {},
     aiTaskStates: {},
+    aiDisplayRunsByTask: {},
     lastSavedTaskId: null
   };
 }

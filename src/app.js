@@ -187,6 +187,20 @@ function setTaskAiUiState(taskId, nextState = null) {
   };
 }
 
+function setTaskAiDisplayRun(taskId, run = null) {
+  if (!taskId) return;
+  const current = { ...(state.operationsUi?.aiDisplayRunsByTask || {}) };
+  if (!run?.id) {
+    delete current[taskId];
+  } else {
+    current[taskId] = run;
+  }
+  state.operationsUi = {
+    ...(state.operationsUi || {}),
+    aiDisplayRunsByTask: current
+  };
+}
+
 function buildAiPendingRecordMessage(runId) {
   const safeRunId = `${runId || ''}`.trim();
   return safeRunId
@@ -205,6 +219,7 @@ function mergeRunIntoState(run) {
   const existing = (state.taskAiRuns || []).filter((entry) => entry.id !== run.id);
   state.taskAiRuns = [run, ...existing]
     .sort((a, b) => `${b.updatedAt || b.createdAt || ''}`.localeCompare(`${a.updatedAt || a.createdAt || ''}`));
+  if (run.taskId) setTaskAiDisplayRun(`${run.taskId}`.trim(), run);
 }
 
 async function pollForTaskAiRunRecord(taskId, runId, options = {}) {
@@ -234,6 +249,7 @@ async function pollForTaskAiRunRecord(taskId, runId, options = {}) {
         return { found: false, run: directRun, timedOut: false, errorType: 'company_mismatch' };
       }
       mergeRunIntoState(directRun);
+      setTaskAiDisplayRun(`${taskId}`.trim(), directRun);
       state.taskAiFollowups = await listEntities('taskAiFollowups').catch(() => state.taskAiFollowups || []);
       return { found: true, run: directRun, timedOut: false, source: 'direct' };
     }
@@ -251,6 +267,7 @@ async function pollForTaskAiRunRecord(taskId, runId, options = {}) {
       if (taskCompanyId && runCompanyId && runCompanyId !== taskCompanyId) {
         return { found: false, run: match, timedOut: false, errorType: 'company_mismatch' };
       }
+      setTaskAiDisplayRun(`${taskId}`.trim(), match);
       state.taskAiFollowups = await listEntities('taskAiFollowups').catch(() => state.taskAiFollowups || []);
       return { found: true, run: match, timedOut: false, source: 'query' };
     }
@@ -925,6 +942,8 @@ async function render() {
         }
       }
 
+      render();
+
       await refreshData();
       render();
     },
@@ -993,6 +1012,8 @@ async function render() {
           });
         }
       }
+
+      render();
 
       await refreshData();
       render();
