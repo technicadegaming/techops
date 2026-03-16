@@ -145,7 +145,7 @@ export function renderReports(el, state) {
       </div>
       <div class="report-alert-card">
         <b>Blocked work</b>
-        <div class="tiny mt">${blockedTasks.length} task${blockedTasks.length === 1 ? '' : 's'} slowed by owner or follow-up blockers</div>
+        <div class="tiny mt">${blockedTasks.length} task${blockedTasks.length === 1 ? '' : 's'} slowed by assigned-worker or follow-up blockers</div>
       </div>
       <div class="report-alert-card">
         <b>Follow-up queue</b>

@@ -26,6 +26,36 @@ const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1 };
 const PRIORITY_LABEL = { critical: 'P1 critical', high: 'P2 high', medium: 'P3 medium', low: 'P4 low' };
 const STATUS_LABEL = { open: 'Open', in_progress: 'In progress', completed: 'Completed' };
 
+function getWorkerOptionLabel(worker = {}) {
+  const name = `${worker.displayName || worker.fullName || worker.email || worker.id || ''}`.trim();
+  const email = `${worker.email || ''}`.trim();
+  return email && email !== name ? `${name} (${email})` : (name || worker.id || 'Unknown worker');
+}
+
+function resolveAssignmentLabel(identifier, state) {
+  const clean = `${identifier || ''}`.trim();
+  if (!clean) return '';
+  const worker = (state.workers || []).find((entry) => entry.id === clean || `${entry.email || ''}`.trim().toLowerCase() === clean.toLowerCase());
+  if (worker) return getWorkerOptionLabel(worker);
+  const user = (state.users || []).find((entry) => entry.id === clean || `${entry.email || ''}`.trim().toLowerCase() === clean.toLowerCase());
+  if (user) return user.memberLabel || user.displayName || user.fullName || user.email || clean;
+  return clean;
+}
+
+function resolveReporterLabel(task, state) {
+  const byUserId = `${task.reportedByUserId || ''}`.trim();
+  const byEmail = `${task.reportedByEmail || ''}`.trim().toLowerCase();
+  const user = (state.users || []).find((entry) => entry.id === byUserId || (`${entry.email || ''}`.trim().toLowerCase() && `${entry.email || ''}`.trim().toLowerCase() === byEmail));
+  if (user) return user.memberLabel || user.displayName || user.fullName || user.email;
+  return task.reporter || task.reportedByEmail || 'Unknown reporter';
+}
+
+function renderMissingAssetPrompt(assetName = '') {
+  const clean = `${assetName || ''}`.trim();
+  if (!clean) return '';
+  return `No existing asset matches "${clean}". Create the asset first, then save the task. <button type="button" data-create-missing-asset="${clean}">Create asset</button>`;
+}
+
 function getTaskRun(taskId, state) {
   return (state.taskAiRuns || []).find((entry) => entry.taskId === taskId) || null;
 }
@@ -86,7 +116,7 @@ function getTaskStateMeta(task, state) {
   const blockedReasons = [];
   if (needsFollowup) blockedReasons.push('waiting on follow-up answers');
   if (unavailable.length) blockedReasons.push(`assigned unavailable: ${unavailable.join(', ')}`);
-  if (status === 'in_progress' && awaitingAssignment) blockedReasons.push('in progress without an assigned owner');
+  if (status === 'in_progress' && awaitingAssignment) blockedReasons.push('in progress without an assigned worker');
   const blocked = blockedReasons.length > 0;
   const readyForCloseout = status === 'in_progress' && !needsFollowup && assignedWorkers.length > 0 && unavailable.length === 0;
   const closeout = task.closeout || {};
@@ -236,7 +266,8 @@ function createDefaultOperationsUiState() {
     ownershipFilter: 'all',
     exceptionFilter: 'all',
     lastSaveFeedback: '',
-    lastSaveTone: 'info'
+    lastSaveTone: 'info',
+    reassignSelections: {}
   };
 }
 
@@ -288,6 +319,9 @@ export function renderOperations(el, state, actions) {
   const expanded = new Set(state.operationsUi.expandedTaskIds || []);
   const assetById = new Map((state.assets || []).map((asset) => [asset.id, asset]));
   const assetByName = new Map((state.assets || []).map((asset) => [`${asset.name || asset.id}`.toLowerCase(), asset]));
+  const workerOptions = (state.workers || [])
+    .filter((worker) => worker.enabled !== false)
+    .sort((a, b) => getWorkerOptionLabel(a).localeCompare(getWorkerOptionLabel(b)));
   const locationOptions = buildLocationOptions(state);
   const scope = buildLocationSummary(state);
   const scopedTasks = [...scope.scopedTasks].sort((a, b) => {
@@ -306,6 +340,10 @@ export function renderOperations(el, state, actions) {
   const overdueOpen = openMeta.filter(({ meta }) => meta.overdue).length;
   const blockedOpen = openMeta.filter(({ meta }) => meta.blocked).length;
   const readyForCloseout = openMeta.filter(({ meta }) => meta.readyForCloseout).length;
+  const operationsDraft = state.operationsUi?.draft || {};
+  const typedAssetName = `${operationsDraft.assetSearch || ''}`.trim();
+  const typedAssetMatch = typedAssetName ? (assetByName.get(typedAssetName.toLowerCase()) || assetById.get(typedAssetName) || null) : null;
+  const missingAssetPrompt = typedAssetName && !typedAssetMatch;
 
   el.innerHTML = `
     <div class="row space">
@@ -401,9 +439,10 @@ export function renderOperations(el, state, actions) {
       <label>Asset / game
         <input name="assetSearch" list="assetOptions" placeholder="${scopedAssets.length ? 'Search by asset name' : 'No assets in the current location yet'}" required ${editable ? '' : 'disabled'} />
       </label>
+      <div id="missingAssetPrompt" class="inline-state error ${missingAssetPrompt ? '' : 'hide'}">${missingAssetPrompt ? renderMissingAssetPrompt(typedAssetName) : ''}</div>
       <textarea name="description" placeholder="Describe the issue / concern" required ${editable ? '' : 'disabled'}></textarea>
       <input name="alreadyTried" placeholder="What has been tried so far?" ${editable ? '' : 'disabled'} />
-      <input name="reporter" placeholder="Who are you" required ${editable ? '' : 'disabled'} />
+      <input name="reporter" placeholder="Reported by" required ${editable ? '' : 'disabled'} />
 
       <details data-more-details ${state.operationsUi.moreDetailsOpen ? 'open' : ''}>
         <summary>More details (optional)</summary>
@@ -418,10 +457,16 @@ export function renderOperations(el, state, actions) {
           <select name="occurrence" ${editable ? '' : 'disabled'}><option value="constant">Constant</option><option value="intermittent">Intermittent</option></select>
           <select name="reproducible" ${editable ? '' : 'disabled'}><option value="yes">Reproducible</option><option value="no">Not reproducible</option><option value="unknown">Unknown</option></select>
           <input name="visibleCondition" placeholder="Visible condition notes" ${editable ? '' : 'disabled'} />
-          <input name="assignedWorkers" placeholder="Assigned worker IDs/emails (comma-separated)" ${editable ? '' : 'disabled'} />
+          <label>Assigned worker
+            <select name="assignedWorker" ${editable ? '' : 'disabled'}>
+              <option value="">Assign later</option>
+              ${workerOptions.map((worker) => `<option value="${worker.id || worker.email || ''}">${getWorkerOptionLabel(worker)}</option>`).join('')}
+            </select>
+          </label>
           <select name="status" ${editable ? '' : 'disabled'}><option>open</option><option>in_progress</option><option>completed</option></select>
-          <textarea name="notes" placeholder="Optional notes" ${editable ? '' : 'disabled'}></textarea>
+          <textarea name="notes" placeholder="Task notes (persist with the task)" ${editable ? '' : 'disabled'}></textarea>
         </div>
+        <div class="tiny mt">Use a worker assignment instead of free text so the board, reports, and reassignment actions stay consistent.</div>
       </details>
 
       <button class="primary" ${editable ? '' : 'disabled'}>Save task</button>
@@ -452,7 +497,7 @@ export function renderOperations(el, state, actions) {
                 <div class="state-chip-row">${renderTaskStateChips(meta)}</div>
               </div>
               <div class="task-summary-meta">
-                <span>${friendlyAsset}</span>
+                <span>${task.assetId ? `<a href="?tab=assets&assetId=${encodeURIComponent(task.assetId)}&location=${encodeURIComponent(scope.selection?.key || '')}">${friendlyAsset}</a>` : friendlyAsset}</span>
                 <span>${taskLocation.label}</span>
                 <span>${meta.ageLabel}</span>
               </div>
@@ -460,21 +505,23 @@ export function renderOperations(el, state, actions) {
             <div class="task-body">
               ${renderExceptionBanner(meta)}
               <div class="task-meta-grid mt">
-                <div><b>Owner</b><div class="tiny">${meta.assignedWorkers.join(', ') || 'unassigned'}</div></div>
-                <div><b>Reported</b><div class="tiny">${formatDateTime(task.openedAt || task.createdAtClient)}</div></div>
+                <div><b>Assigned worker</b><div class="tiny">${meta.assignedWorkers.map((worker) => resolveAssignmentLabel(worker, state)).join(', ') || 'unassigned'}</div></div>
+                <div><b>Reported by</b><div class="tiny">${resolveReporterLabel(task, state)} | ${formatDateTime(task.openedAt || task.createdAtClient)}</div></div>
                 <div><b>Asset location</b><div class="tiny">${assetLocation?.label || taskLocation.label}${assetLocation && assetLocation.label !== taskLocation.label ? ` | task reported at ${taskLocation.label}` : ''}</div></div>
                 <div><b>Category</b><div class="tiny">${task.issueCategory || 'uncategorized'} | tags: ${(task.symptomTags || []).join(', ') || 'none'}</div></div>
               </div>
               <div class="mt"><b>Issue:</b> ${task.description || ''}</div>
+              ${task.notes ? `<div class="mt"><b>Notes:</b> ${task.notes}</div>` : ''}
               ${meta.unavailable.length ? `<div class="tiny mt">Unavailable assignees: ${meta.unavailable.join(', ')}</div>` : ''}
               <div class="action-row mt">
-                ${editable && task.status === 'open' ? `<button type="button" data-quick-status="${task.id}" data-next-status="in_progress" class="primary">Start now</button>` : ''}
+                ${editable && task.status === 'open' ? `<button type="button" data-quick-status="${task.id}" data-next-status="in_progress" class="primary" ${meta.assignedWorkers.length ? '' : 'disabled'}>Start now</button>` : ''}
                 ${editable && task.status === 'in_progress' ? `<button type="button" data-quick-status="${task.id}" data-next-status="open">Move back to open</button>` : ''}
                 ${task.status !== 'completed' && canCloseTasks(state.permissions) ? `<button type="button" data-open-closeout="${task.id}">Resolve / close</button>` : ''}
                 ${meta.needsFollowup ? `<button type="button" data-open-followup="${task.id}">Answer follow-up</button>` : ''}
                 ${(meta.awaitingAssignment || meta.unavailable.length) ? `<button type="button" data-reassign="${task.id}">Quick reassign</button>` : ''}
                 ${canDelete(state.permissions) ? `<button type="button" data-del="${task.id}" class="danger">Delete</button>` : ''}
               </div>
+              ${(meta.awaitingAssignment || meta.unavailable.length) ? `<div class="row mt"><select data-reassign-select="${task.id}"><option value="">Select worker</option>${workerOptions.map((worker) => `<option value="${worker.id || worker.email || ''}">${getWorkerOptionLabel(worker)}</option>`).join('')}</select><div class="tiny">Required before moving this task into progress.</div></div>` : ''}
               ${renderCloseoutSummary(task, meta)}
               ${renderCloseout(task, state, meta)}
               ${renderAiPanel(task, state, meta)}
@@ -492,6 +539,7 @@ export function renderOperations(el, state, actions) {
   const assetInput = form?.querySelector('[name="assetSearch"]');
   const reporterInput = form?.querySelector('[name="reporter"]');
   const locationInput = form?.querySelector('[name="location"]');
+  const missingAssetPromptEl = form?.querySelector('#missingAssetPrompt');
   const moreDetails = form?.querySelector('[data-more-details]');
 
   const getSelectedAsset = () => {
@@ -502,16 +550,45 @@ export function renderOperations(el, state, actions) {
 
   const syncFormMeta = () => {
     const selectedAsset = getSelectedAsset();
+    const existingIds = state.tasks.map((task) => task.id);
+    const currentAssetKey = buildAssetKey(selectedAsset?.id, selectedAsset?.name || `${assetInput?.value || ''}`);
     const nextId = generateTaskId({
       assetId: selectedAsset?.id,
       assetName: selectedAsset?.name,
-      existingIds: state.tasks.map((task) => task.id)
+      existingIds
     });
-    if (idInput && !idInput.value) idInput.value = nextId;
-    if (openedAtInput && !openedAtInput.value) openedAtInput.value = getCurrentOpenedDateTimeValue(new Date());
+    const shouldRefreshId = !idInput?.value || existingIds.includes(idInput.value) || form?.dataset.assetKeyForId !== currentAssetKey;
+    if (idInput && shouldRefreshId) idInput.value = nextId;
+    if (openedAtInput && (!openedAtInput.value || shouldRefreshId)) openedAtInput.value = getCurrentOpenedDateTimeValue(new Date());
+    if (form) form.dataset.assetKeyForId = currentAssetKey;
     if (reporterInput && !reporterInput.value) reporterInput.value = state.user?.email || '';
     const scopedLocationName = scope.selection?.id ? scope.selection.name : '';
     if (locationInput && !locationInput.value) locationInput.value = selectedAsset?.locationName || selectedAsset?.location || scopedLocationName;
+  };
+
+  const syncMissingAssetPrompt = () => {
+    if (!missingAssetPromptEl) return;
+    const raw = `${assetInput?.value || ''}`.trim();
+    const exists = !raw || !!(assetByName.get(raw.toLowerCase()) || assetById.get(raw));
+    missingAssetPromptEl.classList.toggle('hide', exists);
+    missingAssetPromptEl.innerHTML = exists ? '' : renderMissingAssetPrompt(raw);
+    missingAssetPromptEl.querySelector('[data-create-missing-asset]')?.addEventListener('click', () => actions.prepareAssetCreation({
+      assetName: raw,
+      locationName: `${locationInput?.value || scope.selection?.name || ''}`.trim()
+    }));
+  };
+
+  const resetTaskForm = () => {
+    state.operationsUi.draft = {};
+    state.operationsUi.moreDetailsOpen = false;
+    if (!form) return;
+    form.reset();
+    if (moreDetails) moreDetails.open = false;
+    if (form.dataset.assetKeyForId) delete form.dataset.assetKeyForId;
+    if (idInput) idInput.value = '';
+    if (openedAtInput) openedAtInput.value = '';
+    syncFormMeta();
+    persistDraft();
   };
 
   const restoreDraft = () => {
@@ -536,11 +613,17 @@ export function renderOperations(el, state, actions) {
 
   syncFormMeta();
   restoreDraft();
+  syncMissingAssetPrompt();
 
   form?.addEventListener('input', persistDraft);
+  assetInput?.addEventListener('input', () => {
+    persistDraft();
+    syncMissingAssetPrompt();
+  });
   form?.addEventListener('change', () => {
     syncFormMeta();
     persistDraft();
+    syncMissingAssetPrompt();
   });
   moreDetails?.addEventListener('toggle', () => {
     state.operationsUi.moreDetailsOpen = !!moreDetails.open;
@@ -551,8 +634,22 @@ export function renderOperations(el, state, actions) {
     persistDraft();
     const fd = new FormData(form);
     const selectedAsset = getSelectedAsset();
+    const assignedWorker = `${fd.get('assignedWorker') || ''}`.trim();
+    const requestedStatus = `${fd.get('status') || 'open'}`.trim();
     const openedAtRaw = `${fd.get('openedAt') || ''}`.trim();
     const assetLocation = selectedAsset ? getAssetLocationRecord(state, selectedAsset) : null;
+    if (!selectedAsset) {
+      state.operationsUi.lastSaveFeedback = `Asset "${`${fd.get('assetSearch') || ''}`.trim()}" does not exist yet. Create the asset first, then save the task.`;
+      state.operationsUi.lastSaveTone = 'error';
+      rerender();
+      return;
+    }
+    if (requestedStatus === 'in_progress' && !assignedWorker) {
+      state.operationsUi.lastSaveFeedback = 'Assign a worker before starting a task.';
+      state.operationsUi.lastSaveTone = 'error';
+      rerender();
+      return;
+    }
     const payload = normalizeTaskIntake({
       ...Object.fromEntries(fd.entries()),
       id: `${fd.get('id') || ''}`.trim(),
@@ -563,9 +660,15 @@ export function renderOperations(el, state, actions) {
       locationId: assetLocation?.id || '',
       location: `${fd.get('location') || ''}`.trim() || assetLocation?.name || '',
       assetKeySnapshot: buildAssetKey(selectedAsset?.id, selectedAsset?.name),
+      assignedWorker,
       reportedByUserId: state.user?.uid || '',
       reportedByEmail: state.user?.email || ''
     }, state.settings || {});
+    if (state.tasks.some((task) => task.id === payload.id)) payload.id = generateTaskId({
+      assetId: payload.assetId,
+      assetName: payload.assetName,
+      existingIds: state.tasks.map((task) => task.id)
+    });
     const validation = validateTaskIntake(payload, ['assetId', 'description', 'reporter']);
     if (!validation.ok) {
       state.operationsUi.lastSaveFeedback = `Missing required fields: ${validation.missing.join(', ')}`;
@@ -576,8 +679,7 @@ export function renderOperations(el, state, actions) {
 
     const saved = await actions.saveTask(payload.id || `${fd.get('id') || ''}`.trim(), payload);
     if (!saved) return;
-    state.operationsUi.draft = {};
-    state.operationsUi.moreDetailsOpen = false;
+    resetTaskForm();
   });
 
   el.querySelector('[data-location-filter]')?.addEventListener('change', (event) => actions.setLocationFilter(event.target.value));
@@ -615,6 +717,12 @@ export function renderOperations(el, state, actions) {
     const task = state.tasks.find((entry) => entry.id === button.dataset.quickStatus);
     const nextStatus = button.dataset.nextStatus;
     if (!task || !nextStatus) return;
+    if (nextStatus === 'in_progress' && !(task.assignedWorkers || []).length) {
+      state.operationsUi.lastSaveFeedback = 'Assign a worker before starting a task.';
+      state.operationsUi.lastSaveTone = 'error';
+      rerender();
+      return;
+    }
     await actions.saveTask(task.id, { ...task, status: nextStatus, updatedAtClient: new Date().toISOString() });
   }));
   el.querySelectorAll('[data-open-closeout]').forEach((button) => button.addEventListener('click', () => {
@@ -628,6 +736,12 @@ export function renderOperations(el, state, actions) {
     const followupInput = card?.querySelector('[data-followup] input');
     followupInput?.focus();
     followupInput?.scrollIntoView({ block: 'nearest' });
+  }));
+  el.querySelectorAll('[data-reassign-select]').forEach((input) => input.addEventListener('change', () => {
+    state.operationsUi.reassignSelections = {
+      ...(state.operationsUi.reassignSelections || {}),
+      [input.dataset.reassignSelect]: input.value || ''
+    };
   }));
   el.querySelectorAll('[data-reassign]').forEach((button) => button.addEventListener('click', () => {
     state.operationsUi.scrollY = window.scrollY;

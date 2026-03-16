@@ -39,21 +39,27 @@ export function createAdminActions(deps) {
     },
     createWorker: async (payload) => {
       const id = `worker-${Date.now().toString(36)}`;
+      const workerEmail = `${payload.email || ''}`.trim().toLowerCase();
       await upsertEntity('workers', id, {
         id,
         displayName: `${payload.displayName || ''}`.trim(),
-        email: `${payload.email || ''}`.trim().toLowerCase(),
+        email: workerEmail,
         role: payload.role || 'staff',
         enabled: true,
         available: true,
         skills: `${payload.skills || ''}`.split(/[|,;]+/).map((value) => value.trim()).filter(Boolean),
-        inviteStatus: 'not_invited',
-        accountStatus: payload.email ? 'unlinked' : 'directory_only',
+        inviteStatus: payload.sendInvite === 'yes' && workerEmail ? 'pending' : 'not_invited',
+        accountStatus: workerEmail ? 'unlinked' : 'directory_only',
         phone: '',
         defaultLocationId: `${payload.defaultLocationId || ''}`.trim(),
         locationName: `${payload.locationName || ''}`.trim()
       }, state.user);
-      setAdminFeedback({ tone: 'success', message: `Worker record created for ${`${payload.displayName || 'new worker'}`.trim() || id}.` });
+      let inviteMessage = '';
+      if (payload.sendInvite === 'yes' && workerEmail) {
+        const invite = await createCompanyInvite({ companyId: state.company.id, email: workerEmail, role: payload.role || 'staff', user: state.user });
+        inviteMessage = ` Invite code ${invite.inviteCode} created.`;
+      }
+      setAdminFeedback({ tone: 'success', message: `Worker record created for ${`${payload.displayName || 'new worker'}`.trim() || id}.${inviteMessage}` });
       await refreshData();
       render();
     },

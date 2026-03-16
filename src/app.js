@@ -147,6 +147,20 @@ function reportActionError(label, error, fallbackMessage) {
   alert(formatActionError(error, fallbackMessage));
 }
 
+function evaluatePassword(password = '') {
+  const checks = [
+    { label: 'at least 8 characters', ok: password.length >= 8 },
+    { label: 'one uppercase letter', ok: /[A-Z]/.test(password) },
+    { label: 'one lowercase letter', ok: /[a-z]/.test(password) },
+    { label: 'one number', ok: /\d/.test(password) }
+  ];
+  return {
+    ok: checks.every((check) => check.ok),
+    checks,
+    message: checks.filter((check) => !check.ok).map((check) => check.label).join(', ')
+  };
+}
+
 function requireActiveCompanyId(actionLabel = 'continue') {
   const companyId = `${state.company?.id || state.activeMembership?.companyId || state.memberships?.[0]?.companyId || ''}`.trim();
   if (!companyId) {
@@ -430,6 +444,15 @@ async function render() {
     saveTask: async (_id, payload) => {
       const taskId = `${payload?.id || ''}`.trim() || `${_id || ''}`.trim();
       if (!taskId) return alert('Unable to save task: missing generated task ID.');
+      const existing = state.tasks.find((entry) => entry.id === taskId);
+      if (existing && existing.id === taskId && existing.updatedAtClient !== payload.updatedAtClient && existing.createdAtClient !== payload.createdAtClient) {
+        alert(`Task ID ${taskId} is already in use. Refresh the form to generate a new task ID.`);
+        return false;
+      }
+      if ((payload.status === 'in_progress' || payload.status === 'completed') && !(payload.assignedWorkers || []).length) {
+        alert('Assign a worker before moving a task into progress or completion.');
+        return false;
+      }
       const saved = await runAction('save_task', async () => {
         await upsertEntity('tasks', taskId, withRequiredCompanyId({ ...payload, id: taskId }, 'save a task'), state.user);
         state.operationsUi = {
@@ -456,10 +479,23 @@ async function render() {
     reassignTask: async (taskId) => {
       const task = state.tasks.find((entry) => entry.id === taskId);
       if (!task) return;
-      const worker = prompt('Reassign to worker uid/email:');
-      if (!worker) return;
-      await upsertEntity('tasks', taskId, { ...task, assignedWorkers: [worker.trim()] }, state.user);
+      const nextWorker = `${state.operationsUi?.reassignSelections?.[taskId] || ''}`.trim();
+      if (!nextWorker) {
+        alert('Select a worker before reassigning.');
+        return;
+      }
+      await upsertEntity('tasks', taskId, { ...task, assignedWorkers: [nextWorker], updatedAtClient: new Date().toISOString() }, state.user);
       await refreshData();
+      render();
+    },
+    prepareAssetCreation: ({ assetName = '', locationName = '' } = {}) => {
+      state.assetDraft = {
+        ...createEmptyAssetDraft(),
+        name: `${assetName || ''}`.trim(),
+        locationName: `${locationName || ''}`.trim()
+      };
+      state.route = { ...state.route, tab: 'assets', assetId: null, taskId: null };
+      pushRouteState(state.route);
       render();
     },
     completeTask: async (taskId, closeout) => {
@@ -566,8 +602,42 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
 document.getElementById('registerForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const fd = new FormData(e.currentTarget);
-  try { await register(fd.get('email'), fd.get('password')); } catch (err) { authMessage.textContent = err.message; }
+  const fullName = `${fd.get('fullName') || ''}`.trim();
+  const password = `${fd.get('password') || ''}`;
+  const confirmPassword = `${fd.get('confirmPassword') || ''}`;
+  const passwordState = evaluatePassword(password);
+  if (!fullName) {
+    authMessage.textContent = 'Full name is required.';
+    return;
+  }
+  if (password !== confirmPassword) {
+    authMessage.textContent = 'Passwords do not match.';
+    return;
+  }
+  if (!passwordState.ok) {
+    authMessage.textContent = `Password must include ${passwordState.message}.`;
+    return;
+  }
+  try {
+    await register(fd.get('email'), password, { fullName });
+    authMessage.textContent = 'Account created. Continue with company setup or invite acceptance.';
+  } catch (err) { authMessage.textContent = err.message; }
 });
+
+const registerForm = document.getElementById('registerForm');
+const registerPasswordInput = registerForm?.querySelector('[name="password"]');
+const registerConfirmInput = registerForm?.querySelector('[name="confirmPassword"]');
+const registerPasswordHelp = document.getElementById('registerPasswordHelp');
+const syncRegisterPasswordHelp = () => {
+  const password = `${registerPasswordInput?.value || ''}`;
+  const confirmPassword = `${registerConfirmInput?.value || ''}`;
+  const passwordState = evaluatePassword(password);
+  const requirements = passwordState.checks.map((check) => `${check.ok ? 'ok' : 'missing'} ${check.label}`).join(' | ');
+  const confirmState = confirmPassword ? ` | ${password === confirmPassword ? 'passwords match' : 'passwords do not match'}` : '';
+  if (registerPasswordHelp) registerPasswordHelp.textContent = `${requirements}${confirmState}`;
+};
+registerPasswordInput?.addEventListener('input', syncRegisterPasswordHelp);
+registerConfirmInput?.addEventListener('input', syncRegisterPasswordHelp);
 
 document.getElementById('logoutBtn').addEventListener('click', () => logout());
 

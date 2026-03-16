@@ -2,6 +2,12 @@ import { defaultAiSettings } from './data.js';
 import { canChangeAISettings, canManageBackups, isAdmin } from './roles.js';
 import { buildLocationOptions } from './features/locationContext.js';
 
+const WORKER_ROLE_OPTIONS = ['staff', 'lead', 'assistant_manager', 'manager', 'admin'];
+
+function getReadablePersonName(person = {}) {
+  return person.fullName || person.displayName || person.email || person.userId || person.id || 'Unknown person';
+}
+
 const aiBooleanFields = ['aiEnabled', 'aiAutoAttach', 'aiUseInternalKnowledge', 'aiUseWebSearch', 'aiAskFollowups', 'aiAllowManualRerun', 'aiSaveSuccessfulFixesToLibraryDefault', 'aiShortResponseMode', 'aiVerboseManagerMode', 'aiFeedbackCollectionEnabled', 'mobileConciseModeDefault'];
 const aiNumericFields = ['aiMaxWebSources', 'aiConfidenceThreshold'];
 const aiTextFields = ['aiModel', 'defaultTaskSeverity', 'taskIntakeRequiredFields'];
@@ -46,10 +52,11 @@ export function renderAdmin(el, state, actions) {
     const profile = (state.users || []).find((user) => user.id === membership.userId) || {};
     return {
       ...membership,
-      displayName: profile.displayName || profile.email || membership.userId,
-      email: profile.email || '',
+      displayName: getReadablePersonName(profile),
+      email: profile.email || profile.emailLower || '',
       enabled: profile.enabled !== false,
-      profileRole: profile.role || ''
+      profileRole: profile.role || '',
+      memberLabel: profile.memberLabel || ''
     };
   });
   const locations = state.companyLocations || [];
@@ -95,24 +102,24 @@ export function renderAdmin(el, state, actions) {
 
     <section class="item ${activeSection === 'members' ? '' : 'hide'}" data-admin-section="members">
       <h3>Members</h3>
-      <p class="tiny">Members are signed-in users with workspace access right now. This is the access list.</p>
+      <p class="tiny">Members are signed-in people with active workspace access. Use this list to confirm what a real user will see after accepting an invite.</p>
       <div class="tiny" style="margin-bottom:8px;">Active members: ${members.length} | Pending invites: ${invites.length} | Worker records: ${workers.length}</div>
       ${members.length ? `<table class="table"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Status</th></tr></thead><tbody>${members.map((member) => {
     const badges = [];
     if (memberEmailSet.has(`${member.email || ''}`.trim().toLowerCase()) && workerEmailSet.has(`${member.email || ''}`.trim().toLowerCase())) badges.push('has worker record');
     if (!member.enabled) badges.push('profile disabled');
     if (!member.email) badges.push('no profile email');
-    return `<tr><td>${member.displayName || member.email || member.userId}</td><td>${member.email || '-'}</td><td>${member.role || 'staff'}</td><td>${badges.join(' | ') || 'active'}</td></tr>`;
+    return `<tr><td>${member.displayName || member.email || member.userId}${member.userId && member.displayName !== member.userId ? `<div class="tiny">${member.userId}</div>` : ''}</td><td>${member.email || '-'}</td><td>${member.role || 'staff'}</td><td>${badges.join(' | ') || 'active'}</td></tr>`;
   }).join('')}</tbody></table>` : '<p class="tiny">No active members found yet. Use Invites to grant access.</p>'}
     </section>
 
     <section class="item ${activeSection === 'workers' ? '' : 'hide'}" data-admin-section="workers">
       <h3>Workers</h3>
-      <p class="tiny">Workers are personnel records. They can be scheduled or assigned even if they do not have login access.</p>
+      <p class="tiny">Workers are assignment and scheduling records. They can exist without login access, and an invite is optional when an email is present.</p>
       <form id="workerForm" class="grid grid-2">
         <label>Name<input name="displayName" required /></label>
         <label>Email<input name="email" type="email" placeholder="Optional login email" /></label>
-        <label>Role<input name="role" placeholder="staff" /></label>
+        <label>Role<select name="role">${WORKER_ROLE_OPTIONS.map((role) => `<option value="${role}">${role}</option>`).join('')}</select></label>
         <label>Skills<input name="skills" placeholder="Electrical, Mechanical" /></label>
         <label>Default location
           <select name="defaultLocationId">
@@ -121,6 +128,13 @@ export function renderAdmin(el, state, actions) {
           </select>
         </label>
         <label>Location label<input name="locationName" list="workerLocationNames" placeholder="Visible location label" /></label>
+        <label>Invite access
+          <select name="sendInvite">
+            <option value="no">Do not send invite</option>
+            <option value="yes">Create invite code now</option>
+          </select>
+        </label>
+        <div class="tiny" style="grid-column:1/-1;">Creating a worker does not make them a Member. Choose "Create invite code now" only if this worker should also get sign-in access.</div>
         <button class="primary">Add worker</button>
       </form>
       <datalist id="workerLocationNames">${locationOptions.map((option) => `<option value="${option.name}"></option>`).join('')}</datalist>
@@ -136,7 +150,7 @@ export function renderAdmin(el, state, actions) {
 
     <section class="item ${activeSection === 'invites' ? '' : 'hide'}" data-admin-section="invites">
       <h3>Invites</h3>
-      <p class="tiny">Invites are pending access grants. They are not members until accepted.</p>
+      <p class="tiny">Invites are pending access grants. They are separate from Workers and do not become Members until accepted.</p>
       <form id="inviteForm" class="row">
         <input name="email" type="email" placeholder="person@company.com" required />
         <select name="role"><option value="staff">staff</option><option value="manager">manager</option><option value="admin">admin</option></select>
