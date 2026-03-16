@@ -156,6 +156,32 @@ async function writeAudit(db, payload) {
   });
 }
 
+function buildTaskAiSnapshot({ runId, result, taskId, companyId }) {
+  const parsed = result?.parsed || {};
+  const updatedAt = new Date().toISOString();
+  return {
+    currentAiRunId: runId,
+    aiStatus: 'completed',
+    aiUpdatedAt: updatedAt,
+    aiFrontlineSummary: parsed.shortFrontlineVersion || parsed.conciseIssueSummary || '',
+    aiNextSteps: Array.isArray(parsed.diagnosticSteps) ? parsed.diagnosticSteps.slice(0, 8) : [],
+    aiFollowupQuestions: [],
+    aiFixState: 'pending_review',
+    aiLastCompletedRunSnapshot: {
+      runId,
+      taskId,
+      companyId: companyId || null,
+      completedAt: updatedAt,
+      summary: parsed.conciseIssueSummary || '',
+      frontline: parsed.shortFrontlineVersion || '',
+      confidence: Number.isFinite(Number(parsed.confidence)) ? Number(parsed.confidence) : null,
+      nextSteps: Array.isArray(parsed.diagnosticSteps) ? parsed.diagnosticSteps.slice(0, 8) : [],
+      followupQuestions: [],
+      probableCauses: Array.isArray(parsed.probableCauses) ? parsed.probableCauses.slice(0, 6) : []
+    }
+  };
+}
+
 async function runPipeline({ db, taskId, userId, triggerSource, settings, traceId, followupAnswers = [] }) {
   const taskSnap = await db.collection('tasks').doc(taskId).get();
   const taskCompanyId = taskSnap.exists ? `${taskSnap.data()?.companyId || ''}`.trim() : null;
@@ -183,6 +209,14 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
             libraryCount: context.troubleshootingLibrary.length
           },
           documentationMode: context.documentationContext?.mode || 'web_internal_only',
+          updatedAt: new Date().toISOString(),
+          updatedBy: userId
+        }, { merge: true });
+        await db.collection('tasks').doc(taskId).set({
+          currentAiRunId: runRef.id,
+          aiStatus: 'followup_required',
+          aiUpdatedAt: new Date().toISOString(),
+          aiFollowupQuestions: followup.questions.slice(0, 8),
           updatedAt: new Date().toISOString(),
           updatedBy: userId
         }, { merge: true });
@@ -237,6 +271,25 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
       updatedBy: userId
     }, { merge: true });
 
+    const latestTaskSnap = await db.collection('tasks').doc(taskId).get();
+    if (latestTaskSnap.exists) {
+      const latestTask = latestTaskSnap.data() || {};
+      const latestTaskCompanyId = `${latestTask.companyId || ''}`.trim();
+      const expectedCompanyId = `${context.task.companyId || ''}`.trim();
+      if (!expectedCompanyId || !latestTaskCompanyId || latestTaskCompanyId === expectedCompanyId) {
+        await db.collection('tasks').doc(taskId).set({
+          ...buildTaskAiSnapshot({
+            runId: runRef.id,
+            result,
+            taskId,
+            companyId: latestTaskCompanyId || expectedCompanyId || null
+          }),
+          updatedAt: new Date().toISOString(),
+          updatedBy: userId
+        }, { merge: true });
+      }
+    }
+
     if (settings.aiAutoAttach) {
       await db.collection('tasks').doc(taskId).set({
         aiSummary: {
@@ -258,6 +311,13 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
       status: 'failed',
       error: error.message,
       failureCode: `${error?.code || 'unknown'}`.trim() || 'unknown',
+      updatedAt: new Date().toISOString(),
+      updatedBy: userId
+    }, { merge: true });
+    await db.collection('tasks').doc(taskId).set({
+      currentAiRunId: runRef.id,
+      aiStatus: 'failed',
+      aiUpdatedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       updatedBy: userId
     }, { merge: true });

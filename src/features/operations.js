@@ -39,6 +39,12 @@ const AI_STATUS_LABEL = {
   waiting_for_refresh: 'AI waiting for refresh'
 };
 
+const AI_FIX_STATE_LABEL = {
+  pending_review: 'Pending review',
+  approved: 'Approved fix',
+  rejected: 'Rejected / not useful'
+};
+
 function getAiStatusLabel(status = 'idle') {
   return AI_STATUS_LABEL[status] || `AI ${`${status || 'idle'}`.replaceAll('_', ' ')}`;
 }
@@ -176,6 +182,35 @@ function getTaskRun(task, state) {
   return fromList || validDisplayRun || null;
 }
 
+function getTaskAiSnapshot(task, run = null) {
+  const taskId = `${task?.id || ''}`.trim();
+  const taskCompanyId = `${task?.companyId || ''}`.trim();
+  const snapshot = task?.aiLastCompletedRunSnapshot || null;
+  const snapshotRunId = `${snapshot?.runId || task?.currentAiRunId || ''}`.trim();
+  const snapshotTaskId = `${snapshot?.taskId || taskId}`.trim();
+  const snapshotCompanyId = `${snapshot?.companyId || taskCompanyId || ''}`.trim();
+  const runCompanyId = `${run?.companyId || ''}`.trim();
+  if (!snapshotRunId || !snapshot) return null;
+  if (snapshotTaskId && snapshotTaskId !== taskId) return null;
+  if (taskCompanyId && snapshotCompanyId && snapshotCompanyId !== taskCompanyId) return null;
+  if (run?.id && run.id !== snapshotRunId) return null;
+  if (taskCompanyId && runCompanyId && runCompanyId !== taskCompanyId) return null;
+  return {
+    runId: snapshotRunId,
+    taskId,
+    companyId: taskCompanyId || snapshotCompanyId || null,
+    summary: `${snapshot.summary || ''}`.trim(),
+    frontline: `${task.aiFrontlineSummary || snapshot.frontline || ''}`.trim(),
+    nextSteps: Array.isArray(task.aiNextSteps) ? task.aiNextSteps : (Array.isArray(snapshot.nextSteps) ? snapshot.nextSteps : []),
+    followupQuestions: Array.isArray(task.aiFollowupQuestions) ? task.aiFollowupQuestions : (Array.isArray(snapshot.followupQuestions) ? snapshot.followupQuestions : []),
+    probableCauses: Array.isArray(snapshot.probableCauses) ? snapshot.probableCauses : [],
+    confidence: Number(snapshot.confidence),
+    updatedAt: task.aiUpdatedAt || snapshot.completedAt || '',
+    status: `${task.aiStatus || 'completed'}`.trim() || 'completed',
+    fixState: `${task.aiFixState || 'pending_review'}`.trim() || 'pending_review'
+  };
+}
+
 function getTaskFollowup(runId, state, run = null) {
   if (!runId) return null;
   const followup = (state.taskAiFollowups || []).find((entry) => entry.runId === runId) || null;
@@ -228,7 +263,7 @@ function getTaskAiEligibility(task, state, run = null) {
   };
 }
 
-function getTaskAiState(task, state, run, followup) {
+function getTaskAiState(task, state, run, followup, snapshot = null) {
   const localState = getTaskAiLocalState(task.id, state);
   const eligibility = getTaskAiEligibility(task, state, run);
   if (run?.status === 'followup_required') {
@@ -252,6 +287,15 @@ function getTaskAiState(task, state, run, followup) {
             : 'AI troubleshooting is queued.',
       source: 'run',
       details: run.failureCode ? `failure code: ${run.failureCode}` : '',
+      eligibility
+    };
+  }
+  if (snapshot?.runId) {
+    return {
+      status: snapshot.status || 'completed',
+      message: 'Using saved AI guidance on this task.',
+      source: 'task_snapshot',
+      details: snapshot.fixState ? `review: ${AI_FIX_STATE_LABEL[snapshot.fixState] || snapshot.fixState}` : '',
       eligibility
     };
   }
@@ -339,7 +383,8 @@ function getTaskStateMeta(task, state) {
   const assignedWorkers = task.assignedWorkers || [];
   const run = getTaskRun(task, state);
   const followup = getTaskFollowup(run?.id, state, run);
-  const aiState = getTaskAiState(task, state, run, followup);
+  const snapshot = getTaskAiSnapshot(task, run);
+  const aiState = getTaskAiState(task, state, run, followup, snapshot);
   const unavailable = assignedWorkers.filter((worker) => state.users.some((user) => (
     (user.id === worker || user.email === worker) && (user.enabled === false || user.available === false)
   )));
@@ -365,6 +410,7 @@ function getTaskStateMeta(task, state) {
     assignedWorkers,
     run,
     followup,
+    snapshot,
     aiState,
     needsFollowup,
     awaitingAssignment,
@@ -451,15 +497,21 @@ function renderAiGuidance(aiState, eligibility, state) {
 
 function renderAiPanel(task, state, meta) {
   const run = meta.run;
+  const snapshot = meta.snapshot;
   const followup = meta.followup;
   const aiState = meta.aiState;
   const eligibility = aiState.eligibility;
+  const hasSavedGuidance = !!snapshot?.runId;
+  const aiReviewState = AI_FIX_STATE_LABEL[snapshot?.fixState] || AI_FIX_STATE_LABEL.pending_review;
+  const summary = run?.shortFrontlineVersion || snapshot?.frontline || '';
+  const nextSteps = run?.diagnosticSteps?.length ? run.diagnosticSteps : (snapshot?.nextSteps || []);
   const canShowRunNow = eligibility.hasTaskCompanyContext
     && eligibility.aiEnabled
     && eligibility.canRun
     && !run
+    && !hasSavedGuidance
     && !['queued', 'running'].includes(aiState.status);
-  const canShowRerun = eligibility.hasTaskCompanyContext && eligibility.aiEnabled && eligibility.canRun && !!run && eligibility.manualRerunAllowed;
+  const canShowRerun = eligibility.hasTaskCompanyContext && eligibility.aiEnabled && eligibility.canRun && (hasSavedGuidance || !!run) && eligibility.manualRerunAllowed;
   const rerunLabel = run?.status === 'failed' ? 'Retry AI' : 'Rerun AI';
   const statusTone = ({
     bad: 'error',
@@ -485,9 +537,10 @@ function renderAiPanel(task, state, meta) {
     ${actionHint ? `<div class="tiny mt">${actionHint}</div>` : ''}
     ${guidance ? `<div class="tiny mt">${guidance}</div>` : ''}
     ${task.aiSummary?.summary ? `<div class="tiny mt">${task.aiSummary.summary}</div>` : ''}
-    ${run ? renderAiSourceLine(run) : (aiState.status === 'waiting_for_refresh' ? `<div class="tiny mt">${aiState.message}</div>` : '<div class="tiny mt">No AI run yet for this task.</div>')}
-    ${run?.shortFrontlineVersion ? `<div class="tiny mt"><b>Frontline:</b> ${run.shortFrontlineVersion}</div>` : ''}
-    ${run?.diagnosticSteps?.length ? `<div class="tiny mt"><b>Next steps:</b> ${run.diagnosticSteps.join(' | ')}</div>` : ''}
+    ${run ? renderAiSourceLine(run) : (hasSavedGuidance ? `<div class="tiny mt">Latest saved AI guidance (run ${snapshot.runId}) • ${formatDateTime(snapshot.updatedAt)}</div>` : (aiState.status === 'waiting_for_refresh' ? `<div class="tiny mt">${aiState.message}</div>` : '<div class="tiny mt">No AI run yet for this task.</div>'))}
+    ${hasSavedGuidance ? `<div class="inline-state info mt">Saved guidance review state: <b>${aiReviewState}</b></div>` : ''}
+    ${summary ? `<div class="tiny mt"><b>Frontline:</b> ${summary}</div>` : ''}
+    ${nextSteps?.length ? `<div class="tiny mt"><b>Next steps:</b> ${nextSteps.join(' | ')}</div>` : ''}
     ${followup?.questions?.length ? `<div class="inline-state warn mt">AI cannot advance until the follow-up answers below are submitted.</div>
       <form data-followup="${task.id}" data-run="${run.id}" class="grid mt followup-form">${followup.questions.map((question, index) => `<label class="tiny">${question}<input name="a${index}" placeholder="Answer" ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'} /></label>`).join('')}<button class="primary" ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'}>Submit follow-up answers</button></form>` : ''}
     ${!canAnswerAiFollowups(state.permissions) && followup?.questions?.length ? `<div class="tiny mt">Follow-up answers require staff or higher.</div>` : ''}
@@ -495,6 +548,9 @@ function renderAiPanel(task, state, meta) {
     <div class="action-row mt">
       ${canShowRunNow ? `<button data-run-ai="${task.id}">Run AI now</button>` : ''}
       ${canShowRerun ? `<button data-rerun-ai="${task.id}">${rerunLabel}</button>` : ''}
+      ${hasSavedGuidance ? `<button type="button" data-ai-fix-state="approved" data-task-ai-fix-state="${task.id}">Mark approved</button>
+      <button type="button" data-ai-fix-state="rejected" data-task-ai-fix-state="${task.id}">Mark rejected</button>
+      <button type="button" data-ai-fix-state="pending_review" data-task-ai-fix-state="${task.id}">Set pending review</button>` : ''}
       ${aiState.status === 'disabled_by_settings' && canChangeAISettings(state.permissions) ? '<button type="button" data-open-ai-settings="1">Open AI settings</button>' : ''}
       <button data-save-fix="${task.id}" ${canSaveFixToLibrary(state.permissions) ? '' : 'disabled'}>Save fix to library</button>
     </div>
@@ -1110,6 +1166,10 @@ export function renderOperations(el, state, actions) {
   el.querySelectorAll('[data-save-fix]').forEach((button) => button.addEventListener('click', () => {
     state.operationsUi.scrollY = window.scrollY;
     actions.saveFix(button.dataset.saveFix);
+  }));
+  el.querySelectorAll('[data-task-ai-fix-state]').forEach((button) => button.addEventListener('click', () => {
+    state.operationsUi.scrollY = window.scrollY;
+    actions.setAiFixState(button.dataset.taskAiFixState, button.dataset.aiFixState);
   }));
   el.querySelectorAll('[data-followup]').forEach((followupForm) => followupForm.addEventListener('submit', (event) => {
     event.preventDefault();
