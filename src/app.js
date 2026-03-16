@@ -797,7 +797,27 @@ async function render() {
     return;
   }
 
-  renderDashboard(document.getElementById('dashboard'), state, openTab);
+  renderDashboard(document.getElementById('dashboard'), state, openTab, (focus) => {
+    if (focus === 'critical') {
+      state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', exceptionFilter: 'priority' };
+    } else if (focus === 'blocked') {
+      state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', exceptionFilter: 'blocked' };
+    } else if (focus === 'followup') {
+      state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', ownershipFilter: 'followup' };
+    } else if (focus === 'unassigned') {
+      state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', ownershipFilter: 'unassigned' };
+    } else if (focus === 'overdue_open') {
+      state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', exceptionFilter: 'overdue' };
+    } else if (focus === 'pending_invites') {
+      state.adminSection = 'invites';
+    } else if (focus === 'overdue_pm') {
+      state.route = { ...(state.route || {}), pmFilter: 'overdue' };
+      pushRouteState(state.route);
+    } else if (focus === 'missing_docs') {
+      state.route = { ...(state.route || {}), assetFilter: 'missing_docs' };
+      pushRouteState(state.route);
+    }
+  });
 
   const operationsActions = createOperationsActions({
     state,

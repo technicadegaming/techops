@@ -1,6 +1,21 @@
 import { detectRepeatIssues } from './workflow.js';
 import { buildLocationSummary, getLocationEmptyState, getLocationScopeLabel } from './locationContext.js';
 
+function statusChip(label, tone = 'muted') {
+  return `<span class="state-chip ${tone}">${label}</span>`;
+}
+
+function formatRelativeTime(value) {
+  const timestamp = new Date(value || '').getTime();
+  if (!Number.isFinite(timestamp)) return 'time unknown';
+  const diff = Date.now() - timestamp;
+  const minutes = Math.max(1, Math.round(diff / (1000 * 60)));
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
 function isPmOverdue(schedule, now = new Date()) {
   if (!schedule?.dueDate || schedule.status === 'completed') return false;
   const due = new Date(schedule.dueDate);
@@ -15,7 +30,7 @@ function isPmDueSoon(schedule, now = new Date()) {
   return diffDays >= 0 && diffDays <= 7;
 }
 
-export function renderDashboard(el, state, navigate) {
+export function renderDashboard(el, state, navigate, applyFocus = () => {}) {
   const now = new Date();
   const scope = buildLocationSummary(state);
   const openTasks = scope.openTasks;
@@ -32,6 +47,55 @@ export function renderDashboard(el, state, navigate) {
   const overduePm = pmSchedules.filter((schedule) => isPmOverdue(schedule, now));
   const dueSoonPm = pmSchedules.filter((schedule) => isPmDueSoon(schedule, now));
   const openPm = pmSchedules.filter((schedule) => schedule.status !== 'completed');
+  const pendingInvites = (state.invites || []).filter((invite) => invite.status === 'pending' && invite.companyId === state.company?.id);
+  const blockedOpen = openTasks.filter((task) => {
+    const assignedWorkers = task.assignedWorkers || [];
+    const hasUnavailableWorker = assignedWorkers.some((worker) => (state.users || []).some((user) => (
+      (user.id === worker || user.email === worker) && (user.enabled === false || user.available === false)
+    )));
+    return hasUnavailableWorker || (task.status === 'in_progress' && assignedWorkers.length === 0);
+  });
+  const unassignedOpen = openTasks.filter((task) => !(task.assignedWorkers || []).length);
+  const readyToClose = openTasks.filter((task) => task.status === 'in_progress' && (task.assignedWorkers || []).length > 0);
+  const missingDocsAssets = scope.assetsWithoutDocs || [];
+  const overdueTasks = openTasks.filter((task) => {
+    const opened = new Date(task.openedAt || task.createdAtClient || task.updatedAt || 0);
+    if (Number.isNaN(opened.getTime())) return false;
+    const severity = task.severity || 'medium';
+    const threshold = severity === 'critical' ? 4 : severity === 'high' ? 24 : severity === 'low' ? 168 : 72;
+    return ((Date.now() - opened.getTime()) / (1000 * 60 * 60)) >= threshold;
+  });
+
+  const recentActivity = [
+    ...completedToday.map((task) => ({
+      id: `complete-${task.id}`,
+      at: task.closedAt || task.updatedAt || task.updatedAtClient,
+      text: `Task closed: ${task.title || task.id}`,
+      tone: 'good'
+    })),
+    ...openTasks.slice(0, 8).map((task) => ({
+      id: `open-${task.id}`,
+      at: task.openedAt || task.createdAtClient,
+      text: `Task opened: ${task.title || task.id}`,
+      tone: 'info'
+    })),
+    ...(scope.scopedAssets || []).slice(0, 8).map((asset) => ({
+      id: `asset-${asset.id}`,
+      at: asset.updatedAt || asset.enrichmentUpdatedAt,
+      text: `Asset updated: ${asset.name || asset.id}`,
+      tone: (asset.manualLinks || []).length ? 'good' : 'warn'
+    })),
+    ...pendingInvites.map((invite) => ({
+      id: `invite-${invite.id}`,
+      at: invite.updatedAt || invite.createdAt,
+      text: `Invite pending: ${invite.email || invite.id}`,
+      tone: 'warn'
+    }))
+  ]
+    .filter((entry) => entry.at)
+    .sort((a, b) => `${b.at}`.localeCompare(`${a.at}`))
+    .slice(0, 8);
+
   const workload = (state.users || [])
     .filter((user) => user.enabled !== false)
     .map((user) => ({
@@ -54,37 +118,61 @@ export function renderDashboard(el, state, navigate) {
       </div>
     </div>
 
-    <div class="stats-grid">
-      <button class="stat-card ${critical.length ? 'bad' : 'good'} jump" data-tab="operations">
-        <div class="tiny">Critical work orders</div>
+    <div class="priority-band">
+      <div>
+        <div class="tiny">Attention now</div>
+        <h3>Priority control center</h3>
+        <div class="tiny">Urgent cards are highlighted first. Healthy cards stay quieter.</div>
+      </div>
+      <div class="kpi-line">
+        ${statusChip(`${critical.length} urgent`, critical.length ? 'bad' : 'good')}
+        ${statusChip(`${overduePm.length} overdue PM`, overduePm.length ? 'warn' : 'good')}
+        ${statusChip(`${blockedOpen.length} blocked`, blockedOpen.length ? 'bad' : 'good')}
+        ${statusChip(`${missingDocsAssets.length} missing docs`, missingDocsAssets.length ? 'warn' : 'good')}
+      </div>
+    </div>
+
+    <div class="stats-grid dashboard-priority-grid mt">
+      <button class="stat-card priority-card ${critical.length ? 'bad' : 'good'} jump" data-tab="operations" data-focus="critical">
+        <div class="tiny">Critical / open issues</div>
         <strong>${critical.length}</strong>
-        <div class="tiny">${critical.length ? 'Immediate follow-up recommended.' : 'No critical tasks open.'}</div>
+        <div class="tiny">${critical.length ? 'Immediate follow-up recommended.' : 'Healthy: no critical tasks open.'}</div>
       </button>
-      <button class="stat-card ${overduePm.length ? 'warn' : 'good'} jump" data-tab="calendar">
+      <button class="stat-card priority-card ${overduePm.length ? 'warn' : 'good'} jump" data-tab="calendar" data-focus="overdue_pm">
         <div class="tiny">Overdue preventive maintenance</div>
         <strong>${overduePm.length}</strong>
         <div class="tiny">${dueSoonPm.length} due in the next 7 days</div>
       </button>
-      <button class="stat-card ${repeat.length ? 'warn' : 'good'} jump" data-tab="assets">
-        <div class="tiny">Repeat-failure watchlist</div>
-        <strong>${new Set(repeat.map((entry) => entry.assetId).filter(Boolean)).size}</strong>
-        <div class="tiny">${repeat.length ? 'Recurring issue patterns detected.' : 'No repeat patterns in scope.'}</div>
+      <button class="stat-card priority-card ${blockedOpen.length ? 'bad' : 'good'} jump" data-tab="operations" data-focus="blocked">
+        <div class="tiny">Blocked work</div>
+        <strong>${blockedOpen.length}</strong>
+        <div class="tiny">${blockedOpen.length ? 'Needs assignment/follow-up unblock.' : 'Healthy: no blocked work right now.'}</div>
       </button>
-      <button class="stat-card ${needsFollowup.length ? 'warn' : 'good'} jump" data-tab="operations">
-        <div class="tiny">Workflow follow-ups waiting</div>
+      <button class="stat-card priority-card ${missingDocsAssets.length ? 'warn' : 'good'} jump" data-tab="assets" data-focus="missing_docs" data-asset="${missingDocsAssets[0]?.id || ''}">
+        <div class="tiny">Assets missing docs</div>
+        <strong>${missingDocsAssets.length}</strong>
+        <div class="tiny">${missingDocsAssets.length ? 'Documentation review needed.' : 'Healthy: docs linked for scoped assets.'}</div>
+      </button>
+      <button class="stat-card ${needsFollowup.length ? 'warn' : 'good'} jump" data-tab="operations" data-focus="followup">
+        <div class="tiny">Tasks needing follow-up</div>
         <strong>${needsFollowup.length}</strong>
         <div class="tiny">${needsFollowup.length ? 'AI runs need frontline answers.' : 'No follow-up backlog.'}</div>
       </button>
-      <button class="stat-card ${scope.assetsWithoutDocs.length ? 'warn' : 'good'} jump" data-tab="assets">
-        <div class="tiny">Assets missing docs</div>
-        <strong>${scope.assetsWithoutDocs.length}</strong>
-        <div class="tiny">Focus documentation work where repeat failures are showing up.</div>
+      <button class="stat-card ${pendingInvites.length ? 'warn' : 'good'} jump" data-tab="admin" data-focus="pending_invites">
+        <div class="tiny">Pending invites</div>
+        <strong>${pendingInvites.length}</strong>
+        <div class="tiny">${pendingInvites.length ? 'Access requests awaiting acceptance.' : 'Healthy: no pending invites.'}</div>
       </button>
-      <div class="stat-card ${completedToday.length ? 'good' : ''}">
-        <div class="tiny">Recent completions</div>
-        <strong>${completedToday.length}</strong>
-        <div class="tiny">${completedToday.map((task) => task.id).join(' | ') || 'No completed work in this scope yet.'}</div>
-      </div>
+      <button class="stat-card ${unassignedOpen.length ? 'warn' : 'good'} jump" data-tab="operations" data-focus="unassigned">
+        <div class="tiny">Unassigned open work</div>
+        <strong>${unassignedOpen.length}</strong>
+        <div class="tiny">${unassignedOpen.length ? 'Assign owners to keep queue moving.' : 'Healthy: open work has owners.'}</div>
+      </button>
+      <button class="stat-card ${overdueTasks.length ? 'warn' : 'good'} jump" data-tab="operations" data-focus="overdue_open">
+        <div class="tiny">Overdue open tasks</div>
+        <strong>${overdueTasks.length}</strong>
+        <div class="tiny">${readyToClose.length} in-progress tasks could be reviewed for closeout.</div>
+      </button>
     </div>
 
     <div class="grid grid-2 mt">
@@ -110,16 +198,27 @@ export function renderDashboard(el, state, navigate) {
       </div>
     </div>
 
-    <h3>Staff workload snapshot</h3>
+    <h3>Recent activity</h3>
+    ${recentActivity.length
+      ? `<div class="list">${recentActivity.map((entry) => `<div class="item tiny"><div class="row space"><span>${entry.text}</span>${statusChip(formatRelativeTime(entry.at), entry.tone)}</div></div>`).join('')}</div>`
+      : '<div class="inline-state info">No recent activity found in this scope yet.</div>'}
+
+    <h3>Team workload snapshot</h3>
     ${workload.length
-      ? `<div class="list">${workload.map((row) => `<div class="item tiny"><b>${row.user.email || row.user.id}</b> | ${row.user.role || 'staff'} | open workload ${row.count} | ${row.user.available === false ? 'unavailable' : 'available'}</div>`).join('')}</div>`
+      ? `<div class="list">${workload.map((row) => `<div class="item tiny"><div class="row space"><b>${row.user.email || row.user.id}</b>${statusChip(row.count ? `open ${row.count}` : 'clear', row.count > 3 ? 'warn' : row.count ? 'info' : 'good')}</div><div class="tiny">${row.user.role || 'staff'} · ${row.user.available === false ? 'unavailable' : 'available'} · ${row.count > 0 ? 'assigned work in queue' : 'no assigned open tasks'}</div></div>`).join('')}</div>`
       : '<div class="inline-state info">No active staff records are available for workload balancing yet.</div>'}
 
-    <h3>Recurring-problem watchlist</h3>
-    ${repeat.length
-      ? `<div class="list">${repeat.slice(0, 6).map((entry) => `<button class="item jump" data-tab="assets" data-asset="${entry.assetId}"><b>${entry.assetId || 'Unknown asset'}</b><div class="tiny">${entry.issueCategory || 'uncategorized'} | repeated ${entry.count} times</div></button>`).join('')}</div>`
-      : '<div class="inline-state success">No repeat issues detected in the current scope.</div>'}
+    <details class="mt">
+      <summary><b>Recurring-problem watchlist</b> <span class="tiny">(lower-priority detail)</span></summary>
+      ${repeat.length
+      ? `<div class="list mt">${repeat.slice(0, 6).map((entry) => `<button class="item jump" data-tab="assets" data-asset="${entry.assetId}"><b>${entry.assetId || 'Unknown asset'}</b><div class="tiny">${entry.issueCategory || 'uncategorized'} | repeated ${entry.count} times</div></button>`).join('')}</div>`
+      : '<div class="inline-state success mt">No repeat issues detected in the current scope.</div>'}
+    </details>
   `;
 
-  el.querySelectorAll('.jump').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.tab, button.dataset.id || null, button.dataset.asset || null)));
+  el.querySelectorAll('.jump').forEach((button) => button.addEventListener('click', () => {
+    const focus = button.dataset.focus || null;
+    if (focus) applyFocus(focus);
+    navigate(button.dataset.tab, button.dataset.id || null, button.dataset.asset || null);
+  }));
 }
