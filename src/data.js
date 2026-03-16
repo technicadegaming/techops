@@ -85,9 +85,28 @@ export async function loadUserProfile(uid) {
 
 export async function saveUserProfile(uid, profile, actor) {
   const ref = doc(db, C.users, uid);
-  const before = (await getDoc(ref)).data() || null;
+  let before = null;
+  try {
+    before = (await getDoc(ref)).data() || null;
+  } catch (error) {
+    const code = `${error?.code || ''}`.toLowerCase();
+    if (!code.includes('permission-denied')) throw error;
+  }
   await setDoc(ref, withMeta({ id: uid, ...profile }, actor || { uid }, !before), { merge: true });
-  await logAudit({ action: before ? 'update' : 'create', entityType: 'users', entityId: uid, summary: 'user profile changed', user: actor || { uid }, before, after: profile });
+  try {
+    await logAudit({
+      action: before ? 'update' : 'create',
+      entityType: 'users',
+      entityId: uid,
+      summary: 'user profile changed',
+      user: actor || { uid },
+      before,
+      after: profile,
+      scoped: false
+    });
+  } catch (error) {
+    console.warn('[saveUserProfile] audit log skipped', error);
+  }
 }
 
 export const defaultAiSettings = {

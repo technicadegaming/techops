@@ -8,6 +8,15 @@ function getReadablePersonName(person = {}) {
   return person.fullName || person.displayName || person.email || person.userId || person.id || 'Unknown person';
 }
 
+function renderCompanyAddress(company = {}) {
+  const street = `${company.hqStreet || ''}`.trim();
+  const city = `${company.hqCity || ''}`.trim();
+  const state = `${company.hqState || ''}`.trim();
+  const zip = `${company.hqZip || ''}`.trim();
+  const locality = [city, state].filter(Boolean).join(', ');
+  return [street, locality, zip].filter(Boolean).join(' ').trim() || company.address || '-';
+}
+
 const aiBooleanFields = ['aiEnabled', 'aiAutoAttach', 'aiUseInternalKnowledge', 'aiUseWebSearch', 'aiAskFollowups', 'aiAllowManualRerun', 'aiSaveSuccessfulFixesToLibraryDefault', 'aiShortResponseMode', 'aiVerboseManagerMode', 'aiFeedbackCollectionEnabled', 'mobileConciseModeDefault'];
 const aiNumericFields = ['aiMaxWebSources', 'aiConfidenceThreshold'];
 const aiTextFields = ['aiModel', 'defaultTaskSeverity', 'taskIntakeRequiredFields'];
@@ -83,6 +92,7 @@ export function renderAdmin(el, state, actions) {
         <div><b>Onboarding complete:</b> ${state.company?.onboardingCompleted ? 'Yes' : 'No'}</div>
         <div><b>Email:</b> ${state.company?.primaryEmail || '-'}</div>
         <div><b>Phone:</b> ${state.company?.primaryPhone || '-'}</div>
+        <div><b>HQ address:</b> ${renderCompanyAddress(state.company)}</div>
         <div><b>Timezone:</b> ${state.company?.timeZone || '-'}</div>
       </div>
     </section>

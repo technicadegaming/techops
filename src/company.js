@@ -6,6 +6,30 @@ const C = appConfig.collections;
 
 const slugify = (value = '') => `${value}`.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 40);
 
+function composeAddress(parts = {}) {
+  const street = `${parts.street || ''}`.trim();
+  const city = `${parts.city || ''}`.trim();
+  const state = `${parts.state || ''}`.trim();
+  const zip = `${parts.zip || ''}`.trim();
+  const locality = [city, state].filter(Boolean).join(', ');
+  return [street, locality, zip].filter(Boolean).join(' ').trim();
+}
+
+function normalizeHeadquarters(payload = {}) {
+  const street = `${payload.hqStreet || ''}`.trim();
+  const city = `${payload.hqCity || ''}`.trim();
+  const state = `${payload.hqState || ''}`.trim();
+  const zip = `${payload.hqZip || ''}`.trim();
+  const address = `${payload.address || ''}`.trim() || composeAddress({ street, city, state, zip });
+  return {
+    street,
+    city,
+    state,
+    zip,
+    address
+  };
+}
+
 function randomCode(size = 8) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let out = '';
@@ -75,12 +99,17 @@ export async function createCompanyFromOnboarding(user, payload = {}) {
   const baseName = `${payload.name || ''}`.trim();
   if (!baseName) throw new Error('Company name is required.');
   const companyId = `co-${slugify(baseName) || user.uid.slice(0, 8)}-${Date.now().toString(36).slice(-4)}`;
+  const headquarters = normalizeHeadquarters(payload);
   await setDoc(doc(db, C.companies, companyId), {
     id: companyId,
     name: baseName,
     primaryEmail: payload.primaryEmail || user.email,
     primaryPhone: payload.primaryPhone || '',
-    address: payload.address || '',
+    address: headquarters.address,
+    hqStreet: headquarters.street,
+    hqCity: headquarters.city,
+    hqState: headquarters.state,
+    hqZip: headquarters.zip,
     timeZone: payload.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     estimatedUsers: Number(payload.estimatedUsers || 0) || null,
     estimatedAssets: Number(payload.estimatedAssets || 0) || null,
@@ -112,7 +141,7 @@ export async function createCompanyFromOnboarding(user, payload = {}) {
   if (!locations.length) {
     locations.push({
       name: `${baseName} HQ`,
-      address: payload.address || '',
+      address: headquarters.address,
       timeZone: baseTimeZone,
       notes: 'Auto-created from company profile.'
     });
