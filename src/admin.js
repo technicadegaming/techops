@@ -39,6 +39,12 @@ const AI_SETTINGS_SCHEMA = [
   { section: 'Mobile defaults', fields: [{ key: 'mobileConciseModeDefault', label: 'Mobile concise mode default', help: 'Prefer compact wording on mobile layouts.' }, { key: 'defaultTaskSeverity', label: 'Default task severity', help: 'Pre-selected task severity for intake.' }, { key: 'aiConfidenceThreshold', label: 'Confidence threshold', type: 'number', help: 'Minimum confidence before stronger suggestions.' }] }
 ];
 
+const NOTIFICATION_PREF_OPTIONS = [
+  'task_assigned', 'task_overdue', 'pm_due_soon', 'pm_overdue', 'invite_received', 'invite_accepted',
+  'ai_troubleshooting_ready', 'docs_suggestions_ready', 'doc_review_ready', 'followup_required', 'task_ready_to_close',
+  'task_recently_closed', 'blocked_work', 'unassigned_open_work'
+];
+
 const ADMIN_SECTIONS = [
   { id: 'company', label: 'Company' },
   { id: 'locations', label: 'Locations' },
@@ -88,6 +94,7 @@ export function renderAdmin(el, state, actions) {
   const locations = state.companyLocations || [];
   const locationOptions = buildLocationOptions(state).filter((option) => option.id);
   const settings = { ...defaultAiSettings, ...(state.settings || {}) };
+  const selectedNotificationPrefs = new Set((state.settings?.notificationPrefs?.enabledTypes || []));
   const adminUi = state.adminUi || {};
   const workerEmailSet = new Set(workers.map((worker) => `${worker.email || ''}`.trim().toLowerCase()).filter(Boolean));
   const memberEmailSet = new Set(members.map((member) => `${member.email || ''}`.trim().toLowerCase()).filter(Boolean));
@@ -217,6 +224,13 @@ export function renderAdmin(el, state, actions) {
   }).join('')}</fieldset>`).join('')}
         <button ${canChangeAISettings(state.permissions) ? '' : 'disabled'}>Save settings</button>
       </form>
+      <details class="mt"><summary><b>Notification preferences (scaffold)</b></summary>
+        <form id="notificationPrefsForm" class="grid mt">
+          <div class="tiny">Enable the in-app event categories that should generate notifications for this company/user context.</div>
+          <div class="grid grid-2">${NOTIFICATION_PREF_OPTIONS.map((key) => `<label><input type="checkbox" name="notificationType" value="${key}" ${selectedNotificationPrefs.size === 0 || selectedNotificationPrefs.has(key) ? 'checked' : ''} /> ${key.replace(/_/g, ' ')}</label>`).join('')}</div>
+          <button type="submit">Save notification preferences</button>
+        </form>
+      </details>
     </section>
 
     <section class="item ${activeSection === 'danger' ? '' : 'hide'}" data-admin-section="danger">
@@ -303,6 +317,14 @@ export function renderAdmin(el, state, actions) {
   el.querySelector('#clearAssets')?.addEventListener('click', () => confirmDanger() && actions.clearAssets());
   el.querySelector('#clearWorkers')?.addEventListener('click', () => confirmDanger() && actions.clearWorkers());
   el.querySelector('#resetWorkspace')?.addEventListener('click', () => confirmDanger() && actions.resetWorkspace());
+
+
+  el.querySelector('#notificationPrefsForm')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const fd = new FormData(event.currentTarget);
+    const enabledTypes = fd.getAll('notificationType').map((value) => `${value || ''}`.trim()).filter(Boolean);
+    actions.saveNotificationPrefs(enabledTypes);
+  });
 
   el.querySelector('#aiSettingsForm')?.addEventListener('submit', (event) => {
     event.preventDefault();

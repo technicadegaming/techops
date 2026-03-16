@@ -225,6 +225,15 @@ export function createAdminActions(deps) {
       setAdminFeedback({ tone: 'success', message: 'AI settings saved.' });
       await refreshData();
       render();
+    },
+    saveNotificationPrefs: async (enabledTypes = []) => {
+      await saveAppSettings({
+        ...state.settings,
+        notificationPrefs: { enabledTypes }
+      }, state.user);
+      setAdminFeedback({ tone: 'success', message: 'Notification preferences saved.' });
+      await refreshData();
+      render();
     }
   };
 }
