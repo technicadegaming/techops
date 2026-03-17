@@ -1,0 +1,13 @@
+{
+  "name": "scoot-business-techops",
+  "private": true,
+  "scripts": {
+    "test": "npm run test --prefix functions",
+    "lint": "eslint src/**/*.js functions/src/**/*.js functions/test/**/*.js"
+  },
+  "devDependencies": {
+    "eslint": "^9.22.0",
+    "@eslint/js": "^9.22.0",
+    "globals": "^15.15.0"
+  }
+}

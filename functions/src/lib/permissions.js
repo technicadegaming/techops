@@ -24,9 +24,10 @@ function canAnswerFollowup(role) {
   return hasRoleAtLeast(role, 'staff');
 }
 
-
+// Asset enrichment aligns with company membership policy in enrichmentAuthorization:
+// owner/admin/manager only for company-scoped assets, owner/admin globally.
 function canRunAssetEnrichment(role) {
-  return hasRoleAtLeast(role, 'staff');
+  return hasRoleAtLeast(role, 'manager');
 }
 
 function canSaveToTroubleshootingLibrary(role) {

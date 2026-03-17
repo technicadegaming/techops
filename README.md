@@ -1,30 +1,52 @@
-# WOW Technicade Operations Portal
+# Scoot Business TechOps Portal
 
-WOW Technicade is a frontend web app backed by Firebase services for shared, authenticated operations data.
+Scoot Business TechOps is a multi-tenant operations platform for FEC/arcade-style businesses. The codebase still contains some legacy WOW Technicade naming in low-risk internals, but user-facing and operational docs are now standardized toward Scoot Business.
 
-## Architecture (current)
+## What this repo contains
 
-- **Frontend app**: static app (`index.html` + `src/*`) that renders operations, assets, scheduling, reports, admin, and AI actions.
-- **Firebase Auth**: handles sign-in and user identity.
-- **Cloud Firestore**: system-of-record for shared app data.
-- **Cloud Storage**: file storage used by the app.
-- **Cloud Functions**: server-side callable/triggered logic, including AI orchestration.
+- Browser-based operations portal (`src/`) with Firebase Auth + Firestore-backed data flows.
+- Firebase Cloud Functions (`functions/`) for AI-assisted workflows and policy checks.
+- Firebase security rules (`firestore.rules`, `storage.rules`) for tenant isolation.
+- Operational docs under `docs/`.
 
-## AI request path
+## Firebase products in use
 
-- Frontend calls Firebase callable functions (not direct browser-to-OpenAI).
-- AI orchestration is implemented in `functions/src/index.js`.
-- OpenAI access is server-side only, using Firebase Functions secret `OPENAI_API_KEY`.
+- **Authentication** for identity and session management.
+- **Cloud Firestore** for multi-tenant operational records.
+- **Cloud Functions** for secured server-side orchestration.
+- **Cloud Storage** for company-scoped evidence and backup artifacts.
 
-## Key project files
+## Local development
 
-- `functions/src/index.js` - callable + trigger entrypoints (including AI callables).
-- `src/firebase.js` - Firebase app/auth/firestore/functions/storage initialization.
-- `src/aiAdapter.js` - frontend AI adapter that calls backend functions.
-- `firebase.json` - Firebase functions/firestore configuration for this repo.
-- `firestore.indexes.json` - tracked Firestore composite/single-field index definitions.
+### Prerequisites
 
-## Notes
+- Node.js 20+
+- Firebase CLI
 
-- Firestore indexes are source-controlled in `firestore.indexes.json`.
-- Legacy browser-data migration utilities exist for one-time import, but browser storage is not the source of truth.
+### Setup
+
+```bash
+npm install
+npm install --prefix functions
+```
+
+### Verify locally
+
+```bash
+npm run lint
+npm run test --prefix functions
+```
+
+## Deployment (high-level)
+
+See `docs/DEPLOYMENT.md` for full commands and release steps.
+
+## Security and tenancy model (high-level)
+
+- Company data is scoped by `companyId` in Firestore and by storage path prefix:
+  - `companies/{companyId}/evidence/...`
+  - `companies/{companyId}/backups/...`
+- Enrichment authorization policy is standardized across functions libraries and tests.
+- Firebase local secret files (for example `functions/.secret.local`) are ignored and must never be committed.
+
+See `docs/SECURITY.md` and `docs/ARCHITECTURE.md` for details.

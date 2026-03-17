@@ -1,24 +1,67 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    // Storage tenancy model:
+    // - Company evidence must live under companies/{companyId}/evidence/**
+    // - Company backup bundles must live under companies/{companyId}/backups/**
+    // - Access is resolved from users/{uid} and companyMemberships/{companyId}_{uid}
     function signedIn() { return request.auth != null; }
     function userDoc() {
       return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
     }
-    function isAdmin() { return signedIn() && userDoc().role == 'admin' && userDoc().enabled == true; }
-    function isStaffPlus() {
-      return signedIn() && userDoc().enabled == true &&
-      (userDoc().role in ['admin', 'manager', 'assistant_manager', 'lead', 'staff']);
+    function membershipDoc(companyId) {
+      return firestore.get(/databases/(default)/documents/companyMemberships/$(companyId)_$(request.auth.uid)).data;
     }
 
+    function hasEnabledUserRecord() {
+      return signedIn() && userDoc().enabled == true;
+    }
+
+    function isGlobalAdmin() {
+      return hasEnabledUserRecord() && userDoc().role == 'admin';
+    }
+
+    function companyRole(companyId) {
+      return membershipDoc(companyId).role;
+    }
+
+    function isActiveCompanyMember(companyId) {
+      return hasEnabledUserRecord()
+        && membershipDoc(companyId).status == 'active'
+        && (membershipDoc(companyId).companyId == companyId || companyRole(companyId) == 'owner');
+    }
+
+    function canAccessCompanyEvidence(companyId) {
+      return isGlobalAdmin() || (
+        isActiveCompanyMember(companyId)
+        && companyRole(companyId) in ['owner', 'admin', 'manager', 'assistant_manager', 'lead', 'staff']
+      );
+    }
+
+    function canAccessCompanyBackups(companyId) {
+      return isGlobalAdmin() || (
+        isActiveCompanyMember(companyId)
+        && companyRole(companyId) in ['owner', 'admin']
+      );
+    }
+
+    match /companies/{companyId}/evidence/{allPaths=**} {
+      allow read, write: if canAccessCompanyEvidence(companyId);
+      allow delete: if isGlobalAdmin() || (isActiveCompanyMember(companyId) && companyRole(companyId) in ['owner', 'admin', 'manager']);
+    }
+
+    match /companies/{companyId}/backups/{allPaths=**} {
+      allow read, write: if canAccessCompanyBackups(companyId);
+      allow delete: if canAccessCompanyBackups(companyId);
+    }
+
+    // Legacy root-level locations are admin-only to support controlled cleanup/migration.
     match /evidence/{allPaths=**} {
-      allow read: if isStaffPlus();
-      allow write: if isStaffPlus();
-      allow delete: if isAdmin();
+      allow read, write, delete: if isGlobalAdmin();
     }
 
     match /backups/{allPaths=**} {
-      allow read, write: if isAdmin();
+      allow read, write, delete: if isGlobalAdmin();
     }
   }
 }

@@ -1,6 +1,7 @@
 const { requestFollowupQuestions, requestTroubleshootingPlan } = require('./openaiService');
 const { fetchWebContextForTask } = require('./webContextService');
 const { isWeakTaskDescription } = require('../lib/followup');
+const { isoNow } = require('../lib/timestamps');
 
 const DEFAULT_SETTINGS = {
   aiEnabled: false,
@@ -141,9 +142,9 @@ async function createAiRun({ db, taskId, userId, triggerSource, model, settingsS
     model,
     settingsSnapshot,
     companyId: companyId || null,
-    createdAt: new Date().toISOString(),
+    createdAt: isoNow(),
     createdBy: userId,
-    updatedAt: new Date().toISOString(),
+    updatedAt: isoNow(),
     updatedBy: userId
   });
   return runRef;
@@ -152,13 +153,13 @@ async function createAiRun({ db, taskId, userId, triggerSource, model, settingsS
 async function writeAudit(db, payload) {
   await db.collection('auditLogs').add({
     ...payload,
-    timestamp: new Date().toISOString()
+    timestamp: isoNow()
   });
 }
 
 function buildTaskAiSnapshot({ runId, result, taskId, companyId }) {
   const parsed = result?.parsed || {};
-  const updatedAt = new Date().toISOString();
+  const updatedAt = isoNow();
   return {
     currentAiRunId: runId,
     aiStatus: 'completed',
@@ -189,8 +190,8 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
   try {
     await runRef.set({
       status: 'running',
-      startedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      startedAt: isoNow(),
+      updatedAt: isoNow(),
       updatedBy: userId
     }, { merge: true });
 
@@ -209,15 +210,15 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
             libraryCount: context.troubleshootingLibrary.length
           },
           documentationMode: context.documentationContext?.mode || 'web_internal_only',
-          updatedAt: new Date().toISOString(),
+          updatedAt: isoNow(),
           updatedBy: userId
         }, { merge: true });
         await db.collection('tasks').doc(taskId).set({
           currentAiRunId: runRef.id,
           aiStatus: 'followup_required',
-          aiUpdatedAt: new Date().toISOString(),
+          aiUpdatedAt: isoNow(),
           aiFollowupQuestions: followup.questions.slice(0, 8),
-          updatedAt: new Date().toISOString(),
+          updatedAt: isoNow(),
           updatedBy: userId
         }, { merge: true });
         await db.collection('taskAiFollowups').doc(runRef.id).set({
@@ -228,9 +229,9 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
           answers: [],
           status: 'pending',
           companyId: context.task.companyId || null,
-          createdAt: new Date().toISOString(),
+          createdAt: isoNow(),
           createdBy: userId,
-          updatedAt: new Date().toISOString(),
+          updatedAt: isoNow(),
           updatedBy: userId
         }, { merge: true });
         await writeAudit(db, { action: 'ai_followup_required', entityType: 'taskAiRuns', entityId: runRef.id, companyId: context.task.companyId || null, summary: `Follow-up required for task ${taskId}`, userUid: userId, traceId });
@@ -267,7 +268,7 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
       rawResponseMeta: { ...result.responseMeta, traceId },
       shortFrontlineVersion: result.parsed.shortFrontlineVersion,
       detailedManagerVersion: result.parsed.detailedManagerVersion,
-      updatedAt: new Date().toISOString(),
+      updatedAt: isoNow(),
       updatedBy: userId
     }, { merge: true });
 
@@ -284,7 +285,7 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
             taskId,
             companyId: latestTaskCompanyId || expectedCompanyId || null
           }),
-          updatedAt: new Date().toISOString(),
+          updatedAt: isoNow(),
           updatedBy: userId
         }, { merge: true });
       }
@@ -299,7 +300,7 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
           probableCauses: result.parsed.probableCauses,
           diagnosticSteps: result.parsed.diagnosticSteps,
           confidence: result.parsed.confidence,
-          updatedAt: new Date().toISOString()
+          updatedAt: isoNow()
         }
       }, { merge: true });
     }
@@ -311,14 +312,14 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
       status: 'failed',
       error: error.message,
       failureCode: `${error?.code || 'unknown'}`.trim() || 'unknown',
-      updatedAt: new Date().toISOString(),
+      updatedAt: isoNow(),
       updatedBy: userId
     }, { merge: true });
     await db.collection('tasks').doc(taskId).set({
       currentAiRunId: runRef.id,
       aiStatus: 'failed',
-      aiUpdatedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      aiUpdatedAt: isoNow(),
+      updatedAt: isoNow(),
       updatedBy: userId
     }, { merge: true });
     await writeAudit(db, { action: 'ai_run_failed', entityType: 'taskAiRuns', entityId: runRef.id, companyId: taskCompanyId || null, summary: `AI run failed for task ${taskId}: ${error.message}`, userUid: userId, traceId });
