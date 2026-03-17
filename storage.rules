@@ -10,7 +10,7 @@ service firebase.storage {
       return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
     }
     function membershipDoc(companyId) {
-      return firestore.get(/databases/(default)/documents/companyMemberships/$(companyId)_$(request.auth.uid)).data;
+      return firestore.get(/databases/(default)/documents/companyMemberships/$(companyId + '_' + request.auth.uid)).data;
     }
 
     function hasEnabledUserRecord() {
