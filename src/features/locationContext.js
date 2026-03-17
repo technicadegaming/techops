@@ -146,7 +146,7 @@ export function getLocationScopeLabel(selection) {
   return `${selection.name} view`;
 }
 
-export function getLocationEmptyState(selection, nounPlural, nounSingular = nounPlural) {
+export function getLocationEmptyState(selection, nounPlural) {
   if (!selection || selection.key === ALL_LOCATIONS_KEY) return `No ${nounPlural} yet.`;
   if (selection.key === UNASSIGNED_LOCATION_KEY) return `No ${nounPlural} without a location right now.`;
   return `No ${nounPlural} for ${selection.name} right now.`;

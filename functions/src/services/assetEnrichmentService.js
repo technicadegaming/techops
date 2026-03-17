@@ -103,7 +103,7 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   let parsedUrl;
   try {
     parsedUrl = new URL(url);
-  } catch (err) {
+  } catch {
     return null;
   }
 
@@ -338,7 +338,7 @@ async function verifySuggestionUrl(url, fetchImpl = fetch) {
       method: 'HEAD',
       headers: { 'user-agent': 'techops-asset-enrichment/1.0' }
     }, VERIFY_TIMEOUT_MS, fetchImpl);
-  } catch (error) {
+  } catch {
     headResponse = null;
   }
 
@@ -356,7 +356,7 @@ async function verifySuggestionUrl(url, fetchImpl = fetch) {
         }
       }, VERIFY_TIMEOUT_MS, fetchImpl);
       pageSnippet = await getResponse.text();
-    } catch (error) {
+    } catch {
       if (!headResponse) {
         return {
           verified: false,

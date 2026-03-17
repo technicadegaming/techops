@@ -600,7 +600,7 @@ function renderCloseoutSummary(task, meta) {
   </div>`;
 }
 
-function renderCloseout(task, state, meta) {
+function renderCloseout(task, state) {
   if (task.status === 'completed' || !canCloseTasks(state.permissions)) return '';
   return `<details class="item mt" data-closeout-panel="${task.id}">
     <summary><b>Resolve and close task</b></summary>
@@ -951,7 +951,7 @@ export function renderOperations(el, state, actions) {
               </form>` : ''}
               ${(meta.awaitingAssignment || meta.unavailable.length) ? `<div class="row mt"><select data-reassign-select="${task.id}"><option value="">Select worker</option>${workerOptions.map((worker) => `<option value="${worker.id || worker.email || ''}">${getWorkerOptionLabel(worker)}</option>`).join('')}</select><div class="tiny">Required before moving this task into progress.</div></div>` : ''}
               ${renderCloseoutSummary(task, meta)}
-              ${renderCloseout(task, state, meta)}
+              ${renderCloseout(task, state)}
               ${renderAiPanel(task, state, meta)}
             </div>
           </details>`;
