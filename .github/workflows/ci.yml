@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  functions-test:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,3 +25,5 @@ jobs:
         run: npm run lint
       - name: Functions tests
         run: npm run test --prefix functions
+      - name: Firebase rules tests
+        run: npm run test:rules

@@ -35,7 +35,19 @@ npm install --prefix functions
 ```bash
 npm run lint
 npm run test --prefix functions
+npm run test:rules
 ```
+
+
+### Security rules tests (Firestore + Storage)
+
+Rules tests use the Firebase Local Emulator Suite via `firebase emulators:exec` and Node's built-in test runner.
+
+```bash
+npm run test:rules
+```
+
+This command starts local Firestore + Storage emulators, runs `test/rules/security.rules.test.js`, and then shuts emulators down automatically.
 
 ## Contributor operating guide
 
