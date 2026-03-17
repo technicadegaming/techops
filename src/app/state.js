@@ -48,7 +48,7 @@ export function createInitialState() {
     permissions: buildPermissionContext(), onboardingRequired: false, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], companyMembers: [], workers: [], invites: [],
     companyLocations: [], importHistory: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], notifications: [], notificationPrefs: { enabledTypes: [] }, settings: {},
     restorePayload: null, route: parseRouteState(), assetDraft: createEmptyAssetDraft(), assetUi: { lastActionByAsset: {}, onboardingReviewQueue: [], onboardingValidationErrors: [] },
-    adminUi: { tone: 'info', message: '', importPreview: '', importSummary: '', importTone: 'info' },
+    adminUi: { tone: 'info', message: '', importPreview: '', importSummary: '', importTone: 'info', assetReviewFilter: 'needs_review', selectedAssetReviewIds: [], selectedSuggestionsByAsset: {} },
     operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0, statusFilter: 'open', ownershipFilter: 'all', lastSaveFeedback: '', lastSaveTone: 'info', aiTaskStates: {}, evidenceUploadsByTask: {}, lastSavedTaskId: null },
     adminSection: 'company', onboardingUi: { tone: 'info', message: '', pendingAction: '', handoffStatus: 'idle' }, setupWizard: { active: false, step: 1, message: '', tone: 'info' }
   };
