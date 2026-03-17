@@ -5,36 +5,69 @@ service firebase.storage {
     // - Company evidence must live under companies/{companyId}/evidence/**
     // - Company backup bundles must live under companies/{companyId}/backups/**
     // - Access is resolved from users/{uid} and companyMemberships/{companyId}_{uid}
-    function signedIn() { return request.auth != null; }
-    function userDoc() {
-      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    function signedIn() {
+      return request.auth != null;
     }
-    function membershipDoc(companyId) {
-      return firestore.get(/databases/(default)/documents/companyMemberships/$(companyId)_$(request.auth.uid)).data;
+
+    function membershipId(companyId) {
+      return companyId + '_' + request.auth.uid;
+    }
+
+    function hasUserDoc() {
+      return signedIn()
+        && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid));
+    }
+
+    function userSnapshot() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid));
+    }
+
+    function hasMembershipDoc(companyId) {
+      return signedIn()
+        && firestore.exists(/databases/(default)/documents/companyMemberships/$(membershipId(companyId)));
+    }
+
+    function membershipSnapshot(companyId) {
+      return firestore.get(/databases/(default)/documents/companyMemberships/$(membershipId(companyId)));
     }
 
     function hasEnabledUserRecord() {
-      return signedIn() && userDoc().enabled == true;
+      return hasUserDoc()
+        && userSnapshot().data.enabled == true;
     }
 
     function isGlobalAdmin() {
-      return hasEnabledUserRecord() && userDoc().role == 'admin';
+      return hasEnabledUserRecord()
+        && userSnapshot().data.role == 'admin';
     }
 
     function companyRole(companyId) {
-      return membershipDoc(companyId).role;
+      return hasMembershipDoc(companyId)
+        ? membershipSnapshot(companyId).data.role
+        : null;
     }
 
     function isActiveCompanyMember(companyId) {
       return hasEnabledUserRecord()
-        && membershipDoc(companyId).status == 'active'
-        && (membershipDoc(companyId).companyId == companyId || companyRole(companyId) == 'owner');
+        && hasMembershipDoc(companyId)
+        && membershipSnapshot(companyId).data.status == 'active'
+        && (
+          membershipSnapshot(companyId).data.companyId == companyId
+          || companyRole(companyId) == 'owner'
+        );
     }
 
     function canAccessCompanyEvidence(companyId) {
       return isGlobalAdmin() || (
         isActiveCompanyMember(companyId)
-        && companyRole(companyId) in ['owner', 'admin', 'manager', 'assistant_manager', 'lead', 'staff']
+        && companyRole(companyId) in [
+          'owner',
+          'admin',
+          'manager',
+          'assistant_manager',
+          'lead',
+          'staff'
+        ]
       );
     }
 
@@ -47,7 +80,11 @@ service firebase.storage {
 
     match /companies/{companyId}/evidence/{allPaths=**} {
       allow read, write: if canAccessCompanyEvidence(companyId);
-      allow delete: if isGlobalAdmin() || (isActiveCompanyMember(companyId) && companyRole(companyId) in ['owner', 'admin', 'manager']);
+      allow delete: if isGlobalAdmin()
+        || (
+          isActiveCompanyMember(companyId)
+          && companyRole(companyId) in ['owner', 'admin', 'manager']
+        );
     }
 
     match /companies/{companyId}/backups/{allPaths=**} {
