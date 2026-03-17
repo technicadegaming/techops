@@ -9,8 +9,11 @@ service firebase.storage {
     function userDoc() {
       return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
     }
+    function membershipId(companyId) {
+      return companyId + '_' + request.auth.uid;
+    }
     function membershipDoc(companyId) {
-      return firestore.get(/databases/(default)/documents/companyMemberships/$(companyId)_$(request.auth.uid)).data;
+      return firestore.get(/databases/(default)/documents/companyMemberships/$(membershipId(companyId))).data;
     }
 
     function hasEnabledUserRecord() {
