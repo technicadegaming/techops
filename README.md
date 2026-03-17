@@ -37,6 +37,12 @@ npm run lint
 npm run test --prefix functions
 ```
 
+## Contributor operating guide
+
+- Repository-level Codex guidance and completion criteria live in `AGENTS.md`.
+- Near-term phased implementation sequence lives in `docs/NEXT_PHASE_EXECUTION_PLAN.md`.
+- Keep changes incremental and non-destructive to current Firebase tenancy architecture.
+
 ## Deployment (high-level)
 
 See `docs/DEPLOYMENT.md` for full commands and release steps.
