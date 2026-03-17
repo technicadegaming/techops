@@ -1,28 +1,25 @@
 import { pushRouteState } from '../features/workflow.js';
 
-export function tabVisible(tab) {
-  const value = tab === 'home' ? 'dashboard' : tab;
-  return value || 'dashboard';
+export function tabVisible(state, tab, canViewAdminTab) {
+  if (state.onboardingRequired) return tab === 'dashboard';
+  if (tab === 'admin') return canViewAdminTab();
+  return true;
 }
 
-export function openTab(state, render, name, taskId = null, assetId = null) {
-  state.route = {
-    ...state.route,
-    tab: tabVisible(name),
-    taskId: taskId || null,
-    assetId: assetId || null,
-    pmFilter: null
-  };
+export function buildTabs({ state, sections, canViewAdminTab, onOpenTab, documentRef = document }) {
+  const tabs = documentRef.getElementById('tabs');
+  tabs.innerHTML = sections
+    .filter((section) => tabVisible(state, section, canViewAdminTab))
+    .map((id) => `<button class="tab ${id === state.route.tab ? 'active' : ''}" data-tab="${id}">${id}</button>`)
+    .join('');
+  tabs.querySelectorAll('[data-tab]').forEach((button) => button.addEventListener('click', () => onOpenTab(button.dataset.tab)));
+}
+
+export function openTab({ state, name, taskId = null, assetId = null, documentRef = document }) {
+  state.route = { ...state.route, tab: name, taskId: taskId || null, assetId: assetId || null };
   pushRouteState(state.route);
-  render();
-}
-
-export function buildTabs(state, rootEl, render) {
-  const tabs = rootEl.querySelector('#tabs');
-  tabs.querySelectorAll('[data-tab]').forEach((button) => {
-    const selected = button.dataset.tab === tabVisible(state.route.tab);
-    button.classList.toggle('active', selected);
-    button.setAttribute('aria-selected', selected ? 'true' : 'false');
-  });
-  tabs.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => openTab(state, render, b.dataset.tab)));
+  documentRef.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === name));
+  documentRef.querySelectorAll('.section').forEach((section) => section.classList.toggle('active', section.id === name));
+  if (taskId) setTimeout(() => documentRef.getElementById(`task-${taskId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 120);
+  if (assetId) setTimeout(() => documentRef.getElementById(`asset-${assetId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 120);
 }

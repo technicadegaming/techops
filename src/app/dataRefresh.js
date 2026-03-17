@@ -1,8 +1,7 @@
-import { getAppSettings, listAudit, listEntities, setActiveCompanyContext } from '../data.js';
-import { getCompany, listCompanyMembers, listMembershipsByUser } from '../company.js';
+import { countEntities, getAppSettings, listAudit, listEntities, setActiveCompanyContext } from '../data.js';
+import { ensureBootstrapCompanyForLegacyUser, getCompany, listCompanyMembers, listMembershipsByUser } from '../company.js';
 import { buildPermissionContext, isGlobalAdmin } from '../roles.js';
-import { getWorkspaceReadiness } from '../features/workspaceReadiness.js';
-import { ACTIVE_MEMBERSHIP_STORAGE_KEY } from './state.js';
+import { ACTIVE_MEMBERSHIP_STORAGE_KEY, syncSetupWizardState } from './state.js';
 
 export function getStoredActiveMembershipId(userId) {
   if (!userId) return '';
@@ -19,58 +18,91 @@ export function storeActiveMembershipId(userId, membershipId) {
   }
 }
 
-export async function hydrateMembershipCompanies(state) {
-  const membershipCompanies = {};
-  for (const membership of state.memberships || []) {
-    if (!membership?.companyId) continue;
-    membershipCompanies[membership.companyId] = await getCompany(membership.companyId).catch(() => null);
+export async function hydrateMembershipCompanies(state, memberships = state.memberships || []) {
+  const companyEntries = await Promise.all((memberships || []).map(async (membership) => {
+    const company = await getCompany(membership.companyId).catch(() => null);
+    return [membership.id, company];
+  }));
+  state.membershipCompanies = Object.fromEntries(companyEntries);
+}
+
+export async function refreshData(state, options = {}) {
+  state.tasks = await listEntities('tasks').catch(() => []);
+  state.operations = await listEntities('operations').catch(() => []);
+  state.assets = await listEntities('assets').catch(() => []);
+  state.pmSchedules = await listEntities('pmSchedules').catch(() => []);
+  state.manuals = await listEntities('manuals').catch(() => []);
+  state.notes = await listEntities('notes').catch(() => []);
+  state.users = await listEntities('users').catch(() => []);
+  state.companyMembers = state.company?.id ? await listCompanyMembers(state.company.id).catch(() => []) : [];
+  state.workers = await listEntities('workers').catch(() => []);
+  state.invites = await listEntities('companyInvites').catch(() => []);
+  state.companyLocations = await listEntities('companyLocations').catch(() => []);
+  state.importHistory = await listEntities('importHistory').catch(() => []);
+  state.settings = await getAppSettings().catch(() => ({}));
+  state.auditLogs = await listAudit().catch(() => []);
+  state.taskAiRuns = await listEntities('taskAiRuns').catch(() => []);
+  state.taskAiFollowups = await listEntities('taskAiFollowups').catch(() => []);
+  state.troubleshootingLibrary = await listEntities('troubleshootingLibrary').catch(() => []);
+  state.notifications = await listEntities('notifications').catch(() => []);
+  state.notificationPrefs = state.settings.notificationPrefs || { enabledTypes: [] };
+  if (typeof options.syncNotifications === 'function') {
+    await options.syncNotifications();
+    state.notifications = await listEntities('notifications').catch(() => []);
   }
-  state.membershipCompanies = membershipCompanies;
+  syncSetupWizardState(state);
 }
 
-export async function refreshData(state) {
-  state.tasks = await listEntities('tasks');
-  state.operations = await listEntities('operations');
-  state.assets = await listEntities('assets');
-  state.pmSchedules = await listEntities('pmSchedules');
-  state.manuals = await listEntities('manuals');
-  state.notes = await listEntities('notes');
-  state.users = await listEntities('users');
-  state.workers = await listEntities('workers');
-  state.invites = await listEntities('companyInvites');
-  state.companyLocations = await listEntities('companyLocations');
-  state.importHistory = await listEntities('importHistory');
-  state.taskAiRuns = await listEntities('taskAiRuns');
-  state.taskAiFollowups = await listEntities('taskAiFollowups');
-  state.troubleshootingLibrary = await listEntities('troubleshootingLibrary');
-  state.notifications = await listEntities('notifications');
-  state.companyMembers = state.company?.id ? await listCompanyMembers(state.company.id) : [];
-  state.auditLogs = await listAudit(200);
-  state.settings = await getAppSettings();
-  state.permissions = buildPermissionContext({ user: state.user, profile: state.profile, activeMembership: state.activeMembership, company: state.company });
-  const readiness = getWorkspaceReadiness(state);
-  const dismissed = !!state.settings?.workspaceReadinessDismissedAt;
-  state.setupWizard = { ...(state.setupWizard || {}), active: !!state.company?.id && !state.onboardingRequired && readiness.needsSetupWizard && !dismissed, step: state.setupWizard?.step || 1 };
+export async function setActiveMembership(state, nextMembership, options = {}) {
+  const membershipId = typeof nextMembership === 'string' ? nextMembership : nextMembership?.id;
+  const membership = (state.memberships || []).find((entry) => entry.id === membershipId) || (typeof nextMembership === 'object' ? nextMembership : null);
+  if (!membership) {
+    state.activeMembership = null;
+    state.company = null;
+    state.permissions = buildPermissionContext({ profile: state.profile, membership: null });
+    state.onboardingRequired = true;
+    syncSetupWizardState(state);
+    storeActiveMembershipId(state.user?.uid, '');
+    setActiveCompanyContext(null);
+    if (!options.skipRender && typeof options.render === 'function') options.render();
+    return;
+  }
+
+  state.activeMembership = membership;
+  state.permissions = buildPermissionContext({ profile: state.profile, membership });
+  const company = state.membershipCompanies?.[membership.id] || await getCompany(membership.companyId);
+  state.membershipCompanies = { ...state.membershipCompanies, [membership.id]: company };
+  state.company = company;
+  state.onboardingRequired = false;
+  syncSetupWizardState(state);
+  storeActiveMembershipId(state.user?.uid, membership.id);
+  setActiveCompanyContext(company?.id || membership.companyId, { allowLegacy: isGlobalAdmin(state.permissions) });
+
+  if (!options.skipRefresh && typeof options.refreshData === 'function') await options.refreshData();
+  if (!options.skipRender && typeof options.render === 'function') options.render();
 }
 
-export async function setActiveMembership(state, membership) {
-  state.activeMembership = membership || null;
-  const companyId = `${state.activeMembership?.companyId || ''}`.trim();
-  setActiveCompanyContext(companyId || null);
-  state.company = companyId ? (await getCompany(companyId).catch(() => null)) : null;
-  state.companyMembers = companyId ? await listCompanyMembers(companyId).catch(() => []) : [];
-  state.permissions = buildPermissionContext({ user: state.user, profile: state.profile, activeMembership: state.activeMembership, company: state.company });
-  storeActiveMembershipId(state.user?.uid, state.activeMembership?.id || '');
-}
+export async function bootstrapCompanyContext(state, options = {}) {
+  setActiveCompanyContext(null);
+  const memberships = await listMembershipsByUser(state.user.uid);
+  state.memberships = memberships;
+  const hasLegacyData = (await countEntities('assets').catch(() => 0)) + (await countEntities('tasks').catch(() => 0)) + (await countEntities('operations').catch(() => 0)) > 0;
+  if (!memberships.length) {
+    const adopted = await ensureBootstrapCompanyForLegacyUser(state.user, state.profile, hasLegacyData);
+    if (adopted?.membership) state.memberships = [adopted.membership];
+  }
 
-export function canBypassCompany(state) {
-  return isGlobalAdmin(state.permissions);
-}
+  await hydrateMembershipCompanies(state, state.memberships);
+  const currentMembershipId = `${state.activeMembership?.id || ''}`.trim();
+  const storedMembershipId = getStoredActiveMembershipId(state.user?.uid);
+  const activeMembership = state.memberships.find((membership) => membership.id === currentMembershipId)
+    || state.memberships.find((membership) => membership.id === storedMembershipId)
+    || state.memberships[0]
+    || null;
 
-export async function bootstrapCompanyContext(state) {
-  state.memberships = await listMembershipsByUser(state.user.uid);
-  await hydrateMembershipCompanies(state);
-  const storedMembershipId = getStoredActiveMembershipId(state.user.uid);
-  const activeMembership = state.memberships.find((m) => m.id === storedMembershipId) || state.memberships[0] || null;
-  await setActiveMembership(state, activeMembership);
+  await setActiveMembership(state, activeMembership, {
+    ...options,
+    skipRefresh: true,
+    skipRender: true
+  });
 }

@@ -1,5 +1,6 @@
 import { buildPermissionContext } from '../roles.js';
 import { parseRouteState } from '../features/workflow.js';
+import { getWorkspaceReadiness } from '../features/workspaceReadiness.js';
 
 export const ACTIVE_MEMBERSHIP_STORAGE_KEY = 'techops.activeMembership';
 export const sections = ['dashboard', 'operations', 'assets', 'calendar', 'reports', 'account', 'admin'];
@@ -19,6 +20,26 @@ export function buildPreviewQueryKey(payload = {}) {
   const assetId = `${payload.assetId || ''}`.trim().toLowerCase();
   const followupAnswer = `${payload.followupAnswer || ''}`.trim().toLowerCase();
   return [assetName, manufacturer, serialNumber, assetId, followupAnswer].join('|');
+}
+
+export function setOnboardingFeedback(state, message = '', tone = 'info', extra = {}) {
+  state.onboardingUi = { ...(state.onboardingUi || {}), message, tone, ...extra };
+}
+
+export function setSetupWizardFeedback(state, message = '', tone = 'info') {
+  state.setupWizard = { ...(state.setupWizard || {}), message, tone };
+}
+
+export function syncSetupWizardState(state) {
+  const readiness = getWorkspaceReadiness(state);
+  const dismissed = !!state.settings?.workspaceReadinessDismissedAt;
+  const shouldShow = !!state.company?.id && !state.onboardingRequired && readiness.needsSetupWizard && !dismissed;
+  state.setupWizard = {
+    ...(state.setupWizard || {}),
+    active: shouldShow,
+    step: state.setupWizard?.step || 1
+  };
+  if (!shouldShow) state.setupWizard = { ...(state.setupWizard || {}), active: false, message: '', tone: 'info' };
 }
 
 export function createInitialState() {
