@@ -4,7 +4,6 @@ export function createAssetActions(deps) {
     onLocationFilter,
     render,
     refreshData,
-    runAction,
     withRequiredCompanyId,
     upsertEntity,
     deleteEntity,

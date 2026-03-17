@@ -43,7 +43,7 @@ function isHttpUrl(value) {
   try {
     const parsed = new URL(`${value || ''}`);
     return /^https?:$/.test(parsed.protocol);
-  } catch (error) {
+  } catch {
     return false;
   }
 }
