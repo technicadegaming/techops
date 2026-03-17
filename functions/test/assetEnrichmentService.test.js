@@ -27,7 +27,7 @@ test('normalizeDocumentationSuggestions filters weak and malformed links and ran
   assert.ok(suggestions.length >= 1);
   assert.equal(suggestions[0].url, 'https://www.manufacturer.com/manuals/cool-game-deluxe');
   assert.ok(suggestions.every((row) => /^https?:\/\//.test(row.url)));
-  assert.ok(suggestions.every((row) => Number(row.matchScore) >= 35));
+  assert.ok(suggestions.every((row) => Number(row.matchScore) >= 48));
   assert.ok(suggestions.some((row) => row.isOfficial));
 });
 
@@ -58,7 +58,7 @@ test('verifySuggestionUrl marks dead pages and verified links', async () => {
   assert.equal(goodResult.httpStatus, 200);
 });
 
-test('verifyDocumentationSuggestions sorts verified links first and preserves existing metadata', async () => {
+test('verifyDocumentationSuggestions keeps verification metadata and dead-page suppression', async () => {
   const fetchMock = async (url, options = {}) => {
     if (options.method === 'HEAD') {
       return { ok: true, status: 200, text: async () => '' };
@@ -75,16 +75,17 @@ test('verifyDocumentationSuggestions sorts verified links first and preserves ex
   ], fetchMock);
 
   assert.equal(verified.length, 2);
-  assert.equal(verified[0].url, 'https://example.com/good');
-  assert.equal(verified[0].verified, true);
-  assert.equal(verified[1].verified, false);
-  assert.equal(verified[1].deadPage, true);
+  const deadRow = verified.find((row) => row.url.includes('bad'));
+  const goodRow = verified.find((row) => row.url.includes('good'));
+  assert.equal(goodRow.verified, false);
+  assert.equal(deadRow.verified, false);
+  assert.equal(deadRow.deadPage, true);
 });
 
 test('manufacturer-aware scoring prefers trusted manufacturer ecosystem links', () => {
   const suggestions = normalizeDocumentationSuggestions({
     links: [
-      { title: 'Raw Thrills support manual index', url: 'https://rawthrills.com/support/manuals', sourceType: 'manufacturer' },
+      { title: 'Raw Thrills Fast and Furious Arcade Operator Manual', url: 'https://rawthrills.com/support/fast-and-furious-arcade-operator-manual.pdf', sourceType: 'manufacturer' },
       { title: 'Arcade game page', url: 'https://genericdocs.example.com/manual/fast-and-furious', sourceType: 'other' }
     ],
     confidence: 0.66,
@@ -93,7 +94,7 @@ test('manufacturer-aware scoring prefers trusted manufacturer ecosystem links', 
     manufacturerSuggestion: 'Raw Thrills'
   });
 
-  assert.equal(suggestions[0].url, 'https://rawthrills.com/support/manuals');
+  assert.equal(suggestions[0].url, 'https://rawthrills.com/support/fast-and-furious-arcade-operator-manual.pdf');
   assert.equal(suggestions[0].matchedManufacturer, 'raw thrills');
   assert.ok(suggestions[0].reason.includes('manufacturer_trusted_source_match'));
 });
@@ -135,7 +136,7 @@ test('low-confidence normalization does not crash and returns bounded scores', (
   });
 
   assert.ok(Array.isArray(suggestions));
-  assert.ok(suggestions.every((row) => row.matchScore >= 35 && row.matchScore <= 100));
+  assert.ok(suggestions.every((row) => row.matchScore >= 48 && row.matchScore <= 100));
 });
 
 test('support resources ranking favors official support pages', () => {
@@ -214,7 +215,7 @@ test('official generic page remains fallback but not top exact-doc result', () =
   });
 
   assert.equal(suggestions[0].url, 'https://baytekent.com/support/sink-it-service-manual.pdf');
-  assert.ok(suggestions.some((row) => row.url === 'https://baytekent.com/'));
+  assert.equal(suggestions.some((row) => row.url === 'https://baytekent.com/'), false);
 });
 
 test('conservative docs_found threshold signals exact-title requirement', () => {
@@ -228,7 +229,45 @@ test('conservative docs_found threshold signals exact-title requirement', () => 
     manufacturerSuggestion: 'Bay Tek Games'
   });
 
-  assert.equal(generic[0].exactTitleMatch, false);
-  assert.equal(generic[0].exactManualMatch, false);
-  assert.ok(generic[0].matchScore < 78);
+  assert.equal(generic.length, 0);
+});
+
+
+test('manufacturer alias + exact title is required for manual-library suggestions', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Monopoly Roll-N-Go Operator Manual', url: 'https://archive.org/details/monopoly-roll-n-go-operator-manual', sourceType: 'manual_library' },
+      { title: 'Generic Bay Tek Manual Library', url: 'https://archive.org/details/baytek-manuals', sourceType: 'manual_library' }
+    ],
+    confidence: 0.8,
+    asset: { name: 'Monopoly Roll-N-Go', manufacturer: 'Baytek' },
+    normalizedName: 'Monopoly Roll-N-Go',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+
+  assert.equal(suggestions.length, 1);
+  assert.equal(suggestions[0].exactTitleMatch, true);
+});
+
+test('detectDeadPageText recognizes soft-404 copy', () => {
+  assert.equal(detectDeadPageText('Sorry, the page you are looking for cannot be found.'), true);
+});
+
+test('verifyDocumentationSuggestions suppresses verified-but-weak title matches', async () => {
+  const fetchMock = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => 'text/html' },
+    url: 'https://example.com/manual-index',
+    text: async () => 'manual index'
+  });
+
+  const verified = await verifyDocumentationSuggestions([
+    { url: 'https://example.com/manual-index', matchScore: 90, exactTitleMatch: false, exactManualMatch: false, isOfficial: true },
+    { url: 'https://example.com/sink-it-service-manual.pdf', matchScore: 88, exactTitleMatch: true, exactManualMatch: true, isOfficial: true }
+  ], fetchMock);
+
+  assert.equal(verified[0].url, 'https://example.com/sink-it-service-manual.pdf');
+  assert.equal(verified[0].verified, true);
+  assert.equal(verified[1].verified, false);
 });
