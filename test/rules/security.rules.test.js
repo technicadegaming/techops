@@ -183,3 +183,20 @@ test('storage: legacy root paths are denied for regular members and allowed for 
   await assertSucceeds(uploadString(ref(adminStorage, 'backups/legacy.zip'), 'x'));
   await assertSucceeds(deleteObject(ref(adminStorage, 'evidence/legacy.jpg')));
 });
+
+
+test('storage: task-scoped evidence path shape supports own company and blocks cross-company writes', async () => {
+  await seedMembership({ uid: 'lead-a', companyId: 'company-a', role: 'lead' });
+  await seedMembership({ uid: 'lead-b', companyId: 'company-b', role: 'lead' });
+  const testEnv = await rulesTestEnvPromise;
+
+  const leadAStorage = testEnv.authenticatedContext('lead-a').storage();
+  const leadBStorage = testEnv.authenticatedContext('lead-b').storage();
+
+  const ownPath = 'companies/company-a/evidence/task-123/photo-1.jpg';
+  const crossPath = 'companies/company-a/evidence/task-123/photo-2.jpg';
+
+  await assertSucceeds(uploadString(ref(leadAStorage, ownPath), 'ok'));
+  await assertSucceeds(getBytes(ref(leadAStorage, ownPath)));
+  await assertFails(uploadString(ref(leadBStorage, crossPath), 'nope'));
+});

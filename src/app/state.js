@@ -49,7 +49,7 @@ export function createInitialState() {
     companyLocations: [], importHistory: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], notifications: [], notificationPrefs: { enabledTypes: [] }, settings: {},
     restorePayload: null, route: parseRouteState(), assetDraft: createEmptyAssetDraft(), assetUi: { lastActionByAsset: {}, onboardingReviewQueue: [], onboardingValidationErrors: [] },
     adminUi: { tone: 'info', message: '', importPreview: '', importSummary: '', importTone: 'info' },
-    operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0, statusFilter: 'open', ownershipFilter: 'all', lastSaveFeedback: '', lastSaveTone: 'info', aiTaskStates: {}, lastSavedTaskId: null },
+    operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0, statusFilter: 'open', ownershipFilter: 'all', lastSaveFeedback: '', lastSaveTone: 'info', aiTaskStates: {}, evidenceUploadsByTask: {}, lastSavedTaskId: null },
     adminSection: 'company', onboardingUi: { tone: 'info', message: '', pendingAction: '', handoffStatus: 'idle' }, setupWizard: { active: false, step: 1, message: '', tone: 'info' }
   };
 }

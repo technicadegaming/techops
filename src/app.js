@@ -58,6 +58,8 @@ import { getWorkspaceReadiness } from './features/workspaceReadiness.js';
 import { parseAssetCsv, parseBulkAssetList, normalizeAssetCandidate } from './features/assetIntake.js';
 import { logAudit } from './audit.js';
 import { renderAccount } from './account.js';
+import { storage } from './firebase.js';
+import { buildCompanyEvidencePath } from './storagePaths.js';
 import { hydrateInviteCodeFromRoute, resolveAppElements, syncPendingInviteCode } from './app/boot.js';
 import { reportActionError, withRequiredCompanyId } from './app/actions.js';
 import {
@@ -65,6 +67,12 @@ import {
   refreshData as refreshAppData,
   setActiveMembership as setActiveMembershipState
 } from './app/dataRefresh.js';
+import {
+  deleteObject,
+  getDownloadURL,
+  ref as storageRef,
+  uploadBytes
+} from 'https://www.gstatic.com/firebasejs/10.12.3/firebase-storage.js';
 import { buildTabs as buildTabsUi, openTab as openTabUi } from './app/router.js';
 import {
   buildPreviewQueryKey,
@@ -93,6 +101,33 @@ function isPermissionRelatedError(error) {
   const code = `${error?.code || ''}`.toLowerCase();
   const message = `${error?.message || error || ''}`.toLowerCase();
   return code.includes('permission-denied') || message.includes('permission') || message.includes('missing or insufficient permissions');
+}
+
+
+function sanitizeStorageSegment(value, fallback = 'item') {
+  const normalized = `${value || ''}`.trim().replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  return normalized || fallback;
+}
+
+function buildTaskEvidenceStoragePath(companyId, taskId, filename = '') {
+  const safeTaskId = sanitizeStorageSegment(taskId, 'task');
+  const safeFilename = sanitizeStorageSegment(filename, 'evidence');
+  const prefix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return buildCompanyEvidencePath(companyId, safeTaskId, `${prefix}-${safeFilename}`);
+}
+
+function buildTaskEvidenceMeta({ taskId, file, storagePath, downloadURL, user }) {
+  const uploadedBy = user?.email || user?.uid || 'unknown';
+  return {
+    id: `${taskId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    filename: file.name,
+    storagePath,
+    contentType: file.type || 'application/octet-stream',
+    sizeBytes: Number(file.size || 0),
+    uploadedBy,
+    uploadedAt: new Date().toISOString(),
+    downloadURL: downloadURL || ''
+  };
 }
 
 function buildBootstrapErrorMessage(error) {
@@ -954,6 +989,41 @@ async function render() {
       };
       state.route = { ...state.route, tab: 'assets', assetId: null, taskId: null };
       pushRouteState(state.route);
+      render();
+    },
+    uploadTaskEvidence: async (taskId, file) => {
+      const task = state.tasks.find((entry) => entry.id === taskId);
+      if (!task || !file) return;
+      const companyId = `${task.companyId || state.company?.id || state.activeMembership?.companyId || ''}`.trim();
+      if (!companyId) throw new Error('Missing company context for evidence upload.');
+      if (!task.id) throw new Error('Missing task ID for evidence upload.');
+      const storagePath = buildTaskEvidenceStoragePath(companyId, task.id, file.name);
+      const evidenceRef = storageRef(storage, storagePath);
+      await uploadBytes(evidenceRef, file, { contentType: file.type || 'application/octet-stream' });
+      const downloadURL = await getDownloadURL(evidenceRef).catch(() => '');
+      const entry = buildTaskEvidenceMeta({ taskId: task.id, file, storagePath, downloadURL, user: state.user });
+      await upsertEntity('tasks', task.id, {
+        ...task,
+        uploadedEvidence: [...(Array.isArray(task.uploadedEvidence) ? task.uploadedEvidence : []), entry],
+        updatedAtClient: new Date().toISOString()
+      }, state.user);
+      await refreshData();
+      render();
+    },
+    removeTaskEvidence: async (taskId, evidenceId) => {
+      const task = state.tasks.find((entry) => entry.id === taskId);
+      if (!task) return;
+      const existing = (Array.isArray(task.uploadedEvidence) ? task.uploadedEvidence : []).find((entry) => entry.id === evidenceId);
+      if (!existing) return;
+      if (existing.storagePath) {
+        await deleteObject(storageRef(storage, existing.storagePath)).catch(() => {});
+      }
+      await upsertEntity('tasks', task.id, {
+        ...task,
+        uploadedEvidence: (task.uploadedEvidence || []).filter((entry) => entry.id !== evidenceId),
+        updatedAtClient: new Date().toISOString()
+      }, state.user);
+      await refreshData();
       render();
     },
     completeTask: async (taskId, closeout) => {
