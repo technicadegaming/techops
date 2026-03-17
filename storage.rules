@@ -6,15 +6,18 @@ service firebase.storage {
     // - Company backup bundles must live under companies/{companyId}/backups/**
     // - Access is resolved from users/{uid} and companyMemberships/{companyId}_{uid}
     function signedIn() { return request.auth != null; }
+    function membershipId(companyId) { return companyId + '_' + request.auth.uid; }
     function userDoc() {
       return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
     }
     function membershipDoc(companyId) {
-      return firestore.get(/databases/(default)/documents/companyMemberships/$(companyId)_$(request.auth.uid)).data;
+      return firestore.get(/databases/(default)/documents/companyMemberships/$(membershipId(companyId))).data;
     }
 
     function hasEnabledUserRecord() {
-      return signedIn() && userDoc().enabled == true;
+      return signedIn()
+        && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
+        && userDoc().enabled == true;
     }
 
     function isGlobalAdmin() {
@@ -27,6 +30,7 @@ service firebase.storage {
 
     function isActiveCompanyMember(companyId) {
       return hasEnabledUserRecord()
+        && firestore.exists(/databases/(default)/documents/companyMemberships/$(membershipId(companyId)))
         && membershipDoc(companyId).status == 'active'
         && (membershipDoc(companyId).companyId == companyId || companyRole(companyId) == 'owner');
     }
