@@ -22,9 +22,52 @@ export function createAdminActions(deps) {
     downloadFile,
     downloadJson,
     normalizeAssetId,
+    dedupeUrls,
+    enrichAssetDocumentation,
+    isManager,
     createCompanyInvite,
     revokeInvite
   } = deps;
+
+  const normalizeUrl = (value) => `${value || ''}`.trim();
+  const normalizeUserIdentity = () => `${state.user?.email || state.user?.uid || 'unknown'}`.trim();
+
+  const getReviewSuggestionUrls = (asset = {}) => (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : [])
+    .map((entry) => normalizeUrl(entry?.url))
+    .filter(Boolean);
+
+  const getFilteredAssetReviewQueue = (filter = 'needs_review') => {
+    const normalizedFilter = `${filter || 'needs_review'}`.trim();
+    return (state.assets || []).filter((asset) => {
+      const suggestions = getReviewSuggestionUrls(asset);
+      const manualLinks = Array.isArray(asset.manualLinks) ? asset.manualLinks.filter(Boolean) : [];
+      const reviewState = `${asset.reviewState || ''}`.trim() || (suggestions.length ? 'needs_review' : 'idle');
+      if (normalizedFilter === 'all') return true;
+      if (normalizedFilter === 'needs_review') return reviewState === 'needs_review';
+      if (normalizedFilter === 'has_suggestions') return suggestions.length > 0;
+      if (normalizedFilter === 'missing_docs') return manualLinks.length === 0;
+      if (normalizedFilter === 'approved') return reviewState === 'approved';
+      if (normalizedFilter === 'rejected') return reviewState === 'rejected';
+      return true;
+    });
+  };
+
+  const upsertAssetReviewFields = async (asset, patch = {}) => {
+    const reviewer = normalizeUserIdentity();
+    await upsertEntity('assets', asset.id, {
+      ...asset,
+      ...patch,
+      reviewUpdatedAt: new Date().toISOString(),
+      reviewUpdatedBy: reviewer
+    }, state.user);
+  };
+
+  const ensureManagerAccess = () => {
+    if (isManager(state.permissions)) return true;
+    setAdminFeedback({ tone: 'error', message: 'Manager or admin access is required for documentation review tools.' });
+    render();
+    return false;
+  };
 
   const setAdminFeedback = ({ tone = 'info', message = '' } = {}) => {
     state.adminUi = { ...(state.adminUi || {}), tone, message };
@@ -39,6 +82,159 @@ export function createAdminActions(deps) {
     setImportFeedback,
     setAdminSection: (section) => {
       state.adminSection = section || 'company';
+      render();
+    },
+    setAssetReviewFilter: (filter) => {
+      state.adminUi = { ...(state.adminUi || {}), assetReviewFilter: filter || 'needs_review' };
+      render();
+    },
+    toggleAssetReviewSelection: (assetId, selected) => {
+      const selectedAssets = new Set(state.adminUi?.selectedAssetReviewIds || []);
+      if (selected) selectedAssets.add(assetId);
+      else selectedAssets.delete(assetId);
+      state.adminUi = { ...(state.adminUi || {}), selectedAssetReviewIds: [...selectedAssets] };
+      render();
+    },
+    toggleAssetSuggestionSelection: (assetId, url, selected) => {
+      const cleanUrl = normalizeUrl(url);
+      if (!cleanUrl) return;
+      const selectedSuggestionsByAsset = { ...(state.adminUi?.selectedSuggestionsByAsset || {}) };
+      const next = new Set(selectedSuggestionsByAsset[assetId] || []);
+      if (selected) next.add(cleanUrl);
+      else next.delete(cleanUrl);
+      selectedSuggestionsByAsset[assetId] = [...next];
+      state.adminUi = { ...(state.adminUi || {}), selectedSuggestionsByAsset };
+      render();
+    },
+    runBulkAssetEnrichment: async (scope = 'filtered') => {
+      if (!ensureManagerAccess()) return;
+      const reviewFilter = state.adminUi?.assetReviewFilter || 'needs_review';
+      const selectedIds = new Set(state.adminUi?.selectedAssetReviewIds || []);
+      const filteredQueue = getFilteredAssetReviewQueue(reviewFilter);
+      const baseQueue = scope === 'all'
+        ? (state.assets || [])
+        : (scope === 'selected' ? filteredQueue.filter((asset) => selectedIds.has(asset.id)) : filteredQueue);
+      const queue = baseQueue.filter((asset) => !(Array.isArray(asset.manualLinks) && asset.manualLinks.length));
+      if (!queue.length) {
+        setAdminFeedback({ tone: 'info', message: 'No eligible assets found for bulk enrichment in this scope.' });
+        render();
+        return;
+      }
+      setAdminFeedback({ tone: 'info', message: `Running enrichment for ${queue.length} asset${queue.length === 1 ? '' : 's'}...` });
+      render();
+      let completed = 0;
+      let failed = 0;
+      for (const asset of queue) {
+        try {
+          await enrichAssetDocumentation(asset.id, { trigger: 'bulk_admin_review' });
+          completed += 1;
+        } catch (error) {
+          console.error('[admin_bulk_asset_enrichment]', { assetId: asset.id, error });
+          failed += 1;
+        }
+      }
+      await refreshData();
+      setAdminFeedback({ tone: failed ? 'warn' : 'success', message: `Bulk enrichment finished. Updated ${completed}/${queue.length} assets${failed ? ` (${failed} failed)` : ''}.` });
+      render();
+    },
+    approveSelectedSuggestions: async () => {
+      if (!ensureManagerAccess()) return;
+      const selectedSuggestionsByAsset = state.adminUi?.selectedSuggestionsByAsset || {};
+      const selectedAssetIds = Object.keys(selectedSuggestionsByAsset).filter((assetId) => Array.isArray(selectedSuggestionsByAsset[assetId]) && selectedSuggestionsByAsset[assetId].length);
+      if (!selectedAssetIds.length) {
+        setAdminFeedback({ tone: 'info', message: 'Select at least one suggestion to approve.' });
+        render();
+        return;
+      }
+      for (const assetId of selectedAssetIds) {
+        const current = state.assets.find((asset) => asset.id === assetId);
+        if (!current) continue;
+        const selectedUrls = selectedSuggestionsByAsset[assetId].map(normalizeUrl).filter(Boolean);
+        const approved = dedupeUrls([...(current.reviewApprovedSuggestionUrls || []), ...selectedUrls]);
+        const rejected = (current.reviewRejectedSuggestionUrls || []).filter((url) => !selectedUrls.includes(url));
+        await upsertAssetReviewFields(current, {
+          manualLinks: dedupeUrls([...(current.manualLinks || []), ...selectedUrls]),
+          reviewSelectedSuggestionUrls: (current.reviewSelectedSuggestionUrls || []).filter((url) => !selectedUrls.includes(url)),
+          reviewApprovedSuggestionUrls: approved,
+          reviewRejectedSuggestionUrls: rejected,
+          reviewState: 'approved',
+          reviewLastAction: 'bulk_approve'
+        });
+      }
+      state.adminUi = { ...(state.adminUi || {}), selectedSuggestionsByAsset: {} };
+      await refreshData();
+      setAdminFeedback({ tone: 'success', message: `Approved selected suggestions on ${selectedAssetIds.length} asset${selectedAssetIds.length === 1 ? '' : 's'}.` });
+      render();
+    },
+    rejectSelectedSuggestions: async () => {
+      if (!ensureManagerAccess()) return;
+      const selectedSuggestionsByAsset = state.adminUi?.selectedSuggestionsByAsset || {};
+      const selectedAssetIds = Object.keys(selectedSuggestionsByAsset).filter((assetId) => Array.isArray(selectedSuggestionsByAsset[assetId]) && selectedSuggestionsByAsset[assetId].length);
+      if (!selectedAssetIds.length) {
+        setAdminFeedback({ tone: 'info', message: 'Select at least one suggestion to reject.' });
+        render();
+        return;
+      }
+      for (const assetId of selectedAssetIds) {
+        const current = state.assets.find((asset) => asset.id === assetId);
+        if (!current) continue;
+        const selectedUrls = selectedSuggestionsByAsset[assetId].map(normalizeUrl).filter(Boolean);
+        await upsertAssetReviewFields(current, {
+          reviewSelectedSuggestionUrls: (current.reviewSelectedSuggestionUrls || []).filter((url) => !selectedUrls.includes(url)),
+          reviewRejectedSuggestionUrls: dedupeUrls([...(current.reviewRejectedSuggestionUrls || []), ...selectedUrls]),
+          reviewState: 'rejected',
+          reviewLastAction: 'bulk_reject'
+        });
+      }
+      state.adminUi = { ...(state.adminUi || {}), selectedSuggestionsByAsset: {} };
+      await refreshData();
+      setAdminFeedback({ tone: 'success', message: `Rejected selected suggestions on ${selectedAssetIds.length} asset${selectedAssetIds.length === 1 ? '' : 's'}.` });
+      render();
+    },
+    approveAssetSuggestion: async (assetId, url) => {
+      if (!ensureManagerAccess()) return;
+      const current = state.assets.find((asset) => asset.id === assetId);
+      const cleanUrl = normalizeUrl(url);
+      if (!current || !cleanUrl) return;
+      await upsertAssetReviewFields(current, {
+        manualLinks: dedupeUrls([...(current.manualLinks || []), cleanUrl]),
+        reviewSelectedSuggestionUrls: dedupeUrls([...(current.reviewSelectedSuggestionUrls || []), cleanUrl]),
+        reviewApprovedSuggestionUrls: dedupeUrls([...(current.reviewApprovedSuggestionUrls || []), cleanUrl]),
+        reviewRejectedSuggestionUrls: (current.reviewRejectedSuggestionUrls || []).filter((entry) => normalizeUrl(entry) !== cleanUrl),
+        reviewState: 'approved',
+        reviewLastAction: 'approve_single'
+      });
+      await refreshData();
+      setAdminFeedback({ tone: 'success', message: 'Suggestion approved and attached.' });
+      render();
+    },
+    rejectAssetSuggestion: async (assetId, url) => {
+      if (!ensureManagerAccess()) return;
+      const current = state.assets.find((asset) => asset.id === assetId);
+      const cleanUrl = normalizeUrl(url);
+      if (!current || !cleanUrl) return;
+      await upsertAssetReviewFields(current, {
+        reviewSelectedSuggestionUrls: (current.reviewSelectedSuggestionUrls || []).filter((entry) => normalizeUrl(entry) !== cleanUrl),
+        reviewRejectedSuggestionUrls: dedupeUrls([...(current.reviewRejectedSuggestionUrls || []), cleanUrl]),
+        reviewState: 'rejected',
+        reviewLastAction: 'reject_single'
+      });
+      await refreshData();
+      setAdminFeedback({ tone: 'success', message: 'Suggestion rejected and removed from review selection.' });
+      render();
+    },
+    removeAttachedManualFromReview: async (assetId, url) => {
+      if (!ensureManagerAccess()) return;
+      const current = state.assets.find((asset) => asset.id === assetId);
+      const cleanUrl = normalizeUrl(url);
+      if (!current || !cleanUrl) return;
+      await upsertAssetReviewFields(current, {
+        manualLinks: (current.manualLinks || []).filter((entry) => normalizeUrl(entry) !== cleanUrl),
+        reviewLastAction: 'remove_attached_manual',
+        reviewState: `${current.reviewState || ''}`.trim() || 'needs_review'
+      });
+      await refreshData();
+      setAdminFeedback({ tone: 'success', message: 'Attached manual removed.' });
       render();
     },
     setAuditFilter: (category) => {

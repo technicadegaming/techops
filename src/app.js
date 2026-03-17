@@ -1399,6 +1399,9 @@ async function render() {
     downloadFile,
     downloadJson,
     normalizeAssetId,
+    dedupeUrls,
+    enrichAssetDocumentation,
+    isManager,
     createCompanyInvite,
     revokeInvite
   }));
