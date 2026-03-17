@@ -34,16 +34,20 @@ import { getWorkspaceReadiness } from './features/workspaceReadiness.js';
 import { parseAssetCsv, parseBulkAssetList, normalizeAssetCandidate } from './features/assetIntake.js';
 import { logAudit } from './audit.js';
 import { renderAccount } from './account.js';
+import { resolveAppElements } from './app/boot.js';
+import { createInitialState } from './app/state.js';
 
-const authView = document.getElementById('authView');
-const appView = document.getElementById('appView');
-const authMessage = document.getElementById('authMessage');
-const activeCompanySwitcher = document.getElementById('activeCompanySwitcher');
-const activeLocationSwitcher = document.getElementById('activeLocationSwitcher');
-const locationScopeBadge = document.getElementById('locationScopeBadge');
-const notificationBell = document.getElementById('notificationBell');
-const notificationBadge = document.getElementById('notificationBadge');
-const notificationPanel = document.getElementById('notificationPanel');
+const {
+  authView,
+  appView,
+  authMessage,
+  activeCompanySwitcher,
+  activeLocationSwitcher,
+  locationScopeBadge,
+  notificationBell,
+  notificationBadge,
+  notificationPanel
+} = resolveAppElements(document);
 const ACTIVE_MEMBERSHIP_STORAGE_KEY = 'techops.activeMembership';
 
 const sections = ['dashboard', 'operations', 'assets', 'calendar', 'reports', 'account', 'admin'];
@@ -85,44 +89,7 @@ function buildPreviewQueryKey(payload = {}) {
   return [assetName, manufacturer, serialNumber, assetId, followupAnswer].join('|');
 }
 
-const state = {
-  user: null,
-  profile: null,
-  company: null,
-  memberships: [],
-  membershipCompanies: {},
-  activeMembership: null,
-  permissions: buildPermissionContext(),
-  onboardingRequired: false,
-  tasks: [],
-  operations: [],
-  assets: [],
-  pmSchedules: [],
-  manuals: [],
-  notes: [],
-  users: [],
-  companyMembers: [],
-  workers: [],
-  invites: [],
-  companyLocations: [],
-  importHistory: [],
-  auditLogs: [],
-  taskAiRuns: [],
-  taskAiFollowups: [],
-  troubleshootingLibrary: [],
-  notifications: [],
-  notificationPrefs: { enabledTypes: [] },
-  settings: {},
-  restorePayload: null,
-  route: parseRouteState(),
-  assetDraft: createEmptyAssetDraft(),
-  assetUi: { lastActionByAsset: {}, onboardingReviewQueue: [], onboardingValidationErrors: [] },
-  adminUi: { tone: 'info', message: '', importPreview: '', importSummary: '', importTone: 'info' },
-  operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0, statusFilter: 'open', ownershipFilter: 'all', lastSaveFeedback: '', lastSaveTone: 'info', aiTaskStates: {}, lastSavedTaskId: null },
-  adminSection: 'company',
-  onboardingUi: { tone: 'info', message: '', pendingAction: '', handoffStatus: 'idle' },
-  setupWizard: { active: false, step: 1, message: '', tone: 'info' }
-};
+const state = createInitialState();
 
 function getAuthInviteCodeValue() {
   const input = document.getElementById('authInviteCode');

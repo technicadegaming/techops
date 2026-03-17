@@ -62,10 +62,10 @@ async function resolveTaskCompanyContext({ task, requestedCompanyId, userId }) {
   await db.collection('tasks').doc(task.id).set({
     companyId: normalizedRequestedCompanyId,
     aiDebug: {
-      companyContextRecoveredAt: admin.firestore.FieldValue.serverTimestamp(),
+      companyContextRecoveredAt: serverTimestamp(admin),
       companyContextRecoveredBy: userId || 'system'
     },
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: serverTimestamp(admin),
     updatedBy: userId || 'system'
   }, { merge: true });
 
@@ -172,7 +172,7 @@ exports.answerTaskFollowup = onCall({ secrets: [OPENAI_API_KEY] }, async (reques
   await db.collection('taskAiFollowups').doc(request.data.runId).set({
     answers,
     status: 'answered',
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: serverTimestamp(admin),
     updatedBy: request.auth.uid
   }, { merge: true });
 
@@ -326,12 +326,12 @@ exports.saveTaskFixToTroubleshootingLibrary = onCall({}, async (request) => {
     notes: request.data.notes || '',
     manualReferences: Array.isArray(request.data.manualReferences) ? request.data.manualReferences : [],
     sourceTaskId: request.data.taskId,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: serverTimestamp(admin),
     createdBy: request.auth.uid,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: serverTimestamp(admin),
     updatedBy: request.auth.uid
   });
-  await db.collection('auditLogs').add({ action: 'ai_save_to_library', entityType: 'troubleshootingLibrary', entityId: libRef.id, companyId: authz.companyId, summary: `Saved fix from task ${request.data.taskId}`, userUid: request.auth.uid, timestamp: admin.firestore.FieldValue.serverTimestamp() });
+  await db.collection('auditLogs').add({ action: 'ai_save_to_library', entityType: 'troubleshootingLibrary', entityId: libRef.id, companyId: authz.companyId, summary: `Saved fix from task ${request.data.taskId}`, userUid: request.auth.uid, timestamp: serverTimestamp(admin) });
   return { ok: true, id: libRef.id };
 });
 

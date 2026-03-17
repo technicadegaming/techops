@@ -67,3 +67,7 @@ node_modules/
 
 # dataconnect generated files
 .dataconnect
+
+# Local Firebase/function secrets
+functions/.secret.local
+functions/.secret.*.local

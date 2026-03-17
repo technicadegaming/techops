@@ -64,7 +64,7 @@ export async function ensureBootstrapCompanyForLegacyUser(user, profile, hasLega
   if (memberships.length) return { membership: memberships[0], created: false };
   if (!hasLegacyData || !canAutoAdoptLegacyWorkspace(user, profile)) return { membership: null, created: false };
 
-  const suggested = `${profile?.companyName || profile?.displayName || user.email?.split('@')[0] || 'Technicade'} Workspace`;
+  const suggested = `${profile?.companyName || profile?.displayName || user.email?.split('@')[0] || 'Scoot'} Workspace`;
   const companyId = `co-${slugify(suggested) || user.uid.slice(0, 8)}-${user.uid.slice(0, 4)}`;
   const companyRef = doc(db, C.companies, companyId);
   await setDoc(companyRef, {

@@ -99,7 +99,7 @@ function renderInitialOnboarding(el, state, actions) {
     <div class="grid grid-2">
       <form id="createCompanyForm" class="item onboarding-form">
         <h3>Create company</h3>
-        <label>Company name<input name="name" placeholder="Technicade" required /></label>
+        <label>Company name<input name="name" placeholder="Scoot" required /></label>
         <label>Contact email<input name="primaryEmail" type="email" placeholder="name@company.com" value="${state.user?.email || ''}" /></label>
         <label>Primary phone<input name="primaryPhone" placeholder="Example: (555) 555-5555" /></label>
         <p class="tiny" style="margin:0;">Company profile</p>
