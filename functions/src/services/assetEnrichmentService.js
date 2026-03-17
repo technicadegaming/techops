@@ -48,6 +48,14 @@ const DEAD_PAGE_PATTERNS = [
 const VERIFY_TIMEOUT_MS = 3500;
 const VERIFY_MAX_SUGGESTIONS = 5;
 const COMMON_SHORT_TITLE_WORDS = new Set(['the', 'pro', 'plus', 'super', 'game', 'deluxe', 'sport']);
+const MANUAL_INTENT_TOKENS = ['manual', 'operator', 'service', 'parts', 'install', 'installation', 'schematic', 'instruction'];
+const SOFT_404_TEXT_PATTERNS = [
+  /sorry[,\s]+the page you are looking for/i,
+  /we (?:could|can) not find/i,
+  /nothing (?:found|here)/i,
+  /access denied/i
+];
+
 
 function tokenize(value) {
   return `${value || ''}`
@@ -139,12 +147,20 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     return words.length <= 2 && variant.length <= 9 && commonOnly;
   });
   const hasExactTitleMatch = titleVariants.some((variant) => combinedText.includes(variant));
-  const hasTitleManufacturerCombo = hasExactTitleMatch && (!!manufacturerPhrase && combinedText.includes(manufacturerPhrase));
+  const hasStrongTitleMatch = hasExactTitleMatch || titleVariants.some((variant) => {
+    const words = variant.split(' ').filter(Boolean);
+    return words.length >= 2 && words.filter((word) => combinedText.includes(word)).length >= Math.max(2, words.length - 1);
+  });
+  const hasManufacturerAliasMatch = !!manufacturerProfile && [manufacturerProfile.key, ...(manufacturerProfile.aliases || [])]
+    .map((alias) => normalizePhrase(alias))
+    .filter(Boolean)
+    .some((alias) => combinedText.includes(alias));
+  const hasTitleManufacturerCombo = hasStrongTitleMatch && ((!!manufacturerPhrase && combinedText.includes(manufacturerPhrase)) || hasManufacturerAliasMatch);
   const isOfficial = !!manufacturerToken && (lowerHost.includes(manufacturerToken) || sourceType === 'manufacturer');
-  const isLikelyManual = /manual|operator|service|parts|schematic|instruction/.test(`${titleJoined} ${lowerPath}`);
+  const isLikelyManual = MANUAL_INTENT_TOKENS.some((token) => `${titleJoined} ${lowerPath}`.includes(token));
   const hasPdfSignal = /\.pdf($|\?|#)|pdf/.test(`${lowerPath} ${titleJoined}`);
   const isGenericHomepage = lowerPath === '/' || /^\/(home|index(\.html?)?)?$/.test(lowerPath);
-  const isGenericManualHub = /manuals?|support|docs?|downloads?|products?/.test(lowerPath) && !hasExactTitleMatch;
+  const isGenericManualHub = /manuals?|support|docs?|downloads?|products?|category|catalog/.test(lowerPath) && !hasStrongTitleMatch;
   const isDistributorLike = sourceType === 'distributor' || /distributor|betson/.test(lowerHost);
 
   if (sourceType === 'manufacturer' || sourceType === 'official_site' || sourceType === 'support' || sourceType === 'parts' || sourceType === 'contact') {
@@ -176,19 +192,23 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     reasons.push('manufacturer_docs_path_match');
   }
 
+  if (hasStrongTitleMatch) {
+    score += 20;
+    reasons.push('strong_title_phrase_match');
+  }
   if (hasExactTitleMatch) {
-    score += 24;
+    score += 12;
     reasons.push('exact_title_phrase_match');
   }
   if (hasTitleManufacturerCombo) {
     score += 20;
     reasons.push('exact_title_manufacturer_match');
   }
-  if (hasExactTitleMatch && (isLikelyManual || hasPdfSignal)) {
+  if (hasStrongTitleMatch && (isLikelyManual || hasPdfSignal)) {
     score += 26;
     reasons.push('exact_title_manual_match');
   }
-  if (hasExactTitleMatch && isOfficial && /support|product|manual|service|parts/.test(lowerPath)) {
+  if (hasStrongTitleMatch && isOfficial && /support|product|manual|service|parts|install/.test(lowerPath)) {
     score += 14;
     reasons.push('exact_title_official_support_match');
   }
@@ -210,12 +230,12 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     score -= 18;
     reasons.push('generic_manual_hub_penalty');
   }
-  if (isDistributorLike && !hasExactTitleMatch) {
-    score -= 16;
+  if (isDistributorLike && !hasStrongTitleMatch) {
+    score -= 24;
     reasons.push('generic_distributor_penalty');
   }
-  if (sourceType === 'manual_library' && !hasExactTitleMatch) {
-    score -= 12;
+  if (sourceType === 'manual_library' && !hasStrongTitleMatch) {
+    score -= 22;
     reasons.push('generic_library_penalty');
   }
   if (/forum|reddit|facebook|youtube|pinterest/.test(lowerHost)) {
@@ -236,12 +256,20 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     score -= 10;
     reasons.push('model_mismatch_penalty');
   }
-  if (manufacturerProfile && !manufacturerProfile.sourceTokens.some((token) => lowerHost.includes(token)) && sourceType !== 'manual_library' && !isOfficial) {
-    score -= 10;
+  const hostMatchesManufacturerEcosystem = !!manufacturerProfile && manufacturerProfile.sourceTokens.some((token) => lowerHost.includes(token));
+  if (manufacturerProfile && !hostMatchesManufacturerEcosystem && sourceType !== 'manual_library' && !isOfficial) {
+    score -= 16;
     reasons.push('manufacturer_source_mismatch_penalty');
   }
 
-  if (shortTitle && hasExactTitleMatch && !(hasTitleManufacturerCombo || isLikelyManual || isOfficial || manufacturerProfile)) {
+  const manufacturerRequiredForManual = !!manufacturerPhrase || !!manufacturerProfile;
+  const manufacturerMatchStrong = !manufacturerRequiredForManual || hasTitleManufacturerCombo || hostMatchesManufacturerEcosystem || isOfficial;
+  if (kind === 'documentation' && (!hasStrongTitleMatch || !manufacturerMatchStrong)) {
+    score -= 30;
+    reasons.push('strict_exactness_penalty');
+  }
+
+  if (shortTitle && hasStrongTitleMatch && !(hasTitleManufacturerCombo || isLikelyManual || isOfficial || manufacturerProfile)) {
     score -= 18;
     reasons.push('short_title_weak_signal_penalty');
   }
@@ -256,7 +284,8 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   }
 
   const bounded = Math.max(0, Math.min(100, score));
-  if (bounded < 35) return null;
+  const minimumScore = kind === 'documentation' ? 48 : 40;
+  if (bounded < minimumScore) return null;
 
   return {
     title: row.title || row.label || 'Candidate documentation',
@@ -267,7 +296,7 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     isOfficial,
     isLikelyManual,
     exactTitleMatch: hasExactTitleMatch,
-    exactManualMatch: hasExactTitleMatch && (isLikelyManual || hasPdfSignal),
+    exactManualMatch: hasStrongTitleMatch && (isLikelyManual || hasPdfSignal),
     trustedSource: isOfficial || !!manufacturerProfile || TRUSTED_MANUAL_HOST_TOKENS.some((token) => lowerHost.includes(token)),
     matchedManufacturer: manufacturerProfile?.key || '',
     sourceTrustReason: reasons.find((reason) => /manufacturer_trusted_source_match|trusted_manual_host|official_host_match/.test(reason)) || '',
@@ -328,7 +357,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = VERIFY_TIMEOUT_MS
 
 function detectDeadPageText(rawText) {
   const text = `${rawText || ''}`.slice(0, 3000);
-  return DEAD_PAGE_PATTERNS.some((pattern) => pattern.test(text));
+  return DEAD_PAGE_PATTERNS.some((pattern) => pattern.test(text)) || SOFT_404_TEXT_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 async function verifySuggestionUrl(url, fetchImpl = fetch) {
@@ -381,9 +410,14 @@ async function verifySuggestionUrl(url, fetchImpl = fetch) {
   }
 
   const httpStatus = Number(response.status) || null;
+  const contentType = `${response.headers?.get?.('content-type') || ''}`.toLowerCase();
+  const resolvedUrl = `${response.url || ''}`.toLowerCase();
+  const sourceUrl = `${url || ''}`.toLowerCase();
+  const redirectedToLikelyError = resolvedUrl && sourceUrl && resolvedUrl !== sourceUrl && /404|error|not[-_ ]?found/.test(resolvedUrl);
   const deadByStatus = httpStatus === 404 || httpStatus === 410 || httpStatus >= 500;
+  const deadByContentType = !!contentType && !/text\/html|application\/pdf|text\/plain/.test(contentType);
   const deadByText = !!pageSnippet && detectDeadPageText(pageSnippet);
-  const deadPage = deadByStatus || deadByText;
+  const deadPage = deadByStatus || deadByText || redirectedToLikelyError || deadByContentType;
   const verified = response.ok && !deadPage;
 
   return {
@@ -400,9 +434,13 @@ async function verifyDocumentationSuggestions(suggestions, fetchImpl = fetch) {
   const verifiedRows = await Promise.all(
     bounded.map(async (row) => {
       const verification = await verifySuggestionUrl(row.url, fetchImpl);
+      const strongMatch = Number(row.matchScore || 0) >= 72 && !!row.exactTitleMatch && !!row.exactManualMatch;
+      const aliveAndStrong = verification.verified && strongMatch;
       return {
         ...row,
-        ...verification
+        ...verification,
+        verified: aliveAndStrong,
+        verificationStatus: aliveAndStrong ? 'verified' : verification.verificationStatus
       };
     })
   );
@@ -423,12 +461,12 @@ function buildLookupContext(asset, assetId, followupAnswer = '') {
     assetId: asset.id || assetId,
     followupAnswer: `${followupAnswer || asset.enrichmentFollowupAnswer || ''}`.trim(),
     lookupTargets: [
-      'exact title manufacturer operator manual',
-      'exact title operator manual pdf',
-      'exact title service manual pdf',
-      'exact title parts manual',
-      'exact title official support page',
-      'exact cabinet title install manual'
+      'arcade manual for [title] by [manufacturer]',
+      'operator manual for [title] by [manufacturer]',
+      'service manual for [title] by [manufacturer]',
+      'parts manual for [title] by [manufacturer]',
+      'install manual for [title] by [manufacturer]',
+      'exact title official support page by manufacturer'
     ],
     preferredSourceHints: preferredSources,
     notes: 'Prioritize exact title + manufacturer documentation for arcade/FEC equipment. Prefer exact operator/service/install/parts manuals and exact-title official support pages over generic manufacturer hubs/distributor listings. Ask one short actionable follow-up question only if needed.'
@@ -521,8 +559,8 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
   const confidenceThreshold = settings.aiConfidenceThreshold || 0.45;
 
   const strongSuggestions = suggestions.filter((s) => {
-    const scoreGate = s.matchScore >= 78 || (s.isOfficial && s.matchScore >= 72);
-    const exactGate = !!s.exactTitleMatch && (!!s.exactManualMatch || !!s.isLikelyManual || /support|product|manual|service|parts/i.test(`${s.url || ''} ${s.title || ''}`));
+    const scoreGate = s.matchScore >= 80 || (s.isOfficial && s.matchScore >= 76);
+    const exactGate = !!s.exactTitleMatch && !!s.exactManualMatch;
     return scoreGate && exactGate;
   });
   const strongVerifiedSuggestions = strongSuggestions.filter((s) => s.verified && s.trustedSource);
