@@ -7,6 +7,8 @@ import { buildUsageSummary, getTrialDaysRemaining, isTrialExpired, normalizeBill
 
 const WORKER_ROLE_OPTIONS = ['staff', 'lead', 'assistant_manager', 'manager', 'admin'];
 const ACCESS_ROLE_OPTIONS = ['owner', 'admin', 'manager', 'staff', 'viewer'];
+const BUSINESS_TYPE_OPTIONS = ['Service provider', 'Owner/operator', 'Franchise group', 'Manufacturer', 'Distributor', 'Facilities team', 'Multi-site enterprise', 'Other'];
+const INDUSTRY_OPTIONS = ['Family entertainment', 'Arcade and attractions', 'Hospitality', 'Foodservice', 'Retail', 'Healthcare', 'Education', 'Facilities management', 'Manufacturing', 'Transportation', 'Other'];
 
 const aiBooleanFields = ['aiEnabled', 'aiAutoAttach', 'aiUseInternalKnowledge', 'aiUseWebSearch', 'aiAskFollowups', 'aiAllowManualRerun', 'aiSaveSuccessfulFixesToLibraryDefault', 'aiShortResponseMode', 'aiVerboseManagerMode', 'aiFeedbackCollectionEnabled', 'mobileConciseModeDefault'];
 const aiNumericFields = ['aiMaxWebSources', 'aiConfidenceThreshold'];
@@ -60,6 +62,11 @@ const ADMIN_SECTIONS = [
 
 function getReadablePersonName(person = {}) {
   return person.fullName || person.displayName || person.email || person.userId || person.id || 'Unknown person';
+}
+
+function getMemberDisplayLabel(member = {}) {
+  const person = member.person || {};
+  return person.fullName || person.displayName || member.displayName || member.fullName || member.email || member.userEmail || member.userIdentity || member.userId || member.id || 'Unknown member';
 }
 
 function renderCompanyAddress(company = {}) {
@@ -155,8 +162,12 @@ export function renderAdmin(el, state, actions) {
           <div class="grid grid-2">
             <label>Company name<input name="name" value="${state.company?.name || ''}" required /></label>
             <label>Logo URL (optional)<input name="logoUrl" value="${state.company?.logoUrl || ''}" placeholder="https://..." /></label>
-            <label>Business type<input name="businessType" value="${state.company?.businessType || ''}" placeholder="Service provider, manufacturer, franchise..." /></label>
-            <label>Industry<input name="industry" value="${state.company?.industry || ''}" placeholder="HVAC, foodservice, facilities..." /></label>
+            <label>Business type
+              <select name="businessType">${BUSINESS_TYPE_OPTIONS.map((option) => `<option value="${option}" ${option === (state.company?.businessType || '') ? 'selected' : ''}>${option}</option>`).join('')}</select>
+            </label>
+            <label>Industry
+              <select name="industry">${INDUSTRY_OPTIONS.map((option) => `<option value="${option}" ${option === (state.company?.industry || '') ? 'selected' : ''}>${option}</option>`).join('')}</select>
+            </label>
           </div>
         </fieldset>
         <fieldset class="onboarding-location-fieldset"><legend><b>Contact and timezone</b></legend>
@@ -200,7 +211,7 @@ export function renderAdmin(el, state, actions) {
           ? '<div class="inline-state warn mt">Trial has ended. Access remains available in this soft-gating phase; please choose a paid plan soon.</div>'
           : (trialDaysRemaining !== null && trialDaysRemaining <= 7
             ? `<div class="inline-state warn mt">Trial ends in <b>${Math.max(trialDaysRemaining, 0)} day${Math.max(trialDaysRemaining, 0) === 1 ? '' : 's'}</b>. Billing checkout is coming soon.</div>`
-            : '<div class="inline-state info mt">Free trial-first flow is active. Billing collection is intentionally not enforced in this scaffold pass.</div>');
+            : '<div class="inline-state info mt">Trial mode is active while billing checkout is being finalized. You can still set plan, contacts, and renewal readiness now.</div>');
         return `<div class="grid grid-2 settings-stack">
           <div class="item">
             <h4 style="margin:0 0 8px;">Subscription summary</h4>
@@ -209,8 +220,8 @@ export function renderAdmin(el, state, actions) {
             <div class="tiny">Seat usage: <b>${usageSummary.seatsUsed}</b>${seatLimit ? ` / <b>${seatLimit}</b>` : ' (no limit set yet)'}</div>
             <div class="tiny">Usage snapshot: members ${usageSummary.members}, workers ${usageSummary.workers}, locations ${usageSummary.locations}, assets ${usageSummary.assets}.</div>
             ${trialWarning}
-            <div class="tiny mt">Checkout/customer portal integration placeholders:</div>
-            <div class="row mt"><button type="button" disabled>Start checkout (coming soon)</button><button type="button" disabled>Open billing portal (coming soon)</button></div>
+            <div class="tiny mt">Checkout/customer portal rollout status:</div>
+            <div class="row mt"><button type="button" disabled>Start checkout (staged rollout)</button><button type="button" disabled>Open billing portal (staged rollout)</button></div>
           </div>
           <div class="item">
             <h4 style="margin:0 0 8px;">Billing contact details</h4>
@@ -227,6 +238,7 @@ export function renderAdmin(el, state, actions) {
                 <label>Subscription status<select name="subscriptionStatus"><option value="trialing" ${(state.company?.subscriptionStatus || 'trialing') === 'trialing' ? 'selected' : ''}>trialing</option><option value="active" ${state.company?.subscriptionStatus === 'active' ? 'selected' : ''}>active</option><option value="past_due" ${state.company?.subscriptionStatus === 'past_due' ? 'selected' : ''}>past_due</option><option value="canceled" ${state.company?.subscriptionStatus === 'canceled' ? 'selected' : ''}>canceled</option></select></label>
                 <label>Trial status<select name="trialStatus"><option value="active" ${(state.company?.trialStatus || 'active') === 'active' ? 'selected' : ''}>active</option><option value="expired" ${state.company?.trialStatus === 'expired' ? 'selected' : ''}>expired</option><option value="converted" ${state.company?.trialStatus === 'converted' ? 'selected' : ''}>converted</option></select></label>
                 <label>Trial end date<input type="date" name="trialEndsAt" value="${(state.company?.trialEndsAt || '').slice(0, 10)}" /></label>
+                <label>Default trial length (days)<input type="number" min="1" max="120" name="trialLengthDays" value="${Number(state.company?.trialLengthDays || 0) || ''}" placeholder="Config default" /></label>
                 <label>Seat limit<input type="number" min="1" name="seatLimit" value="${seatLimit || ''}" placeholder="Optional" /></label>
               </div>
               <label>Billing email<input name="billingEmail" type="email" value="${state.company?.billingEmail || state.company?.primaryEmail || ''}" /></label>
@@ -285,7 +297,7 @@ export function renderAdmin(el, state, actions) {
     chips.push(renderStatusChip(member.enabled ? 'active' : 'inactive', member.enabled ? 'good' : 'warn'));
     chips.push(renderStatusChip(workerEmailSet.has(normalizedEmail) ? 'linked worker' : 'unlinked worker', workerEmailSet.has(normalizedEmail) ? 'good' : 'warn'));
     if (member.isCurrentUser) chips.push(renderStatusChip('you', 'info'));
-    return `<div class="item"><div class="row space"><b>${member.displayName || member.userId}</b><div class="state-chip-row">${chips.join('')}</div></div><div class="tiny">${member.email || '-'} ${member.userId ? `| ${member.userId}` : ''}</div><details class="mt"><summary>Edit role/access</summary><form data-member-form="${member.id}" class="grid grid-2 mt"><label>Role<select name="role" ${member.role === 'owner' ? 'disabled' : ''}>${ACCESS_ROLE_OPTIONS.map((role) => `<option value="${role}" ${role === (member.role || 'staff') ? 'selected' : ''}>${formatRoleLabel(role)}</option>`).join('')}</select></label><label>Status<select name="status"><option value="active" ${member.status !== 'inactive' ? 'selected' : ''}>active</option><option value="inactive" ${member.status === 'inactive' ? 'selected' : ''}>inactive</option></select></label><div class="tiny" style="grid-column:1/-1;">Use inactive for temporary access removal.</div><button type="submit" ${member.role === 'owner' ? 'disabled' : ''}>Save member access</button></form></details></div>`;
+    return `<div class="item"><div class="row space"><b>${getMemberDisplayLabel(member)}</b><div class="state-chip-row">${chips.join('')}</div></div><div class="tiny">${member.email || member.person?.email || member.userEmail || '-'}</div><details class="mt"><summary>Edit role/access</summary><form data-member-form="${member.id}" class="grid grid-2 mt"><label>Role<select name="role" ${member.role === 'owner' ? 'disabled' : ''}>${ACCESS_ROLE_OPTIONS.map((role) => `<option value="${role}" ${role === (member.role || 'staff') ? 'selected' : ''}>${formatRoleLabel(role)}</option>`).join('')}</select></label><label>Status<select name="status"><option value="active" ${member.status !== 'inactive' ? 'selected' : ''}>active</option><option value="inactive" ${member.status === 'inactive' ? 'selected' : ''}>inactive</option></select></label><div class="tiny" style="grid-column:1/-1;">Use inactive for temporary access removal.</div><button type="submit" ${member.role === 'owner' ? 'disabled' : ''}>Save member access</button></form></details></div>`;
   }).join('') || '<div class="inline-state info">No member records yet.</div>'}</div></section>
 
     <section class="item ${activeSection === 'workers' ? '' : 'hide'}" data-admin-section="workers"><h3>Workers</h3><p class="tiny">Directory records for assignments.</p><details><summary><b>Add worker record</b></summary><form id="workerForm" class="grid grid-2 mt"><label>Display name<input name="displayName" required /></label><label>Email (optional)<input name="email" type="email" /></label><label>Role<select name="role">${WORKER_ROLE_OPTIONS.map((role) => `<option value="${role}">${formatRoleLabel(role)}</option>`).join('')}</select></label><label>Default location<select name="defaultLocationId"><option value="">No default</option>${locationOptions.map((option) => `<option value="${option.id}">${option.label}</option>`).join('')}</select></label><label>Location label<input name="locationName" /></label><label>Skills (comma separated)<input name="skills" /></label><label>Send invite?<select name="sendInvite"><option value="no">No</option><option value="yes">Yes</option></select></label><button class="primary" type="submit">Create worker</button></form></details><div class="list mt">${workers.map((worker) => `<div class="item"><div class="row space"><b>${worker.displayName || worker.id}</b><div class="state-chip-row">${renderStatusChip(formatRoleLabel(worker.role || 'staff'))}${renderStatusChip(worker.enabled ? 'enabled' : 'disabled', worker.enabled ? 'good' : 'warn')}</div></div><div class="tiny">${worker.email || 'No email'} ${worker.locationName ? `| ${worker.locationName}` : ''}</div><details class="mt"><summary>Edit worker</summary><form data-worker-form="${worker.id}" class="grid grid-2 mt"><label>Display name<input name="displayName" value="${worker.displayName || ''}" /></label><label>Email<input name="email" type="email" value="${worker.email || ''}" /></label><label>Role<select name="role">${WORKER_ROLE_OPTIONS.map((role) => `<option value="${role}" ${role === (worker.role || 'staff') ? 'selected' : ''}>${formatRoleLabel(role)}</option>`).join('')}</select></label><label>Location label<input name="locationName" value="${worker.locationName || ''}" /></label><button type="submit">Save worker updates</button></form></details></div>`).join('') || '<div class="inline-state info">No workers yet.</div>'}</div></section>

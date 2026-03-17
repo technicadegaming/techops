@@ -149,7 +149,7 @@ function renderPostSaveActions(state) {
       <b>Next steps for ${taskId}</b>
       <button type="button" data-jump-task="${taskId}">Open task card</button>
     </div>
-    <div class="tiny mt">Suggested order: assign/start work → run AI → add timeline update → resolve/close → save fix to library.</div>
+    <div class="tiny mt">Suggested order: save task → run AI guidance (assignment optional while open) → assign/start work → update timeline → resolve/close → save fix to library.</div>
   </div>`;
 }
 

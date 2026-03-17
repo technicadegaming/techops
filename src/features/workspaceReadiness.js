@@ -47,6 +47,7 @@ function renderCheckRow(label, ok, { optional = false, recommended = false } = {
 
 export function renderWorkspaceReadinessCard(state = {}, { title = 'Workspace readiness', compact = false, dismissible = false } = {}) {
   const readiness = getWorkspaceReadiness(state);
+  const allowDismiss = dismissible && readiness.requiredComplete;
   const rows = [
     renderCheckRow('Company profile', readiness.checks.company),
     renderCheckRow('At least one location', readiness.checks.location),
@@ -61,7 +62,7 @@ export function renderWorkspaceReadinessCard(state = {}, { title = 'Workspace re
       <b>${title}</b>
       <div class="tiny">Required ${readiness.requiredCompleteCount}/${readiness.requiredTotalCount} | Optional ${readiness.optionalCompleteCount}/${readiness.optionalTotalCount}</div>
     </div>
-    ${dismissible ? '<div class="tiny mt"><button type="button" data-dismiss-readiness="1">Dismiss</button></div>' : ''}
+    ${dismissible ? `<div class="tiny mt">${allowDismiss ? '<button type="button" data-dismiss-readiness="1">Dismiss</button>' : 'Dismiss becomes available when all required readiness items are complete.'}</div>` : ''}
     <div class="mt">${rows}</div>
     ${readiness.requiredComplete
       ? '<div class="inline-state success mt">Core setup complete. Your workspace is operationally ready.</div>'
