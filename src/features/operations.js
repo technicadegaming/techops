@@ -662,6 +662,8 @@ function createDefaultOperationsUiState() {
     statusFilter: 'open',
     ownershipFilter: 'all',
     exceptionFilter: 'all',
+    taskSearch: '',
+    assigneeFilter: 'all',
     lastSaveFeedback: '',
     lastSaveTone: 'info',
     reassignSelections: {},
@@ -671,15 +673,21 @@ function createDefaultOperationsUiState() {
   };
 }
 
+function normalizeQueryValue(value = '') {
+  return `${value || ''}`.trim().toLowerCase();
+}
+
 function readFormDraft(form) {
   if (!form) return {};
   return Object.fromEntries(new FormData(form).entries());
 }
 
-function filterTasks(tasks, state) {
+function filterTasks(tasks, state, assetById = new Map()) {
   const statusFilter = state.operationsUi?.statusFilter || 'open';
   const ownershipFilter = state.operationsUi?.ownershipFilter || 'all';
   const exceptionFilter = state.operationsUi?.exceptionFilter || 'all';
+  const taskSearch = normalizeQueryValue(state.operationsUi?.taskSearch || '');
+  const assigneeFilter = normalizeQueryValue(state.operationsUi?.assigneeFilter || 'all');
   const myIdentifiers = new Set([state.user?.uid, state.user?.email].filter(Boolean));
   return (tasks || []).filter((task) => {
     const meta = getTaskStateMeta(task, state);
@@ -709,7 +717,25 @@ function filterTasks(tasks, state) {
             : exceptionFilter === 'closeout'
               ? meta.readyForCloseout
               : true;
-    return statusMatch && ownershipMatch && exceptionMatch;
+    const assigneeMatch = assigneeFilter === 'all'
+      ? true
+      : assigned.some((worker) => normalizeQueryValue(worker) === assigneeFilter);
+    const linkedAsset = assetById.get(task.assetId) || null;
+    const assignedLabels = assigned.map((worker) => resolveAssignmentLabel(worker, state));
+    const searchBlob = [
+      task.id,
+      linkedAsset?.name,
+      task.assetName,
+      task.title,
+      task.description,
+      task.notes,
+      task.reporter,
+      task.reportedByEmail,
+      ...assigned,
+      ...assignedLabels
+    ].map((entry) => normalizeQueryValue(entry)).join(' ');
+    const searchMatch = !taskSearch || searchBlob.includes(taskSearch);
+    return statusMatch && ownershipMatch && exceptionMatch && assigneeMatch && searchMatch;
   });
 }
 
@@ -732,7 +758,18 @@ export function renderOperations(el, state, actions) {
   const scopedAssets = scope.scopedAssets;
   const openTasks = scope.openTasks;
   const openMeta = openTasks.map((task) => ({ task, meta: getTaskStateMeta(task, state) }));
-  const visibleTasks = filterTasks(scopedTasks, state);
+  const visibleTasks = filterTasks(scopedTasks, state, assetById);
+  const taskWorkerOptions = workerOptions.filter((worker) => scopedTasks.some((task) => {
+    const assigned = Array.isArray(task.assignedWorkers) ? task.assignedWorkers : [];
+    return assigned.some((entry) => `${entry}`.trim() === `${worker.id || worker.email || ''}`.trim());
+  }));
+  const activeTaskFilterParts = [
+    state.operationsUi.taskSearch ? `search: "${state.operationsUi.taskSearch}"` : '',
+    state.operationsUi.assigneeFilter && state.operationsUi.assigneeFilter !== 'all' ? `assignee: ${resolveAssignmentLabel(state.operationsUi.assigneeFilter, state)}` : '',
+    state.operationsUi.statusFilter !== 'open' ? `status: ${STATUS_LABEL[state.operationsUi.statusFilter] || state.operationsUi.statusFilter}` : '',
+    state.operationsUi.ownershipFilter !== 'all' ? `ownership: ${state.operationsUi.ownershipFilter.replace('_', ' ')}` : '',
+    state.operationsUi.exceptionFilter !== 'all' ? `exception: ${state.operationsUi.exceptionFilter.replace('_', ' ')}` : ''
+  ].filter(Boolean);
   const unassignedOpen = openMeta.filter(({ meta }) => meta.awaitingAssignment).length;
   const followupOpen = openMeta.filter(({ meta }) => meta.needsFollowup).length;
   const inProgress = scopedTasks.filter((task) => task.status === 'in_progress').length;
@@ -808,6 +845,17 @@ export function renderOperations(el, state, actions) {
           </select>
         </label>
       </div>
+      <div class="grid grid-2 mt">
+        <label class="tiny">Task search
+          <input type="search" data-task-search placeholder="Task ID, asset, issue description, assignee" value="${state.operationsUi.taskSearch || ''}" />
+        </label>
+        <label class="tiny">Assignee
+          <select data-assignee-filter>
+            <option value="all">All assignees</option>
+            ${taskWorkerOptions.map((worker) => `<option value="${worker.id || worker.email || ''}" ${`${worker.id || worker.email || ''}` === `${state.operationsUi.assigneeFilter || 'all'}` ? 'selected' : ''}>${getWorkerOptionLabel(worker)}</option>`).join('')}
+          </select>
+        </label>
+      </div>
       <div class="filter-row mt">
         <button class="filter-chip ${state.operationsUi.statusFilter === 'open' ? 'active' : ''}" data-status-filter="open" type="button">Open work</button>
         <button class="filter-chip ${state.operationsUi.statusFilter === 'in_progress' ? 'active' : ''}" data-status-filter="in_progress" type="button">In progress</button>
@@ -827,6 +875,11 @@ export function renderOperations(el, state, actions) {
         <button class="filter-chip ${state.operationsUi.exceptionFilter === 'blocked' ? 'active' : ''}" data-exception-filter="blocked" type="button">Blocked</button>
         <button class="filter-chip ${state.operationsUi.exceptionFilter === 'closeout' ? 'active' : ''}" data-exception-filter="closeout" type="button">Ready to close</button>
       </div>
+      <div class="row space mt">
+        <div class="tiny">Showing ${visibleTasks.length} of ${scopedTasks.length} tasks in this location scope.</div>
+        <button type="button" data-clear-task-filters ${activeTaskFilterParts.length ? '' : 'disabled'}>Clear filters</button>
+      </div>
+      ${activeTaskFilterParts.length ? `<div class="tiny mt">Active filters: ${activeTaskFilterParts.join(' · ')}</div>` : '<div class="tiny mt">Active filters: default view (open work, all owners, all exceptions).</div>'}
     </div>
 
     ${state.operationsUi.lastSaveFeedback ? `<div class="inline-state ${state.operationsUi.lastSaveTone || 'info'}">${state.operationsUi.lastSaveFeedback}</div>` : ''}
@@ -1162,10 +1215,26 @@ export function renderOperations(el, state, actions) {
   });
 
   el.querySelector('[data-location-filter]')?.addEventListener('change', (event) => actions.setLocationFilter(event.target.value));
+  el.querySelector('[data-task-search]')?.addEventListener('input', (event) => {
+    state.operationsUi.taskSearch = event.target.value;
+    rerender();
+  });
+  el.querySelector('[data-assignee-filter]')?.addEventListener('change', (event) => {
+    state.operationsUi.assigneeFilter = event.target.value || 'all';
+    rerender();
+  });
   el.querySelectorAll('[data-status-filter]').forEach((button) => button.addEventListener('click', () => {
     state.operationsUi.statusFilter = button.dataset.statusFilter || 'open';
     rerender();
   }));
+  el.querySelector('[data-clear-task-filters]')?.addEventListener('click', () => {
+    state.operationsUi.statusFilter = 'open';
+    state.operationsUi.ownershipFilter = 'all';
+    state.operationsUi.exceptionFilter = 'all';
+    state.operationsUi.taskSearch = '';
+    state.operationsUi.assigneeFilter = 'all';
+    rerender();
+  });
   el.querySelectorAll('[data-ownership-filter]').forEach((button) => button.addEventListener('click', () => {
     state.operationsUi.ownershipFilter = button.dataset.ownershipFilter || 'all';
     rerender();

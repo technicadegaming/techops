@@ -110,6 +110,23 @@ function buildReviewQueue(assets = [], filter = 'needs_review') {
   });
 }
 
+function matchesAssetReviewSearch(asset = {}, query = '') {
+  const clean = `${query || ''}`.trim().toLowerCase();
+  if (!clean) return true;
+  const suggestions = Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : [];
+  const searchable = [
+    asset.id,
+    asset.name,
+    asset.manufacturer,
+    asset.model,
+    asset.serialNumber,
+    asset.locationName,
+    asset.location,
+    ...suggestions.map((entry) => entry?.title || entry?.url || '')
+  ].map((value) => `${value || ''}`.trim().toLowerCase()).join(' ');
+  return searchable.includes(clean);
+}
+
 function formatDateLabel(value) {
   if (!value) return 'Not set';
   const parsed = new Date(value);
@@ -183,7 +200,13 @@ export function renderAdmin(el, state, actions) {
     { id: 'rejected', label: 'Rejected' },
     { id: 'all', label: 'All assets' }
   ];
-  const reviewQueue = buildReviewQueue(state.assets || [], reviewFilter);
+  const reviewSearch = `${adminUi.assetReviewSearch || ''}`.trim();
+  const filteredQueue = buildReviewQueue(state.assets || [], reviewFilter);
+  const reviewQueue = filteredQueue.filter((asset) => matchesAssetReviewSearch(asset, reviewSearch));
+  const reviewActiveFilters = [
+    reviewFilter !== 'needs_review' ? `queue: ${reviewFilter.replace('_', ' ')}` : '',
+    reviewSearch ? `search: "${reviewSearch}"` : ''
+  ].filter(Boolean);
   const selectedAssetReviewIds = new Set(adminUi.selectedAssetReviewIds || []);
   const selectedSuggestionsByAsset = adminUi.selectedSuggestionsByAsset || {};
 
@@ -361,13 +384,18 @@ export function renderAdmin(el, state, actions) {
             ${reviewFilterOptions.map((option) => `<option value="${option.id}" ${reviewFilter === option.id ? 'selected' : ''}>${option.label}</option>`).join('')}
           </select>
         </label>
+        <label class="tiny">Search
+          <input type="search" data-asset-review-search placeholder="Asset, manufacturer, serial, suggestion title" value="${reviewSearch}" />
+        </label>
         <button type="button" data-run-review-enrichment="all">Run enrichment for all eligible assets</button>
         <button type="button" data-run-review-enrichment="filtered">Run enrichment for filtered assets</button>
         <button type="button" data-run-review-enrichment="selected">Run enrichment for selected assets</button>
         <button type="button" data-approve-selected-suggestions class="primary">Approve selected suggestions</button>
         <button type="button" data-reject-selected-suggestions>Reject selected suggestions</button>
+        <button type="button" data-clear-review-filters ${reviewActiveFilters.length ? '' : 'disabled'}>Clear filters</button>
       </div>
-      <div class="tiny mt">Queue: ${reviewQueue.length} assets in current filter.</div>
+      <div class="tiny mt">Queue: ${reviewQueue.length} of ${filteredQueue.length} assets in current filter.</div>
+      <div class="tiny mt">Active filters: ${reviewActiveFilters.length ? reviewActiveFilters.join(' · ') : 'default queue view'}</div>
       <div class="list mt">
         ${reviewQueue.map((asset) => {
     const suggestions = (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).filter((entry) => entry?.url && !entry?.deadPage && !entry?.unreachable);
@@ -442,6 +470,8 @@ export function renderAdmin(el, state, actions) {
   el.querySelectorAll('[data-admin-tab]').forEach((button) => button.addEventListener('click', () => actions.setAdminSection(button.dataset.adminTab)));
   el.querySelectorAll('[data-audit-filter]').forEach((button) => button.addEventListener('click', () => actions.setAuditFilter(button.dataset.auditFilter)));
   el.querySelector('[data-asset-review-filter]')?.addEventListener('change', (event) => actions.setAssetReviewFilter(event.target.value));
+  el.querySelector('[data-asset-review-search]')?.addEventListener('input', (event) => actions.setAssetReviewSearch(event.target.value));
+  el.querySelector('[data-clear-review-filters]')?.addEventListener('click', () => actions.clearAssetReviewFilters());
   el.querySelectorAll('[data-review-asset-select]').forEach((input) => input.addEventListener('change', () => actions.toggleAssetReviewSelection(input.dataset.reviewAssetSelect, input.checked)));
   el.querySelectorAll('[data-review-suggestion-select]').forEach((input) => input.addEventListener('change', () => actions.toggleAssetSuggestionSelection(input.dataset.reviewSuggestionSelect, decodeURIComponent(input.dataset.url || ''), input.checked)));
   el.querySelectorAll('[data-run-review-enrichment]').forEach((button) => button.addEventListener('click', () => actions.runBulkAssetEnrichment(button.dataset.runReviewEnrichment)));

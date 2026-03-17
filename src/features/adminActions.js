@@ -88,6 +88,18 @@ export function createAdminActions(deps) {
       state.adminUi = { ...(state.adminUi || {}), assetReviewFilter: filter || 'needs_review' };
       render();
     },
+    setAssetReviewSearch: (query) => {
+      state.adminUi = { ...(state.adminUi || {}), assetReviewSearch: `${query || ''}` };
+      render();
+    },
+    clearAssetReviewFilters: () => {
+      state.adminUi = {
+        ...(state.adminUi || {}),
+        assetReviewFilter: 'needs_review',
+        assetReviewSearch: ''
+      };
+      render();
+    },
     toggleAssetReviewSelection: (assetId, selected) => {
       const selectedAssets = new Set(state.adminUi?.selectedAssetReviewIds || []);
       if (selected) selectedAssets.add(assetId);
