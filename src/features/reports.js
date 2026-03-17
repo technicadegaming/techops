@@ -107,6 +107,12 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
   const assetAttention = buildAssetAttentionSummary(scopedTasks, scope.scopedAssets).slice(0, 8);
   const workload = buildAssigneeWorkloadSummary(scopedTasks, state.users || [], now).slice(0, 8);
   const locationComparison = buildLocationComparisonSummary(state, now).slice(0, 8);
+  const completionRate = scopedTasks.length ? Math.round((completed.length / scopedTasks.length) * 100) : 0;
+  const blockedRate = unresolved.length ? Math.round((blockedTasks.length / unresolved.length) * 100) : 0;
+  const reportActiveFilters = [
+    selection?.key && selection.key !== '__all_locations__' ? `location: ${selection.label}` : '',
+    statusFilter !== 'open' ? `status: ${statusFilter.replace('_', ' ')}` : ''
+  ].filter(Boolean);
 
   el.innerHTML = `
     <div class="row space">
@@ -135,6 +141,16 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
           <button class="filter-chip ${statusFilter === 'all' ? 'active' : ''}" data-report-status="all" type="button">All tasks</button>
         </div>
       </div>
+      <div class="row space mt">
+        <div class="tiny">Active filters: ${reportActiveFilters.length ? reportActiveFilters.join(' · ') : 'default view (all locations, open tasks)'}</div>
+        <div class="tiny">Result count: ${scopedTasks.length} tasks</div>
+      </div>
+    </div>
+
+    <div class="kpi-line" style="margin-bottom:8px;">
+      <span>Completion rate: ${completionRate}%</span>
+      <span>Blocked share: ${blockedRate}% of unresolved</span>
+      <span>AI follow-up backlog: ${followupTasks.length}</span>
     </div>
 
     <div class="stats-grid">

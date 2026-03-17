@@ -19,6 +19,10 @@ function renderAssetCardFallback(asset, error) {
   </div>`;
 }
 
+function normalizeQueryValue(value = '') {
+  return `${value || ''}`.trim().toLowerCase();
+}
+
 const ENRICHMENT_STATUS_LABELS = {
   queued: 'queued',
   searching_docs: 'searching',
@@ -274,11 +278,44 @@ export function renderAssets(el, state, actions) {
   const repeatPatterns = detectRepeatIssues(state.tasks || []);
   const locationOptions = buildLocationOptions(state);
   const scope = buildLocationSummary(state);
+  state.assetUi = {
+    searchQuery: '',
+    statusFilter: 'all',
+    reviewFilter: 'all',
+    enrichmentFilter: 'all',
+    ...(state.assetUi || {})
+  };
   const assetFilter = state.route?.assetFilter || 'all';
   const scopedAssets = (scope.scopedAssets || []).filter((asset) => {
-    if (assetFilter !== 'missing_docs') return true;
-    return !(asset.manualLinks || []).length;
+    if (assetFilter !== 'missing_docs' && state.assetUi.statusFilter === 'all') return true;
+    const hasDocs = (asset.manualLinks || []).length > 0;
+    if (assetFilter === 'missing_docs' && hasDocs) return false;
+    if (state.assetUi.statusFilter === 'missing_docs') return !hasDocs;
+    if (state.assetUi.statusFilter === 'has_docs') return hasDocs;
+    return true;
+  }).filter((asset) => {
+    const reviewState = `${asset.reviewState || ''}`.trim() || ((asset.documentationSuggestions || []).some((entry) => entry?.url) ? 'needs_review' : 'idle');
+    if (state.assetUi.reviewFilter === 'all') return true;
+    if (state.assetUi.reviewFilter === 'missing_docs') return !(asset.manualLinks || []).length;
+    return reviewState === state.assetUi.reviewFilter;
+  }).filter((asset) => {
+    const enrichmentStatus = normalizeEnrichmentStatus(asset.enrichmentStatus || 'idle');
+    if (state.assetUi.enrichmentFilter === 'all') return true;
+    if (state.assetUi.enrichmentFilter === 'action_needed') return ['followup_needed', 'likely_manual_unreachable', 'no_match_yet', 'lookup_failed', 'permission_blocked'].includes(enrichmentStatus);
+    if (state.assetUi.enrichmentFilter === 'in_progress') return ['queued', 'searching_docs', 'in_progress'].includes(enrichmentStatus);
+    return enrichmentStatus === state.assetUi.enrichmentFilter;
+  }).filter((asset) => {
+    const query = normalizeQueryValue(state.assetUi.searchQuery || '');
+    if (!query) return true;
+    const haystack = [asset.id, asset.name, asset.manufacturer, asset.model, asset.serialNumber, asset.locationName, asset.location].map(normalizeQueryValue).join(' ');
+    return haystack.includes(query);
   });
+  const activeAssetFilters = [
+    state.assetUi.searchQuery ? `search: "${state.assetUi.searchQuery}"` : '',
+    state.assetUi.statusFilter !== 'all' ? `docs: ${state.assetUi.statusFilter.replace('_', ' ')}` : '',
+    state.assetUi.reviewFilter !== 'all' ? `review: ${state.assetUi.reviewFilter.replace('_', ' ')}` : '',
+    state.assetUi.enrichmentFilter !== 'all' ? `enrichment: ${state.assetUi.enrichmentFilter.replace('_', ' ')}` : ''
+  ].filter(Boolean);
   const assetTasks = scope.scopedTasks;
   const docsReadyCount = (scope.scopedAssets || []).filter((asset) => (asset.manualLinks || []).length > 0).length;
   const docsMissingCount = scope.assetsWithoutDocs.length;
@@ -298,6 +335,42 @@ export function renderAssets(el, state, actions) {
           </select>
         </label>
       </div>
+      <div class="grid grid-2 mt">
+        <label class="tiny">Asset search
+          <input type="search" data-asset-search placeholder="Name, manufacturer, model, serial, location" value="${state.assetUi.searchQuery || ''}" />
+        </label>
+        <label class="tiny">Docs status
+          <select data-asset-docs-filter>
+            <option value="all" ${state.assetUi.statusFilter === 'all' ? 'selected' : ''}>All docs states</option>
+            <option value="missing_docs" ${state.assetUi.statusFilter === 'missing_docs' ? 'selected' : ''}>Missing docs</option>
+            <option value="has_docs" ${state.assetUi.statusFilter === 'has_docs' ? 'selected' : ''}>Has docs</option>
+          </select>
+        </label>
+        <label class="tiny">Review state
+          <select data-asset-review-filter>
+            <option value="all" ${state.assetUi.reviewFilter === 'all' ? 'selected' : ''}>All review states</option>
+            <option value="needs_review" ${state.assetUi.reviewFilter === 'needs_review' ? 'selected' : ''}>Needs review</option>
+            <option value="approved" ${state.assetUi.reviewFilter === 'approved' ? 'selected' : ''}>Approved</option>
+            <option value="rejected" ${state.assetUi.reviewFilter === 'rejected' ? 'selected' : ''}>Rejected</option>
+            <option value="idle" ${state.assetUi.reviewFilter === 'idle' ? 'selected' : ''}>Idle</option>
+            <option value="missing_docs" ${state.assetUi.reviewFilter === 'missing_docs' ? 'selected' : ''}>Missing docs</option>
+          </select>
+        </label>
+        <label class="tiny">Enrichment state
+          <select data-asset-enrichment-filter>
+            <option value="all" ${state.assetUi.enrichmentFilter === 'all' ? 'selected' : ''}>All enrichment states</option>
+            <option value="action_needed" ${state.assetUi.enrichmentFilter === 'action_needed' ? 'selected' : ''}>Action needed</option>
+            <option value="in_progress" ${state.assetUi.enrichmentFilter === 'in_progress' ? 'selected' : ''}>In progress</option>
+            <option value="verified_manual_found" ${state.assetUi.enrichmentFilter === 'verified_manual_found' ? 'selected' : ''}>Verified manual found</option>
+            <option value="followup_needed" ${state.assetUi.enrichmentFilter === 'followup_needed' ? 'selected' : ''}>Follow-up needed</option>
+          </select>
+        </label>
+      </div>
+      <div class="row space mt">
+        <div class="tiny">Showing ${scopedAssets.length} of ${(scope.scopedAssets || []).length} assets in this location scope.</div>
+        <button type="button" data-clear-asset-filters ${activeAssetFilters.length ? '' : 'disabled'}>Clear filters</button>
+      </div>
+      <div class="tiny mt">Active filters: ${activeAssetFilters.length ? activeAssetFilters.join(' · ') : 'none'}</div>
     </div>
     ${assetFilter === 'missing_docs' ? '<div class="inline-state warn">Showing assets missing docs only.</div>' : ''}
     <form id="assetForm" class="grid grid-2" style="margin-bottom:12px; border:1px solid #e5e7eb; border-radius:10px; padding:10px;">
@@ -484,6 +557,29 @@ export function renderAssets(el, state, actions) {
     actions.applyOnboardingReviewEdit(Number(reviewForm.dataset.onboardingReviewRow), Object.fromEntries(fd.entries()));
   }));
   el.querySelector('[data-location-filter]')?.addEventListener('change', (event) => actions.setLocationFilter(event.target.value));
+  el.querySelector('[data-asset-search]')?.addEventListener('input', (event) => {
+    state.assetUi.searchQuery = event.target.value;
+    renderAssets(el, state, actions);
+  });
+  el.querySelector('[data-asset-docs-filter]')?.addEventListener('change', (event) => {
+    state.assetUi.statusFilter = event.target.value || 'all';
+    renderAssets(el, state, actions);
+  });
+  el.querySelector('[data-asset-review-filter]')?.addEventListener('change', (event) => {
+    state.assetUi.reviewFilter = event.target.value || 'all';
+    renderAssets(el, state, actions);
+  });
+  el.querySelector('[data-asset-enrichment-filter]')?.addEventListener('change', (event) => {
+    state.assetUi.enrichmentFilter = event.target.value || 'all';
+    renderAssets(el, state, actions);
+  });
+  el.querySelector('[data-clear-asset-filters]')?.addEventListener('click', () => {
+    state.assetUi.searchQuery = '';
+    state.assetUi.statusFilter = 'all';
+    state.assetUi.reviewFilter = 'all';
+    state.assetUi.enrichmentFilter = 'all';
+    renderAssets(el, state, actions);
+  });
   el.querySelectorAll('[data-docs]').forEach((button) => button.addEventListener('click', () => actions.markDocsReviewed(button.dataset.docs)));
   el.querySelectorAll('[data-del]').forEach((button) => button.addEventListener('click', () => actions.deleteAsset(button.dataset.del)));
   el.querySelectorAll('[data-enrich]').forEach((button) => button.addEventListener('click', () => actions.runAssetEnrichment(button.dataset.enrich)));
