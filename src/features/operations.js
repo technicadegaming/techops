@@ -45,6 +45,8 @@ const AI_FIX_STATE_LABEL = {
   rejected: 'Rejected / not useful'
 };
 
+const MAX_EVIDENCE_IMAGE_BYTES = 8 * 1024 * 1024;
+
 function getAiStatusLabel(status = 'idle') {
   return AI_STATUS_LABEL[status] || `AI ${`${status || 'idle'}`.replaceAll('_', ' ')}`;
 }
@@ -80,6 +82,27 @@ function renderAttachments(attachments = {}, emptyLabel = 'No references recorde
     ${renderReferenceGroup('Images', attachments.images || [])}
     ${renderReferenceGroup('Videos', attachments.videos || [])}
     ${renderReferenceGroup('Evidence', attachments.evidence || [])}
+  </div>`;
+}
+
+
+function formatFileSize(sizeBytes = 0) {
+  const size = Number(sizeBytes || 0);
+  if (!size) return '0 B';
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function renderUploadedEvidence(task = {}, state = {}, editable = false) {
+  const files = Array.isArray(task.uploadedEvidence) ? task.uploadedEvidence : [];
+  const uiState = state.operationsUi?.evidenceUploadsByTask?.[task.id] || {};
+  return `<div class="mt evidence-upload-panel">
+    <b>Uploaded evidence files</b>
+    <div class="tiny">Image uploads only for now. Other file types can be added later.</div>
+    ${editable ? `<div class="row mt"><input type="file" accept="image/*" data-task-evidence-file="${task.id}" /><button type="button" data-upload-task-evidence="${task.id}" ${uiState.uploading ? 'disabled' : ''}>${uiState.uploading ? 'Uploading…' : 'Upload image'}</button></div>` : ''}
+    ${uiState.message ? `<div class="inline-state ${uiState.tone || 'info'} mt">${uiState.message}</div>` : ''}
+    ${files.length ? `<div class="attachment-block mt">${files.map((entry) => `<div class="attachment-group"><div class="row space"><span class="state-chip muted">${entry.filename || entry.storagePath || 'file'}</span>${editable ? `<button type="button" class="danger" data-remove-task-evidence="${task.id}" data-evidence-id="${entry.id}">Remove</button>` : ''}</div><div class="tiny mt">${entry.contentType || 'unknown type'} • ${formatFileSize(entry.sizeBytes)} • uploaded ${formatDateTime(entry.uploadedAt)} by ${entry.uploadedBy || 'unknown'}</div>${entry.downloadURL ? `<div class="tiny mt"><a href="${entry.downloadURL}" target="_blank" rel="noopener">Open file</a></div>` : ''}</div>`).join('')}</div>` : '<div class="inline-state info mt">No uploaded evidence files yet.</div>'}
   </div>`;
 }
 
@@ -926,6 +949,7 @@ export function renderOperations(el, state, actions) {
               <div class="mt"><b>Asset link:</b> ${task.assetId ? `<a href="?tab=assets&assetId=${encodeURIComponent(task.assetId)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open asset record</a>` : 'No linked asset'}</div>
               <div class="mt"><b>Service timeline</b>${renderTimeline(task)}</div>
               <div class="mt"><b>Recorded references</b>${renderAttachments(task.attachments || {}, 'No image, video, or evidence references on this task yet.')}</div>
+              ${renderUploadedEvidence(task, state, editable)}
               ${meta.unavailable.length ? `<div class="tiny mt">Unavailable assignees: ${meta.unavailable.join(', ')}</div>` : ''}
               <div class="task-actions mt">
                 <div class="tiny"><b>Next actions</b></div>
@@ -1229,6 +1253,78 @@ export function renderOperations(el, state, actions) {
   el.querySelectorAll('[data-del]').forEach((button) => button.addEventListener('click', () => {
     state.operationsUi.scrollY = window.scrollY;
     actions.deleteTask(button.dataset.del);
+  }));
+  el.querySelectorAll('[data-upload-task-evidence]').forEach((button) => button.addEventListener('click', async () => {
+    const taskId = button.dataset.uploadTaskEvidence;
+    const input = el.querySelector(`[data-task-evidence-file="${taskId}"]`);
+    const file = input?.files?.[0] || null;
+    if (!file) {
+      state.operationsUi.evidenceUploadsByTask = {
+        ...(state.operationsUi.evidenceUploadsByTask || {}),
+        [taskId]: { uploading: false, tone: 'error', message: 'Select an image to upload.' }
+      };
+      rerender();
+      return;
+    }
+    if (!file.type?.startsWith('image/')) {
+      state.operationsUi.evidenceUploadsByTask = {
+        ...(state.operationsUi.evidenceUploadsByTask || {}),
+        [taskId]: { uploading: false, tone: 'error', message: 'Only image uploads are enabled right now.' }
+      };
+      rerender();
+      return;
+    }
+    if (Number(file.size || 0) > MAX_EVIDENCE_IMAGE_BYTES) {
+      state.operationsUi.evidenceUploadsByTask = {
+        ...(state.operationsUi.evidenceUploadsByTask || {}),
+        [taskId]: { uploading: false, tone: 'error', message: 'Image is too large. Keep uploads under 8 MB.' }
+      };
+      rerender();
+      return;
+    }
+    state.operationsUi.evidenceUploadsByTask = {
+      ...(state.operationsUi.evidenceUploadsByTask || {}),
+      [taskId]: { uploading: true, tone: 'info', message: 'Uploading image evidence…' }
+    };
+    rerender();
+    try {
+      await actions.uploadTaskEvidence(taskId, file);
+      state.operationsUi.evidenceUploadsByTask = {
+        ...(state.operationsUi.evidenceUploadsByTask || {}),
+        [taskId]: { uploading: false, tone: 'success', message: `Uploaded ${file.name}.` }
+      };
+      rerender();
+    } catch (error) {
+      state.operationsUi.evidenceUploadsByTask = {
+        ...(state.operationsUi.evidenceUploadsByTask || {}),
+        [taskId]: { uploading: false, tone: 'error', message: `${error?.message || 'Unable to upload evidence file.'}` }
+      };
+      rerender();
+    }
+  }));
+  el.querySelectorAll('[data-remove-task-evidence]').forEach((button) => button.addEventListener('click', async () => {
+    const taskId = button.dataset.removeTaskEvidence;
+    const evidenceId = button.dataset.evidenceId;
+    if (!taskId || !evidenceId) return;
+    state.operationsUi.evidenceUploadsByTask = {
+      ...(state.operationsUi.evidenceUploadsByTask || {}),
+      [taskId]: { uploading: true, tone: 'info', message: 'Removing uploaded evidence…' }
+    };
+    rerender();
+    try {
+      await actions.removeTaskEvidence(taskId, evidenceId);
+      state.operationsUi.evidenceUploadsByTask = {
+        ...(state.operationsUi.evidenceUploadsByTask || {}),
+        [taskId]: { uploading: false, tone: 'success', message: 'Evidence removed.' }
+      };
+      rerender();
+    } catch (error) {
+      state.operationsUi.evidenceUploadsByTask = {
+        ...(state.operationsUi.evidenceUploadsByTask || {}),
+        [taskId]: { uploading: false, tone: 'error', message: `${error?.message || 'Unable to remove evidence.'}` }
+      };
+      rerender();
+    }
   }));
   el.querySelectorAll('[data-run-ai]').forEach((button) => button.addEventListener('click', () => {
     state.operationsUi.scrollY = window.scrollY;
