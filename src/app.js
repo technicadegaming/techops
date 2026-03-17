@@ -10,7 +10,7 @@ import {
   syncSecuritySnapshot,
   watchAuth
 } from './auth.js';
-import { clearEntitySet, countEntities, deleteEntity, getAppSettings, getEntity, listAudit, listEntities, saveAppSettings, saveUserProfile, setActiveCompanyContext, upsertEntity } from './data.js';
+import { clearEntitySet, deleteEntity, getEntity, listEntities, saveAppSettings, saveUserProfile, setActiveCompanyContext, upsertEntity } from './data.js';
 import { renderDashboard } from './features/dashboard.js';
 import { renderOperations } from './features/operations.js';
 import { renderAssets } from './features/assets.js';
@@ -19,13 +19,13 @@ import { renderReports } from './features/reports.js';
 import { renderAdmin } from './admin.js';
 import { renderOnboarding } from './onboarding.js';
 import { formatActionError, runActionFactory } from './uiActions.js';
-import { buildPermissionContext, canDelete, isAdmin, isGlobalAdmin, isManager } from './roles.js';
+import { buildPermissionContext, canDelete, isAdmin, isManager } from './roles.js';
 import { previewLegacyImport, importLegacyData } from './migration.js';
 import { buildAssetsCsv, buildAuditCsv, buildCompanyBackupBundle, buildInvitesCsv, buildLocationsCsv, buildMembersCsv, buildTasksCsv, buildWorkersCsv, dryRunBackup, exportBackupJson, restoreBackup, validateBackup } from './backup.js';
 import { analyzeTaskTroubleshooting, answerTaskFollowup, enrichAssetDocumentation, previewAssetDocumentationLookup, regenerateTaskTroubleshooting, saveTaskFixToTroubleshootingLibrary } from './aiAdapter.js';
 import { buildCloseoutEvent, parseRouteState, pushRouteState } from './features/workflow.js';
 import { buildNotificationCandidates, formatRelativeTime } from './features/notifications.js';
-import { acceptInvite, createCompanyFromOnboarding, createCompanyInvite, ensureBootstrapCompanyForLegacyUser, getCompany, listCompanyMembers, listMembershipsByUser, revokeInvite } from './company.js';
+import { acceptInvite, createCompanyFromOnboarding, createCompanyInvite, revokeInvite } from './company.js';
 import { buildLocationOptions, getLocationSelection, getLocationScopeLabel } from './features/locationContext.js';
 import { createOperationsActions } from './features/operationsActions.js';
 import { createAssetActions } from './features/assetActions.js';
@@ -34,8 +34,11 @@ import { getWorkspaceReadiness } from './features/workspaceReadiness.js';
 import { parseAssetCsv, parseBulkAssetList, normalizeAssetCandidate } from './features/assetIntake.js';
 import { logAudit } from './audit.js';
 import { renderAccount } from './account.js';
-import { resolveAppElements } from './app/boot.js';
-import { createInitialState } from './app/state.js';
+import { hydrateInviteCodeFromRoute, resolveAppElements, syncPendingInviteCode } from './app/boot.js';
+import { reportActionError, requireActiveCompanyId, withRequiredCompanyId } from './app/actions.js';
+import { bootstrapCompanyContext as bootstrapCompanyContextState, refreshData as refreshAppData, setActiveMembership as setActiveMembershipState } from './app/dataRefresh.js';
+import { buildTabs as buildTabsUi, openTab as openTabUi } from './app/router.js';
+import { buildPreviewQueryKey, createEmptyAssetDraft, createInitialState, sections, setOnboardingFeedback, setSetupWizardFeedback, syncSetupWizardState } from './app/state.js';
 
 const {
   authView,
@@ -48,87 +51,7 @@ const {
   notificationBadge,
   notificationPanel
 } = resolveAppElements(document);
-const ACTIVE_MEMBERSHIP_STORAGE_KEY = 'techops.activeMembership';
-
-const sections = ['dashboard', 'operations', 'assets', 'calendar', 'reports', 'account', 'admin'];
-function createEmptyAssetDraft() {
-  return {
-    name: '',
-    serialNumber: '',
-    manufacturer: '',
-    id: '',
-    status: '',
-    ownerWorkers: '',
-    manualLinksText: '',
-    historyNote: '',
-    imageRefsText: '',
-    videoRefsText: '',
-    evidenceRefsText: '',
-    notes: '',
-    manualLinks: [],
-    supportResources: [],
-    supportContacts: [],
-    preview: null,
-    previewStatus: 'idle',
-    previewMeta: { inFlightQuery: '', lastCompletedQuery: '' },
-    draftNameNormalized: '',
-    saveFeedback: '',
-    saveSecondaryFeedback: '',
-    saveDebugContext: '',
-    saveFeedbackTone: 'success',
-    saving: false
-  };
-}
-
-function buildPreviewQueryKey(payload = {}) {
-  const assetName = `${payload.assetName || ''}`.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-  const manufacturer = `${payload.manufacturer || ''}`.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-  const serialNumber = `${payload.serialNumber || ''}`.trim().toLowerCase();
-  const assetId = `${payload.assetId || ''}`.trim().toLowerCase();
-  const followupAnswer = `${payload.followupAnswer || ''}`.trim().toLowerCase();
-  return [assetName, manufacturer, serialNumber, assetId, followupAnswer].join('|');
-}
-
 const state = createInitialState();
-
-function getAuthInviteCodeValue() {
-  const input = document.getElementById('authInviteCode');
-  return `${input?.value || ''}`.trim();
-}
-
-function syncPendingInviteCode() {
-  const inviteCode = getAuthInviteCodeValue();
-  state.onboardingUi = { ...(state.onboardingUi || {}), inviteCodePrefill: inviteCode };
-}
-
-function hydrateInviteCodeFromRoute() {
-  const params = new URLSearchParams(window.location.search || '');
-  const inviteCode = `${params.get('invite') || params.get('inviteCode') || ''}`.trim();
-  if (!inviteCode) return;
-  const input = document.getElementById('authInviteCode');
-  if (input && !input.value) input.value = inviteCode;
-  state.onboardingUi = { ...(state.onboardingUi || {}), inviteCodePrefill: inviteCode };
-}
-
-function setOnboardingFeedback(message = '', tone = 'info', extra = {}) {
-  state.onboardingUi = { ...(state.onboardingUi || {}), message, tone, ...extra };
-}
-
-function setSetupWizardFeedback(message = '', tone = 'info') {
-  state.setupWizard = { ...(state.setupWizard || {}), message, tone };
-}
-
-function syncSetupWizardState() {
-  const readiness = getWorkspaceReadiness(state);
-  const dismissed = !!state.settings?.workspaceReadinessDismissedAt;
-  const shouldShow = !!state.company?.id && !state.onboardingRequired && readiness.needsSetupWizard && !dismissed;
-  state.setupWizard = {
-    ...(state.setupWizard || {}),
-    active: shouldShow,
-    step: state.setupWizard?.step || 1
-  };
-  if (!shouldShow) state.setupWizard = { ...(state.setupWizard || {}), active: false, message: '', tone: 'info' };
-}
 
 function isPermissionRelatedError(error) {
   const code = `${error?.code || ''}`.toLowerCase();
@@ -177,11 +100,6 @@ function buildAssetSaveDebugContext() {
     companyId: `${state.company?.id || state.activeMembership?.companyId || ''}`.trim() || 'unknown',
     companyRole: state.permissions?.companyRole || 'unknown'
   };
-}
-
-function reportActionError(label, error, fallbackMessage) {
-  console.error(`[${label}]`, error);
-  alert(formatActionError(error, fallbackMessage));
 }
 
 function setTaskAiUiState(taskId, nextState = null) {
@@ -367,63 +285,23 @@ function evaluatePassword(password = '') {
   };
 }
 
-function requireActiveCompanyId(actionLabel = 'continue') {
-  const companyId = `${state.company?.id || state.activeMembership?.companyId || state.memberships?.[0]?.companyId || ''}`.trim();
-  if (!companyId) {
-    throw new Error(`No active company context is available. Complete onboarding before trying to ${actionLabel}.`);
-  }
-  return companyId;
-}
-
-function getStoredActiveMembershipId() {
-  const userId = `${state.user?.uid || ''}`.trim();
-  if (!userId) return '';
-  try {
-    return localStorage.getItem(`${ACTIVE_MEMBERSHIP_STORAGE_KEY}:${userId}`) || '';
-  } catch {
-    return '';
-  }
-}
-
-function storeActiveMembershipId(membershipId) {
-  const userId = `${state.user?.uid || ''}`.trim();
-  if (!userId) return;
-  try {
-    if (membershipId) {
-      localStorage.setItem(`${ACTIVE_MEMBERSHIP_STORAGE_KEY}:${userId}`, membershipId);
-      return;
-    }
-    localStorage.removeItem(`${ACTIVE_MEMBERSHIP_STORAGE_KEY}:${userId}`);
-  } catch {
-    // Ignore local storage failures and keep the selection in memory.
-  }
-}
-
-function withRequiredCompanyId(payload = {}, actionLabel = 'continue') {
-  return { ...payload, companyId: requireActiveCompanyId(actionLabel) };
-}
-
 const runAction = runActionFactory({ reportActionError });
 
-function tabVisible(tab) {
-  if (state.onboardingRequired) return tab === 'dashboard';
-  if (tab === 'admin') return isAdmin(state.permissions);
-  return true;
-}
-
-function buildTabs() {
-  const tabs = document.getElementById('tabs');
-  tabs.innerHTML = sections.filter(tabVisible).map((id) => `<button class="tab ${id === state.route.tab ? 'active' : ''}" data-tab="${id}">${id}</button>`).join('');
-  tabs.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => openTab(b.dataset.tab)));
-}
 
 function openTab(name, taskId = null, assetId = null) {
-  state.route = { ...state.route, tab: name, taskId: taskId || null, assetId: assetId || null };
-  pushRouteState(state.route);
-  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
-  document.querySelectorAll('.section').forEach((s) => s.classList.toggle('active', s.id === name));
-  if (taskId) setTimeout(() => document.getElementById(`task-${taskId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 120);
-  if (assetId) setTimeout(() => document.getElementById(`asset-${assetId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 120);
+  openTabUi({ state, name, taskId, assetId });
+}
+
+async function refreshData() {
+  await refreshAppData(state, { syncNotifications });
+}
+
+async function setActiveMembership(nextMembership, options = {}) {
+  await setActiveMembershipState(state, nextMembership, { ...options, refreshData, render });
+}
+
+async function bootstrapCompanyContext() {
+  await bootstrapCompanyContextState(state, { refreshData, render });
 }
 
 function renderActiveLocationSwitcher() {
@@ -468,7 +346,7 @@ async function syncNotifications() {
   for (const candidate of candidates) {
     const current = existingByKey.get(candidate.eventKey);
     if (!current) {
-      await upsertEntity('notifications', candidate.id, withRequiredCompanyId({
+      await upsertEntity('notifications', candidate.id, withRequiredCompanyId(state, {
         ...candidate,
         userId: state.user.uid,
         readAt: null,
@@ -481,7 +359,7 @@ async function syncNotifications() {
     }
     if (current.status === 'dismissed') continue;
     const shouldRefreshUnread = !!candidate.happenedAt && `${candidate.happenedAt}` !== `${current.happenedAt || ''}`;
-    await upsertEntity('notifications', current.id, withRequiredCompanyId({
+    await upsertEntity('notifications', current.id, withRequiredCompanyId(state, {
       ...current,
       title: candidate.title,
       body: candidate.body,
@@ -504,7 +382,7 @@ function unreadNotificationCount() {
 async function markNotificationRead(notificationId) {
   const notification = (state.notifications || []).find((entry) => entry.id === notificationId);
   if (!notification || notification.readAt) return;
-  await upsertEntity('notifications', notification.id, withRequiredCompanyId({
+  await upsertEntity('notifications', notification.id, withRequiredCompanyId(state, {
     ...notification,
     readAt: new Date().toISOString(),
     updatedAtClient: new Date().toISOString()
@@ -516,7 +394,7 @@ async function markNotificationRead(notificationId) {
 async function dismissNotification(notificationId) {
   const notification = (state.notifications || []).find((entry) => entry.id === notificationId);
   if (!notification) return;
-  await upsertEntity('notifications', notification.id, withRequiredCompanyId({
+  await upsertEntity('notifications', notification.id, withRequiredCompanyId(state, {
     ...notification,
     dismissedAt: new Date().toISOString(),
     status: 'dismissed',
@@ -529,7 +407,7 @@ async function dismissNotification(notificationId) {
 async function markAllNotificationsRead() {
   const unread = (state.notifications || []).filter((entry) => entry.status !== 'dismissed' && !entry.readAt);
   for (const notification of unread) {
-    await upsertEntity('notifications', notification.id, withRequiredCompanyId({
+    await upsertEntity('notifications', notification.id, withRequiredCompanyId(state, {
       ...notification,
       readAt: new Date().toISOString(),
       updatedAtClient: new Date().toISOString()
@@ -619,68 +497,6 @@ function applyActionCenterFocus(focus) {
   } else if (focus === 'due_soon_pm') {
     state.route = { ...(state.route || {}), pmFilter: 'due_soon' };
   }
-}
-
-async function refreshData() {
-  state.tasks = await listEntities('tasks').catch(() => []);
-  state.operations = await listEntities('operations').catch(() => []);
-  state.assets = await listEntities('assets').catch(() => []);
-  state.pmSchedules = await listEntities('pmSchedules').catch(() => []);
-  state.manuals = await listEntities('manuals').catch(() => []);
-  state.notes = await listEntities('notes').catch(() => []);
-  state.users = await listEntities('users').catch(() => []);
-  state.companyMembers = state.company?.id ? await listCompanyMembers(state.company.id).catch(() => []) : [];
-  state.workers = await listEntities('workers').catch(() => []);
-  state.invites = await listEntities('companyInvites').catch(() => []);
-  state.companyLocations = await listEntities('companyLocations').catch(() => []);
-  state.importHistory = await listEntities('importHistory').catch(() => []);
-  state.settings = await getAppSettings().catch(() => ({}));
-  state.auditLogs = await listAudit().catch(() => []);
-  state.taskAiRuns = await listEntities('taskAiRuns').catch(() => []);
-  state.taskAiFollowups = await listEntities('taskAiFollowups').catch(() => []);
-  state.troubleshootingLibrary = await listEntities('troubleshootingLibrary').catch(() => []);
-  state.notifications = await listEntities('notifications').catch(() => []);
-  state.notificationPrefs = state.settings.notificationPrefs || { enabledTypes: [] };
-  await syncNotifications();
-  state.notifications = await listEntities('notifications').catch(() => []);
-  syncSetupWizardState();
-}
-
-async function hydrateMembershipCompanies(memberships = []) {
-  const companyEntries = await Promise.all((memberships || []).map(async (membership) => {
-    const company = await getCompany(membership.companyId).catch(() => null);
-    return [membership.id, company];
-  }));
-  state.membershipCompanies = Object.fromEntries(companyEntries);
-}
-
-async function setActiveMembership(nextMembership, options = {}) {
-  const membershipId = typeof nextMembership === 'string' ? nextMembership : nextMembership?.id;
-  const membership = (state.memberships || []).find((entry) => entry.id === membershipId) || (typeof nextMembership === 'object' ? nextMembership : null);
-  if (!membership) {
-    state.activeMembership = null;
-    state.company = null;
-    state.permissions = buildPermissionContext({ profile: state.profile, membership: null });
-    state.onboardingRequired = true;
-  syncSetupWizardState();
-    storeActiveMembershipId('');
-    setActiveCompanyContext(null);
-    if (!options.skipRender) render();
-    return;
-  }
-
-  state.activeMembership = membership;
-  state.permissions = buildPermissionContext({ profile: state.profile, membership });
-  const company = state.membershipCompanies?.[membership.id] || await getCompany(membership.companyId);
-  state.membershipCompanies = { ...state.membershipCompanies, [membership.id]: company };
-  state.company = company;
-  state.onboardingRequired = false;
-  syncSetupWizardState();
-  storeActiveMembershipId(membership.id);
-  setActiveCompanyContext(company?.id || membership.companyId, { allowLegacy: isGlobalAdmin(state.permissions) });
-
-  if (!options.skipRefresh) await refreshData();
-  if (!options.skipRender) render();
 }
 
 function renderActiveCompanySwitcher() {
@@ -775,30 +591,8 @@ function normalizeSupportEntries(values = []) {
 }
 
 
-async function bootstrapCompanyContext() {
-  setActiveCompanyContext(null);
-  const memberships = await listMembershipsByUser(state.user.uid);
-  state.memberships = memberships;
-  const hasLegacyData = (await countEntities('assets').catch(() => 0)) + (await countEntities('tasks').catch(() => 0)) + (await countEntities('operations').catch(() => 0)) > 0;
-  if (!memberships.length) {
-    const adopted = await ensureBootstrapCompanyForLegacyUser(state.user, state.profile, hasLegacyData);
-    if (adopted?.membership) {
-      state.memberships = [adopted.membership];
-    }
-  }
-
-  await hydrateMembershipCompanies(state.memberships);
-  const currentMembershipId = `${state.activeMembership?.id || ''}`.trim();
-  const storedMembershipId = getStoredActiveMembershipId();
-  const activeMembership = state.memberships.find((membership) => membership.id === currentMembershipId)
-    || state.memberships.find((membership) => membership.id === storedMembershipId)
-    || state.memberships[0]
-    || null;
-  await setActiveMembership(activeMembership, { skipRefresh: true, skipRender: true });
-}
-
 async function render() {
-  buildTabs();
+  buildTabsUi({ state, sections, canViewAdminTab: () => isAdmin(state.permissions), onOpenTab: openTab });
   const roleLabel = state.permissions.companyRole || state.profile?.role || 'pending';
   renderActiveCompanySwitcher();
   renderActiveLocationSwitcher();
@@ -809,7 +603,7 @@ async function render() {
     renderOnboarding(document.getElementById('dashboard'), state, {
       createCompany: async (payload) => {
         await runAction('create_company', async () => {
-          setOnboardingFeedback('Creating your workspace…', 'info', { pendingAction: 'create_company', handoffStatus: 'working' });
+          setOnboardingFeedback(state, 'Creating your workspace…', 'info', { pendingAction: 'create_company', handoffStatus: 'working' });
           render();
           await createCompanyFromOnboarding(state.user, payload);
           await bootstrapCompanyContext();
@@ -818,14 +612,14 @@ async function render() {
         }, {
           fallbackMessage: 'Unable to create company workspace.',
           onError: (error) => {
-            setOnboardingFeedback(formatActionError(error, 'Unable to create company workspace.'), 'error', { pendingAction: '', handoffStatus: 'error' });
+            setOnboardingFeedback(state, formatActionError(error, 'Unable to create company workspace.'), 'error', { pendingAction: '', handoffStatus: 'error' });
             render();
           }
         });
       },
       acceptInvite: async (inviteCode) => {
         await runAction('accept_invite', async () => {
-          setOnboardingFeedback('Joining company…', 'info', { pendingAction: 'accept_invite', handoffStatus: 'working' });
+          setOnboardingFeedback(state, 'Joining company…', 'info', { pendingAction: 'accept_invite', handoffStatus: 'working' });
           render();
           await acceptInvite({ inviteCode, user: state.user });
           await bootstrapCompanyContext();
@@ -834,7 +628,7 @@ async function render() {
         }, {
           fallbackMessage: 'Unable to accept invite.',
           onError: (error) => {
-            setOnboardingFeedback(formatActionError(error, 'Unable to accept invite.'), 'error', { pendingAction: '', handoffStatus: 'error' });
+            setOnboardingFeedback(state, formatActionError(error, 'Unable to accept invite.'), 'error', { pendingAction: '', handoffStatus: 'error' });
             render();
           }
         });
@@ -851,7 +645,7 @@ async function render() {
       dismissReadiness: async () => {
         const readiness = getWorkspaceReadiness(state);
         if (!readiness.requiredComplete) {
-          setSetupWizardFeedback('Finish required readiness items before dismissing this checklist.', 'warn');
+          setSetupWizardFeedback(state, 'Finish required readiness items before dismissing this checklist.', 'warn');
           render();
           return;
         }
@@ -861,10 +655,10 @@ async function render() {
       },
       submitSetupStep: async (step, payload) => {
         await runAction('setup_wizard_step', async () => {
-          setSetupWizardFeedback('');
+          setSetupWizardFeedback(state, '');
           const currentStep = Number(step) || 1;
           if (currentStep === 1) {
-            await upsertEntity('companies', state.company.id, withRequiredCompanyId({
+            await upsertEntity('companies', state.company.id, withRequiredCompanyId(state, {
               ...state.company,
               name: `${payload.companyName || state.company?.name || ''}`.trim(),
               primaryEmail: `${payload.primaryEmail || ''}`.trim(),
@@ -875,7 +669,7 @@ async function render() {
           if (currentStep === 2) {
             const firstLocation = (state.companyLocations || [])[0];
             if (firstLocation?.id) {
-              await upsertEntity('companyLocations', firstLocation.id, withRequiredCompanyId({
+              await upsertEntity('companyLocations', firstLocation.id, withRequiredCompanyId(state, {
                 ...firstLocation,
                 name: `${payload.locationName || firstLocation.name || ''}`.trim(),
                 address: `${payload.locationAddress || firstLocation.address || ''}`.trim(),
@@ -886,7 +680,7 @@ async function render() {
           if (currentStep === 3) {
             const ownerWorker = (state.workers || []).find((worker) => `${worker.email || ''}`.toLowerCase() === `${state.user?.email || ''}`.toLowerCase());
             if (ownerWorker?.id) {
-              await upsertEntity('workers', ownerWorker.id, withRequiredCompanyId({
+              await upsertEntity('workers', ownerWorker.id, withRequiredCompanyId(state, {
                 ...ownerWorker,
                 displayName: `${payload.ownerWorkerDisplayName || ownerWorker.displayName || ''}`.trim() || ownerWorker.displayName
               }, 'update owner worker record'), state.user);
@@ -894,7 +688,7 @@ async function render() {
             const name = `${payload.newWorkerName || ''}`.trim();
             const email = `${payload.newWorkerEmail || ''}`.trim().toLowerCase();
             if (name) {
-              await upsertEntity('workers', `worker-${Date.now().toString(36)}`, withRequiredCompanyId({
+              await upsertEntity('workers', `worker-${Date.now().toString(36)}`, withRequiredCompanyId(state, {
                 displayName: name,
                 email,
                 role: 'staff',
@@ -942,7 +736,7 @@ async function render() {
               const manufacturer = row.manufacturer || row.manufacturerSuggestion || '';
               const category = row.category || row.categorySuggestion || '';
               const shouldReview = row.reviewNeeded || !!row.manufacturerSuggestion || !!row.categorySuggestion;
-              await upsertEntity('assets', id, withRequiredCompanyId({
+              await upsertEntity('assets', id, withRequiredCompanyId(state, {
                 id,
                 name: row.name,
                 manufacturer,
@@ -970,7 +764,7 @@ async function render() {
             await saveAppSettings({ ...state.settings, aiEnabled: payload.aiEnabled === 'yes', aiConfiguredExplicitly: true }, state.user);
           }
           if (currentStep === 6) {
-            await upsertEntity('companies', state.company.id, withRequiredCompanyId({
+            await upsertEntity('companies', state.company.id, withRequiredCompanyId(state, {
               ...state.company,
               onboardingCompleted: true,
               onboardingCompletedAt: new Date().toISOString()
@@ -980,17 +774,17 @@ async function render() {
           if (currentStep === 4) {
             state.route = { ...(state.route || {}), tab: 'assets', assetId: null };
             state.setupWizard = { ...(state.setupWizard || {}), step: 5, message: 'Assets added. Review normalization and documentation suggestions in Assets.', tone: 'success' };
-            syncSetupWizardState();
+            syncSetupWizardState(state);
             render();
             return;
           }
           state.setupWizard = { ...(state.setupWizard || {}), step: Math.min(6, currentStep + 1), message: currentStep < 6 ? 'Saved. Continue to the next step.' : 'Workspace launched.', tone: 'success' };
-          syncSetupWizardState();
+          syncSetupWizardState(state);
           render();
         }, {
           fallbackMessage: 'Unable to save setup step.',
           onError: (error) => {
-            setSetupWizardFeedback(formatActionError(error, 'Unable to save setup step.'), 'error');
+            setSetupWizardFeedback(state, formatActionError(error, 'Unable to save setup step.'), 'error');
             render();
           }
         });
@@ -1045,7 +839,7 @@ async function render() {
         return false;
       }
       const saved = await runAction('save_task', async () => {
-        await upsertEntity('tasks', taskId, withRequiredCompanyId({ ...payload, id: taskId }, 'save a task'), state.user);
+        await upsertEntity('tasks', taskId, withRequiredCompanyId(state, { ...payload, id: taskId }, 'save a task'), state.user);
         setTaskAiUiState(taskId, buildPostSaveAiState({ taskId, isNewTask: !existing }));
         state.operationsUi = {
           ...(state.operationsUi || {}),
@@ -1517,7 +1311,7 @@ window.addEventListener('popstate', () => {
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const fd = new FormData(e.currentTarget);
-  syncPendingInviteCode();
+  syncPendingInviteCode(state);
   try {
     await login(fd.get('email'), fd.get('password'));
   } catch (err) { authMessage.textContent = err.message; }
@@ -1543,7 +1337,7 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
     return;
   }
   try {
-    syncPendingInviteCode();
+    syncPendingInviteCode(state);
     setActiveCompanyContext(null);
     await register(fd.get('email'), password, { fullName });
     authMessage.textContent = 'Account created. Handing off to workspace setup...';
@@ -1551,7 +1345,7 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
 });
 
 document.getElementById('googleLoginBtn')?.addEventListener('click', async () => {
-  syncPendingInviteCode();
+  syncPendingInviteCode(state);
   try {
     await loginWithGoogle();
     authMessage.textContent = 'Google sign-in successful. Finishing setup...';
@@ -1561,7 +1355,7 @@ document.getElementById('googleLoginBtn')?.addEventListener('click', async () =>
 });
 
 document.getElementById('googleRegisterBtn')?.addEventListener('click', async () => {
-  syncPendingInviteCode();
+  syncPendingInviteCode(state);
   try {
     await loginWithGoogle();
     authMessage.textContent = 'Google sign-in successful. Finishing setup...';
@@ -1611,7 +1405,7 @@ if (notificationBell && notificationPanel) {
   });
 }
 
-hydrateInviteCodeFromRoute();
+hydrateInviteCodeFromRoute(state);
 
 watchAuth(async (user) => {
   if (!user) {
@@ -1623,7 +1417,7 @@ watchAuth(async (user) => {
     state.activeMembership = null;
     state.notifications = [];
     if (notificationPanel) notificationPanel.classList.add('hide');
-    setOnboardingFeedback('', 'info', { pendingAction: '', handoffStatus: 'idle' });
+    setOnboardingFeedback(state, '', 'info', { pendingAction: '', handoffStatus: 'idle' });
     authView.classList.remove('hide');
     appView.classList.add('hide');
     return;
@@ -1633,7 +1427,7 @@ watchAuth(async (user) => {
     authView.classList.remove('hide');
     appView.classList.add('hide');
     setActiveCompanyContext(null);
-    setOnboardingFeedback('', 'info', { pendingAction: '', handoffStatus: 'working' });
+    setOnboardingFeedback(state, '', 'info', { pendingAction: '', handoffStatus: 'working' });
     state.user = { uid: user.uid, email: user.email, displayName: user.displayName };
     state.profile = await resolveProfile(user);
     state.profile = await syncSecuritySnapshot(user, state.profile);
@@ -1652,7 +1446,7 @@ watchAuth(async (user) => {
   } catch (error) {
     console.error('[watchAuth]', error);
     authMessage.textContent = buildBootstrapErrorMessage(error);
-    setOnboardingFeedback(authMessage.textContent, 'error', { pendingAction: '', handoffStatus: 'error' });
+    setOnboardingFeedback(state, authMessage.textContent, 'error', { pendingAction: '', handoffStatus: 'error' });
     authView.classList.remove('hide');
     appView.classList.add('hide');
     setActiveCompanyContext(null);
