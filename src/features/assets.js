@@ -204,8 +204,9 @@ function renderPreviewPanel(state) {
 function renderEnrichmentDetails(asset, manager, state) {
   const status = normalizeEnrichmentStatus(asset.enrichmentStatus || 'idle');
   const stale = isEnrichmentStale(asset);
-  const suggestions = Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : [];
-  const supportLinks = Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : [];
+  const suggestions = (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).filter((entry) => !entry?.deadPage && !entry?.unreachable);
+  const supportLinks = (Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []).filter((entry) => !entry?.deadPage && !entry?.unreachable);
+  const hiddenDeadLinks = (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).length - suggestions.length;
   const contacts = Array.isArray(asset.supportContactsSuggestion) ? asset.supportContactsSuggestion : [];
   const showFollowup = status === 'followup_needed' && asset.enrichmentFollowupQuestion;
   const linkedManuals = Array.isArray(asset.manualLinks) ? asset.manualLinks : [];
@@ -234,6 +235,7 @@ function renderEnrichmentDetails(asset, manager, state) {
 
     <div style="margin-bottom:10px;">
       <div class="tiny" style="font-weight:700; margin-bottom:4px;">Suggested manuals to review</div>
+      ${hiddenDeadLinks > 0 ? `<div class="tiny">Suppressed ${hiddenDeadLinks} unreachable/dead suggestion${hiddenDeadLinks === 1 ? '' : 's'}.</div>` : ''}
       ${suggestions.length ? suggestions.map((entry, index) => {
     const confidence = entry.confidence ? ` | ${Math.round(Number(entry.confidence) * 100)}%` : '';
     const score = Number.isFinite(Number(entry.matchScore)) ? ` | score ${Math.round(Number(entry.matchScore))}` : '';

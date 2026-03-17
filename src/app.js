@@ -882,6 +882,12 @@ async function render() {
         render();
       },
       dismissReadiness: async () => {
+        const readiness = getWorkspaceReadiness(state);
+        if (!readiness.requiredComplete) {
+          setSetupWizardFeedback('Finish required readiness items before dismissing this checklist.', 'warn');
+          render();
+          return;
+        }
         await saveAppSettings({ ...state.settings, workspaceReadinessDismissedAt: new Date().toISOString() }, state.user);
         await refreshData();
         render();

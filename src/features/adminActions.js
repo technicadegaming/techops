@@ -157,6 +157,7 @@ export function createAdminActions(deps) {
           ...state.company,
           trialStatus: `${payload.trialStatus || state.company?.trialStatus || 'active'}`.trim(),
           trialEndsAt: `${payload.trialEndsAt || state.company?.trialEndsAt || ''}`.trim(),
+          trialLengthDays: Number(payload.trialLengthDays) > 0 ? Number(payload.trialLengthDays) : (state.company?.trialLengthDays || null),
           subscriptionStatus: `${payload.subscriptionStatus || state.company?.subscriptionStatus || 'trialing'}`.trim(),
           planKey: `${payload.planKey || state.company?.planKey || 'starter_trial'}`.trim(),
           billingEmail: `${payload.billingEmail || ''}`.trim().toLowerCase(),
@@ -187,8 +188,8 @@ export function createAdminActions(deps) {
         await upsertEntity('companies', state.company.id, withRequiredCompanyId({
           ...state.company,
           name: `${payload.name || state.company?.name || ''}`.trim(),
-          primaryEmail: `${payload.primaryEmail || ''}`.trim(),
-          primaryPhone: `${payload.primaryPhone || ''}`.trim(),
+          primaryEmail: `${payload.primaryEmail || state.company?.primaryEmail || ''}`.trim(),
+          primaryPhone: `${payload.primaryPhone || state.company?.primaryPhone || ''}`.trim(),
           timeZone: `${payload.timeZone || state.company?.timeZone || 'UTC'}`.trim(),
           businessType: `${payload.businessType || ''}`.trim(),
           industry: `${payload.industry || ''}`.trim(),

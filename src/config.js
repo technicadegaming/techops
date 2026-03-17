@@ -9,6 +9,9 @@ const defaults = {
     appId: '1:257947502595:web:43fc4fc28bd69bac69a636'
   },
   bootstrapAdmins: ['technicadegaming@gmail.com'],
+  billing: {
+    trialLengthDays: 21
+  },
   collections: {
     users: 'users', assets: 'assets', tasks: 'tasks', operations: 'operations', manuals: 'manuals',
     pmSchedules: 'pmSchedules', notes: 'notes', auditLogs: 'auditLogs', appSettings: 'appSettings',
@@ -21,5 +24,6 @@ export const appConfig = {
   ...defaults,
   ...(window.__APP_CONFIG__ || {}),
   firebase: { ...defaults.firebase, ...((window.__APP_CONFIG__ || {}).firebase || {}) },
-  collections: { ...defaults.collections, ...((window.__APP_CONFIG__ || {}).collections || {}) }
+  collections: { ...defaults.collections, ...((window.__APP_CONFIG__ || {}).collections || {}) },
+  billing: { ...defaults.billing, ...((window.__APP_CONFIG__ || {}).billing || {}) }
 };

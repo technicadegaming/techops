@@ -22,12 +22,14 @@ function normalizeHeadquarters(payload = {}) {
   const city = `${payload.hqCity || ''}`.trim();
   const state = `${payload.hqState || ''}`.trim();
   const zip = `${payload.hqZip || ''}`.trim();
+  const country = `${payload.hqCountry || ''}`.trim() || 'US';
   const address = `${payload.address || ''}`.trim() || composeAddress({ street, city, state, zip });
   return {
     street,
     city,
     state,
     zip,
+    country,
     address
   };
 }
@@ -62,7 +64,7 @@ export async function ensureBootstrapCompanyForLegacyUser(user, profile, hasLega
   if (memberships.length) return { membership: memberships[0], created: false };
   if (!hasLegacyData || !canAutoAdoptLegacyWorkspace(user, profile)) return { membership: null, created: false };
 
-  const suggested = `${profile?.companyName || profile?.displayName || user.email?.split('@')[0] || 'WOW'} Workspace`;
+  const suggested = `${profile?.companyName || profile?.displayName || user.email?.split('@')[0] || 'Technicade'} Workspace`;
   const companyId = `co-${slugify(suggested) || user.uid.slice(0, 8)}-${user.uid.slice(0, 4)}`;
   const companyRef = doc(db, C.companies, companyId);
   await setDoc(companyRef, {
@@ -114,6 +116,7 @@ export async function createCompanyFromOnboarding(user, payload = {}) {
     hqCity: headquarters.city,
     hqState: headquarters.state,
     hqZip: headquarters.zip,
+    hqCountry: headquarters.country,
     timeZone: payload.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     estimatedUsers: Number(payload.estimatedUsers || 0) || null,
     estimatedAssets: Number(payload.estimatedAssets || 0) || null,

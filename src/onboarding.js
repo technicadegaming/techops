@@ -13,6 +13,15 @@ const SUPPORTED_TIMEZONES = [
   'Europe/London'
 ];
 
+const US_STATES = [
+  'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
+  'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
+  'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
+  'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
+  'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY',
+  'DC'
+];
+
 function getDefaultTimeZone() {
   const resolved = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   return SUPPORTED_TIMEZONES.includes(resolved) ? resolved : 'UTC';
@@ -44,7 +53,7 @@ function composeAddress({ street = '', city = '', state = '', zip = '' } = {}) {
 }
 
 function normalizeFirstLocationPayload(formData, companyName, companyTimeZone) {
-  const useDifferentLocation = formData.get('useDifferentFirstLocation') === 'on';
+  const useDifferentLocation = `${formData.get('firstLocationName') || ''}`.trim() || `${formData.get('firstLocationAddress') || ''}`.trim();
   const hqStreet = `${formData.get('hqStreet') || ''}`.trim();
   const hqCity = `${formData.get('hqCity') || ''}`.trim();
   const hqState = `${formData.get('hqState') || ''}`.trim();
@@ -83,21 +92,34 @@ function renderInitialOnboarding(el, state, actions) {
   const handoffStatus = state.onboardingUi?.handoffStatus || 'idle';
   const inviteCodePrefill = `${state.onboardingUi?.inviteCodePrefill || ''}`.trim();
   el.innerHTML = `
-    <h2>Welcome to WOW Technicade Operations</h2>
+    <h2>Welcome to Scoot Business</h2>
     <p class="tiny">Create your company workspace in under a minute, or join one with an invite code. New workspaces begin on a free trial; billing setup comes later in Admin.</p>
     ${onboardingMessage ? `<div class="tiny" style="margin:0 0 12px; padding:8px 10px; border-radius:8px; border:1px solid ${onboardingTone === 'error' ? '#fca5a5' : (onboardingTone === 'success' ? '#86efac' : '#d1d5db')}; background:${onboardingTone === 'error' ? '#fef2f2' : (onboardingTone === 'success' ? '#f0fdf4' : '#f9fafb')}; color:${onboardingTone === 'error' ? '#991b1b' : (onboardingTone === 'success' ? '#166534' : '#374151')};">${onboardingMessage}</div>` : ''}
     ${handoffStatus === 'working' ? '<div class="inline-state info mt">Finishing account handoff…</div>' : ''}
     <div class="grid grid-2">
       <form id="createCompanyForm" class="item onboarding-form">
         <h3>Create company</h3>
-        <label>Company name<input name="name" placeholder="Example: WOW Technicade" required /></label>
+        <label>Company name<input name="name" placeholder="Technicade" required /></label>
         <label>Contact email<input name="primaryEmail" type="email" placeholder="name@company.com" value="${state.user?.email || ''}" /></label>
         <label>Primary phone<input name="primaryPhone" placeholder="Example: (555) 555-5555" /></label>
         <p class="tiny" style="margin:0;">Company profile</p>
         <label>HQ street<input name="hqStreet" placeholder="123 Main St" /></label>
+        <label>HQ country
+          <select name="hqCountry" id="hqCountrySelect">
+            <option value="US" selected>United States</option>
+            <option value="CA">Canada</option>
+            <option value="GB">United Kingdom</option>
+            <option value="OTHER">Other</option>
+          </select>
+        </label>
         <div class="row onboarding-row">
           <label style="flex:1;">City<input name="hqCity" placeholder="Chicago" /></label>
-          <label style="flex:1;">State<input name="hqState" placeholder="IL" /></label>
+          <label style="flex:1;" id="hqStateSelectWrap">State
+            <select name="hqState">${US_STATES.map((stateCode) => `<option value="${stateCode}">${stateCode}</option>`).join('')}</select>
+          </label>
+          <label style="flex:1;" id="hqStateTextWrap" class="hide">State/Region
+            <input name="hqRegion" placeholder="Province / region" />
+          </label>
           <label style="flex:1;">ZIP<input name="hqZip" placeholder="60601" inputmode="numeric" /></label>
         </div>
         <label>Company timezone
@@ -108,11 +130,10 @@ function renderInitialOnboarding(el, state, actions) {
           <label style="flex:1;">Estimated assets<input name="estimatedAssets" type="number" min="0" placeholder="Example: 150" /></label>
         </div>
         <fieldset class="onboarding-location-fieldset">
-          <label class="row" style="align-items:center; gap:8px;">
-            <input type="checkbox" name="useDifferentFirstLocation" style="width:auto;" />
-            <span>My first location is different from HQ</span>
-          </label>
-          <div id="firstLocationFields" class="hide">
+          <div class="tiny">Your first location is created from HQ by default. If needed, customize it now.</div>
+          <details>
+            <summary class="tiny"><b>Customize first location (optional)</b></summary>
+          <div id="firstLocationFields">
             <label>First location name<input name="firstLocationName" placeholder="Example: Main Plant" /></label>
             <label>First location address<input name="firstLocationAddress" placeholder="Street, city, state" /></label>
             <label>First location timezone
@@ -120,6 +141,7 @@ function renderInitialOnboarding(el, state, actions) {
             </label>
             <label>First location notes (optional)<textarea name="firstLocationNotes" placeholder="Optional setup notes"></textarea></label>
           </div>
+          </details>
         </fieldset>
         <button class="primary" ${pendingAction ? "disabled" : ""}>${pendingAction === "create_company" ? "Creating workspace..." : "Create company workspace"}</button>
       </form>
@@ -131,27 +153,31 @@ function renderInitialOnboarding(el, state, actions) {
       </form>
     </div>`;
 
-  const locationToggle = el.querySelector('[name="useDifferentFirstLocation"]');
-  const firstLocationFields = el.querySelector('#firstLocationFields');
-  const syncFirstLocationVisibility = () => {
-    const useDifferentLocation = locationToggle?.checked === true;
-    firstLocationFields?.classList.toggle('hide', !useDifferentLocation);
+  const countrySelect = el.querySelector('#hqCountrySelect');
+  const hqStateSelectWrap = el.querySelector('#hqStateSelectWrap');
+  const hqStateTextWrap = el.querySelector('#hqStateTextWrap');
+  const syncRegionInputs = () => {
+    const isUS = `${countrySelect?.value || 'US'}`.trim().toUpperCase() === 'US';
+    hqStateSelectWrap?.classList.toggle('hide', !isUS);
+    hqStateTextWrap?.classList.toggle('hide', isUS);
   };
-  locationToggle?.addEventListener('change', syncFirstLocationVisibility);
-  syncFirstLocationVisibility();
+  countrySelect?.addEventListener('change', syncRegionInputs);
+  syncRegionInputs();
 
   el.querySelector('#createCompanyForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
     const companyName = `${fd.get('name') || ''}`.trim();
     const companyTimeZone = `${fd.get('timeZone') || ''}`.trim();
+    const regionFallback = `${fd.get('hqRegion') || ''}`.trim();
     await actions.createCompany({
       name: companyName,
       primaryEmail: fd.get('primaryEmail'),
       primaryPhone: fd.get('primaryPhone'),
       hqStreet: fd.get('hqStreet'),
       hqCity: fd.get('hqCity'),
-      hqState: fd.get('hqState'),
+      hqState: fd.get('hqState') || regionFallback,
+      hqCountry: fd.get('hqCountry') || 'US',
       hqZip: fd.get('hqZip'),
       timeZone: companyTimeZone,
       estimatedUsers: fd.get('estimatedUsers'),
@@ -180,13 +206,14 @@ function renderSetupWizard(el, state, actions) {
     ${renderWorkspaceReadinessCard(state, { compact: true, dismissible: true })}
     ${msg ? `<div class="inline-state ${tone} mt">${msg}</div>` : ''}
     <div class="item mt">
-      <div class="tiny">Step ${step} of 6 • Guided workspace setup</div>
-      <div class="kpi-line mt"><span>1. Company basics</span><span>2. First location</span><span>3. Team setup</span><span>4. Add assets</span><span>5. AI setup</span><span>6. Review and launch</span></div>
+      <div class="tiny">Step ${step} of 6 • Focused workspace setup</div>
+      <div class="kpi-line mt"><span>1. Confirm company</span><span>2. Confirm HQ location</span><span>3. Team setup</span><span>4. Add assets</span><span>5. AI setup</span><span>6. Review and launch</span></div>
     </div>
 
     <form id="wizardForm" class="item mt grid">
       <div data-step="1" class="${step === 1 ? '' : 'hide'}">
-        <h3>Company basics</h3>
+        <h3>Company basics (confirm)</h3>
+        <div class="tiny">Captured during company creation. Adjust only if needed.</div>
         <label>Company name<input name="companyName" value="${state.company?.name || ''}" required /></label>
         <label>Contact email<input name="primaryEmail" type="email" value="${state.company?.primaryEmail || state.user?.email || ''}" /></label>
         <label>Primary phone<input name="primaryPhone" value="${state.company?.primaryPhone || ''}" /></label>
@@ -194,7 +221,8 @@ function renderSetupWizard(el, state, actions) {
       </div>
 
       <div data-step="2" class="${step === 2 ? '' : 'hide'}">
-        <h3>First location</h3>
+        <h3>First location (confirm)</h3>
+        <div class="tiny">Defaulted from HQ to reduce first-time setup friction.</div>
         <label>Name<input name="locationName" value="${currentLocation.name || ''}" required /></label>
         <label>Address<input name="locationAddress" value="${currentLocation.address || state.company?.address || ''}" /></label>
         <label>Timezone<select name="locationTimeZone">${renderTimeZoneOptions(currentLocation.timeZone || state.company?.timeZone || getDefaultTimeZone())}</select></label>
@@ -203,9 +231,9 @@ function renderSetupWizard(el, state, actions) {
       <div data-step="3" class="${step === 3 ? '' : 'hide'}">
         <h3>Team setup</h3>
         <div class="tiny">Members = signed-in users. Staff records = assignable technicians. Invites = optional next step.</div>
-        <label>Owner team member name<input name="ownerWorkerDisplayName" value="${workerDefaultName}" /></label>
-        <label>Add first assignable staff name (optional)<input name="newWorkerName" placeholder="Example: Alex Smith" /></label>
-        <label>Add first assignable staff email (optional)<input name="newWorkerEmail" type="email" placeholder="alex@company.com" /></label>
+        <label>Your admin display name<input name="ownerWorkerDisplayName" value="${workerDefaultName}" /></label>
+        <label>Add another staff member name (optional)<input name="newWorkerName" placeholder="Example: Alex Smith" /></label>
+        <label>Add another staff member email (optional)<input name="newWorkerEmail" type="email" placeholder="alex@company.com" /></label>
         <label>Invite email (optional)<input name="inviteEmail" type="email" placeholder="person@company.com" /></label>
         <label>Invite role<select name="inviteRole"><option value="staff">Staff</option><option value="lead">Lead</option><option value="assistant_manager">Assistant manager</option><option value="manager">Manager</option><option value="admin">Admin</option></select></label>
       </div>

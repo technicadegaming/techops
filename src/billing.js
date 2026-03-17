@@ -1,4 +1,6 @@
-export const TRIAL_LENGTH_DAYS = 14;
+import { appConfig } from './config.js';
+
+export const TRIAL_LENGTH_DAYS = Number(appConfig.billing?.trialLengthDays) > 0 ? Number(appConfig.billing.trialLengthDays) : 21;
 
 function addDays(date, days) {
   const next = new Date(date.getTime());
@@ -10,6 +12,7 @@ export function buildInitialBillingScaffold({ primaryEmail = '', displayName = '
   const now = new Date();
   return {
     trialStatus: 'active',
+    trialLengthDays: TRIAL_LENGTH_DAYS,
     trialStartedAt: now.toISOString(),
     trialEndsAt: addDays(now, TRIAL_LENGTH_DAYS).toISOString(),
     subscriptionStatus: 'trialing',
