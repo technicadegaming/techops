@@ -10,7 +10,15 @@ import {
   syncSecuritySnapshot,
   watchAuth
 } from './auth.js';
-import { clearEntitySet, deleteEntity, getEntity, listEntities, saveAppSettings, saveUserProfile, setActiveCompanyContext, upsertEntity } from './data.js';
+import {
+  clearEntitySet,
+  deleteEntity,
+  getEntity,
+  listEntities,
+  saveAppSettings,
+  setActiveCompanyContext,
+  upsertEntity
+} from './data.js';
 import { renderDashboard } from './features/dashboard.js';
 import { renderOperations } from './features/operations.js';
 import { renderAssets } from './features/assets.js';
@@ -20,9 +28,25 @@ import { renderAdmin } from './admin.js';
 import { renderOnboarding } from './onboarding.js';
 import { formatActionError, runActionFactory } from './uiActions.js';
 import { buildPermissionContext, canDelete, isAdmin, isManager } from './roles.js';
-import { previewLegacyImport, importLegacyData } from './migration.js';
-import { buildAssetsCsv, buildAuditCsv, buildCompanyBackupBundle, buildInvitesCsv, buildLocationsCsv, buildMembersCsv, buildTasksCsv, buildWorkersCsv, dryRunBackup, exportBackupJson, restoreBackup, validateBackup } from './backup.js';
-import { analyzeTaskTroubleshooting, answerTaskFollowup, enrichAssetDocumentation, previewAssetDocumentationLookup, regenerateTaskTroubleshooting, saveTaskFixToTroubleshootingLibrary } from './aiAdapter.js';
+import {
+  buildAssetsCsv,
+  buildAuditCsv,
+  buildCompanyBackupBundle,
+  buildInvitesCsv,
+  buildLocationsCsv,
+  buildMembersCsv,
+  buildTasksCsv,
+  buildWorkersCsv,
+  exportBackupJson
+} from './backup.js';
+import {
+  analyzeTaskTroubleshooting,
+  answerTaskFollowup,
+  enrichAssetDocumentation,
+  previewAssetDocumentationLookup,
+  regenerateTaskTroubleshooting,
+  saveTaskFixToTroubleshootingLibrary
+} from './aiAdapter.js';
 import { buildCloseoutEvent, parseRouteState, pushRouteState } from './features/workflow.js';
 import { buildNotificationCandidates, formatRelativeTime } from './features/notifications.js';
 import { acceptInvite, createCompanyFromOnboarding, createCompanyInvite, revokeInvite } from './company.js';
@@ -35,10 +59,22 @@ import { parseAssetCsv, parseBulkAssetList, normalizeAssetCandidate } from './fe
 import { logAudit } from './audit.js';
 import { renderAccount } from './account.js';
 import { hydrateInviteCodeFromRoute, resolveAppElements, syncPendingInviteCode } from './app/boot.js';
-import { reportActionError, requireActiveCompanyId, withRequiredCompanyId } from './app/actions.js';
-import { bootstrapCompanyContext as bootstrapCompanyContextState, refreshData as refreshAppData, setActiveMembership as setActiveMembershipState } from './app/dataRefresh.js';
+import { reportActionError, withRequiredCompanyId } from './app/actions.js';
+import {
+  bootstrapCompanyContext as bootstrapCompanyContextState,
+  refreshData as refreshAppData,
+  setActiveMembership as setActiveMembershipState
+} from './app/dataRefresh.js';
 import { buildTabs as buildTabsUi, openTab as openTabUi } from './app/router.js';
-import { buildPreviewQueryKey, createEmptyAssetDraft, createInitialState, sections, setOnboardingFeedback, setSetupWizardFeedback, syncSetupWizardState } from './app/state.js';
+import {
+  buildPreviewQueryKey,
+  createEmptyAssetDraft,
+  createInitialState,
+  sections,
+  setOnboardingFeedback,
+  setSetupWizardFeedback,
+  syncSetupWizardState
+} from './app/state.js';
 
 const {
   authView,
@@ -237,7 +273,7 @@ function getTaskAiFailureState(error, fallbackAction = 'run AI') {
   };
 }
 
-function buildPostSaveAiState({ taskId, isNewTask }) {
+function buildPostSaveAiState({ isNewTask }) {
   const companyId = `${state.company?.id || state.activeMembership?.companyId || ''}`.trim();
   if (!companyId) {
     return {
@@ -840,7 +876,7 @@ async function render() {
       }
       const saved = await runAction('save_task', async () => {
         await upsertEntity('tasks', taskId, withRequiredCompanyId(state, { ...payload, id: taskId }, 'save a task'), state.user);
-        setTaskAiUiState(taskId, buildPostSaveAiState({ taskId, isNewTask: !existing }));
+        setTaskAiUiState(taskId, buildPostSaveAiState({ isNewTask: !existing }));
         state.operationsUi = {
           ...(state.operationsUi || {}),
           expandedTaskIds: [...new Set([...(state.operationsUi?.expandedTaskIds || []), taskId])],

@@ -1,22 +1,34 @@
 const admin = require('firebase-admin');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
+const { defineSecret } = require('firebase-functions/params');
 
 const { DEFAULT_SETTINGS, runPipeline } = require('./services/taskAiOrchestrator');
 const { assertString, sanitizeFollowupAnswers } = require('./lib/validators');
+const {
+  canAnswerFollowup,
+  canRunAssetEnrichment,
+  canRunManualAi,
+  canSaveToTroubleshootingLibrary,
+} = require('./lib/permissions');
+const {
+  authorizeAssetEnrichment,
+  getActiveMembershipForCompany,
+  isGlobalAdminRole,
+} = require('./lib/enrichmentAuthorization');
+const {
+  enrichAssetDocumentation,
+  previewAssetDocumentationLookup,
+} = require('./services/assetEnrichmentService');
 
-const { canAnswerFollowup, canRunAssetEnrichment, canRunManualAi, canSaveToTroubleshootingLibrary } = require('./lib/permissions');
-const { authorizeAssetEnrichment, getActiveMembershipForCompany, isGlobalAdminRole } = require('./lib/enrichmentAuthorization');
-
-
-
-const { enrichAssetDocumentation, previewAssetDocumentationLookup } = require('./services/assetEnrichmentService');
-
-const { defineSecret } = require("firebase-functions/params");
-const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
+const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
 
 admin.initializeApp();
 const db = admin.firestore();
+
+function serverTimestamp() {
+  return admin.firestore.FieldValue.serverTimestamp();
+}
 
 async function getUserRole(uid) {
   const snap = await db.collection('users').doc(uid).get();
@@ -59,22 +71,27 @@ async function resolveTaskCompanyContext({ task, requestedCompanyId, userId }) {
     throw new HttpsError('failed-precondition', 'Task is missing company context required for AI.');
   }
 
-  await db.collection('tasks').doc(task.id).set({
-    companyId: normalizedRequestedCompanyId,
-    aiDebug: {
-      companyContextRecoveredAt: serverTimestamp(admin),
-      companyContextRecoveredBy: userId || 'system'
+  await db.collection('tasks').doc(task.id).set(
+    {
+      companyId: normalizedRequestedCompanyId,
+      aiDebug: {
+        companyContextRecoveredAt: serverTimestamp(),
+        companyContextRecoveredBy: userId || 'system',
+      },
+      updatedAt: serverTimestamp(),
+      updatedBy: userId || 'system',
     },
-    updatedAt: serverTimestamp(admin),
-    updatedBy: userId || 'system'
-  }, { merge: true });
+    { merge: true },
+  );
 
   return { companyId: normalizedRequestedCompanyId, source: 'request_backfill' };
 }
 
 async function authorizeCompanyMember({ uid, companyId, checkAccess }) {
   const globalRole = await getUserRole(uid);
-  if (isGlobalAdminRole(globalRole)) return { allowed: true, scope: 'global_admin', globalRole, companyId };
+  if (isGlobalAdminRole(globalRole)) {
+    return { allowed: true, scope: 'global_admin', globalRole, companyId };
+  }
 
   const normalizedCompanyId = normalizeCompanyId(companyId);
   if (!normalizedCompanyId) {
@@ -82,23 +99,38 @@ async function authorizeCompanyMember({ uid, companyId, checkAccess }) {
     return { allowed, scope: 'legacy_no_company', globalRole, companyId: null };
   }
 
-  const membership = await getActiveMembershipForCompany({ db, companyId: normalizedCompanyId, uid });
+  const membership = await getActiveMembershipForCompany({
+    db,
+    companyId: normalizedCompanyId,
+    uid,
+  });
   const companyRole = `${membership?.role || ''}`.trim().toLowerCase();
   const allowed = checkAccess(companyRole);
-  return { allowed, scope: 'company_membership', companyRole, globalRole, companyId: normalizedCompanyId };
+  return {
+    allowed,
+    scope: 'company_membership',
+    companyRole,
+    globalRole,
+    companyId: normalizedCompanyId,
+  };
 }
 
 async function enforceRateLimit(taskId, userId) {
-  const recent = await db.collection('taskAiRuns')
+  const recent = await db
+    .collection('taskAiRuns')
     .where('taskId', '==', taskId)
     .where('createdBy', '==', userId)
     .orderBy('createdAt', 'desc')
     .limit(1)
     .get();
+
   if (recent.empty) return;
+
   const last = recent.docs[0].data();
   const lastMs = last.createdAt?.toMillis?.() || 0;
-  if (Date.now() - lastMs < 15000) throw new HttpsError('resource-exhausted', 'Please wait before running AI troubleshooting again.');
+  if (Date.now() - lastMs < 15000) {
+    throw new HttpsError('resource-exhausted', 'Please wait before running AI troubleshooting again.');
+  }
 }
 
 exports.analyzeTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
@@ -114,12 +146,23 @@ exports.analyzeTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async
 
     const task = await loadTask(request.data.taskId);
     const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
-    const taskContext = await resolveTaskCompanyContext({ task, requestedCompanyId, userId: request.auth.uid });
+    const taskContext = await resolveTaskCompanyContext({
+      task,
+      requestedCompanyId,
+      userId: request.auth.uid,
+    });
 
-    const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskContext.companyId, checkAccess: canRunManualAi });
-    const canRun = authz.allowed;
-    if (!canRun) {
-      throw new HttpsError('permission-denied', `Insufficient role for AI run in company ${authz.companyId || 'unknown'}`);
+    const authz = await authorizeCompanyMember({
+      uid: request.auth.uid,
+      companyId: taskContext.companyId,
+      checkAccess: canRunManualAi,
+    });
+
+    if (!authz.allowed) {
+      throw new HttpsError(
+        'permission-denied',
+        `Insufficient role for AI run in company ${authz.companyId || 'unknown'}`,
+      );
     }
 
     await enforceRateLimit(request.data.taskId, request.auth.uid);
@@ -136,7 +179,7 @@ exports.analyzeTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async
       userId: request.auth.uid,
       triggerSource: 'manual',
       settings,
-      traceId: request.rawRequest.headers['x-cloud-trace-context'] || `manual-${Date.now()}`
+      traceId: request.rawRequest.headers['x-cloud-trace-context'] || `manual-${Date.now()}`,
     });
 
     console.log('analyzeTaskTroubleshooting:success', {
@@ -161,23 +204,45 @@ exports.answerTaskFollowup = onCall({ secrets: [OPENAI_API_KEY] }, async (reques
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
   assertString(request.data?.taskId, 'taskId');
   assertString(request.data?.runId, 'runId');
+
   const task = await loadTask(request.data.taskId);
   const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
-  const taskContext = await resolveTaskCompanyContext({ task, requestedCompanyId, userId: request.auth.uid });
+  const taskContext = await resolveTaskCompanyContext({
+    task,
+    requestedCompanyId,
+    userId: request.auth.uid,
+  });
 
-  const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskContext.companyId, checkAccess: canAnswerFollowup });
-  if (!authz.allowed) throw new HttpsError('permission-denied', 'Insufficient role for follow-up answers');
+  const authz = await authorizeCompanyMember({
+    uid: request.auth.uid,
+    companyId: taskContext.companyId,
+    checkAccess: canAnswerFollowup,
+  });
+  if (!authz.allowed) {
+    throw new HttpsError('permission-denied', 'Insufficient role for follow-up answers');
+  }
 
   const answers = sanitizeFollowupAnswers(request.data.answers || []);
-  await db.collection('taskAiFollowups').doc(request.data.runId).set({
-    answers,
-    status: 'answered',
-    updatedAt: serverTimestamp(admin),
-    updatedBy: request.auth.uid
-  }, { merge: true });
+  await db.collection('taskAiFollowups').doc(request.data.runId).set(
+    {
+      answers,
+      status: 'answered',
+      updatedAt: serverTimestamp(),
+      updatedBy: request.auth.uid,
+    },
+    { merge: true },
+  );
 
   const settings = await getAiSettings(authz.companyId);
-  return runPipeline({ db, taskId: request.data.taskId, userId: request.auth.uid, triggerSource: 'followup', settings, traceId: request.rawRequest.headers['x-cloud-trace-context'] || `followup-${Date.now()}`, followupAnswers: answers });
+  return runPipeline({
+    db,
+    taskId: request.data.taskId,
+    userId: request.auth.uid,
+    triggerSource: 'followup',
+    settings,
+    traceId: request.rawRequest.headers['x-cloud-trace-context'] || `followup-${Date.now()}`,
+    followupAnswers: answers,
+  });
 });
 
 exports.regenerateTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
@@ -192,11 +257,23 @@ exports.regenerateTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, as
 
     const task = await loadTask(request.data.taskId);
     const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
-    const taskContext = await resolveTaskCompanyContext({ task, requestedCompanyId, userId: request.auth.uid });
+    const taskContext = await resolveTaskCompanyContext({
+      task,
+      requestedCompanyId,
+      userId: request.auth.uid,
+    });
 
-    const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskContext.companyId, checkAccess: canRunManualAi });
+    const authz = await authorizeCompanyMember({
+      uid: request.auth.uid,
+      companyId: taskContext.companyId,
+      checkAccess: canRunManualAi,
+    });
+
     if (!authz.allowed) {
-      throw new HttpsError('permission-denied', `Insufficient role for AI rerun in company ${authz.companyId || 'unknown'}`);
+      throw new HttpsError(
+        'permission-denied',
+        `Insufficient role for AI rerun in company ${authz.companyId || 'unknown'}`,
+      );
     }
 
     const settings = await getAiSettings(authz.companyId);
@@ -234,7 +311,6 @@ exports.regenerateTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, as
   }
 });
 
-
 exports.enrichAssetDocumentation = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
   assertString(request.data?.assetId, 'assetId');
@@ -243,7 +319,7 @@ exports.enrichAssetDocumentation = onCall({ secrets: [OPENAI_API_KEY] }, async (
     db,
     assetId: request.data.assetId,
     uid: request.auth.uid,
-    getUserRole
+    getUserRole,
   });
 
   if (!authz.allowed) {
@@ -255,6 +331,7 @@ exports.enrichAssetDocumentation = onCall({ secrets: [OPENAI_API_KEY] }, async (
   if (!settings.aiEnabled) {
     return { ok: false, status: 'no_match_yet', message: 'AI is disabled by admin settings' };
   }
+
   return enrichAssetDocumentation({
     db,
     assetId: request.data.assetId,
@@ -262,17 +339,23 @@ exports.enrichAssetDocumentation = onCall({ secrets: [OPENAI_API_KEY] }, async (
     settings,
     triggerSource: request.data?.trigger || 'manual',
     followupAnswer: `${request.data?.followupAnswer || ''}`.trim(),
-    traceId: request.rawRequest.headers['x-cloud-trace-context'] || `asset-${Date.now()}`
+    traceId: request.rawRequest.headers['x-cloud-trace-context'] || `asset-${Date.now()}`,
   });
 });
-
 
 exports.previewAssetDocumentationLookup = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
   assertString(request.data?.assetName, 'assetName');
+
   const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
-  const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: requestedCompanyId, checkAccess: canRunAssetEnrichment });
-  if (!authz.allowed) throw new HttpsError('permission-denied', 'Insufficient role for asset enrichment');
+  const authz = await authorizeCompanyMember({
+    uid: request.auth.uid,
+    companyId: requestedCompanyId,
+    checkAccess: canRunAssetEnrichment,
+  });
+  if (!authz.allowed) {
+    throw new HttpsError('permission-denied', 'Insufficient role for asset enrichment');
+  }
 
   const settings = await getAiSettings(authz.companyId);
   if (!settings.aiEnabled) {
@@ -287,32 +370,58 @@ exports.previewAssetDocumentationLookup = onCall({ secrets: [OPENAI_API_KEY] }, 
       manufacturer: `${request.data?.manufacturer || ''}`.trim(),
       serialNumber: `${request.data?.serialNumber || ''}`.trim(),
       assetId: `${request.data?.assetId || ''}`.trim(),
-      followupAnswer: `${request.data?.followupAnswer || ''}`.trim()
-    }
+      followupAnswer: `${request.data?.followupAnswer || ''}`.trim(),
+    },
   });
 });
 
 exports.fetchWebContextForTask = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
   assertString(request.data?.taskId, 'taskId');
+
   const task = await loadTask(request.data.taskId);
   const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
-  const taskContext = await resolveTaskCompanyContext({ task, requestedCompanyId, userId: request.auth.uid });
-  const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskContext.companyId, checkAccess: canAnswerFollowup });
-  if (!authz.allowed) throw new HttpsError('permission-denied', 'Insufficient role for web context preview');
+  const taskContext = await resolveTaskCompanyContext({
+    task,
+    requestedCompanyId,
+    userId: request.auth.uid,
+  });
+
+  const authz = await authorizeCompanyMember({
+    uid: request.auth.uid,
+    companyId: taskContext.companyId,
+    checkAccess: canAnswerFollowup,
+  });
+  if (!authz.allowed) {
+    throw new HttpsError('permission-denied', 'Insufficient role for web context preview');
+  }
 
   const settings = await getAiSettings(authz.companyId);
-  return { enabled: settings.aiUseWebSearch, message: 'Web context fetch runs as part of orchestration pipeline.' };
+  return {
+    enabled: settings.aiUseWebSearch,
+    message: 'Web context fetch runs as part of orchestration pipeline.',
+  };
 });
 
 exports.saveTaskFixToTroubleshootingLibrary = onCall({}, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
   assertString(request.data?.taskId, 'taskId');
+
   const task = await loadTask(request.data.taskId);
   const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
-  const taskContext = await resolveTaskCompanyContext({ task, requestedCompanyId, userId: request.auth.uid });
-  const authz = await authorizeCompanyMember({ uid: request.auth.uid, companyId: taskContext.companyId, checkAccess: canSaveToTroubleshootingLibrary });
+  const taskContext = await resolveTaskCompanyContext({
+    task,
+    requestedCompanyId,
+    userId: request.auth.uid,
+  });
+
+  const authz = await authorizeCompanyMember({
+    uid: request.auth.uid,
+    companyId: taskContext.companyId,
+    checkAccess: canSaveToTroubleshootingLibrary,
+  });
   if (!authz.allowed) throw new HttpsError('permission-denied', 'Insufficient role');
+
   const libRef = db.collection('troubleshootingLibrary').doc();
   await libRef.set({
     id: libRef.id,
@@ -326,37 +435,58 @@ exports.saveTaskFixToTroubleshootingLibrary = onCall({}, async (request) => {
     notes: request.data.notes || '',
     manualReferences: Array.isArray(request.data.manualReferences) ? request.data.manualReferences : [],
     sourceTaskId: request.data.taskId,
-    createdAt: serverTimestamp(admin),
+    createdAt: serverTimestamp(),
     createdBy: request.auth.uid,
-    updatedAt: serverTimestamp(admin),
-    updatedBy: request.auth.uid
+    updatedAt: serverTimestamp(),
+    updatedBy: request.auth.uid,
   });
-  await db.collection('auditLogs').add({ action: 'ai_save_to_library', entityType: 'troubleshootingLibrary', entityId: libRef.id, companyId: authz.companyId, summary: `Saved fix from task ${request.data.taskId}`, userUid: request.auth.uid, timestamp: serverTimestamp(admin) });
+
+  await db.collection('auditLogs').add({
+    action: 'ai_save_to_library',
+    entityType: 'troubleshootingLibrary',
+    entityId: libRef.id,
+    companyId: authz.companyId,
+    summary: `Saved fix from task ${request.data.taskId}`,
+    userUid: request.auth.uid,
+    timestamp: serverTimestamp(),
+  });
+
   return { ok: true, id: libRef.id };
 });
 
-exports.onTaskCreatedQueueAi = onDocumentCreated({
-  document: 'tasks/{taskId}',
-  secrets: [OPENAI_API_KEY]
-}, async (event) => {
-  const taskData = event.data?.data?.() || {};
-  const companyId = normalizeCompanyId(taskData.companyId);
-  const settings = await getAiSettings(companyId);
-  if (!companyId) {
-    console.warn('onTaskCreatedQueueAi:missing_company_context', {
-      taskId: event.params.taskId,
-      createdBy: taskData.createdBy || null
-    });
-  }
-  if (!settings.aiEnabled) {
-    console.log('onTaskCreatedQueueAi:disabled_by_settings', {
-      taskId: event.params.taskId,
-      companyId
-    });
-    return;
-  }
-  const createdBy = taskData.createdBy || 'system';
-  await runPipeline({ db, taskId: event.params.taskId, userId: createdBy, triggerSource: 'auto_create', settings, traceId: event.id || `create-${Date.now()}` });
-});
+exports.onTaskCreatedQueueAi = onDocumentCreated(
+  {
+    document: 'tasks/{taskId}',
+    secrets: [OPENAI_API_KEY],
+  },
+  async (event) => {
+    const taskData = event.data?.data?.() || {};
+    const companyId = normalizeCompanyId(taskData.companyId);
+    const settings = await getAiSettings(companyId);
 
+    if (!companyId) {
+      console.warn('onTaskCreatedQueueAi:missing_company_context', {
+        taskId: event.params.taskId,
+        createdBy: taskData.createdBy || null,
+      });
+    }
 
+    if (!settings.aiEnabled) {
+      console.log('onTaskCreatedQueueAi:disabled_by_settings', {
+        taskId: event.params.taskId,
+        companyId,
+      });
+      return;
+    }
+
+    const createdBy = taskData.createdBy || 'system';
+    await runPipeline({
+      db,
+      taskId: event.params.taskId,
+      userId: createdBy,
+      triggerSource: 'auto_create',
+      settings,
+      traceId: event.id || `create-${Date.now()}`,
+    });
+  },
+);
