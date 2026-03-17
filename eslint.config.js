@@ -28,5 +28,15 @@ module.exports = [
     rules: {
       'no-console': 'off'
     }
+  },
+  {
+    files: ['test/**/*.js'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: {
+        ...globals.node,
+        ...globals.es2022
+      }
+    }
   }
 ];
