@@ -6,15 +6,32 @@ service firebase.storage {
     // - Company backup bundles must live under companies/{companyId}/backups/**
     // - Access is resolved from users/{uid} and companyMemberships/{companyId}_{uid}
     function signedIn() { return request.auth != null; }
+    function userSnapshot() {
+      return signedIn()
+        ? firestore.get(/databases/(default)/documents/users/$(request.auth.uid))
+        : null;
+    }
     function userDoc() {
-      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+      return userSnapshot().data;
+    }
+    function hasUserDoc() {
+      return signedIn() && userSnapshot().data != null;
+    }
+
+    function membershipSnapshot(companyId) {
+      return signedIn()
+        ? firestore.get(/databases/(default)/documents/companyMemberships/$(companyId)_$(request.auth.uid))
+        : null;
     }
     function membershipDoc(companyId) {
-      return firestore.get(/databases/(default)/documents/companyMemberships/$(companyId)_$(request.auth.uid)).data;
+      return membershipSnapshot(companyId).data;
+    }
+    function hasMembershipDoc(companyId) {
+      return signedIn() && membershipSnapshot(companyId).data != null;
     }
 
     function hasEnabledUserRecord() {
-      return signedIn() && userDoc().enabled == true;
+      return hasUserDoc() && userDoc().enabled == true;
     }
 
     function isGlobalAdmin() {
@@ -22,11 +39,12 @@ service firebase.storage {
     }
 
     function companyRole(companyId) {
-      return membershipDoc(companyId).role;
+      return hasMembershipDoc(companyId) ? membershipDoc(companyId).role : null;
     }
 
     function isActiveCompanyMember(companyId) {
       return hasEnabledUserRecord()
+        && hasMembershipDoc(companyId)
         && membershipDoc(companyId).status == 'active'
         && (membershipDoc(companyId).companyId == companyId || companyRole(companyId) == 'owner');
     }
