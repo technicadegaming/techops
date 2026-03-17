@@ -4,7 +4,7 @@
   "scripts": {
     "test": "npm run test:functions && npm run test:rules",
     "test:functions": "npm run test --prefix functions",
-    "test:rules": "firebase emulators:exec --only firestore,storage \"node --test test/rules/**/*.test.js\"",
+    "test:rules": "firebase emulators:exec --only firestore,storage \"node --test test/rules/security.rules.test.js\"",
     "lint": "eslint src/**/*.js functions/src/**/*.js functions/test/**/*.js test/**/*.js"
   },
   "devDependencies": {
