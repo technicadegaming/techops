@@ -56,9 +56,21 @@ function pickApprovedSuggestions(asset = {}) {
     .map((s) => ({ title: s.title || s.url, url: s.url, sourceType: 'approved_doc' }));
 }
 
+/*
+Phase 2 manual-ingestion path (documented only in this PR):
+- Approved manual PDFs should live in Storage under a company-scoped path such as
+  companies/{companyId}/manuals/{assetId}/{manualId}/source.pdf.
+- Extracted/manual chunk text should live in Firestore as company-scoped metadata plus
+  manuals/{manualId}/chunks documents so task AI can retrieve actual manual content.
+- buildDocumentationContext can then prefer approved chunk excerpts first, fall back to
+  approved manual links/external support pages second, and finally optional web research.
+*/
+
 async function buildDocumentationContext(asset = null) {
   if (!asset) return { mode: 'web_internal_only', items: [] };
   const manualCandidates = (asset.manualLinks || []).filter(Boolean).slice(0, 3).map((url) => ({ title: url, url, sourceType: 'manual' }));
+  // Today this only fetches linked URLs/excerpts. A later low-risk extension can prepend
+  // approved manual chunk records here so troubleshooting uses actual manual text.
   const fallbackCandidates = manualCandidates.length ? [] : pickApprovedSuggestions(asset);
   const supportCandidates = manualCandidates.length ? [] : (Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion.slice(0, 2).map((s) => ({ title: s.label || s.title || s.url, url: s.url || s, sourceType: 'support' })) : []);
 
