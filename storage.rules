@@ -4,6 +4,7 @@ service firebase.storage {
     // Storage tenancy model:
     // - Company evidence must live under companies/{companyId}/evidence/**
     // - Company backup bundles must live under companies/{companyId}/backups/**
+    // - Company manuals must live under companies/{companyId}/manuals/**
     // - Access is resolved from users/{uid} and companyMemberships/{companyId}_{uid}
 
     function signedIn() {
@@ -82,6 +83,15 @@ service firebase.storage {
 
     match /companies/{companyId}/backups/{allPaths=**} {
       allow read, write, delete: if canAccessCompanyBackups(companyId);
+    }
+
+    match /companies/{companyId}/manuals/{allPaths=**} {
+      allow read, write: if canAccessCompanyEvidence(companyId);
+      allow delete: if isGlobalAdmin()
+        || (
+          isActiveCompanyMember(companyId)
+          && companyRole(companyId) in ['owner', 'admin', 'manager']
+        );
     }
 
     // Legacy root-level locations are admin-only to support controlled cleanup/migration.

@@ -9,3 +9,13 @@ export function buildCompanyBackupPath(companyId, ...segments) {
   if (!safeCompanyId) throw new Error('companyId is required for backup storage paths');
   return ['companies', safeCompanyId, 'backups', ...segments.filter(Boolean)].join('/');
 }
+
+export function buildCompanyManualPath(companyId, assetId, manualId, fileName = 'source.pdf') {
+  const safeCompanyId = `${companyId || ''}`.trim();
+  const safeAssetId = `${assetId || ''}`.trim();
+  const safeManualId = `${manualId || ''}`.trim();
+  if (!safeCompanyId) throw new Error('companyId is required for manual storage paths');
+  if (!safeAssetId) throw new Error('assetId is required for manual storage paths');
+  if (!safeManualId) throw new Error('manualId is required for manual storage paths');
+  return ['companies', safeCompanyId, 'manuals', safeAssetId, safeManualId, `${fileName || 'source.pdf'}`.trim() || 'source.pdf'].join('/');
+}

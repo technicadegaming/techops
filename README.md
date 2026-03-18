@@ -14,7 +14,7 @@ Scoot Business TechOps is a multi-tenant operations platform for FEC/arcade-styl
 - **Authentication** for identity and session management.
 - **Cloud Firestore** for multi-tenant operational records.
 - **Cloud Functions** for secured server-side orchestration.
-- **Cloud Storage** for company-scoped evidence and backup artifacts.
+- **Cloud Storage** for company-scoped evidence, approved manual source files, and backup artifacts.
 
 ## Local development
 
@@ -88,6 +88,7 @@ firebase deploy --only hosting
 
 - Company data is scoped by `companyId` in Firestore and by storage path prefix:
   - `companies/{companyId}/evidence/...`
+  - `companies/{companyId}/manuals/{assetId}/{manualId}/source.pdf`
   - `companies/{companyId}/backups/...`
 - Enrichment authorization policy is standardized across functions libraries and tests.
 - Firebase local secret files (for example `functions/.secret.local`) are ignored and must never be committed.
