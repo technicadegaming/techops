@@ -12,7 +12,14 @@ const TRUSTED_MANUAL_HOST_TOKENS = [
 
 const MANUFACTURER_SOURCE_MAP = [
   { key: 'raw thrills', aliases: ['rawthrills'], sourceTokens: ['rawthrills.com', 'betson.com'], categories: ['video', 'motion', 'simulator'] },
-  { key: 'bay tek', aliases: ['baytek'], sourceTokens: ['baytekent.com', 'betson.com'], categories: ['redemption', 'ticket'] },
+  {
+    key: 'bay tek',
+    aliases: ['baytek', 'bay tek games', 'baytek games'],
+    sourceTokens: ['parts.baytekent.com', 'baytekent.com', 'betson.com'],
+    preferredSourceTokens: ['parts.baytekent.com', 'baytekent.com'],
+    lowTrustSourceTokens: ['betson.com'],
+    categories: ['redemption', 'ticket']
+  },
   { key: 'ice', aliases: ['innovative concepts in entertainment'], sourceTokens: ['icegame.com', 'betson.com'], categories: ['redemption', 'ticket'] },
   { key: 'betson', aliases: ['betson enterprises'], sourceTokens: ['betson.com'], categories: ['parts', 'distribution'] },
   { key: 'unis', aliases: ['unis technology', 'unis technologies'], sourceTokens: ['unistop.com', 'unistechnology.com', 'betson.com'], categories: ['video', 'redemption'] },
@@ -157,6 +164,8 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     .some((alias) => combinedText.includes(alias));
   const hasTitleManufacturerCombo = hasStrongTitleMatch && ((!!manufacturerPhrase && combinedText.includes(manufacturerPhrase)) || hasManufacturerAliasMatch);
   const isOfficial = !!manufacturerToken && (lowerHost.includes(manufacturerToken) || sourceType === 'manufacturer');
+  const preferredSourceMatch = !!manufacturerProfile && (manufacturerProfile.preferredSourceTokens || []).some((token) => lowerHost.includes(token));
+  const lowTrustSourceMatch = !!manufacturerProfile && (manufacturerProfile.lowTrustSourceTokens || []).some((token) => lowerHost.includes(token));
   const isLikelyManual = MANUAL_INTENT_TOKENS.some((token) => `${titleJoined} ${lowerPath}`.includes(token));
   const hasPdfSignal = /\.pdf($|\?|#)|pdf/.test(`${lowerPath} ${titleJoined}`);
   const isGenericHomepage = lowerPath === '/' || /^\/(home|index(\.html?)?)?$/.test(lowerPath);
@@ -186,6 +195,10 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   if (manufacturerProfile && manufacturerProfile.sourceTokens.some((token) => lowerHost.includes(token))) {
     score += 18;
     reasons.push('manufacturer_trusted_source_match');
+  }
+  if (preferredSourceMatch) {
+    score += 16;
+    reasons.push('manufacturer_preferred_source_match');
   }
   if (manufacturerProfile && /manual|support|docs|service|operators?/.test(lowerPath)) {
     score += 7;
@@ -230,6 +243,10 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     score -= 18;
     reasons.push('generic_manual_hub_penalty');
   }
+  if (kind === 'documentation' && isGenericManualHub && !hasExactTitleMatch) {
+    score -= 20;
+    reasons.push('generic_manual_hub_exact_title_penalty');
+  }
   if (isDistributorLike && !hasStrongTitleMatch) {
     score -= 24;
     reasons.push('generic_distributor_penalty');
@@ -237,6 +254,18 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   if (sourceType === 'manual_library' && !hasStrongTitleMatch) {
     score -= 22;
     reasons.push('generic_library_penalty');
+  }
+  if ((sourceType === 'manual_library' || isDistributorLike) && !hasExactTitleMatch) {
+    score -= 18;
+    reasons.push('secondary_source_exact_title_penalty');
+  }
+  if (lowTrustSourceMatch) {
+    score -= 8;
+    reasons.push('manufacturer_low_trust_source_penalty');
+    if (!(hasExactTitleMatch && hasTitleManufacturerCombo && (isLikelyManual || hasPdfSignal))) {
+      score -= 20;
+      reasons.push('manufacturer_low_trust_source_strictness_penalty');
+    }
   }
   if (/forum|reddit|facebook|youtube|pinterest/.test(lowerHost)) {
     score -= 14;
@@ -267,6 +296,10 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   if (kind === 'documentation' && (!hasStrongTitleMatch || !manufacturerMatchStrong)) {
     score -= 30;
     reasons.push('strict_exactness_penalty');
+  }
+  if (kind === 'documentation' && (sourceType === 'manual_library' || isDistributorLike) && !(hasExactTitleMatch && hasTitleManufacturerCombo)) {
+    score -= 16;
+    reasons.push('secondary_source_strictness_penalty');
   }
 
   if (shortTitle && hasStrongTitleMatch && !(hasTitleManufacturerCombo || isLikelyManual || isOfficial || manufacturerProfile)) {
@@ -299,8 +332,10 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     exactManualMatch: hasStrongTitleMatch && (isLikelyManual || hasPdfSignal),
     trustedSource: isOfficial || !!manufacturerProfile || TRUSTED_MANUAL_HOST_TOKENS.some((token) => lowerHost.includes(token)),
     matchedManufacturer: manufacturerProfile?.key || '',
-    sourceTrustReason: reasons.find((reason) => /manufacturer_trusted_source_match|trusted_manual_host|official_host_match/.test(reason)) || '',
-    reason: reasons.slice(0, 4).join(',') || 'basic_match'
+    sourceTrustReason: (preferredSourceMatch
+      ? 'manufacturer_preferred_source_match'
+      : (reasons.find((reason) => /manufacturer_trusted_source_match|trusted_manual_host|official_host_match/.test(reason)) || '')),
+    reason: reasons.slice(0, 8).join(',') || 'basic_match'
   };
 }
 
@@ -469,7 +504,7 @@ function buildLookupContext(asset, assetId, followupAnswer = '') {
       'exact title official support page by manufacturer'
     ],
     preferredSourceHints: preferredSources,
-    notes: 'Prioritize exact title + manufacturer documentation for arcade/FEC equipment. Prefer exact operator/service/install/parts manuals and exact-title official support pages over generic manufacturer hubs/distributor listings. Ask one short actionable follow-up question only if needed.'
+    notes: 'Prioritize exact title + manufacturer documentation for arcade/FEC equipment. Prefer manufacturer-specific parts/support/manual hosts (for Bay Tek: parts.baytekent.com before baytekent.com before distributors/manual libraries), then exact-title official support pages, and only then exact-title secondary sources. Ask one short actionable follow-up question only if needed.'
   };
 }
 
@@ -697,3 +732,17 @@ module.exports = {
   getManufacturerProfile,
   buildFollowupQuestion
 };
+
+
+/*
+Manual ingestion-ready data model proposal (Phase 2, no migration in this PR):
+- Keep current asset.manualLinks/admin review flow for approval.
+- When a manual is approved, persist the source PDF in Storage at
+  companies/{companyId}/manuals/{assetId}/{manualId}/source.pdf
+- Persist a Firestore manual record (existing manuals collection can host this incrementally) with:
+  { id, companyId, assetId, manufacturer, normalizedName, sourceUrl, storagePath, mimeType, sha256, approvedAt, approvedBy, extractionStatus }
+- Persist extracted text chunks in a subcollection like manuals/{manualId}/chunks with:
+  { chunkIndex, text, tokenCount, pageStart, pageEnd, embeddingStatus, companyId, assetId }
+- Task AI should later read approved manual chunk docs by companyId + assetId/manualId, select the most relevant chunks for the task, and send chunk text as supplied internal context before optional web search.
+- This keeps manual URLs as review metadata while creating a low-risk path to approved, company-scoped manual content retrieval.
+*/

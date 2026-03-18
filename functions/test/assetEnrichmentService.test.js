@@ -271,3 +271,62 @@ test('verifyDocumentationSuggestions suppresses verified-but-weak title matches'
   assert.equal(verified[0].verified, true);
   assert.equal(verified[1].verified, false);
 });
+
+
+test('bay tek preferred parts host outranks generic manual-library and distributor results for quik drop', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Quik Drop Manual', url: 'https://parts.baytekent.com/quik-drop-manual.pdf', sourceType: 'parts' },
+      { title: 'Bay Tek Quik Drop Manual', url: 'https://www.betson.com/amusement-products/quik-drop-manual/', sourceType: 'distributor' },
+      { title: 'Quik Drop Operator Manual', url: 'https://archive.org/details/quik-drop-operator-manual', sourceType: 'manual_library' }
+    ],
+    confidence: 0.83,
+    asset: { name: 'Quik Drop', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Quik Drop',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+
+  assert.equal(suggestions[0].url, 'https://parts.baytekent.com/quik-drop-manual.pdf');
+  assert.equal(suggestions[0].sourceTrustReason, 'manufacturer_preferred_source_match');
+  assert.equal(suggestions[0].exactManualMatch, true);
+});
+
+test('bay tek manufacturer profile exposes preferred and low-trust sources', () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
+  assert.deepEqual(profile?.preferredSourceTokens, ['parts.baytekent.com', 'baytekent.com']);
+  assert.deepEqual(profile?.lowTrustSourceTokens, ['betson.com']);
+});
+
+test('generic distributor and manual-library results are demoted without exact-title evidence', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Bay Tek Redemption Manuals', url: 'https://archive.org/details/baytek-redemption-manuals', sourceType: 'manual_library' },
+      { title: 'Bay Tek Games Catalog', url: 'https://www.betson.com/amusement-products/bay-tek-games/', sourceType: 'distributor' },
+      { title: 'Quik Drop Parts Manual', url: 'https://parts.baytekent.com/quik-drop-parts-manual.pdf', sourceType: 'parts' }
+    ],
+    confidence: 0.79,
+    asset: { name: 'Quik Drop', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Quik Drop',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+
+  assert.equal(suggestions.length, 1);
+  assert.equal(suggestions[0].url, 'https://parts.baytekent.com/quik-drop-parts-manual.pdf');
+});
+
+test('betson-like pages stay weak unless they are the exact machine manual', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Bay Tek Games', url: 'https://www.betson.com/amusement-products/bay-tek-games/', sourceType: 'distributor' },
+      { title: 'Quik Drop Operator Manual PDF', url: 'https://www.betson.com/amusement-products/quik-drop-operator-manual.pdf', sourceType: 'distributor' }
+    ],
+    confidence: 0.77,
+    asset: { name: 'Quik Drop', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Quik Drop',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+
+  assert.equal(suggestions.length, 1);
+  assert.equal(suggestions[0].url, 'https://www.betson.com/amusement-products/quik-drop-operator-manual.pdf');
+  assert.ok(suggestions[0].reason.includes('exact_title_manual_match'));
+});
