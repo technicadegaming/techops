@@ -168,6 +168,21 @@ test('storage: backups path is admin/owner scoped for company members', async ()
   await assertFails(getBytes(ref(staffStorage, 'companies/company-a/backups/snapshot.json')));
 });
 
+test('storage: manuals path allows same-company access and blocks cross-company access', async () => {
+  await seedMembership({ uid: 'staff-a', companyId: 'company-a', role: 'staff' });
+  await seedMembership({ uid: 'staff-b', companyId: 'company-b', role: 'staff' });
+  const testEnv = await rulesTestEnvPromise;
+
+  const staffAStorage = testEnv.authenticatedContext('staff-a').storage();
+  const staffBStorage = testEnv.authenticatedContext('staff-b').storage();
+  const ownPath = 'companies/company-a/manuals/asset-1/manual-1/source.pdf';
+
+  await assertSucceeds(uploadString(ref(staffAStorage, ownPath), 'manual-pdf'));
+  await assertSucceeds(getBytes(ref(staffAStorage, ownPath)));
+  await assertFails(getBytes(ref(staffBStorage, ownPath)));
+  await assertFails(uploadString(ref(staffBStorage, 'companies/company-a/manuals/asset-1/manual-2/source.pdf'), 'blocked'));
+});
+
 test('storage: legacy root paths are denied for regular members and allowed for global admins', async () => {
   await seedMembership({ uid: 'staff-a', companyId: 'company-a', role: 'staff' });
   await seedMembership({ uid: 'global-admin', companyId: 'company-a', role: 'staff', userRole: 'admin' });

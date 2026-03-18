@@ -735,14 +735,8 @@ module.exports = {
 
 
 /*
-Manual ingestion-ready data model proposal (Phase 2, no migration in this PR):
-- Keep current asset.manualLinks/admin review flow for approval.
-- When a manual is approved, persist the source PDF in Storage at
-  companies/{companyId}/manuals/{assetId}/{manualId}/source.pdf
-- Persist a Firestore manual record (existing manuals collection can host this incrementally) with:
-  { id, companyId, assetId, manufacturer, normalizedName, sourceUrl, storagePath, mimeType, sha256, approvedAt, approvedBy, extractionStatus }
-- Persist extracted text chunks in a subcollection like manuals/{manualId}/chunks with:
-  { chunkIndex, text, tokenCount, pageStart, pageEnd, embeddingStatus, companyId, assetId }
-- Task AI should later read approved manual chunk docs by companyId + assetId/manualId, select the most relevant chunks for the task, and send chunk text as supplied internal context before optional web search.
-- This keeps manual URLs as review metadata while creating a low-risk path to approved, company-scoped manual content retrieval.
+Approved manual ingestion is implemented separately so the current asset review/admin flow can:
+- keep using documentationSuggestions/manualLinks for approval UI
+- persist company-scoped source files and Firestore metadata after approval
+- produce manuals/{manualId}/chunks records for later task-AI evidence retrieval
 */

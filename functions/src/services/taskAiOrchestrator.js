@@ -43,6 +43,49 @@ async function fetchDocExcerpt(url) {
   return { excerpt: compactExcerpt(cleaned), contentType: contentType || 'text/html' };
 }
 
+async function fetchApprovedManualChunkContext(db, asset = {}) {
+  const companyId = `${asset.companyId || ''}`.trim();
+  const assetId = `${asset.id || ''}`.trim();
+  if (!db || !companyId || !assetId) return [];
+
+  const manualSnap = await db.collection('manuals')
+    .where('companyId', '==', companyId)
+    .where('assetId', '==', assetId)
+    .limit(3)
+    .get();
+
+  const manuals = manualSnap.docs
+    .map((doc) => ({ id: doc.id, ...doc.data() }))
+    .filter((manual) => ['completed', 'no_text_extracted'].includes(`${manual.extractionStatus || ''}`))
+    .sort((a, b) => {
+      const aTime = Date.parse(a.approvedAt || a.updatedAt || 0) || 0;
+      const bTime = Date.parse(b.approvedAt || b.updatedAt || 0) || 0;
+      return bTime - aTime;
+    })
+    .slice(0, 2);
+
+  const results = [];
+  for (const manual of manuals) {
+    const chunkSnap = await db.collection('manuals').doc(manual.id).collection('chunks')
+      .orderBy('chunkIndex', 'asc')
+      .limit(4)
+      .get()
+      .catch(() => ({ docs: [] }));
+    const excerpts = chunkSnap.docs.map((doc) => compactExcerpt(doc.data()?.text || '', 500)).filter(Boolean);
+    if (!excerpts.length) continue;
+    results.push({
+      manualId: manual.id,
+      title: manual.sourceTitle || manual.fileName || manual.sourceUrl,
+      url: manual.sourceUrl || '',
+      storagePath: manual.storagePath || '',
+      sourceType: 'approved_manual_chunk',
+      excerpts,
+      contentType: manual.contentType || 'application/pdf'
+    });
+  }
+  return results;
+}
+
 function pickApprovedSuggestions(asset = {}) {
   const docs = Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : [];
   return docs
@@ -57,25 +100,22 @@ function pickApprovedSuggestions(asset = {}) {
 }
 
 /*
-Phase 2 manual-ingestion path (documented only in this PR):
-- Approved manual PDFs should live in Storage under a company-scoped path such as
+Approved-manual ingestion path:
+- Approved manual source files live in Storage under a company-scoped path such as
   companies/{companyId}/manuals/{assetId}/{manualId}/source.pdf.
-- Extracted/manual chunk text should live in Firestore as company-scoped metadata plus
-  manuals/{manualId}/chunks documents so task AI can retrieve actual manual content.
-- buildDocumentationContext can then prefer approved chunk excerpts first, fall back to
-  approved manual links/external support pages second, and finally optional web research.
+- Extracted/manual chunk text lives in Firestore at manuals/{manualId}/chunks documents.
+- buildDocumentationContext now prefers approved chunk excerpts first, then linked manual/support URLs.
 */
 
-async function buildDocumentationContext(asset = null) {
+async function buildDocumentationContext(db, asset = null) {
   if (!asset) return { mode: 'web_internal_only', items: [] };
+  const approvedChunkItems = await fetchApprovedManualChunkContext(db, asset).catch(() => []);
   const manualCandidates = (asset.manualLinks || []).filter(Boolean).slice(0, 3).map((url) => ({ title: url, url, sourceType: 'manual' }));
-  // Today this only fetches linked URLs/excerpts. A later low-risk extension can prepend
-  // approved manual chunk records here so troubleshooting uses actual manual text.
-  const fallbackCandidates = manualCandidates.length ? [] : pickApprovedSuggestions(asset);
-  const supportCandidates = manualCandidates.length ? [] : (Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion.slice(0, 2).map((s) => ({ title: s.label || s.title || s.url, url: s.url || s, sourceType: 'support' })) : []);
+  const fallbackCandidates = manualCandidates.length || approvedChunkItems.length ? [] : pickApprovedSuggestions(asset);
+  const supportCandidates = manualCandidates.length || approvedChunkItems.length ? [] : (Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion.slice(0, 2).map((s) => ({ title: s.label || s.title || s.url, url: s.url || s, sourceType: 'support' })) : []);
 
   const selected = [...manualCandidates, ...fallbackCandidates, ...supportCandidates].filter((x) => !!x.url).slice(0, 4);
-  const items = [];
+  const items = [...approvedChunkItems];
   for (const source of selected) {
     try {
       const fetched = await fetchDocExcerpt(source.url);
@@ -98,7 +138,9 @@ async function buildDocumentationContext(asset = null) {
     }
   }
 
-  const mode = items.some((x) => x.sourceType === 'manual')
+  const mode = items.some((x) => x.sourceType === 'approved_manual_chunk')
+    ? 'approved_manual_internal'
+    : items.some((x) => x.sourceType === 'manual')
     ? 'manual_backed'
     : (items.some((x) => x.sourceType === 'approved_doc') ? 'approved_doc_backed' : (items.length ? 'support_backed' : 'web_internal_only'));
   return { mode, items };
@@ -130,7 +172,7 @@ async function gatherContext(db, taskId) {
     return [row.manufacturer, row.gameTitle, row.assetType].some((x) => x && [asset.manufacturer, asset.gameTitle, asset.type].includes(x));
   }).slice(0, 10);
 
-  const documentationContext = await buildDocumentationContext(asset).catch(() => ({ mode: 'web_internal_only', items: [] }));
+  const documentationContext = await buildDocumentationContext(db, asset).catch(() => ({ mode: 'web_internal_only', items: [] }));
 
   return {
     task,

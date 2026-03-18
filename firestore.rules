@@ -249,6 +249,13 @@ service cloud.firestore {
       allow create: if canCreateScopedResource();
       allow update: if canUpdateScopedResource();
       allow delete: if canDeleteScopedResource();
+
+      match /chunks/{chunkId} {
+        allow read: if canReadScopedResource(resource.data);
+        allow create: if canCreateScopedResource();
+        allow update: if canUpdateScopedResource();
+        allow delete: if canDeleteScopedResource();
+      }
     }
 
     match /notes/{docId} {

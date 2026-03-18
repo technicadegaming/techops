@@ -7,6 +7,7 @@ export function createAssetActions(deps) {
     withRequiredCompanyId,
     upsertEntity,
     deleteEntity,
+    approveAssetManual,
     enrichAssetDocumentation,
     previewAssetDocumentationLookup,
     markAssetEnrichmentFailure,
@@ -37,6 +38,30 @@ export function createAssetActions(deps) {
         [assetId]: { message, tone }
       }
     };
+  };
+
+  const approveManualSources = async (assetId, urls = [], current = {}, metadataByUrl = {}) => {
+    const uniqueUrls = Array.from(new Set((urls || []).map((url) => `${url || ''}`.trim()).filter(Boolean))).slice(0, 2);
+    if (!uniqueUrls.length) return { completed: 0, failed: 0 };
+    let completed = 0;
+    let failed = 0;
+    for (const url of uniqueUrls) {
+      try {
+        const meta = metadataByUrl[url] || {};
+        await approveAssetManual({
+          assetId,
+          sourceUrl: url,
+          sourceTitle: meta.title || current.name || url,
+          sourceType: meta.sourceType || 'approved_doc',
+          approvedSuggestionIndex: Number.isInteger(meta.index) ? meta.index : undefined
+        });
+        completed += 1;
+      } catch (error) {
+        failed += 1;
+        console.error('[approve_asset_manual]', { assetId, url, error });
+      }
+    }
+    return { completed, failed };
   };
 
   const actions = {
@@ -324,6 +349,7 @@ export function createAssetActions(deps) {
         })
         .sort((a, b) => Number(b?.matchScore || 0) - Number(a?.matchScore || 0));
       const links = strongSuggestions.slice(0, 2).map((entry) => entry.url).filter(Boolean);
+      const metadataByUrl = Object.fromEntries(strongSuggestions.slice(0, 2).map((entry, index) => [entry.url, { title: entry.title, sourceType: entry.sourceType, index: suggestions.indexOf(entry) >= 0 ? suggestions.indexOf(entry) : index }]));
       if (!links.length) {
         const weakQuestion = current.enrichmentFollowupQuestion || 'Can you confirm cabinet type/version from the manufacturer plate?';
         await upsertEntity('assets', id, { ...current, enrichmentStatus: 'followup_needed', enrichmentFollowupQuestion: weakQuestion }, state.user);
@@ -333,7 +359,8 @@ export function createAssetActions(deps) {
         return;
       }
       await upsertEntity('assets', id, { ...current, manualLinks: dedupeUrls([...(current.manualLinks || []), ...links]), enrichmentStatus: 'verified_manual_found', enrichmentFollowupQuestion: '' }, state.user);
-      setAssetActionFeedback(id, `Applied ${links.length} trusted documentation link${links.length === 1 ? '' : 's'}.`, 'success');
+      const approval = await approveManualSources(id, links, current, metadataByUrl);
+      setAssetActionFeedback(id, `Applied ${links.length} trusted documentation link${links.length === 1 ? '' : 's'}${approval.completed ? ` and ingested ${approval.completed}` : ''}${approval.failed ? ` (${approval.failed} ingestion failed)` : ''}.`, approval.failed ? 'info' : 'success');
       await refreshData();
       render();
     },
@@ -349,10 +376,13 @@ export function createAssetActions(deps) {
         const strongManuals = (Array.isArray(current.documentationSuggestions) ? current.documentationSuggestions : [])
           .filter((entry) => !!entry?.verified)
           .sort((a, b) => Number(b?.matchScore || 0) - Number(a?.matchScore || 0))
-          .map((entry) => entry?.url)
-          .filter(Boolean)
           .slice(0, 2);
-        if (strongManuals.length) patch.manualLinks = dedupeUrls([...(current.manualLinks || []), ...strongManuals]);
+        const manualUrls = strongManuals.map((entry) => entry?.url).filter(Boolean);
+        patch.__manualApproval = {
+          urls: manualUrls,
+          metadataByUrl: Object.fromEntries(strongManuals.map((entry) => [entry.url, { title: entry.title, sourceType: entry.sourceType, index: (current.documentationSuggestions || []).indexOf(entry) }]))
+        };
+        if (manualUrls.length) patch.manualLinks = dedupeUrls([...(current.manualLinks || []), ...manualUrls]);
       }
       if (mode === 'support' || mode === 'all') {
         const supportLinks = (Array.isArray(current.supportResourcesSuggestion) ? current.supportResourcesSuggestion : [])
@@ -370,8 +400,11 @@ export function createAssetActions(deps) {
         }
       }
       if (!Object.keys(patch).length) return;
+      const manualApproval = patch.__manualApproval || null;
+      if (manualApproval) delete patch.__manualApproval;
       await upsertEntity('assets', id, { ...current, ...patch }, state.user);
-      setAssetActionFeedback(id, `Applied ${mode === 'all' ? 'documentation suggestions' : mode}.`, 'success');
+      const approval = manualApproval ? await approveManualSources(id, manualApproval.urls, current, manualApproval.metadataByUrl) : { completed: 0, failed: 0 };
+      setAssetActionFeedback(id, `Applied ${mode === 'all' ? 'documentation suggestions' : mode}${approval.completed ? ` and ingested ${approval.completed} manual${approval.completed === 1 ? '' : 's'}` : ''}${approval.failed ? ` (${approval.failed} ingestion failed)` : ''}.`, approval.failed ? 'info' : 'success');
       await refreshData();
       render();
     },
@@ -383,7 +416,8 @@ export function createAssetActions(deps) {
       const url = `${selected?.url || ''}`.trim();
       if (!url) return;
       await upsertEntity('assets', id, { ...current, manualLinks: dedupeUrls([...(current.manualLinks || []), url]), enrichmentStatus: 'verified_manual_found' }, state.user);
-      setAssetActionFeedback(id, 'Applied one documentation link.', 'success');
+      const approval = await approveManualSources(id, [url], current, { [url]: { title: selected?.title, sourceType: selected?.sourceType, index } });
+      setAssetActionFeedback(id, `Applied one documentation link${approval.completed ? ' and ingested it' : ''}${approval.failed ? ' (ingestion failed)' : ''}.`, approval.failed ? 'info' : 'success');
       await refreshData();
       render();
     },

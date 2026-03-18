@@ -37,3 +37,7 @@ export function enrichAssetDocumentation(assetId, options = {}) {
 export function previewAssetDocumentationLookup(payload) {
   return call('previewAssetDocumentationLookup', payload);
 }
+
+export function approveAssetManual(payload) {
+  return call('approveAssetManual', payload);
+}

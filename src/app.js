@@ -42,6 +42,7 @@ import {
 import {
   analyzeTaskTroubleshooting,
   answerTaskFollowup,
+  approveAssetManual,
   enrichAssetDocumentation,
   previewAssetDocumentationLookup,
   regenerateTaskTroubleshooting,
@@ -1336,6 +1337,7 @@ async function render() {
     withRequiredCompanyId,
     upsertEntity,
     deleteEntity,
+    approveAssetManual,
     enrichAssetDocumentation,
     previewAssetDocumentationLookup,
     markAssetEnrichmentFailure,
