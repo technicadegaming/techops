@@ -174,6 +174,44 @@ function buildFollowupQuestion({ parsedQuestion, profile, likelyCategory, hasOnl
   return 'What exact cabinet nameplate text appears under/near the game logo (including subtitle/version/model)?';
 }
 
+function normalizeSuggestionSourceType(sourceType, { lowerHost, lowTrustSourceMatch }) {
+  const raw = `${sourceType || 'other'}`.trim().toLowerCase() || 'other';
+  if (lowTrustSourceMatch && /manufacturer|official_site|support|parts/.test(raw)) return 'distributor';
+  if (/betson/.test(lowerHost)) return 'distributor';
+  return raw;
+}
+
+function getDocumentationSuggestionRank(entry = {}) {
+  const sourceType = `${entry.sourceType || entry.resourceType || 'other'}`.trim().toLowerCase();
+  const url = `${entry.url || ''}`.toLowerCase();
+  const verified = !!entry.verified;
+  const exactTitleMatch = !!entry.exactTitleMatch;
+  const exactManualMatch = !!entry.exactManualMatch;
+  const isDirectFile = /\.pdf($|\?|#)|\/wp-content\/uploads\/|\/manuals?\/[^/]+\.(pdf|docx?)($|\?|#)/.test(url);
+  const isManualLibrary = sourceType === 'manual_library';
+  const isSupportResource = ['support', 'official_site', 'contact'].includes(sourceType) && !exactManualMatch;
+  const isMirror = ['distributor', 'other'].includes(sourceType);
+  const isTitleSpecificPage = exactTitleMatch && /support|parts|downloads?|manual|service|install|product/.test(url);
+
+  if (verified && isDirectFile) return 0;
+  if (verified && exactTitleMatch && exactManualMatch) return 1;
+  if (verified && isTitleSpecificPage) return 2;
+  if (verified && isManualLibrary) return 3;
+  if (verified && isMirror) return 4;
+  if (isSupportResource) return 6;
+  return 5;
+}
+
+function compareDocumentationSuggestions(a = {}, b = {}) {
+  const rankDiff = getDocumentationSuggestionRank(a) - getDocumentationSuggestionRank(b);
+  if (rankDiff !== 0) return rankDiff;
+  if (!!a.verified !== !!b.verified) return a.verified ? -1 : 1;
+  if (!!a.exactManualMatch !== !!b.exactManualMatch) return a.exactManualMatch ? -1 : 1;
+  if (!!a.exactTitleMatch !== !!b.exactTitleMatch) return a.exactTitleMatch ? -1 : 1;
+  if (Number(b.matchScore || 0) !== Number(a.matchScore || 0)) return Number(b.matchScore || 0) - Number(a.matchScore || 0);
+  return `${a.url || ''}`.localeCompare(`${b.url || ''}`);
+}
+
 function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manufacturerSuggestion, followupAnswer, kind = 'documentation' }) {
   const url = `${row?.url || ''}`.trim();
   const title = `${row?.title || row?.label || ''}`.trim();
@@ -191,7 +229,6 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   if (lowerHost.length < 4 || /\.(png|jpg|gif|webp|svg|zip|exe)$/i.test(lowerPath)) return null;
   if (/(redirect|tracker|utm_|clickid=|javascript:|mailto:)/i.test(lowerUrl)) return null;
 
-  const sourceType = `${row.sourceType || row.resourceType || 'other'}`.trim().toLowerCase();
   const assetTokens = new Set([
     ...tokenize(asset?.name),
     ...tokenize(normalizedName),
@@ -225,9 +262,10 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     .filter(Boolean)
     .some((alias) => combinedText.includes(alias));
   const hasTitleManufacturerCombo = hasStrongTitleMatch && ((!!manufacturerPhrase && combinedText.includes(manufacturerPhrase)) || hasManufacturerAliasMatch);
-  const isOfficial = !!manufacturerToken && (lowerHost.includes(manufacturerToken) || sourceType === 'manufacturer');
   const preferredSourceMatch = !!manufacturerProfile && (manufacturerProfile.preferredSourceTokens || []).some((token) => lowerHost.includes(token));
   const lowTrustSourceMatch = !!manufacturerProfile && (manufacturerProfile.lowTrustSourceTokens || []).some((token) => lowerHost.includes(token));
+  const sourceType = normalizeSuggestionSourceType(row.sourceType || row.resourceType, { lowerHost, lowTrustSourceMatch });
+  const isOfficial = !!manufacturerToken && (lowerHost.includes(manufacturerToken) || sourceType === 'manufacturer');
   const isLikelyManual = MANUAL_INTENT_TOKENS.some((token) => `${titleJoined} ${lowerPath}`.includes(token));
   const hasPdfSignal = /\.pdf($|\?|#)|pdf/.test(`${lowerPath} ${titleJoined}`);
   const isGenericHomepage = lowerPath === '/' || /^\/(home|index(\.html?)?)?$/.test(lowerPath);
@@ -404,7 +442,7 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   const minimumScore = kind === 'documentation' ? 48 : 40;
   if (bounded < minimumScore) return null;
 
-  return {
+  const suggestion = {
     title: row.title || row.label || 'Candidate documentation',
     url,
     confidence: fallbackConfidence,
@@ -420,6 +458,11 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
       ? 'manufacturer_preferred_source_match'
       : (reasons.find((reason) => /manufacturer_trusted_source_match|trusted_manual_host|official_host_match/.test(reason)) || '')),
     reason: reasons.slice(0, 8).join(',') || 'basic_match'
+  };
+
+  return {
+    ...suggestion,
+    rankTier: getDocumentationSuggestionRank(suggestion)
   };
 }
 
@@ -438,7 +481,7 @@ function normalizeDocumentationSuggestions({ links, confidence, asset, normalize
       kind
     }))
     .filter(Boolean)
-    .sort((a, b) => b.matchScore - a.matchScore)
+    .sort(compareDocumentationSuggestions)
     .slice(0, 5);
 }
 
@@ -564,10 +607,9 @@ async function verifyDocumentationSuggestions(suggestions, fetchImpl = fetch) {
     })
   );
 
-  return verifiedRows.sort((a, b) => {
-    if (!!a.verified !== !!b.verified) return a.verified ? -1 : 1;
-    return Number(b.matchScore || 0) - Number(a.matchScore || 0);
-  });
+  return verifiedRows
+    .map((row) => ({ ...row, rankTier: getDocumentationSuggestionRank(row) }))
+    .sort(compareDocumentationSuggestions);
 }
 
 function buildLookupContext(asset, assetId, followupAnswer = '') {
@@ -818,6 +860,8 @@ module.exports = {
   detectDeadPageText,
   verifySuggestionUrl,
   verifyDocumentationSuggestions,
+  getDocumentationSuggestionRank,
+  compareDocumentationSuggestions,
   getManufacturerProfile,
   buildFollowupQuestion
 };

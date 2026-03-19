@@ -8,6 +8,7 @@ import {
   getLocationScopeLabel
 } from './locationContext.js';
 import { formatRelativeTime } from './notifications.js';
+import { sortDocumentationSuggestions } from './documentationSuggestions.js';
 
 function renderAssetCardFallback(asset, error) {
   const id = `${asset?.id || 'unknown'}`;
@@ -185,7 +186,7 @@ function renderPreviewPanel(state) {
   if (!preview && ['searching', 'searching_refined'].includes(status)) return renderInlineFeedback('Searching official/manual sources...', 'info');
   if (!preview && status === 'no_strong_match') return renderInlineFeedback('No strong match yet. Verify manufacturer/model text and try again.', 'error');
 
-  const docs = (preview?.documentationSuggestions || []).slice(0, 3);
+  const docs = sortDocumentationSuggestions(preview?.documentationSuggestions || []).slice(0, 3);
   const support = (preview?.supportResourcesSuggestion || []).slice(0, 3);
   const statusTone = docs.length || support.length ? 'success' : 'info';
   return `
@@ -208,7 +209,7 @@ function renderPreviewPanel(state) {
 function renderEnrichmentDetails(asset, manager, state) {
   const status = normalizeEnrichmentStatus(asset.enrichmentStatus || 'idle');
   const stale = isEnrichmentStale(asset);
-  const suggestions = (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).filter((entry) => !entry?.deadPage && !entry?.unreachable);
+  const suggestions = sortDocumentationSuggestions((Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).filter((entry) => !entry?.deadPage && !entry?.unreachable));
   const supportLinks = (Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []).filter((entry) => !entry?.deadPage && !entry?.unreachable);
   const hiddenDeadLinks = (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).length - suggestions.length;
   const contacts = Array.isArray(asset.supportContactsSuggestion) ? asset.supportContactsSuggestion : [];
