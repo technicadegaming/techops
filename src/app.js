@@ -358,6 +358,7 @@ function evaluatePassword(password = '') {
 }
 
 const runAction = runActionFactory({ reportActionError });
+const withActiveCompanyId = (payload = {}, actionLabel = 'continue') => withRequiredCompanyId(state, payload, actionLabel);
 
 
 function openTab(name, taskId = null, assetId = null) {
@@ -1334,7 +1335,7 @@ async function render() {
     render,
     refreshData,
     runAction,
-    withRequiredCompanyId,
+    withRequiredCompanyId: withActiveCompanyId,
     upsertEntity,
     deleteEntity,
     approveAssetManual,
@@ -1385,7 +1386,7 @@ async function render() {
     render,
     refreshData,
     runAction,
-    withRequiredCompanyId,
+    withRequiredCompanyId: withActiveCompanyId,
     upsertEntity,
     clearEntitySet,
     saveAppSettings,

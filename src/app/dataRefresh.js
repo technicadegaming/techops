@@ -26,6 +26,43 @@ export async function hydrateMembershipCompanies(state, memberships = state.memb
   state.membershipCompanies = Object.fromEntries(companyEntries);
 }
 
+function pickActiveMembership(state, memberships = state.memberships || []) {
+  const currentMembershipId = `${state.activeMembership?.id || ''}`.trim();
+  const storedMembershipId = getStoredActiveMembershipId(state.user?.uid);
+  const list = Array.isArray(memberships) ? memberships : [];
+  return list.find((membership) => membership.id === currentMembershipId)
+    || list.find((membership) => membership.id === storedMembershipId)
+    || (list.length === 1 ? list[0] : null)
+    || list[0]
+    || null;
+}
+
+async function ensureActiveCompanyHydrated(state, membership) {
+  if (!membership?.companyId) return null;
+  const cachedCompany = state.membershipCompanies?.[membership.id] || null;
+  const existingCompanyMatchesMembership = `${state.company?.id || ''}`.trim() === `${membership.companyId || ''}`.trim();
+  if (existingCompanyMatchesMembership && state.company) return state.company;
+  if (cachedCompany) {
+    state.company = cachedCompany;
+    return cachedCompany;
+  }
+
+  const company = await getCompany(membership.companyId).catch((error) => {
+    console.warn('[ensureActiveCompanyHydrated] Unable to load company document for active membership.', {
+      membershipId: membership.id,
+      companyId: membership.companyId,
+      error
+    });
+    return null;
+  });
+  if (company) {
+    state.membershipCompanies = { ...state.membershipCompanies, [membership.id]: company };
+    state.company = company;
+    return company;
+  }
+  return null;
+}
+
 export async function refreshData(state, options = {}) {
   state.tasks = await listEntities('tasks').catch(() => []);
   state.operations = await listEntities('operations').catch(() => []);
@@ -55,7 +92,9 @@ export async function refreshData(state, options = {}) {
 
 export async function setActiveMembership(state, nextMembership, options = {}) {
   const membershipId = typeof nextMembership === 'string' ? nextMembership : nextMembership?.id;
-  const membership = (state.memberships || []).find((entry) => entry.id === membershipId) || (typeof nextMembership === 'object' ? nextMembership : null);
+  const membership = (state.memberships || []).find((entry) => entry.id === membershipId)
+    || (typeof nextMembership === 'object' ? nextMembership : null)
+    || (state.memberships?.length === 1 ? state.memberships[0] : null);
   if (!membership) {
     state.activeMembership = null;
     state.company = null;
@@ -70,13 +109,20 @@ export async function setActiveMembership(state, nextMembership, options = {}) {
 
   state.activeMembership = membership;
   state.permissions = buildPermissionContext({ profile: state.profile, membership });
-  const company = state.membershipCompanies?.[membership.id] || await getCompany(membership.companyId);
+  const company = await ensureActiveCompanyHydrated(state, membership);
   state.membershipCompanies = { ...state.membershipCompanies, [membership.id]: company };
-  state.company = company;
+  state.company = company || state.company || null;
   state.onboardingRequired = false;
   syncSetupWizardState(state);
   storeActiveMembershipId(state.user?.uid, membership.id);
   setActiveCompanyContext(company?.id || membership.companyId, { allowLegacy: isGlobalAdmin(state.permissions) });
+
+  if (!company && membership.companyId) {
+    console.info('[setActiveMembership] Active membership selected without hydrated company document; using membership companyId for scope.', {
+      membershipId: membership.id,
+      companyId: membership.companyId
+    });
+  }
 
   if (!options.skipRefresh && typeof options.refreshData === 'function') await options.refreshData();
   if (!options.skipRender && typeof options.render === 'function') options.render();
@@ -84,6 +130,8 @@ export async function setActiveMembership(state, nextMembership, options = {}) {
 
 export async function bootstrapCompanyContext(state, options = {}) {
   setActiveCompanyContext(null);
+  state.company = null;
+  state.activeMembership = null;
   const memberships = await listMembershipsByUser(state.user.uid);
   state.memberships = memberships;
   const hasLegacyData = (await countEntities('assets').catch(() => 0)) + (await countEntities('tasks').catch(() => 0)) + (await countEntities('operations').catch(() => 0)) > 0;
@@ -93,12 +141,14 @@ export async function bootstrapCompanyContext(state, options = {}) {
   }
 
   await hydrateMembershipCompanies(state, state.memberships);
-  const currentMembershipId = `${state.activeMembership?.id || ''}`.trim();
-  const storedMembershipId = getStoredActiveMembershipId(state.user?.uid);
-  const activeMembership = state.memberships.find((membership) => membership.id === currentMembershipId)
-    || state.memberships.find((membership) => membership.id === storedMembershipId)
-    || state.memberships[0]
-    || null;
+  const activeMembership = pickActiveMembership(state, state.memberships);
+
+  console.info('[bootstrapCompanyContext] Resolved membership bootstrap state.', {
+    membershipCount: state.memberships.length,
+    activeMembershipId: activeMembership?.id || 'none',
+    activeMembershipCompanyId: activeMembership?.companyId || 'none',
+    storedMembershipId: getStoredActiveMembershipId(state.user?.uid) || 'none'
+  });
 
   await setActiveMembership(state, activeMembership, {
     ...options,
