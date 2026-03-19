@@ -22,7 +22,7 @@ const MANUFACTURER_SOURCE_MAP = [
   },
   {
     key: 'bay tek',
-    aliases: ['baytek', 'bay tek games', 'baytek games'],
+    aliases: ['baytek', 'bay tek games', 'baytek games', 'bay tek entertainment', 'baytek entertainment'],
     sourceTokens: ['parts.baytekent.com', 'baytekent.com', 'betson.com'],
     preferredSourceTokens: ['parts.baytekent.com', 'baytekent.com'],
     lowTrustSourceTokens: ['betson.com'],
@@ -485,6 +485,38 @@ function normalizeDocumentationSuggestions({ links, confidence, asset, normalize
     .slice(0, 5);
 }
 
+
+function isPreservableVerifiedManualSuggestion(entry = {}) {
+  const url = `${entry?.url || ''}`.trim().toLowerCase();
+  if (!url) return false;
+  if (!entry?.verified || entry?.deadPage || entry?.unreachable) return false;
+  if (!entry?.exactTitleMatch || !entry?.exactManualMatch) return false;
+  const directFile = /\.pdf($|\?|#)|\/wp-content\/uploads\/|\/manuals?\/[^/]+\.(pdf|docx?)($|\?|#)/.test(url);
+  return directFile || getDocumentationSuggestionRank(entry) <= 1;
+}
+
+function dedupeDocumentationSuggestions(rows = []) {
+  const sorted = rows
+    .filter((row) => row?.url)
+    .map((row) => ({ ...row, rankTier: getDocumentationSuggestionRank(row) }))
+    .sort(compareDocumentationSuggestions);
+  const seen = new Set();
+  return sorted.filter((row) => {
+    const key = `${row.url || ''}`.trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function mergeDocumentationSuggestions({ existingSuggestions, nextSuggestions }) {
+  const preserved = (Array.isArray(existingSuggestions) ? existingSuggestions : []).filter(isPreservableVerifiedManualSuggestion);
+  return dedupeDocumentationSuggestions([
+    ...(Array.isArray(nextSuggestions) ? nextSuggestions : []),
+    ...preserved
+  ]).slice(0, 5);
+}
+
 function normalizeSupportContacts(rows) {
   if (!Array.isArray(rows)) return [];
   const trustedContact = rows
@@ -721,7 +753,10 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
   const normalizedName = preview?.normalizedName || asset.name || '';
   const manufacturerSuggestion = preview?.likelyManufacturer || '';
   const manufacturerProfile = getManufacturerProfile(asset?.manufacturer, manufacturerSuggestion, normalizedName, preview?.likelyCategory);
-  const suggestions = await verifyDocumentationSuggestions(preview.documentationSuggestions || []);
+  const suggestions = mergeDocumentationSuggestions({
+    existingSuggestions: asset.documentationSuggestions || [],
+    nextSuggestions: await verifyDocumentationSuggestions(preview.documentationSuggestions || [])
+  });
   const confidenceThreshold = settings.aiConfidenceThreshold || 0.45;
 
   const strongSuggestions = suggestions.filter((s) => {
@@ -862,6 +897,8 @@ module.exports = {
   verifyDocumentationSuggestions,
   getDocumentationSuggestionRank,
   compareDocumentationSuggestions,
+  isPreservableVerifiedManualSuggestion,
+  mergeDocumentationSuggestions,
   getManufacturerProfile,
   buildFollowupQuestion
 };

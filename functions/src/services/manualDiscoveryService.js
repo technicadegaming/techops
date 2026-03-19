@@ -3,6 +3,7 @@ const MAX_SEARCH_RESULTS_PER_QUERY = 8;
 const MAX_DISCOVERY_RESULTS = 10;
 const MAX_FOLLOWUP_FETCHES = 4;
 const MAX_ADAPTER_FETCHES = 8;
+const MAX_SEED_FETCHES = 6;
 const SEARCH_FOLLOWUP_PRIORITY = 0;
 const ADAPTER_FOLLOWUP_PRIORITY = 1;
 const MANUAL_KEYWORDS = ['manual', 'operator', 'service', 'parts', 'install', 'installation', 'schematic', 'instruction', 'owners'];
@@ -77,28 +78,43 @@ function extractHref(rawHref) {
   return '';
 }
 
+function buildManufacturerQueryTerms(manufacturer, manufacturerProfile) {
+  return Array.from(new Set([
+    `${manufacturer || ''}`.trim(),
+    `${manufacturerProfile?.key || ''}`.trim(),
+    ...((manufacturerProfile?.aliases || []).map((alias) => `${alias || ''}`.trim()))
+  ].filter(Boolean)));
+}
+
 function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) {
-  const cleanManufacturer = `${manufacturer || ''}`.trim();
   const cleanTitle = `${title || ''}`.trim();
   if (!cleanTitle) return { officialQueries: [], fallbackQueries: [] };
   const preferredDomains = manufacturerProfile?.preferredSourceTokens?.length
     ? manufacturerProfile.preferredSourceTokens
     : (manufacturerProfile?.sourceTokens || []).slice(0, 2);
+  const manufacturerTerms = buildManufacturerQueryTerms(manufacturer, manufacturerProfile).slice(0, 7);
+  const manufacturerOrClause = manufacturerTerms.length
+    ? `(${manufacturerTerms.map((term) => `"${term}"`).join(' OR ')})`
+    : '';
 
-  const fallbackQueries = [
-    `"${cleanManufacturer}" "${cleanTitle}" "service manual" pdf`,
-    `"${cleanManufacturer}" "${cleanTitle}" "operator manual" pdf`,
-    `"${cleanManufacturer}" "${cleanTitle}" "parts manual" pdf`,
-    `"${cleanManufacturer}" "${cleanTitle}" manual pdf`,
-    `"${cleanManufacturer}" "${cleanTitle}" download manual`
-  ].filter(Boolean);
+  const fallbackQueries = manufacturerTerms.flatMap((term) => ([
+    `"${term}" "${cleanTitle}" "service manual" pdf`,
+    `"${term}" "${cleanTitle}" "operator manual" pdf`,
+    `"${term}" "${cleanTitle}" "parts manual" pdf`,
+    `"${term}" "${cleanTitle}" manual pdf`,
+    `"${term}" "${cleanTitle}" download manual`
+  ]));
 
   const officialQueries = preferredDomains.flatMap((domain) => ([
     `site:${domain} "${cleanTitle}" ("service manual" OR "operator manual" OR manual) (pdf OR download)`,
-    `site:${domain} "${cleanTitle}" ("parts manual" OR "install manual" OR support) (pdf OR download)`
-  ]));
+    `site:${domain} ${manufacturerOrClause} "${cleanTitle}" ("service manual" OR "operator manual" OR manual) (pdf OR download)`,
+    `site:${domain} ${manufacturerOrClause} "${cleanTitle}" ("parts manual" OR "install manual" OR support) (pdf OR download)`
+  ].map((query) => query.replace(/\s+/g, ' ').trim())));
 
-  return { officialQueries, fallbackQueries };
+  return {
+    officialQueries: Array.from(new Set(officialQueries)).filter(Boolean),
+    fallbackQueries: Array.from(new Set(fallbackQueries)).filter(Boolean)
+  };
 }
 
 async function searchDuckDuckGoHtml(query, fetchImpl = fetch) {
@@ -309,6 +325,103 @@ function buildFollowupExecutionPlan(followupPages) {
   return [...searchPages, ...adapterPages].slice(0, MAX_FOLLOWUP_FETCHES);
 }
 
+
+function buildManufacturerDiscoverySeedPages({ title, manufacturerProfile }) {
+  const cleanTitle = `${title || ''}`.trim();
+  if (!cleanTitle || !manufacturerProfile?.key) return [];
+  const encodedTitle = encodeURIComponent(cleanTitle);
+  const adapters = {
+    'bay tek': [
+      {
+        adapter: 'bay_tek_seed',
+        type: 'search_page',
+        label: `${cleanTitle} Bay Tek parts search`,
+        url: `https://parts.baytekent.com/?s=${encodedTitle}`
+      },
+      {
+        adapter: 'bay_tek_seed',
+        type: 'search_page',
+        label: `${cleanTitle} Bay Tek support search`,
+        url: `https://baytekent.com/?s=${encodedTitle}`
+      },
+      {
+        adapter: 'bay_tek_seed',
+        type: 'search_page',
+        label: `${cleanTitle} Betson search`,
+        url: `https://www.betson.com/?s=${encodeURIComponent(`${cleanTitle} Bay Tek`)}`
+      }
+    ]
+  };
+
+  return adapters[manufacturerProfile.key] || [];
+}
+
+async function crawlManufacturerSeedPages({ candidates, manufacturer, titleVariants, manufacturerProfile, fetchImpl, manualRows, supportRows, followupPages, logEvent }) {
+  for (const candidate of dedupeByUrl(candidates).slice(0, MAX_SEED_FETCHES)) {
+    try {
+      const response = await fetchImpl(candidate.url, { headers: { 'user-agent': SEARCH_USER_AGENT } });
+      if (!response.ok) {
+        logEvent('seed_probe_rejected', { adapter: candidate.adapter, url: candidate.url, status: response.status, reason: 'http_error' });
+        continue;
+      }
+      const contentType = `${response.headers?.get?.('content-type') || ''}`.toLowerCase();
+      if (!/text\/html|application\/xhtml\+xml/.test(contentType)) {
+        logEvent('seed_probe_skipped_non_html', { adapter: candidate.adapter, url: candidate.url, contentType: sanitizeDiagnosticValue(contentType, 80) });
+        continue;
+      }
+      const html = await response.text();
+      const anchorCandidates = extractAnchorCandidates(html, candidate.url);
+      const classified = anchorCandidates.map((row) => ({
+        ...row,
+        classification: classifyManualCandidate({
+          title: `${candidate.label || ''} ${row.title || ''}`.trim(),
+          url: row.url,
+          manufacturer,
+          titleVariants,
+          manufacturerProfile
+        })
+      }));
+
+      for (const row of classified) {
+        if (row.classification.includeManual) {
+          manualRows.push({
+            title: row.title,
+            url: row.url,
+            sourceType: row.classification.sourceType,
+            discoverySource: `seed:${candidate.adapter}`
+          });
+          continue;
+        }
+        if (row.classification.titleSpecificSupport && !row.classification.genericSupport) {
+          followupPages.push({ title: row.title, url: row.url, adapter: candidate.adapter, priority: SEARCH_FOLLOWUP_PRIORITY });
+        }
+        if (row.classification.includeSupport) {
+          supportRows.push({
+            label: row.title,
+            url: row.url,
+            resourceType: row.classification.resourceType,
+            discoverySource: `seed:${candidate.adapter}`
+          });
+        }
+      }
+
+      logEvent('seed_probe_result', {
+        adapter: candidate.adapter,
+        url: candidate.url,
+        anchorsScanned: anchorCandidates.length,
+        acceptedManuals: classified.filter((row) => row.classification.includeManual).map((row) => row.url).slice(0, 5),
+        queuedFollowups: classified.filter((row) => row.classification.titleSpecificSupport && !row.classification.genericSupport).map((row) => row.url).slice(0, 5)
+      });
+    } catch (error) {
+      logEvent('seed_probe_error', {
+        adapter: candidate.adapter,
+        url: candidate.url,
+        reason: sanitizeDiagnosticValue(error?.message || String(error), 120)
+      });
+    }
+  }
+}
+
 function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile }) {
   const slug = slugifyTitle(title);
   if (!slug || !manufacturerProfile?.key) return [];
@@ -469,6 +582,7 @@ async function discoverManualDocumentation({ assetName, normalizedName, manufact
   const supportRows = [];
   const followupPages = [];
   const adapterCandidates = buildManufacturerDiscoveryAdapters({ title, manufacturerProfile });
+  const seedPages = buildManufacturerDiscoverySeedPages({ title, manufacturerProfile });
 
   logEvent('start', {
     assetName: sanitizeDiagnosticValue(assetName, 120),
@@ -476,8 +590,26 @@ async function discoverManualDocumentation({ assetName, normalizedName, manufact
     manufacturer: sanitizeDiagnosticValue(manufacturer, 120),
     provider: searchProvider?.name || 'anonymous_search_provider',
     adapterCount: adapterCandidates.length,
+    seedPageCount: seedPages.length,
     queriesTried: queries.map((entry) => ({ mode: entry.mode, query: sanitizeDiagnosticValue(entry.query, 160) }))
   });
+
+  if (seedPages.length) {
+    logEvent('seed_pages', {
+      pages: seedPages.map((candidate) => ({ adapter: candidate.adapter, type: candidate.type, url: candidate.url }))
+    });
+    await crawlManufacturerSeedPages({
+      candidates: seedPages,
+      manufacturer,
+      titleVariants,
+      manufacturerProfile,
+      fetchImpl,
+      manualRows,
+      supportRows,
+      followupPages,
+      logEvent
+    });
+  }
 
   if (adapterCandidates.length) {
     logEvent('adapter_candidates', {
@@ -615,7 +747,9 @@ async function discoverManualDocumentation({ assetName, normalizedName, manufact
 }
 
 module.exports = {
+  buildManufacturerQueryTerms,
   buildManualSearchQueries,
+  buildManufacturerDiscoverySeedPages,
   buildManufacturerDiscoveryAdapters,
   searchDuckDuckGoHtml,
   classifyManualCandidate,

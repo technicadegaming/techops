@@ -1,7 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
+  buildManufacturerQueryTerms,
   buildManualSearchQueries,
+  buildManufacturerDiscoverySeedPages,
   buildManufacturerDiscoveryAdapters,
   classifyManualCandidate,
   extractManualLinksFromHtmlPage,
@@ -275,4 +277,59 @@ test('discoverManualDocumentation prioritizes search-discovered follow-up pages 
   assert.equal(htmlFetchCounts.get('https://rawthrills.com/games/jurassic-park-arcade-support'), 1);
   assert.equal(htmlFetchCounts.get('https://rawthrills.com/games/jurassic-park-arcade-support-a'), 1);
   assert.equal(htmlFetchCounts.get('https://rawthrills.com/games/jurassic-park-arcade-support-d'), 1);
+});
+
+
+test('Bay Tek alias expansion includes entertainment naming in query terms and fallback search coverage', () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
+  const terms = buildManufacturerQueryTerms('Bay Tek Games', profile);
+  const queries = buildManualSearchQueries({
+    manufacturer: 'Bay Tek Games',
+    title: 'Quik Drop',
+    manufacturerProfile: profile
+  });
+
+  assert.ok(terms.includes('bay tek entertainment'));
+  assert.ok(queries.fallbackQueries.some((query) => query.toLowerCase().includes('"bay tek entertainment"')));
+});
+
+test('buildManufacturerDiscoverySeedPages exposes deterministic Bay Tek official and distributor crawl targets', () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
+  const pages = buildManufacturerDiscoverySeedPages({ title: 'Quik Drop', manufacturerProfile: profile });
+
+  assert.deepEqual(pages.map((row) => row.url), [
+    'https://parts.baytekent.com/?s=Quik%20Drop',
+    'https://baytekent.com/?s=Quik%20Drop',
+    'https://www.betson.com/?s=Quik%20Drop%20Bay%20Tek'
+  ]);
+});
+
+test('discoverManualDocumentation can recover Quik Drop direct pdf from deterministic Bay Tek seed crawling without DuckDuckGo hits', async () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
+  const fetchMock = async (url) => {
+    if (url === 'https://parts.baytekent.com/?s=Quik%20Drop') {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/html' },
+        text: async () => '<a href="/manuals/quik-drop-service-manual.pdf">Quik Drop Service Manual PDF</a>'
+      };
+    }
+    if (url === 'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf') {
+      return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+    }
+    return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+  };
+
+  const result = await discoverManualDocumentation({
+    assetName: 'Quik Drop',
+    normalizedName: 'Quik Drop',
+    manufacturer: 'Bay Tek Games',
+    manufacturerProfile: profile,
+    searchProvider: async () => [],
+    fetchImpl: fetchMock,
+    logger: { log: () => {} }
+  });
+
+  assert.equal(result.documentationLinks[0]?.url, 'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf');
 });
