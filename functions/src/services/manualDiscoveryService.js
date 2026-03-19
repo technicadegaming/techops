@@ -50,8 +50,30 @@ const BAY_TEK_UTILITY_PATHS = [
   /^\/support\/?$/,
   /^\/products?\/?$/,
   /^\/parts\/?$/,
+  /^\/parts-service\/?$/,
+  /^\/blog\/?$/,
+  /^\/news\/?$/,
+  /^\/terms(?:-conditions)?\/?$/,
+  /^\/privacy(?:-policy)?\/?$/,
+  /^\/contact(?:-us)?\/?$/,
   /^\/product-category\/?$/,
   /^\/shop\/?$/
+];
+const BETSON_UTILITY_PATHS = [
+  /^\/$/,
+  /^\/(home|index(\.html?)?)?$/,
+  /^\/about(?:-us)?\/?$/,
+  /^\/contact(?:-us)?\/?$/,
+  /^\/blog\/?$/,
+  /^\/news\/?$/,
+  /^\/privacy(?:-policy)?\/?$/,
+  /^\/terms(?:-conditions)?\/?$/,
+  /^\/brands\/?$/,
+  /^\/manufacturers\/?$/,
+  /^\/amusement-products\/?$/,
+  /^\/parts\/?$/,
+  /^\/services\/?$/,
+  /^\/support\/?$/
 ];
 
 function normalizePhrase(value) {
@@ -246,6 +268,25 @@ function hasBayTekTitleSpecificPath(pathname, titleVariants) {
   return false;
 }
 
+function isBetsonDomain(host) {
+  return /(^|\.)betson\.com$/.test(`${host || ''}`.toLowerCase());
+}
+
+function isBetsonUtilityPath(pathname) {
+  const lowerPath = `${pathname || ''}`.toLowerCase();
+  return BETSON_UTILITY_PATHS.some((pattern) => pattern.test(lowerPath));
+}
+
+function hasBetsonTitleSpecificPath(pathname, titleVariants) {
+  const lowerPath = `${pathname || ''}`.toLowerCase();
+  if (/\/wp-content\/uploads\/.+\.(pdf|docx?)($|[?#])/.test(lowerPath)) return true;
+  if (/\.(pdf|docx?)($|[?#])/.test(lowerPath)) return true;
+  if (/\/(product|products|amusement-products|support|manuals?|downloads?)\//.test(lowerPath)) {
+    return hasExactOrStrongTitle(lowerPath, titleVariants);
+  }
+  return false;
+}
+
 function classifyManualCandidate({ title, url, manufacturer, titleVariants, manufacturerProfile }) {
   let parsed;
   try {
@@ -282,32 +323,36 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
   const bayTekDomain = isBayTekDomain(host);
   const bayTekUtility = isBayTekProfile(manufacturerProfile) && bayTekDomain && isBayTekUtilityPath(path);
   const bayTekTitleSpecificPath = isBayTekProfile(manufacturerProfile) && bayTekDomain && hasBayTekTitleSpecificPath(path, titleVariants);
+  const betsonDomain = isBetsonDomain(host);
+  const betsonUtility = betsonDomain && isBetsonUtilityPath(path);
+  const betsonTitleSpecificPath = betsonDomain && hasBetsonTitleSpecificPath(path, titleVariants);
   const hostManualIntent = sourceType === 'manual_library' && /manual/.test(normalizePhrase(host));
   const exactMachineManual = titleMatch && manufacturerMatch && (directPdf || manualIntent || downloadIntent || hostManualIntent);
   const titleSpecificOfficialPage = titleMatch
     && manufacturerMatch
     && !bayTekUtility
+    && !betsonUtility
     && !isGenericSupportPath(path, titleVariants)
-    && /manufacturer|support|parts/.test(sourceType)
+    && /manufacturer|support|parts|distributor/.test(sourceType)
     && path.split('/').filter(Boolean).length >= 1;
   const titleSpecificSupport = titleMatch
     && manufacturerMatch
     && !bayTekUtility
+    && !betsonUtility
     && (
       /support|product|parts|downloads?|manual|service|install/.test(path)
       || titleSpecificOfficialPage
       || bayTekTitleSpecificPath
+      || betsonTitleSpecificPath
     );
-  const genericSupport = isGenericSupportPath(path, titleVariants) || bayTekUtility;
+  const genericSupport = isGenericSupportPath(path, titleVariants) || bayTekUtility || betsonUtility;
   const includeManual = titleMatch
     && manufacturerMatch
     && !genericSupport
     && !bayTekUtility
-    && (directPdf || manualIntent || downloadIntent || hostManualIntent);
-  const includeSupport = !bayTekUtility && (
-    titleSpecificSupport
-    || (sourceType === 'manufacturer' || sourceType === 'support' || sourceType === 'parts')
-  );
+    && !betsonUtility
+    && (directPdf || manualIntent || downloadIntent || hostManualIntent || (betsonDomain && /\/wp-content\/uploads\//.test(path)));
+  const includeSupport = !bayTekUtility && !betsonUtility && titleSpecificSupport;
   const rejectionReasons = [];
 
   if (!titleMatch) rejectionReasons.push('missing_title_match');
@@ -315,6 +360,7 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
   if (!directPdf && !manualIntent && !downloadIntent && !hostManualIntent) rejectionReasons.push('missing_manual_signal');
   if (genericSupport) rejectionReasons.push('generic_support_page');
   if (bayTekUtility) rejectionReasons.push('bay_tek_utility_link');
+  if (betsonUtility) rejectionReasons.push('betson_utility_link');
   if (!includeSupport && !includeManual) rejectionReasons.push('not_support_or_manual');
 
   return {
@@ -355,7 +401,7 @@ function isJunkAnchorCandidate({ href, title, url, attributes, pageUrl, mode = '
 
   if (mode === 'seed') {
     if (/(^|\s)(nav|menu|header|footer|skip|breadcrumb|logo|mobile-menu)(\s|$)/.test(attributeText)) return true;
-    if (/\/(contact|contact-us|about|about-us|privacy-policy|terms-and-conditions|terms|faq)(\/|$)/.test(parsedUrl.pathname.toLowerCase())) return true;
+    if (/\/(contact|contact-us|about|about-us|privacy-policy|privacy|terms-and-conditions|terms|faq|blog|news)(\/|$)/.test(parsedUrl.pathname.toLowerCase())) return true;
     if (/\/(cart|checkout|my-account|account|login|register|wishlist)(\/|$)/.test(parsedUrl.pathname.toLowerCase())) return true;
     if (normalizedTitle.length <= 3 && !/pdf|manual|guide|download/.test(normalizedTitle)) return true;
   }
@@ -364,6 +410,13 @@ function isJunkAnchorCandidate({ href, title, url, attributes, pageUrl, mode = '
     const lowerPath = parsedUrl.pathname.toLowerCase();
     if (isBayTekUtilityPath(lowerPath)) return true;
     if (mode !== 'default' && !/\.(pdf|docx?)$/i.test(lowerPath) && /\/(contact|about|privacy|terms|faq)(\/|$)/.test(lowerPath)) return true;
+  }
+
+  if (isBetsonDomain(parsedUrl.hostname)) {
+    const lowerPath = parsedUrl.pathname.toLowerCase();
+    if (isBetsonUtilityPath(lowerPath)) return true;
+    if (mode !== 'default' && !hasBetsonTitleSpecificPath(lowerPath, [normalizedTitle].filter(Boolean))
+      && /\/(contact|about|privacy|terms|faq|blog|news)(\/|$)/.test(lowerPath)) return true;
   }
 
   return false;
@@ -479,6 +532,12 @@ function buildManufacturerDiscoverySeedPages({ title, manufacturerProfile }) {
         type: 'search_page',
         label: `${cleanTitle} Betson search`,
         url: `https://www.betson.com/?s=${encodeURIComponent(`${cleanTitle} Bay Tek`)}`
+      },
+      {
+        adapter: 'bay_tek_seed',
+        type: 'search_page',
+        label: `${cleanTitle} Betson product search`,
+        url: `https://www.betson.com/amusement-products/?s=${encodeURIComponent(cleanTitle)}`
       }
     ]
   };
@@ -581,6 +640,18 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile }) {
         type: 'support_page',
         label: `${title} support`,
         url: `https://baytekent.com/support/${slug}`
+      },
+      {
+        adapter: 'betson',
+        type: 'search_page',
+        label: `${title} Betson search`,
+        url: `https://www.betson.com/?s=${encodeURIComponent(`${title} Bay Tek`)}`
+      },
+      {
+        adapter: 'betson',
+        type: 'support_page',
+        label: `${title} Betson product`,
+        url: `https://www.betson.com/amusement-products/${slug}/`
       }
     ],
     ice: [

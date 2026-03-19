@@ -204,6 +204,77 @@ test('classifyManualCandidate rejects Bay Tek homepage, parts homepage, cart, an
   assert.equal(directPdf.includeManual, true);
 });
 
+test('classifyManualCandidate rejects generic Bay Tek terms/blog/parts-service pages for Quik Drop support flow', () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
+  const urls = [
+    'https://www.baytekent.com/terms-conditions/',
+    'https://www.baytekent.com/blog',
+    'https://www.baytekent.com/parts-service',
+    'https://parts.baytekent.com/'
+  ];
+
+  urls.forEach((url) => {
+    const result = classifyManualCandidate({
+      title: 'Bay Tek Support',
+      url,
+      manufacturer: 'Bay Tek Games',
+      titleVariants: ['quik drop'],
+      manufacturerProfile: profile
+    });
+    assert.equal(result.includeManual, false);
+    assert.equal(result.includeSupport, false);
+    assert.ok(result.rejectionReasons.includes('generic_support_page') || result.rejectionReasons.includes('bay_tek_utility_link'));
+  });
+});
+
+test('discoverManualDocumentation extracts Quik Drop PDF from Betson title-specific result pages', async () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
+  const fetchMock = async (url) => {
+    if (url === 'https://www.betson.com/?s=Quik%20Drop%20Bay%20Tek') {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/html' },
+        text: async () => `
+          <html><body>
+            <a href="https://www.betson.com/blog">Blog</a>
+            <a href="https://www.betson.com/amusement-products/quik-drop/">Quik Drop by Bay Tek</a>
+          </body></html>
+        `
+      };
+    }
+    if (url === 'https://www.betson.com/amusement-products/quik-drop/') {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/html' },
+        text: async () => `
+          <html><body>
+            <a href="https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf">Download Quik Drop Service Manual PDF</a>
+          </body></html>
+        `
+      };
+    }
+    if (url === 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf') {
+      return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+    }
+    return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+  };
+
+  const result = await discoverManualDocumentation({
+    assetName: 'Quik Drop',
+    normalizedName: 'Quik Drop',
+    manufacturer: 'Bay Tek Games',
+    manufacturerProfile: profile,
+    searchProvider: async () => [],
+    fetchImpl: fetchMock,
+    logger: { log: () => {} }
+  });
+
+  assert.equal(result.documentationLinks.some((row) => row.url === 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf'), true);
+  assert.equal(result.supportResources.some((row) => /blog/.test(row.url)), false);
+});
+
 test('discoverManualDocumentation extracts real Bay Tek search results and follows title-specific result pages instead of chrome anchors', async () => {
   const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
   const fetchMock = async (url) => {
@@ -445,7 +516,8 @@ test('buildManufacturerDiscoverySeedPages exposes deterministic Bay Tek official
   assert.deepEqual(pages.map((row) => row.url), [
     'https://parts.baytekent.com/?s=Quik%20Drop',
     'https://baytekent.com/?s=Quik%20Drop',
-    'https://www.betson.com/?s=Quik%20Drop%20Bay%20Tek'
+    'https://www.betson.com/?s=Quik%20Drop%20Bay%20Tek',
+    'https://www.betson.com/amusement-products/?s=Quik%20Drop'
   ]);
 });
 
