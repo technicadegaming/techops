@@ -6,6 +6,8 @@ const {
   verifySuggestionUrl,
   verifyDocumentationSuggestions,
   getDocumentationSuggestionRank,
+  isPreservableVerifiedManualSuggestion,
+  mergeDocumentationSuggestions,
   getManufacturerProfile,
   buildFollowupQuestion
 } = require('../src/services/assetEnrichmentService');
@@ -519,4 +521,72 @@ test('support resources keep generic official support pages when documentation r
 
   assert.equal(support.length, 2);
   assert.equal(support[0].url, 'https://www.baytekent.com/support');
+});
+
+
+test('mergeDocumentationSuggestions preserves previously verified direct pdf when a later run returns no manual candidates', () => {
+  const existing = [{
+    title: 'Quik Drop Service Manual PDF',
+    url: 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
+    sourceType: 'distributor',
+    matchScore: 91,
+    exactTitleMatch: true,
+    exactManualMatch: true,
+    verified: true,
+    trustedSource: true,
+    deadPage: false,
+    unreachable: false
+  }];
+
+  const merged = mergeDocumentationSuggestions({
+    existingSuggestions: existing,
+    nextSuggestions: []
+  });
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
+});
+
+test('isPreservableVerifiedManualSuggestion rejects support-only results but preserves verified direct manuals', () => {
+  assert.equal(isPreservableVerifiedManualSuggestion({
+    url: 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
+    verified: true,
+    exactTitleMatch: true,
+    exactManualMatch: true
+  }), true);
+
+  assert.equal(isPreservableVerifiedManualSuggestion({
+    url: 'https://www.baytekent.com/support/quik-drop',
+    verified: true,
+    exactTitleMatch: true,
+    exactManualMatch: false
+  }), false);
+});
+
+test('mergeDocumentationSuggestions keeps Quik Drop verified direct pdf ahead of later support-only refresh results', () => {
+  const merged = mergeDocumentationSuggestions({
+    existingSuggestions: [{
+      title: 'Quik Drop Service Manual PDF',
+      url: 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
+      sourceType: 'distributor',
+      matchScore: 91,
+      exactTitleMatch: true,
+      exactManualMatch: true,
+      verified: true,
+      trustedSource: true
+    }],
+    nextSuggestions: [{
+      title: 'Bay Tek Support',
+      url: 'https://www.baytekent.com/support/quik-drop',
+      sourceType: 'support',
+      matchScore: 84,
+      exactTitleMatch: true,
+      exactManualMatch: false,
+      verified: false,
+      trustedSource: true
+    }]
+  });
+
+  assert.equal(merged[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
+  assert.equal(merged.some((row) => row.url === 'https://www.baytekent.com/support/quik-drop'), true);
 });
