@@ -5,6 +5,7 @@ const {
   detectDeadPageText,
   verifySuggestionUrl,
   verifyDocumentationSuggestions,
+  getDocumentationSuggestionRank,
   getManufacturerProfile,
   buildFollowupQuestion
 } = require('../src/services/assetEnrichmentService');
@@ -272,6 +273,37 @@ test('verifyDocumentationSuggestions suppresses verified-but-weak title matches'
   assert.equal(verified[1].verified, false);
 });
 
+test('verified direct pdf outranks verified manual-library html pages', async () => {
+  const fetchMock = async (url) => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => (url.endsWith('.pdf') ? 'application/pdf' : 'text/html') },
+    url,
+    text: async () => 'operator manual'
+  });
+
+  const verified = await verifyDocumentationSuggestions([
+    {
+      url: 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
+      sourceType: 'distributor',
+      matchScore: 92,
+      exactTitleMatch: true,
+      exactManualMatch: true,
+      isLikelyManual: true
+    },
+    {
+      url: 'https://www.manualslib.com/manual/999999/Quik-Drop.html',
+      sourceType: 'manual_library',
+      matchScore: 96,
+      exactTitleMatch: true,
+      exactManualMatch: true
+    }
+  ], fetchMock);
+
+  assert.equal(verified[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
+  assert.equal(getDocumentationSuggestionRank(verified[0]) < getDocumentationSuggestionRank(verified[1]), true);
+});
+
 
 test('bay tek preferred parts host outranks generic manual-library and distributor results for quik drop', () => {
   const suggestions = normalizeDocumentationSuggestions({
@@ -336,6 +368,57 @@ test('betson-like pages stay weak unless they are the exact machine manual', () 
   assert.equal(suggestions.length, 1);
   assert.equal(suggestions[0].url, 'https://www.betson.com/amusement-products/quik-drop-operator-manual.pdf');
   assert.ok(suggestions[0].reason.includes('exact_title_manual_match'));
+  assert.equal(suggestions[0].sourceType, 'distributor');
+});
+
+test('quik drop betson direct pdf beats manualslib and all-guidesbox style pages', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Quik Drop Service Manual PDF', url: 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf', sourceType: 'distributor' },
+      { title: 'Quik Drop Manual', url: 'https://www.manualslib.com/manual/999999/Quik-Drop.html', sourceType: 'manual_library' },
+      { title: 'Quik Drop Service Manual', url: 'https://www.all-guidesbox.com/manual/123456/quik-drop.html', sourceType: 'other' }
+    ],
+    confidence: 0.86,
+    asset: { name: 'Quik Drop', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Quik Drop',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+
+  assert.equal(suggestions[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
+  assert.equal(suggestions.every((row) => row.url !== 'https://www.all-guidesbox.com/manual/123456/quik-drop.html'), true);
+  assert.equal(suggestions.some((row) => row.sourceType === 'manual_library'), false);
+});
+
+test('support resources do not outrank direct manuals in verified ordering', async () => {
+  const fetchMock = async (url) => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => (url.endsWith('.pdf') ? 'application/pdf' : 'text/html') },
+    url,
+    text: async () => 'support manual'
+  });
+
+  const verified = await verifyDocumentationSuggestions([
+    {
+      url: 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
+      sourceType: 'distributor',
+      matchScore: 91,
+      exactTitleMatch: true,
+      exactManualMatch: true,
+      isLikelyManual: true
+    },
+    {
+      url: 'https://www.baytekent.com/support/quik-drop',
+      sourceType: 'support',
+      matchScore: 95,
+      exactTitleMatch: true,
+      exactManualMatch: false,
+      isOfficial: true
+    }
+  ], fetchMock);
+
+  assert.equal(verified[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
+  assert.equal(getDocumentationSuggestionRank(verified[0]) < getDocumentationSuggestionRank(verified[1]), true);
 });
 
 test('bay tek quik drop rejects generic official home/support pages as manual results', () => {
