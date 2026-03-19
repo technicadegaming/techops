@@ -136,6 +136,74 @@ test('extractAnchorCandidates rejects junk hash, accessibility, and chrome ancho
   ]);
 });
 
+test('extractAnchorCandidates rejects Bay Tek utility, homepage, and chrome links while keeping title-specific result links', () => {
+  const rows = extractAnchorCandidates(`
+    <html><body>
+      <header><a href="https://baytekent.com/">Bay Tek Home</a></header>
+      <nav>
+        <a href="https://parts.baytekent.com/">Parts Home</a>
+        <a href="https://parts.baytekent.com/cart.php">Cart</a>
+        <a href="https://parts.baytekent.com/login.php">Login</a>
+      </nav>
+      <section class="products">
+        <a href="https://parts.baytekent.com/product/quik-drop/">Quik Drop</a>
+        <a href="https://parts.baytekent.com/support/quik-drop">Quik Drop Support</a>
+        <a href="https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf">Quik Drop Service Manual PDF</a>
+      </section>
+    </body></html>
+  `, 'https://parts.baytekent.com/?s=Quik%20Drop', { mode: 'seed' });
+
+  assert.deepEqual(rows.map((row) => row.url), [
+    'https://parts.baytekent.com/product/quik-drop/',
+    'https://parts.baytekent.com/support/quik-drop',
+    'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf'
+  ]);
+});
+
+test('classifyManualCandidate rejects Bay Tek homepage, parts homepage, cart, and login links while keeping title-specific result and pdf links', () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
+  const candidates = [
+    { url: 'https://baytekent.com/', title: 'Bay Tek Entertainment' },
+    { url: 'https://parts.baytekent.com/', title: 'Bay Tek Parts' },
+    { url: 'https://parts.baytekent.com/cart.php', title: 'Cart' },
+    { url: 'https://parts.baytekent.com/login.php', title: 'Login' }
+  ];
+
+  for (const candidate of candidates) {
+    const result = classifyManualCandidate({
+      title: candidate.title,
+      url: candidate.url,
+      manufacturer: 'Bay Tek Games',
+      titleVariants: ['quik drop'],
+      manufacturerProfile: profile
+    });
+
+    assert.equal(result.includeManual, false);
+    assert.equal(result.includeSupport, false);
+    assert.ok(result.rejectionReasons.includes('bay_tek_utility_link') || result.rejectionReasons.includes('generic_support_page'));
+  }
+
+  const titleSpecificResult = classifyManualCandidate({
+    title: 'Bay Tek Quik Drop',
+    url: 'https://parts.baytekent.com/product/quik-drop/',
+    manufacturer: 'Bay Tek Games',
+    titleVariants: ['quik drop'],
+    manufacturerProfile: profile
+  });
+  const directPdf = classifyManualCandidate({
+    title: 'Quik Drop Service Manual PDF',
+    url: 'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf',
+    manufacturer: 'Bay Tek Games',
+    titleVariants: ['quik drop'],
+    manufacturerProfile: profile
+  });
+
+  assert.equal(titleSpecificResult.includeManual, false);
+  assert.equal(titleSpecificResult.titleSpecificSupport, true);
+  assert.equal(titleSpecificResult.includeSupport, true);
+  assert.equal(directPdf.includeManual, true);
+});
+
 test('discoverManualDocumentation extracts real Bay Tek search results and follows title-specific result pages instead of chrome anchors', async () => {
   const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
   const fetchMock = async (url) => {
@@ -219,7 +287,7 @@ test('discoverManualDocumentation finds exact manual-only results for Bay Tek ti
   });
 
   assert.deepEqual(result.documentationLinks.map((row) => row.url), ['https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf']);
-  assert.equal(result.supportResources.some((row) => row.url === 'https://baytekent.com/support'), true);
+  assert.equal(result.supportResources.some((row) => row.url === 'https://baytekent.com/support'), false);
   assert.equal(logs.some((entry) => entry[0] === 'manualDiscovery:search_results'), true);
   assert.equal(logs.some((entry) => entry[0] === 'manualDiscovery:result_classification'), true);
 });
@@ -409,4 +477,59 @@ test('discoverManualDocumentation can recover Quik Drop direct pdf from determin
   });
 
   assert.equal(result.documentationLinks[0]?.url, 'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf');
+});
+
+test('discoverManualDocumentation rejects Bay Tek utility links and extracts Quik Drop documentation suggestions from mocked search and result pages', async () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
+  const fetchMock = async (url) => {
+    if (url === 'https://parts.baytekent.com/?s=Quik%20Drop') {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/html' },
+        text: async () => `
+          <html><body>
+            <a href="https://parts.baytekent.com/cart.php">Cart</a>
+            <a href="https://parts.baytekent.com/login.php">Login</a>
+            <a href="https://baytekent.com/">Bay Tek Home</a>
+            <a href="https://parts.baytekent.com/">Parts Home</a>
+            <div class="product">
+              <a href="/product/quik-drop/">Quik Drop</a>
+            </div>
+          </body></html>
+        `
+      };
+    }
+    if (url === 'https://parts.baytekent.com/product/quik-drop/') {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/html' },
+        text: async () => `
+          <html><body>
+            <a href="/downloads/quik-drop-operator-manual.pdf">Download Quik Drop Operator Manual</a>
+            <a href="/support">Support</a>
+          </body></html>
+        `
+      };
+    }
+    if (url === 'https://parts.baytekent.com/downloads/quik-drop-operator-manual.pdf') {
+      return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+    }
+    return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+  };
+
+  const result = await discoverManualDocumentation({
+    assetName: 'Quik Drop',
+    normalizedName: 'Quik Drop',
+    manufacturer: 'Bay Tek Games',
+    manufacturerProfile: profile,
+    searchProvider: async () => [],
+    fetchImpl: fetchMock,
+    logger: { log: () => {} }
+  });
+
+  assert.ok(result.documentationLinks.some((row) => row.url === 'https://parts.baytekent.com/downloads/quik-drop-operator-manual.pdf'));
+  assert.equal(result.documentationLinks.some((row) => /cart\.php|login\.php|baytekent\.com\/?$|parts\.baytekent\.com\/?$/.test(row.url)), false);
+  assert.equal(result.supportResources.some((row) => /cart\.php|login\.php|https:\/\/baytekent\.com\/?$|https:\/\/parts\.baytekent\.com\/?$/.test(row.url)), false);
 });
