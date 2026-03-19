@@ -8,6 +8,7 @@ const {
   getDocumentationSuggestionRank,
   isPreservableVerifiedManualSuggestion,
   mergeDocumentationSuggestions,
+  collectReusableVerifiedManuals,
   getManufacturerProfile,
   buildFollowupQuestion
 } = require('../src/services/assetEnrichmentService');
@@ -506,11 +507,14 @@ test('raw thrills jurassic park arcade rejects generic support page and keeps di
   assert.equal(suggestions[0].url, 'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf');
 });
 
-test('support resources keep generic official support pages when documentation rejects them', () => {
+test('support resources reject generic Bay Tek homepage, parts-service, blog, and terms pages', () => {
   const support = normalizeDocumentationSuggestions({
     links: [
-      { label: 'Bay Tek Support', url: 'https://www.baytekent.com/support', resourceType: 'support' },
-      { label: 'Bay Tek Home', url: 'https://www.baytekent.com/', resourceType: 'official_site' }
+      { label: 'Bay Tek Home', url: 'https://www.baytekent.com/', resourceType: 'official_site' },
+      { label: 'Bay Tek Parts Service', url: 'https://www.baytekent.com/parts-service', resourceType: 'support' },
+      { label: 'Bay Tek Blog', url: 'https://www.baytekent.com/blog', resourceType: 'support' },
+      { label: 'Bay Tek Terms', url: 'https://www.baytekent.com/terms-conditions/', resourceType: 'support' },
+      { label: 'Quik Drop Support', url: 'https://www.baytekent.com/support/quik-drop', resourceType: 'support' }
     ],
     confidence: 0.63,
     asset: { name: 'Quik Drop', manufacturer: 'Bay Tek Games' },
@@ -519,8 +523,7 @@ test('support resources keep generic official support pages when documentation r
     kind: 'support'
   });
 
-  assert.equal(support.length, 2);
-  assert.equal(support[0].url, 'https://www.baytekent.com/support');
+  assert.deepEqual(support.map((row) => row.url), ['https://www.baytekent.com/support/quik-drop']);
 });
 
 
@@ -589,4 +592,37 @@ test('mergeDocumentationSuggestions keeps Quik Drop verified direct pdf ahead of
 
   assert.equal(merged[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
   assert.equal(merged.some((row) => row.url === 'https://www.baytekent.com/support/quik-drop'), true);
+});
+
+test('collectReusableVerifiedManuals reuses previously approved exact-match Quik Drop manual from company records', () => {
+  const reused = collectReusableVerifiedManuals({
+    asset: { name: 'Quik Drop', normalizedName: 'Quik Drop' },
+    matchedManufacturer: 'bay tek',
+    manualRecords: [{
+      sourceTitle: 'Quik Drop Service Manual PDF',
+      sourceUrl: 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
+      manufacturer: 'Bay Tek Games',
+      assetTitle: 'Quik Drop'
+    }],
+    siblingAssets: [{
+      name: 'Quik Drop',
+      normalizedName: 'Quik Drop',
+      matchedManufacturer: 'bay tek',
+      documentationSuggestions: [{
+        title: 'Quik Drop Service Manual PDF',
+        url: 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
+        sourceType: 'distributor',
+        matchScore: 91,
+        exactTitleMatch: true,
+        exactManualMatch: true,
+        verified: true,
+        trustedSource: true
+      }]
+    }]
+  });
+
+  assert.equal(reused.length, 1);
+  assert.equal(reused[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
+  assert.equal(reused[0].reusedVerifiedManual, true);
+  assert.equal(reused[0].verified, true);
 });

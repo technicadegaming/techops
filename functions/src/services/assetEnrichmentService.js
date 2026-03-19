@@ -89,6 +89,17 @@ const GENERIC_DOCUMENTATION_PATH_PATTERNS = [
   /^\/manuals?\/(?:index|library|hub)?\/?$/,
   /^\/support\/(?:manuals?|downloads?|docs?|library|hub)?\/?$/
 ];
+const GENERIC_SUPPORT_JUNK_PATH_PATTERNS = [
+  /^\/$/,
+  /^\/(home|index(\.html?)?)?$/,
+  /^\/parts-service\/?$/,
+  /^\/parts\/?$/,
+  /^\/blog\/?$/,
+  /^\/news\/?$/,
+  /^\/terms(?:-conditions)?\/?$/,
+  /^\/privacy(?:-policy)?\/?$/,
+  /^\/contact(?:-us)?\/?$/
+];
 
 
 function tokenize(value) {
@@ -123,6 +134,98 @@ function isStrictlyGenericDocumentationPage(lowerPath, titleVariants) {
   const genericPath = GENERIC_DOCUMENTATION_PATH_PATTERNS.some((pattern) => pattern.test(lowerPath));
   if (!genericPath) return false;
   return !pathHasTitleEvidence(lowerPath, titleVariants);
+}
+
+function isGenericSupportJunkPage(lowerPath, titleVariants) {
+  const genericPath = GENERIC_SUPPORT_JUNK_PATH_PATTERNS.some((pattern) => pattern.test(lowerPath));
+  if (!genericPath) return false;
+  return !pathHasTitleEvidence(lowerPath, titleVariants);
+}
+
+function normalizeAssetMatchKey(assetName = '', normalizedName = '') {
+  return normalizePhrase(normalizedName || assetName);
+}
+
+function isReusableVerifiedManual(entry = {}, matchedManufacturer = '') {
+  if (!isPreservableVerifiedManualSuggestion(entry)) return false;
+  const entryManufacturer = normalizePhrase(entry.matchedManufacturer || entry.manufacturer || '');
+  const normalizedManufacturer = normalizePhrase(matchedManufacturer);
+  if (normalizedManufacturer && entryManufacturer && entryManufacturer !== normalizedManufacturer) return false;
+  return true;
+}
+
+function collectReusableVerifiedManuals({ asset = {}, matchedManufacturer = '', manualRecords = [], siblingAssets = [] }) {
+  const assetMatchKey = normalizeAssetMatchKey(asset.name, asset.normalizedName);
+  if (!assetMatchKey || !matchedManufacturer) return [];
+
+  const manualSuggestions = (Array.isArray(manualRecords) ? manualRecords : []).flatMap((manual) => {
+    const manualAssetMatchKey = normalizeAssetMatchKey(manual.assetTitle, manual.normalizedName);
+    const manualManufacturer = normalizePhrase(manual.matchedManufacturer || manual.manufacturer || '');
+    if (manualAssetMatchKey !== assetMatchKey || manualManufacturer !== normalizePhrase(matchedManufacturer)) return [];
+    const url = `${manual.sourceUrl || ''}`.trim();
+    if (!url) return [];
+    return [{
+      title: manual.sourceTitle || manual.assetTitle || asset.name || url,
+      url,
+      sourceType: manual.sourceType || 'approved_doc',
+      matchScore: 100,
+      exactTitleMatch: true,
+      exactManualMatch: true,
+      verified: true,
+      trustedSource: true,
+      matchedManufacturer,
+      reusedVerifiedManual: true,
+      reason: 'reused_verified_manual_record'
+    }];
+  });
+
+  const siblingSuggestions = (Array.isArray(siblingAssets) ? siblingAssets : []).flatMap((candidate) => {
+    const candidateAssetMatchKey = normalizeAssetMatchKey(candidate.name, candidate.normalizedName);
+    const candidateManufacturer = normalizePhrase(candidate.matchedManufacturer || candidate.manufacturer || '');
+    if (candidateAssetMatchKey !== assetMatchKey || candidateManufacturer !== normalizePhrase(matchedManufacturer)) return [];
+    return (Array.isArray(candidate.documentationSuggestions) ? candidate.documentationSuggestions : [])
+      .filter((entry) => isReusableVerifiedManual(entry, matchedManufacturer))
+      .map((entry) => ({
+        ...entry,
+        matchedManufacturer,
+        reusedVerifiedManual: true,
+        reason: entry.reason ? `${entry.reason},reused_verified_manual_asset` : 'reused_verified_manual_asset'
+      }));
+  });
+
+  return dedupeDocumentationSuggestions([...manualSuggestions, ...siblingSuggestions]).slice(0, 5);
+}
+
+async function findReusableVerifiedManuals({ db, asset = {}, assetId = '', companyId = '', matchedManufacturer = '' }) {
+  const normalizedManufacturer = normalizePhrase(matchedManufacturer);
+  const assetMatchKey = normalizeAssetMatchKey(asset.name, asset.normalizedName);
+  if (!db || !companyId || !normalizedManufacturer || !assetMatchKey) return [];
+
+  const [manualSnap, assetSnap] = await Promise.all([
+    db.collection('manuals')
+      .where('companyId', '==', companyId)
+      .limit(50)
+      .get()
+      .catch(() => ({ docs: [] })),
+    db.collection('assets')
+      .where('companyId', '==', companyId)
+      .where('matchedManufacturer', '==', matchedManufacturer)
+      .limit(20)
+      .get()
+      .catch(() => ({ docs: [] }))
+  ]);
+
+  const manualRecords = (manualSnap.docs || []).map((doc) => doc.data?.() || {});
+  const siblingAssets = (assetSnap.docs || [])
+    .filter((doc) => doc.id !== assetId)
+    .map((doc) => doc.data?.() || {});
+
+  return collectReusableVerifiedManuals({
+    asset,
+    matchedManufacturer: normalizedManufacturer,
+    manualRecords,
+    siblingAssets
+  });
 }
 
 function buildLookupTargets(assetName, manufacturer, manufacturerProfile) {
@@ -271,6 +374,7 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   const isGenericHomepage = lowerPath === '/' || /^\/(home|index(\.html?)?)?$/.test(lowerPath);
   const isGenericManualHub = /manuals?|support|docs?|downloads?|products?|category|catalog/.test(lowerPath) && !hasStrongTitleMatch;
   const isStrictGenericDocumentationPage = isStrictlyGenericDocumentationPage(lowerPath, titleVariants);
+  const isGenericSupportJunk = isGenericSupportJunkPage(lowerPath, titleVariants);
   const isDistributorLike = sourceType === 'distributor' || /distributor|betson/.test(lowerHost);
   const hasDirectManualSignal = hasPdfSignal || /download|operator|service|parts|install|manual/.test(`${lowerPath} ${titleJoined}`);
   const isTitleSpecificSupportPage = hasStrongTitleMatch && isOfficial && /support|parts|downloads?|manual|service|install|product/.test(lowerPath);
@@ -425,6 +529,11 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   if (kind === 'support' && /official_site|support|parts|contact/.test(sourceType)) {
     score += 8;
     reasons.push('support_resource_bias');
+  }
+  if (kind === 'support' && isGenericSupportJunk) {
+    score -= 40;
+    reasons.push('generic_support_junk_penalty');
+    if (!hasStrongTitleMatch || !hasDirectManualSignal) return null;
   }
 
   if (kind === 'documentation') {
@@ -753,9 +862,20 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
   const normalizedName = preview?.normalizedName || asset.name || '';
   const manufacturerSuggestion = preview?.likelyManufacturer || '';
   const manufacturerProfile = getManufacturerProfile(asset?.manufacturer, manufacturerSuggestion, normalizedName, preview?.likelyCategory);
+  const matchedManufacturer = manufacturerProfile?.key || normalizePhrase(manufacturerSuggestion);
+  const reusedSuggestions = await findReusableVerifiedManuals({
+    db,
+    asset: { ...asset, normalizedName },
+    assetId,
+    companyId: asset.companyId || '',
+    matchedManufacturer
+  });
   const suggestions = mergeDocumentationSuggestions({
     existingSuggestions: asset.documentationSuggestions || [],
-    nextSuggestions: await verifyDocumentationSuggestions(preview.documentationSuggestions || [])
+    nextSuggestions: [
+      ...(await verifyDocumentationSuggestions(preview.documentationSuggestions || [])),
+      ...reusedSuggestions
+    ]
   });
   const confidenceThreshold = settings.aiConfidenceThreshold || 0.45;
 
@@ -818,7 +938,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
   if (Array.isArray(preview.alternateNames) && preview.alternateNames.length) updatePayload.alternateNames = preview.alternateNames;
   if (Array.isArray(preview.searchHints) && preview.searchHints.length) updatePayload.searchHints = preview.searchHints;
   if (preview.topMatchReason) updatePayload.topMatchReason = preview.topMatchReason;
-  if (manufacturerProfile?.key) updatePayload.matchedManufacturer = manufacturerProfile.key;
+  if (matchedManufacturer) updatePayload.matchedManufacturer = matchedManufacturer;
   if (shouldSetManufacturer) updatePayload.manufacturer = manufacturerSuggestion;
 
   await assetRef.set(updatePayload, { merge: true });
@@ -899,6 +1019,8 @@ module.exports = {
   compareDocumentationSuggestions,
   isPreservableVerifiedManualSuggestion,
   mergeDocumentationSuggestions,
+  collectReusableVerifiedManuals,
+  findReusableVerifiedManuals,
   getManufacturerProfile,
   buildFollowupQuestion
 };
