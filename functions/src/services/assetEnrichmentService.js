@@ -11,7 +11,14 @@ const TRUSTED_MANUAL_HOST_TOKENS = [
 ];
 
 const MANUFACTURER_SOURCE_MAP = [
-  { key: 'raw thrills', aliases: ['rawthrills'], sourceTokens: ['rawthrills.com', 'betson.com'], categories: ['video', 'motion', 'simulator'] },
+  {
+    key: 'raw thrills',
+    aliases: ['rawthrills'],
+    sourceTokens: ['rawthrills.com', 'betson.com'],
+    preferredSourceTokens: ['rawthrills.com'],
+    lowTrustSourceTokens: ['betson.com'],
+    categories: ['video', 'motion', 'simulator']
+  },
   {
     key: 'bay tek',
     aliases: ['baytek', 'bay tek games', 'baytek games'],
@@ -20,7 +27,14 @@ const MANUFACTURER_SOURCE_MAP = [
     lowTrustSourceTokens: ['betson.com'],
     categories: ['redemption', 'ticket']
   },
-  { key: 'ice', aliases: ['innovative concepts in entertainment'], sourceTokens: ['icegame.com', 'betson.com'], categories: ['redemption', 'ticket'] },
+  {
+    key: 'ice',
+    aliases: ['innovative concepts in entertainment'],
+    sourceTokens: ['support.icegame.com', 'icegame.com', 'betson.com'],
+    preferredSourceTokens: ['support.icegame.com', 'icegame.com'],
+    lowTrustSourceTokens: ['betson.com'],
+    categories: ['redemption', 'ticket']
+  },
   { key: 'betson', aliases: ['betson enterprises'], sourceTokens: ['betson.com'], categories: ['parts', 'distribution'] },
   { key: 'unis', aliases: ['unis technology', 'unis technologies'], sourceTokens: ['unistop.com', 'unistechnology.com', 'betson.com'], categories: ['video', 'redemption'] },
   { key: 'sega', aliases: ['sega amusements'], sourceTokens: ['segaarcade.com', 'segaarcade.co.uk', 'arcade', 'manual'], categories: ['video', 'arcade'] },
@@ -63,6 +77,18 @@ const SOFT_404_TEXT_PATTERNS = [
   /access denied/i
 ];
 
+const GENERIC_DOCUMENTATION_PATH_PATTERNS = [
+  /^\/$/,
+  /^\/(home|index(\.html?)?)?$/,
+  /^\/support\/?$/,
+  /^\/products\/?$/,
+  /^\/downloads?\/?$/,
+  /^\/docs?\/?$/,
+  /^\/manuals?\/?$/,
+  /^\/manuals?\/(?:index|library|hub)?\/?$/,
+  /^\/support\/(?:manuals?|downloads?|docs?|library|hub)?\/?$/
+];
+
 
 function tokenize(value) {
   return `${value || ''}`
@@ -84,7 +110,42 @@ function normalizePhrase(value) {
 
 function buildExactTitleVariants(assetName, normalizedName) {
   const variants = new Set([normalizePhrase(normalizedName), normalizePhrase(assetName)]);
-  return Array.from(variants).filter((entry) => entry && entry.length >= 4);
+  return Array.from(variants).filter((entry) => entry && entry.length >= 3);
+}
+
+function pathHasTitleEvidence(lowerPath, titleVariants) {
+  const normalizedPath = normalizePhrase(lowerPath.replace(/\//g, ' '));
+  return titleVariants.some((variant) => normalizedPath.includes(variant));
+}
+
+function isStrictlyGenericDocumentationPage(lowerPath, titleVariants) {
+  const genericPath = GENERIC_DOCUMENTATION_PATH_PATTERNS.some((pattern) => pattern.test(lowerPath));
+  if (!genericPath) return false;
+  return !pathHasTitleEvidence(lowerPath, titleVariants);
+}
+
+function buildLookupTargets(assetName, manufacturer, manufacturerProfile) {
+  const cleanTitle = `${assetName || '[title]'}`.trim() || '[title]';
+  const cleanManufacturer = `${manufacturer || '[manufacturer]'}`.trim() || '[manufacturer]';
+  const preferredDomains = manufacturerProfile?.preferredSourceTokens?.length
+    ? manufacturerProfile.preferredSourceTokens
+    : (manufacturerProfile?.sourceTokens || []).slice(0, 2);
+
+  const baseTargets = [
+    `"${cleanManufacturer}" "${cleanTitle}" "service manual" pdf`,
+    `"${cleanManufacturer}" "${cleanTitle}" "operator manual" pdf`,
+    `"${cleanManufacturer}" "${cleanTitle}" "parts manual" pdf`,
+    `"${cleanManufacturer}" "${cleanTitle}" "install manual" pdf`,
+    `"${cleanManufacturer}" "${cleanTitle}" manual pdf`,
+    `"${cleanManufacturer}" "${cleanTitle}" download manual`
+  ];
+
+  const domainTargets = preferredDomains.flatMap((domain) => [
+    `site:${domain} "${cleanTitle}" ("service manual" OR "operator manual" OR manual) (pdf OR download)`,
+    `site:${domain} "${cleanTitle}" ("parts manual" OR "install manual" OR support) (pdf OR download)`
+  ]);
+
+  return [...baseTargets, ...domainTargets];
 }
 
 function getManufacturerProfile(...values) {
@@ -170,7 +231,10 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   const hasPdfSignal = /\.pdf($|\?|#)|pdf/.test(`${lowerPath} ${titleJoined}`);
   const isGenericHomepage = lowerPath === '/' || /^\/(home|index(\.html?)?)?$/.test(lowerPath);
   const isGenericManualHub = /manuals?|support|docs?|downloads?|products?|category|catalog/.test(lowerPath) && !hasStrongTitleMatch;
+  const isStrictGenericDocumentationPage = isStrictlyGenericDocumentationPage(lowerPath, titleVariants);
   const isDistributorLike = sourceType === 'distributor' || /distributor|betson/.test(lowerHost);
+  const hasDirectManualSignal = hasPdfSignal || /download|operator|service|parts|install|manual/.test(`${lowerPath} ${titleJoined}`);
+  const isTitleSpecificSupportPage = hasStrongTitleMatch && isOfficial && /support|parts|downloads?|manual|service|install|product/.test(lowerPath);
 
   if (sourceType === 'manufacturer' || sourceType === 'official_site' || sourceType === 'support' || sourceType === 'parts' || sourceType === 'contact') {
     score += 14;
@@ -235,11 +299,15 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     reasons.push('exact_normalized_name');
   }
 
-  if (isGenericHomepage) {
+  if (kind === 'documentation' && isGenericHomepage) {
     score -= 22;
     reasons.push('generic_homepage_penalty');
   }
-  if (isGenericManualHub) {
+  if (kind === 'documentation' && isStrictGenericDocumentationPage) {
+    score -= 40;
+    reasons.push('generic_documentation_landing_penalty');
+  }
+  if (kind === 'documentation' && isGenericManualHub) {
     score -= 18;
     reasons.push('generic_manual_hub_penalty');
   }
@@ -297,6 +365,10 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     score -= 30;
     reasons.push('strict_exactness_penalty');
   }
+  if (kind === 'documentation' && !hasDirectManualSignal && !isTitleSpecificSupportPage) {
+    score -= 32;
+    reasons.push('missing_direct_manual_signal_penalty');
+  }
   if (kind === 'documentation' && (sourceType === 'manual_library' || isDistributorLike) && !(hasExactTitleMatch && hasTitleManufacturerCombo)) {
     score -= 16;
     reasons.push('secondary_source_strictness_penalty');
@@ -314,6 +386,17 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   if (kind === 'support' && /official_site|support|parts|contact/.test(sourceType)) {
     score += 8;
     reasons.push('support_resource_bias');
+  }
+
+  if (kind === 'documentation') {
+    const rejectForGenericLanding = (isGenericHomepage || isStrictGenericDocumentationPage || isGenericManualHub)
+      && !(hasStrongTitleMatch && (hasDirectManualSignal || isTitleSpecificSupportPage));
+    const rejectForWeakEvidence = !hasStrongTitleMatch || !manufacturerMatchStrong || (!hasDirectManualSignal && !isTitleSpecificSupportPage);
+    if (rejectForGenericLanding) return null;
+    if ((sourceType === 'manual_library' || isDistributorLike) && !(hasExactTitleMatch && (hasTitleManufacturerCombo || (hasDirectManualSignal && !!manufacturerProfile)))) {
+      return null;
+    }
+    if (rejectForWeakEvidence) return null;
   }
 
   const bounded = Math.max(0, Math.min(100, score));
@@ -495,16 +578,9 @@ function buildLookupContext(asset, assetId, followupAnswer = '') {
     serialNumber: asset.serialNumber || '',
     assetId: asset.id || assetId,
     followupAnswer: `${followupAnswer || asset.enrichmentFollowupAnswer || ''}`.trim(),
-    lookupTargets: [
-      'arcade manual for [title] by [manufacturer]',
-      'operator manual for [title] by [manufacturer]',
-      'service manual for [title] by [manufacturer]',
-      'parts manual for [title] by [manufacturer]',
-      'install manual for [title] by [manufacturer]',
-      'exact title official support page by manufacturer'
-    ],
+    lookupTargets: buildLookupTargets(asset.name, asset.manufacturer, manufacturerProfile),
     preferredSourceHints: preferredSources,
-    notes: 'Prioritize exact title + manufacturer documentation for arcade/FEC equipment. Prefer manufacturer-specific parts/support/manual hosts (for Bay Tek: parts.baytekent.com before baytekent.com before distributors/manual libraries), then exact-title official support pages, and only then exact-title secondary sources. Ask one short actionable follow-up question only if needed.'
+    notes: 'Prioritize exact title + manufacturer documentation for arcade/FEC equipment. Prefer official manufacturer-domain-first searches using exact title + manufacturer. Prefer manufacturer-specific parts/support/manual hosts (Bay Tek: parts.baytekent.com before baytekent.com before distributors/manual libraries; ICE: support.icegame.com before icegame.com; Raw Thrills: rawthrills.com), then exact-title official support/download pages, and only then exact-title secondary sources. Generic homepages, generic /support, /products, and manual-library hubs are support resources only and must not count as manual results without exact-title manual/download evidence. Ask one short actionable follow-up question only if needed.'
   };
 }
 

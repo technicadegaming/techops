@@ -236,7 +236,7 @@ test('conservative docs_found threshold signals exact-title requirement', () => 
 test('manufacturer alias + exact title is required for manual-library suggestions', () => {
   const suggestions = normalizeDocumentationSuggestions({
     links: [
-      { title: 'Monopoly Roll-N-Go Operator Manual', url: 'https://archive.org/details/monopoly-roll-n-go-operator-manual', sourceType: 'manual_library' },
+      { title: 'Bay Tek Monopoly Roll-N-Go Operator Manual', url: 'https://archive.org/details/bay-tek-monopoly-roll-n-go-operator-manual', sourceType: 'manual_library' },
       { title: 'Generic Bay Tek Manual Library', url: 'https://archive.org/details/baytek-manuals', sourceType: 'manual_library' }
     ],
     confidence: 0.8,
@@ -297,6 +297,13 @@ test('bay tek manufacturer profile exposes preferred and low-trust sources', () 
   assert.deepEqual(profile?.lowTrustSourceTokens, ['betson.com']);
 });
 
+test('ice and raw thrills manufacturer profiles expose official-domain-first preferences', () => {
+  const iceProfile = getManufacturerProfile('ICE', 'Air FX');
+  const rawThrillsProfile = getManufacturerProfile('Raw Thrills', 'Jurassic Park Arcade');
+  assert.deepEqual(iceProfile?.preferredSourceTokens, ['support.icegame.com', 'icegame.com']);
+  assert.deepEqual(rawThrillsProfile?.preferredSourceTokens, ['rawthrills.com']);
+});
+
 test('generic distributor and manual-library results are demoted without exact-title evidence', () => {
   const suggestions = normalizeDocumentationSuggestions({
     links: [
@@ -329,4 +336,104 @@ test('betson-like pages stay weak unless they are the exact machine manual', () 
   assert.equal(suggestions.length, 1);
   assert.equal(suggestions[0].url, 'https://www.betson.com/amusement-products/quik-drop-operator-manual.pdf');
   assert.ok(suggestions[0].reason.includes('exact_title_manual_match'));
+});
+
+test('bay tek quik drop rejects generic official home/support pages as manual results', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Bay Tek Entertainment', url: 'https://www.baytekent.com/', sourceType: 'manufacturer' },
+      { title: 'Bay Tek Support', url: 'https://www.baytekent.com/support', sourceType: 'support' },
+      { title: 'Quik Drop Service Manual PDF', url: 'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf', sourceType: 'parts' }
+    ],
+    confidence: 0.84,
+    asset: { name: 'Quik Drop', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Quik Drop',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+
+  assert.deepEqual(suggestions.map((row) => row.url), ['https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf']);
+});
+
+test('bay tek sink it keeps title-specific support in manuals but excludes generic support hub', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Support', url: 'https://baytekent.com/support', sourceType: 'support' },
+      { title: 'Sink It Support', url: 'https://baytekent.com/support/sink-it', sourceType: 'support' },
+      { title: 'Products', url: 'https://baytekent.com/products', sourceType: 'manufacturer' }
+    ],
+    confidence: 0.78,
+    asset: { name: 'Sink It', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Sink It',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+
+  assert.equal(suggestions.length, 1);
+  assert.equal(suggestions[0].url, 'https://baytekent.com/support/sink-it');
+});
+
+test('bay tek skee-ball modern prefers exact manual over official generic manual hub', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Bay Tek Manual Library', url: 'https://baytekent.com/support/manual-library', sourceType: 'manufacturer' },
+      { title: 'Skee-Ball Modern Operator Manual', url: 'https://parts.baytekent.com/manuals/skee-ball-modern-operator-manual.pdf', sourceType: 'parts' }
+    ],
+    confidence: 0.81,
+    asset: { name: 'Skee-Ball Modern', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Skee-Ball Modern',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+
+  assert.equal(suggestions.length, 1);
+  assert.equal(suggestions[0].url, 'https://parts.baytekent.com/manuals/skee-ball-modern-operator-manual.pdf');
+});
+
+test('ice air fx prefers support.icegame.com manual results over broader official pages', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'ICE Air FX Manual', url: 'https://support.icegame.com/manuals/air-fx-service-manual.pdf', sourceType: 'support' },
+      { title: 'ICE Home', url: 'https://www.icegame.com/', sourceType: 'manufacturer' },
+      { title: 'ICE Support', url: 'https://www.icegame.com/support', sourceType: 'support' }
+    ],
+    confidence: 0.8,
+    asset: { name: 'Air FX', manufacturer: 'ICE' },
+    normalizedName: 'Air FX',
+    manufacturerSuggestion: 'ICE'
+  });
+
+  assert.equal(suggestions.length, 1);
+  assert.equal(suggestions[0].url, 'https://support.icegame.com/manuals/air-fx-service-manual.pdf');
+  assert.equal(suggestions[0].sourceTrustReason, 'manufacturer_preferred_source_match');
+});
+
+test('raw thrills jurassic park arcade rejects generic support page and keeps direct manual', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Support', url: 'https://rawthrills.com/support', sourceType: 'support' },
+      { title: 'Jurassic Park Arcade Operator Manual', url: 'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf', sourceType: 'manufacturer' }
+    ],
+    confidence: 0.82,
+    asset: { name: 'Jurassic Park Arcade', manufacturer: 'Raw Thrills' },
+    normalizedName: 'Jurassic Park Arcade',
+    manufacturerSuggestion: 'Raw Thrills'
+  });
+
+  assert.equal(suggestions.length, 1);
+  assert.equal(suggestions[0].url, 'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf');
+});
+
+test('support resources keep generic official support pages when documentation rejects them', () => {
+  const support = normalizeDocumentationSuggestions({
+    links: [
+      { label: 'Bay Tek Support', url: 'https://www.baytekent.com/support', resourceType: 'support' },
+      { label: 'Bay Tek Home', url: 'https://www.baytekent.com/', resourceType: 'official_site' }
+    ],
+    confidence: 0.63,
+    asset: { name: 'Quik Drop', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Quik Drop',
+    manufacturerSuggestion: 'Bay Tek Games',
+    kind: 'support'
+  });
+
+  assert.equal(support.length, 2);
+  assert.equal(support[0].url, 'https://www.baytekent.com/support');
 });
