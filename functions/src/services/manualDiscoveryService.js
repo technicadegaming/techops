@@ -38,6 +38,21 @@ const GENERIC_SUPPORT_PATHS = [
   /^\/manuals?\/(index|library|hub)?\/?$/,
   /^\/support\/(manuals?|downloads?|docs?|library|hub)?\/?$/
 ];
+const BAY_TEK_UTILITY_PATHS = [
+  /^\/$/,
+  /^\/cart(?:\.php)?\/?$/,
+  /^\/login(?:\.php)?\/?$/,
+  /^\/checkout(?:\.php)?\/?$/,
+  /^\/my-account\/?$/,
+  /^\/account\/?$/,
+  /^\/register(?:\.php)?\/?$/,
+  /^\/wishlist\/?$/,
+  /^\/support\/?$/,
+  /^\/products?\/?$/,
+  /^\/parts\/?$/,
+  /^\/product-category\/?$/,
+  /^\/shop\/?$/
+];
 
 function normalizePhrase(value) {
   return `${value || ''}`
@@ -209,6 +224,28 @@ function hasManufacturerEvidence(text, manufacturer, manufacturerProfile) {
     || (manufacturerProfile?.sourceTokens || []).some((token) => normalized.includes(normalizePhrase(token)));
 }
 
+function isBayTekProfile(manufacturerProfile) {
+  return manufacturerProfile?.key === 'bay tek';
+}
+
+function isBayTekDomain(host) {
+  return /(^|\.)baytekent\.com$/.test(`${host || ''}`.toLowerCase());
+}
+
+function isBayTekUtilityPath(pathname) {
+  const lowerPath = `${pathname || ''}`.toLowerCase();
+  return BAY_TEK_UTILITY_PATHS.some((pattern) => pattern.test(lowerPath));
+}
+
+function hasBayTekTitleSpecificPath(pathname, titleVariants) {
+  const lowerPath = `${pathname || ''}`.toLowerCase();
+  if (/\.(pdf|docx?)($|[?#])/.test(lowerPath)) return true;
+  if (/\/(product|products|support|manuals?|downloads?)\//.test(lowerPath)) {
+    return hasExactOrStrongTitle(lowerPath, titleVariants);
+  }
+  return false;
+}
+
 function classifyManualCandidate({ title, url, manufacturer, titleVariants, manufacturerProfile }) {
   let parsed;
   try {
@@ -242,28 +279,42 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
   const downloadIntent = DOWNLOAD_KEYWORDS.some((token) => titleAndPath.includes(token));
   const sourceType = detectSourceType(url, manufacturerProfile);
   const resourceType = detectResourceType(url, manufacturerProfile);
+  const bayTekDomain = isBayTekDomain(host);
+  const bayTekUtility = isBayTekProfile(manufacturerProfile) && bayTekDomain && isBayTekUtilityPath(path);
+  const bayTekTitleSpecificPath = isBayTekProfile(manufacturerProfile) && bayTekDomain && hasBayTekTitleSpecificPath(path, titleVariants);
   const hostManualIntent = sourceType === 'manual_library' && /manual/.test(normalizePhrase(host));
   const exactMachineManual = titleMatch && manufacturerMatch && (directPdf || manualIntent || downloadIntent || hostManualIntent);
   const titleSpecificOfficialPage = titleMatch
     && manufacturerMatch
+    && !bayTekUtility
     && !isGenericSupportPath(path, titleVariants)
     && /manufacturer|support|parts/.test(sourceType)
     && path.split('/').filter(Boolean).length >= 1;
   const titleSpecificSupport = titleMatch
     && manufacturerMatch
+    && !bayTekUtility
     && (
       /support|product|parts|downloads?|manual|service|install/.test(path)
       || titleSpecificOfficialPage
+      || bayTekTitleSpecificPath
     );
-  const genericSupport = isGenericSupportPath(path, titleVariants);
-  const includeManual = titleMatch && manufacturerMatch && !genericSupport && (directPdf || manualIntent || downloadIntent || hostManualIntent);
-  const includeSupport = titleSpecificSupport || sourceType === 'manufacturer' || sourceType === 'support' || sourceType === 'parts';
+  const genericSupport = isGenericSupportPath(path, titleVariants) || bayTekUtility;
+  const includeManual = titleMatch
+    && manufacturerMatch
+    && !genericSupport
+    && !bayTekUtility
+    && (directPdf || manualIntent || downloadIntent || hostManualIntent);
+  const includeSupport = !bayTekUtility && (
+    titleSpecificSupport
+    || (sourceType === 'manufacturer' || sourceType === 'support' || sourceType === 'parts')
+  );
   const rejectionReasons = [];
 
   if (!titleMatch) rejectionReasons.push('missing_title_match');
   if (!manufacturerMatch) rejectionReasons.push('missing_manufacturer_match');
   if (!directPdf && !manualIntent && !downloadIntent && !hostManualIntent) rejectionReasons.push('missing_manual_signal');
   if (genericSupport) rejectionReasons.push('generic_support_page');
+  if (bayTekUtility) rejectionReasons.push('bay_tek_utility_link');
   if (!includeSupport && !includeManual) rejectionReasons.push('not_support_or_manual');
 
   return {
@@ -307,6 +358,12 @@ function isJunkAnchorCandidate({ href, title, url, attributes, pageUrl, mode = '
     if (/\/(contact|contact-us|about|about-us|privacy-policy|terms-and-conditions|terms|faq)(\/|$)/.test(parsedUrl.pathname.toLowerCase())) return true;
     if (/\/(cart|checkout|my-account|account|login|register|wishlist)(\/|$)/.test(parsedUrl.pathname.toLowerCase())) return true;
     if (normalizedTitle.length <= 3 && !/pdf|manual|guide|download/.test(normalizedTitle)) return true;
+  }
+
+  if (isBayTekDomain(parsedUrl.hostname)) {
+    const lowerPath = parsedUrl.pathname.toLowerCase();
+    if (isBayTekUtilityPath(lowerPath)) return true;
+    if (mode !== 'default' && !/\.(pdf|docx?)$/i.test(lowerPath) && /\/(contact|about|privacy|terms|faq)(\/|$)/.test(lowerPath)) return true;
   }
 
   return false;
