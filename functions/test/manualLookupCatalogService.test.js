@@ -33,9 +33,11 @@ test('catalog matches exact asset/manufacturer pairs first', () => {
   });
 
   assert.ok(match);
-  assert.equal(match.documentationSuggestions[0].url, 'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf');
+  assert.equal(match.documentationSuggestions[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
   assert.equal(match.documentationSuggestions[0].matchStatus, 'catalog_exact');
-  assert.equal(match.supportResources[0].url, 'https://parts.baytekent.com/support/quik-drop');
+  assert.equal(match.supportResources[0].url, 'https://www.betson.com/amusement-products/quik-drop/');
+  assert.equal(match.documentationSuggestions[0].sourceType, 'distributor');
+  assert.equal(match.documentationSuggestions[0].lookupMethod, 'catalog_curated_distributor_pdf');
 });
 
 test('catalog matches alternate asset names and title normalization aliases', () => {
@@ -49,7 +51,7 @@ test('catalog matches alternate asset names and title normalization aliases', ()
   });
 
   assert.ok(match);
-  assert.equal(match.documentationSuggestions[0].url, 'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf');
+  assert.equal(match.documentationSuggestions[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
 });
 
 test('catalog matches manufacturer aliases', () => {
@@ -77,8 +79,7 @@ test('Quik Drop known-good catalog match returns direct manuals instead of gener
     alternateNames: []
   });
 
-  assert.ok(match.documentationSuggestions.some((entry) => /quik-drop-service-manual\.pdf$/.test(entry.url)));
-  assert.ok(match.documentationSuggestions.some((entry) => /quik-drop-operator-manual\.pdf$/.test(entry.url)));
+  assert.deepEqual(match.documentationSuggestions.map((entry) => entry.url), ['https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf']);
   assert.equal(match.supportResources.every((entry) => !/\/support\/?$/.test(new URL(entry.url).pathname) || /quik-drop/.test(entry.url)), true);
 });
 

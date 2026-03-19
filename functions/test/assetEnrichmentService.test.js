@@ -10,7 +10,8 @@ const {
   mergeDocumentationSuggestions,
   collectReusableVerifiedManuals,
   getManufacturerProfile,
-  buildFollowupQuestion
+  buildFollowupQuestion,
+  shouldDiscoverAfterCatalogMatch
 } = require('../src/services/assetEnrichmentService');
 
 test('normalizeDocumentationSuggestions filters weak and malformed links and ranks strong matches first', () => {
@@ -84,6 +85,71 @@ test('verifyDocumentationSuggestions keeps verification metadata and dead-page s
   assert.equal(goodRow.verified, false);
   assert.equal(deadRow.verified, false);
   assert.equal(deadRow.deadPage, true);
+});
+
+
+test('shouldDiscoverAfterCatalogMatch skips discovery for healthy catalog direct manuals', async () => {
+  const catalogMatch = {
+    confidence: 0.99,
+    documentationSuggestions: [{
+      title: 'Quik Drop Service Manual PDF',
+      url: 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
+      sourceType: 'distributor',
+      matchScore: 96,
+      exactTitleMatch: true,
+      exactManualMatch: true
+    }]
+  };
+
+  const shouldDiscover = await shouldDiscoverAfterCatalogMatch({
+    catalogMatch,
+    confidence: 0.8,
+    draftAsset: { name: 'Quik Drop', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Quik Drop',
+    manufacturerSuggestion: 'Bay Tek Games',
+    followupAnswer: '',
+    fetchImpl: async (url, options = {}) => ({
+      ok: true,
+      status: 200,
+      url,
+      headers: { get: () => (url.endsWith('.pdf') ? 'application/pdf' : 'text/html') },
+      text: async () => options.method === 'HEAD' ? '' : 'Quik Drop service manual PDF'
+    })
+  });
+
+  assert.equal(shouldDiscover, false);
+});
+
+test('shouldDiscoverAfterCatalogMatch continues to fallback when catalog manual verifies dead', async () => {
+  const catalogMatch = {
+    confidence: 0.99,
+    documentationSuggestions: [{
+      title: 'Quik Drop Service Manual PDF',
+      url: 'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf',
+      sourceType: 'manufacturer',
+      matchScore: 96,
+      exactTitleMatch: true,
+      exactManualMatch: true
+    }]
+  };
+
+  const shouldDiscover = await shouldDiscoverAfterCatalogMatch({
+    catalogMatch,
+    confidence: 0.8,
+    draftAsset: { name: 'Quik Drop', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Quik Drop',
+    manufacturerSuggestion: 'Bay Tek Games',
+    followupAnswer: '',
+    fetchImpl: async (url, options = {}) => ({
+      ok: false,
+      status: 404,
+      url,
+      headers: { get: () => 'text/html' },
+      text: async () => options.method === 'HEAD' ? '' : 'manual not found'
+    })
+  });
+
+  assert.equal(shouldDiscover, true);
 });
 
 test('manufacturer-aware scoring prefers trusted manufacturer ecosystem links', () => {
