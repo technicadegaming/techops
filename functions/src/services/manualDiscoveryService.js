@@ -8,6 +8,25 @@ const SEARCH_FOLLOWUP_PRIORITY = 0;
 const ADAPTER_FOLLOWUP_PRIORITY = 1;
 const MANUAL_KEYWORDS = ['manual', 'operator', 'service', 'parts', 'install', 'installation', 'schematic', 'instruction', 'owners'];
 const DOWNLOAD_KEYWORDS = ['download', 'pdf', 'document', 'operators-manual', 'service-manual'];
+const GENERIC_ANCHOR_TITLES = new Set([
+  'toggle menu',
+  'skip to main content',
+  'skip to content',
+  'read more',
+  'learn more',
+  'view more',
+  'click here',
+  'menu'
+]);
+const GENERIC_ANCHOR_HASHES = new Set([
+  'main-content',
+  'content',
+  'main',
+  'primary-navigation',
+  'navigation',
+  'nav',
+  'menu'
+]);
 const GENERIC_SUPPORT_PATHS = [
   /^\/$/,
   /^\/(home|index(\.html?)?)?$/,
@@ -44,6 +63,15 @@ function escapeHtml(value) {
     .replace(/&#39;/g, '\'')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>');
+}
+
+function parseAnchorAttributes(rawAttributes) {
+  const attributes = {};
+  for (const match of `${rawAttributes || ''}`.matchAll(/([:@a-z0-9_-]+)\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/gi)) {
+    const key = `${match[1] || ''}`.toLowerCase();
+    attributes[key] = escapeHtml(match[3] || match[4] || match[5] || '').trim();
+  }
+  return attributes;
 }
 
 function sanitizeDiagnosticValue(value, maxLength = 220) {
@@ -216,7 +244,17 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
   const resourceType = detectResourceType(url, manufacturerProfile);
   const hostManualIntent = sourceType === 'manual_library' && /manual/.test(normalizePhrase(host));
   const exactMachineManual = titleMatch && manufacturerMatch && (directPdf || manualIntent || downloadIntent || hostManualIntent);
-  const titleSpecificSupport = titleMatch && manufacturerMatch && /support|product|parts|downloads?|manual|service|install/.test(path);
+  const titleSpecificOfficialPage = titleMatch
+    && manufacturerMatch
+    && !isGenericSupportPath(path, titleVariants)
+    && /manufacturer|support|parts/.test(sourceType)
+    && path.split('/').filter(Boolean).length >= 1;
+  const titleSpecificSupport = titleMatch
+    && manufacturerMatch
+    && (
+      /support|product|parts|downloads?|manual|service|install/.test(path)
+      || titleSpecificOfficialPage
+    );
   const genericSupport = isGenericSupportPath(path, titleVariants);
   const includeManual = titleMatch && manufacturerMatch && !genericSupport && (directPdf || manualIntent || downloadIntent || hostManualIntent);
   const includeSupport = titleSpecificSupport || sourceType === 'manufacturer' || sourceType === 'support' || sourceType === 'parts';
@@ -243,14 +281,49 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
   };
 }
 
-function extractAnchorCandidates(html, pageUrl) {
+function isGenericAnchorTitle(title) {
+  const normalized = normalizePhrase(title);
+  return !normalized || GENERIC_ANCHOR_TITLES.has(normalized);
+}
+
+function isJunkAnchorCandidate({ href, title, url, attributes, pageUrl, mode = 'default' }) {
+  const normalizedTitle = normalizePhrase(title);
+  const parsedBase = new URL(pageUrl);
+  const parsedUrl = new URL(url);
+  const normalizedHash = `${parsedUrl.hash || ''}`.replace(/^#/, '').trim().toLowerCase();
+  const attributeText = normalizePhrase(Object.values(attributes || {}).join(' '));
+  const rel = `${attributes?.rel || ''}`.toLowerCase();
+  const target = `${attributes?.target || ''}`.toLowerCase();
+
+  if (!href || href === '#' || /^#/.test(href.trim())) return true;
+  if (parsedUrl.pathname === parsedBase.pathname && parsedUrl.search === parsedBase.search && parsedUrl.hash) return true;
+  if (GENERIC_ANCHOR_HASHES.has(normalizedHash)) return true;
+  if (isGenericAnchorTitle(title)) return true;
+  if (/^(javascript:|mailto:|tel:)/i.test(href)) return true;
+  if (rel.includes('nofollow') && target !== '_blank' && !/pdf/i.test(url)) return true;
+
+  if (mode === 'seed') {
+    if (/(^|\s)(nav|menu|header|footer|skip|breadcrumb|logo|mobile-menu)(\s|$)/.test(attributeText)) return true;
+    if (/\/(contact|contact-us|about|about-us|privacy-policy|terms-and-conditions|terms|faq)(\/|$)/.test(parsedUrl.pathname.toLowerCase())) return true;
+    if (/\/(cart|checkout|my-account|account|login|register|wishlist)(\/|$)/.test(parsedUrl.pathname.toLowerCase())) return true;
+    if (normalizedTitle.length <= 3 && !/pdf|manual|guide|download/.test(normalizedTitle)) return true;
+  }
+
+  return false;
+}
+
+function extractAnchorCandidates(html, pageUrl, { mode = 'default' } = {}) {
   const base = new URL(pageUrl);
-  const matches = Array.from(html.matchAll(/<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi));
+  const matches = Array.from(html.matchAll(/<a\b([^>]*)href\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))([^>]*)>([\s\S]*?)<\/a>/gi));
   return matches.map((match) => {
-    const href = escapeHtml(match[1]);
-    const label = escapeHtml(match[2]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const rawAttributes = `${match[1] || ''} ${match[6] || ''}`.trim();
+    const href = escapeHtml(match[3] || match[4] || match[5] || '');
+    const label = escapeHtml(match[7]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const attributes = parseAnchorAttributes(rawAttributes);
     try {
-      return { url: new URL(href, base).toString(), title: label || href };
+      const url = new URL(href, base).toString();
+      if (isJunkAnchorCandidate({ href, title: label, url, attributes, pageUrl, mode })) return null;
+      return { url, title: label || href, href, attributes };
     } catch {
       return null;
     }
@@ -269,7 +342,7 @@ async function extractManualLinksFromHtmlPage({ pageUrl, pageTitle, manufacturer
     return [];
   }
   const html = await response.text();
-  const anchorCandidates = extractAnchorCandidates(html, pageUrl);
+  const anchorCandidates = extractAnchorCandidates(html, pageUrl, { mode: 'followup' });
   const classified = anchorCandidates
     .map((row) => ({
       ...row,
@@ -370,11 +443,11 @@ async function crawlManufacturerSeedPages({ candidates, manufacturer, titleVaria
         continue;
       }
       const html = await response.text();
-      const anchorCandidates = extractAnchorCandidates(html, candidate.url);
+      const anchorCandidates = extractAnchorCandidates(html, candidate.url, { mode: 'seed' });
       const classified = anchorCandidates.map((row) => ({
         ...row,
         classification: classifyManualCandidate({
-          title: `${candidate.label || ''} ${row.title || ''}`.trim(),
+          title: row.title,
           url: row.url,
           manufacturer,
           titleVariants,
@@ -753,6 +826,7 @@ module.exports = {
   buildManufacturerDiscoveryAdapters,
   searchDuckDuckGoHtml,
   classifyManualCandidate,
+  extractAnchorCandidates,
   extractManualLinksFromHtmlPage,
   discoverManualDocumentation
 };

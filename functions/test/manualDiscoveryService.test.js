@@ -6,6 +6,7 @@ const {
   buildManufacturerDiscoverySeedPages,
   buildManufacturerDiscoveryAdapters,
   classifyManualCandidate,
+  extractAnchorCandidates,
   extractManualLinksFromHtmlPage,
   discoverManualDocumentation
 } = require('../src/services/manualDiscoveryService');
@@ -113,6 +114,82 @@ test('extractManualLinksFromHtmlPage pulls direct manual links from title-specif
 
   assert.deepEqual(rows.map((row) => row.url), ['https://parts.baytekent.com/downloads/quik-drop-service-manual.pdf']);
   assert.equal(events.some((entry) => entry.event === 'html_followup_extracted'), true);
+});
+
+test('extractAnchorCandidates rejects junk hash, accessibility, and chrome anchors from Bay Tek seed pages', () => {
+  const rows = extractAnchorCandidates(`
+    <html><body>
+      <a href="#">Toggle menu</a>
+      <a class="skip-link screen-reader-text" href="#main-content">Skip to main content</a>
+      <nav><a class="menu-link" href="/support">Support</a></nav>
+      <footer><a href="/contact-us">Contact Us</a></footer>
+      <main>
+        <a href="/product/quik-drop/">Quik Drop</a>
+        <a href="/manuals/quik-drop-service-manual.pdf">Quik Drop Service Manual PDF</a>
+      </main>
+    </body></html>
+  `, 'https://parts.baytekent.com/?s=Quik%20Drop', { mode: 'seed' });
+
+  assert.deepEqual(rows.map((row) => row.url), [
+    'https://parts.baytekent.com/product/quik-drop/',
+    'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf'
+  ]);
+});
+
+test('discoverManualDocumentation extracts real Bay Tek search results and follows title-specific result pages instead of chrome anchors', async () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
+  const fetchMock = async (url) => {
+    if (url === 'https://parts.baytekent.com/?s=Quik%20Drop') {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/html' },
+        text: async () => `
+          <html><body>
+            <a href="#">Toggle menu</a>
+            <a class="skip-link" href="#main-content">Skip to main content</a>
+            <nav><a class="menu-link" href="/support">Support</a></nav>
+            <a href="/product/quik-drop/">Bay Tek Quik Drop</a>
+            <a href="/manuals/quik-drop-service-manual.pdf">Quik Drop Service Manual PDF</a>
+          </body></html>
+        `
+      };
+    }
+    if (url === 'https://parts.baytekent.com/product/quik-drop/') {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/html' },
+        text: async () => `
+          <html><body>
+            <a href="/downloads/quik-drop-operator-manual.pdf">Quik Drop Operator Manual PDF</a>
+            <a href="#main-content">Skip to main content</a>
+          </body></html>
+        `
+      };
+    }
+    if (url === 'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf' || url === 'https://parts.baytekent.com/downloads/quik-drop-operator-manual.pdf') {
+      return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+    }
+    return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+  };
+
+  const result = await discoverManualDocumentation({
+    assetName: 'Quik Drop',
+    normalizedName: 'Quik Drop',
+    manufacturer: 'Bay Tek Games',
+    manufacturerProfile: profile,
+    searchProvider: async () => [],
+    fetchImpl: fetchMock,
+    logger: { log: () => {} }
+  });
+
+  assert.deepEqual(result.documentationLinks.map((row) => row.url), [
+    'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf',
+    'https://parts.baytekent.com/downloads/quik-drop-operator-manual.pdf'
+  ]);
+  assert.equal(result.supportResources.some((row) => /#|main-content/.test(row.url)), false);
+  assert.equal(result.supportResources.some((row) => row.url === 'https://parts.baytekent.com/support'), false);
 });
 
 test('discoverManualDocumentation finds exact manual-only results for Bay Tek titles and keeps generic support out of manual results', async () => {
