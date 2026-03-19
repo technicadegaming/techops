@@ -92,5 +92,6 @@ firebase deploy --only hosting
   - `companies/{companyId}/backups/...`
 - Enrichment authorization policy is standardized across functions libraries and tests.
 - Firebase local secret files (for example `functions/.secret.local`) are ignored and must never be committed.
+- Asset manual enrichment now checks a curated lookup catalog first (`functions/src/data/manualLookupCatalog.json`) before live rediscovery, then falls back to deterministic official-first/manual-repository-first discovery when no catalog match exists.
 
 See `docs/SECURITY.md` and `docs/ARCHITECTURE.md` for details.

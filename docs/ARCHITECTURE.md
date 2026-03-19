@@ -25,6 +25,9 @@ The app is framework-less JavaScript, intentionally preserved to avoid migration
   - `functions/src/lib/permissions.js`
   - `functions/src/lib/enrichmentAuthorization.js`
 - AI orchestration: `functions/src/services/taskAiOrchestrator.js`
+- Asset documentation enrichment: `functions/src/services/assetEnrichmentService.js`
+- Curated manual catalog lookup: `functions/src/services/manualLookupCatalogService.js` with source data in `functions/src/data/manualLookupCatalog.json`
+- Manual live discovery fallback: `functions/src/services/manualDiscoveryService.js`
 - Manual ingestion/extraction: `functions/src/services/manualIngestionService.js`
 
 ## Multi-tenant boundaries
@@ -32,4 +35,5 @@ The app is framework-less JavaScript, intentionally preserved to avoid migration
 - Firestore collections use `companyId` for tenant scoping.
 - Cloud Storage paths are scoped under `companies/{companyId}/...` for tenant isolation.
 - Approved manual source files are stored under `companies/{companyId}/manuals/{assetId}/{manualId}/source.*`, with extracted text in `manuals/{manualId}/chunks`.
+- Asset manual suggestions use a catalog-first pipeline: normalized title/manufacturer, aliases, and explicit variants are checked against the curated catalog first; only misses continue into deterministic live discovery ordered as official manufacturer pages, official docs/manual repositories, exact-title PDF search, then trusted distributor/manual-library sources.
 - Global admins can bypass tenant constraints where explicitly required.
