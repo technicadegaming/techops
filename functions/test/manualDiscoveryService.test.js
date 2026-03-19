@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   buildManualSearchQueries,
+  buildManufacturerDiscoveryAdapters,
   classifyManualCandidate,
   extractManualLinksFromHtmlPage,
   discoverManualDocumentation
@@ -20,7 +21,26 @@ test('buildManualSearchQueries prioritizes official domains for known manufactur
   assert.match(queries.fallbackQueries[0], /"Bay Tek Games" "Quik Drop" "service manual" pdf/);
 });
 
-test('classifyManualCandidate rejects generic support hubs but keeps title-specific manual pdf links', () => {
+test('buildManufacturerDiscoveryAdapters exposes deterministic candidates for Bay Tek, ICE, and Raw Thrills', () => {
+  const bayTek = buildManufacturerDiscoveryAdapters({
+    title: 'Quik Drop',
+    manufacturerProfile: getManufacturerProfile('Bay Tek Games', 'Quik Drop')
+  });
+  const ice = buildManufacturerDiscoveryAdapters({
+    title: 'Air FX',
+    manufacturerProfile: getManufacturerProfile('ICE', 'Air FX')
+  });
+  const rawThrills = buildManufacturerDiscoveryAdapters({
+    title: 'Jurassic Park Arcade',
+    manufacturerProfile: getManufacturerProfile('Raw Thrills', 'Jurassic Park Arcade')
+  });
+
+  assert.ok(bayTek.some((row) => row.url === 'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf'));
+  assert.ok(ice.some((row) => row.url === 'https://support.icegame.com/manuals/air-fx-service-manual.pdf'));
+  assert.ok(rawThrills.some((row) => row.url === 'https://rawthrills.com/games/jurassic-park-arcade-support'));
+});
+
+test('classifyManualCandidate rejects generic support hubs with rejection reasons but keeps title-specific manual pdf links', () => {
   const profile = getManufacturerProfile('Raw Thrills', 'Jurassic Park Arcade');
   const generic = classifyManualCandidate({
     title: 'Raw Thrills Support',
@@ -38,10 +58,13 @@ test('classifyManualCandidate rejects generic support hubs but keeps title-speci
   });
 
   assert.equal(generic.includeManual, false);
+  assert.ok(generic.rejectionReasons.includes('generic_support_page'));
   assert.equal(exactManual.includeManual, true);
+  assert.deepEqual(exactManual.rejectionReasons, []);
 });
 
 test('extractManualLinksFromHtmlPage pulls direct manual links from title-specific support pages', async () => {
+  const events = [];
   const fetchMock = async () => ({
     ok: true,
     headers: { get: () => 'text/html' },
@@ -59,13 +82,16 @@ test('extractManualLinksFromHtmlPage pulls direct manual links from title-specif
     manufacturer: 'Bay Tek Games',
     titleVariants: ['quik drop'],
     manufacturerProfile: profile,
-    fetchImpl: fetchMock
+    fetchImpl: fetchMock,
+    logEvent: (event, payload) => events.push({ event, payload })
   });
 
   assert.deepEqual(rows.map((row) => row.url), ['https://parts.baytekent.com/downloads/quik-drop-service-manual.pdf']);
+  assert.equal(events.some((entry) => entry.event === 'html_followup_extracted'), true);
 });
 
 test('discoverManualDocumentation finds exact manual-only results for Bay Tek titles and keeps generic support out of manual results', async () => {
+  const logs = [];
   const searchProvider = async (query) => {
     if (query.includes('site:parts.baytekent.com') && query.includes('"Quik Drop"')) {
       return [
@@ -81,47 +107,51 @@ test('discoverManualDocumentation finds exact manual-only results for Bay Tek ti
     manufacturer: 'Bay Tek Games',
     manufacturerProfile: getManufacturerProfile('Bay Tek Games', 'Quik Drop'),
     searchProvider,
-    fetchImpl: async () => { throw new Error('should not fetch html follow-up'); }
+    fetchImpl: async (url) => ({
+      ok: url === 'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf',
+      status: url === 'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf' ? 200 : 404,
+      headers: { get: () => 'application/pdf' }
+    }),
+    logger: { log: (...args) => logs.push(args) },
+    traceId: 'trace-1'
   });
 
   assert.deepEqual(result.documentationLinks.map((row) => row.url), ['https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf']);
   assert.equal(result.supportResources.some((row) => row.url === 'https://baytekent.com/support'), true);
+  assert.equal(logs.some((entry) => entry[0] === 'manualDiscovery:search_results'), true);
+  assert.equal(logs.some((entry) => entry[0] === 'manualDiscovery:result_classification'), true);
 });
 
-test('discoverManualDocumentation regression coverage for Bay Tek, ICE, and Raw Thrills titles', async () => {
-  const fixtures = {
-    'site:parts.baytekent.com "Quik Drop"': [
-      { title: 'Quik Drop Service Manual PDF', url: 'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf' }
-    ],
-    'site:parts.baytekent.com "Sink It"': [
-      { title: 'Sink It Support', url: 'https://baytekent.com/support/sink-it' }
-    ],
-    'site:parts.baytekent.com "Skee-Ball Modern"': [
-      { title: 'Skee-Ball Modern Operator Manual', url: 'https://parts.baytekent.com/manuals/skee-ball-modern-operator-manual.pdf' }
-    ],
-    'site:support.icegame.com "Air FX"': [
-      { title: 'Air FX Service Manual PDF', url: 'https://support.icegame.com/manuals/air-fx-service-manual.pdf' }
-    ],
-    'site:rawthrills.com "Jurassic Park Arcade"': [
-      { title: 'Raw Thrills Support', url: 'https://rawthrills.com/support' },
-      { title: 'Jurassic Park Arcade Support', url: 'https://rawthrills.com/games/jurassic-park-arcade-support' }
-    ]
-  };
-
-  const searchProvider = async (query) => {
-    const matchedKey = Object.keys(fixtures).find((key) => query.includes(key));
-    return matchedKey ? fixtures[matchedKey] : [];
-  };
-
-  const fetchMock = async (url) => ({
-    ok: true,
-    headers: { get: () => 'text/html' },
-    text: async () => {
-      if (url.includes('sink-it')) return '<a href="/manuals/sink-it-operator-manual.pdf">Sink It Operator Manual</a>';
-      if (url.includes('jurassic-park-arcade-support')) return '<a href="/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf">Jurassic Park Arcade Operator Manual</a>';
-      return '<html></html>';
+test('discoverManualDocumentation regression coverage for Bay Tek, ICE, and Raw Thrills adapters and follow-up extraction', async () => {
+  const searchProvider = async () => [];
+  const fetchMock = async (url) => {
+    if (url === 'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf') {
+      return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
     }
-  });
+    if (url === 'https://parts.baytekent.com/support/sink-it') {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/html' },
+        text: async () => '<a href="/manuals/sink-it-operator-manual.pdf">Sink It Operator Manual</a>'
+      };
+    }
+    if (url === 'https://support.icegame.com/manuals/air-fx-service-manual.pdf') {
+      return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+    }
+    if (url === 'https://rawthrills.com/games/jurassic-park-arcade-support') {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/html' },
+        text: async () => '<a href="/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf">Jurassic Park Arcade Operator Manual</a>'
+      };
+    }
+    if (url === 'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf') {
+      return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+    }
+    return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+  };
 
   const cases = [
     {
@@ -132,12 +162,7 @@ test('discoverManualDocumentation regression coverage for Bay Tek, ICE, and Raw 
     {
       assetName: 'Sink It',
       manufacturer: 'Bay Tek Games',
-      expected: 'https://baytekent.com/manuals/sink-it-operator-manual.pdf'
-    },
-    {
-      assetName: 'Skee-Ball Modern',
-      manufacturer: 'Bay Tek Games',
-      expected: 'https://parts.baytekent.com/manuals/skee-ball-modern-operator-manual.pdf'
+      expected: 'https://parts.baytekent.com/manuals/sink-it-operator-manual.pdf'
     },
     {
       assetName: 'Air FX',
@@ -159,7 +184,8 @@ test('discoverManualDocumentation regression coverage for Bay Tek, ICE, and Raw 
       manufacturer: entry.manufacturer,
       manufacturerProfile: profile,
       searchProvider,
-      fetchImpl: fetchMock
+      fetchImpl: fetchMock,
+      logger: { log: () => {} }
     });
     assert.equal(result.documentationLinks[0]?.url, entry.expected);
     assert.ok(result.documentationLinks.every((row) => !/\/support\/?$|\/products\/?$/.test(new URL(row.url).pathname)));

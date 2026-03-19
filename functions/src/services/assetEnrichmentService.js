@@ -602,7 +602,9 @@ async function runLookupPreview({ settings, traceId, draftAsset }) {
     normalizedName,
     manufacturer: manufacturerSuggestion || draftAsset?.manufacturer || '',
     manufacturerProfile,
-    searchHints: Array.isArray(parsed?.searchHints) ? parsed.searchHints : []
+    searchHints: Array.isArray(parsed?.searchHints) ? parsed.searchHints : [],
+    logger: console,
+    traceId
   });
 
   const documentationSuggestions = normalizeDocumentationSuggestions({
