@@ -153,7 +153,7 @@ function buildManufacturerQueryTerms(manufacturer, manufacturerProfile) {
 
 function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) {
   const cleanTitle = `${title || ''}`.trim();
-  if (!cleanTitle) return { officialQueries: [], fallbackQueries: [] };
+  if (!cleanTitle) return { officialQueries: [], exactTitleQueries: [], fallbackQueries: [] };
   const preferredDomains = manufacturerProfile?.preferredSourceTokens?.length
     ? manufacturerProfile.preferredSourceTokens
     : (manufacturerProfile?.sourceTokens || []).slice(0, 2);
@@ -162,13 +162,19 @@ function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) 
     ? `(${manufacturerTerms.map((term) => `"${term}"`).join(' OR ')})`
     : '';
 
-  const fallbackQueries = manufacturerTerms.flatMap((term) => ([
+  const exactTitleQueries = manufacturerTerms.flatMap((term) => ([
     `"${term}" "${cleanTitle}" "service manual" pdf`,
     `"${term}" "${cleanTitle}" "operator manual" pdf`,
     `"${term}" "${cleanTitle}" "parts manual" pdf`,
+    `"${term}" "${cleanTitle}" "installation manual" pdf`,
     `"${term}" "${cleanTitle}" manual pdf`,
-    `"${term}" "${cleanTitle}" download manual`
+    `"${term}" "${cleanTitle}" exact title pdf`
   ]));
+
+  const fallbackQueries = manufacturerProfile?.lowTrustSourceTokens?.flatMap((domain) => ([
+    `site:${domain} "${cleanTitle}" ${manufacturerOrClause} (manual OR "service manual" OR "operator manual") (pdf OR download)`,
+    `site:${domain} "${cleanTitle}" ${manufacturerOrClause} (support OR product OR manual)`
+  ].map((query) => query.replace(/\s+/g, ' ').trim()))) || [];
 
   const officialQueries = preferredDomains.flatMap((domain) => ([
     `site:${domain} "${cleanTitle}" ("service manual" OR "operator manual" OR manual) (pdf OR download)`,
@@ -178,6 +184,7 @@ function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) 
 
   return {
     officialQueries: Array.from(new Set(officialQueries)).filter(Boolean),
+    exactTitleQueries: Array.from(new Set(exactTitleQueries)).filter(Boolean),
     fallbackQueries: Array.from(new Set(fallbackQueries)).filter(Boolean)
   };
 }
@@ -772,9 +779,10 @@ async function discoverManualDocumentation({ assetName, normalizedName, manufact
   const title = normalizedName || assetName;
   const titleVariants = buildExactTitleVariants(assetName, normalizedName);
   const logEvent = buildDiagnosticLogger({ logger, traceId });
-  const { officialQueries, fallbackQueries } = buildManualSearchQueries({ manufacturer, title, manufacturerProfile });
+  const { officialQueries, exactTitleQueries, fallbackQueries } = buildManualSearchQueries({ manufacturer, title, manufacturerProfile });
   const queries = [
     ...officialQueries.map((query) => ({ query, mode: 'official' })),
+    ...exactTitleQueries.map((query) => ({ query, mode: 'exact_pdf' })),
     ...fallbackQueries.map((query) => ({ query, mode: 'fallback' })),
     ...searchHints.slice(0, 3).map((query) => ({ query, mode: 'hint' }))
   ];

@@ -2,6 +2,7 @@ const admin = require('firebase-admin');
 const { HttpsError } = require('firebase-functions/v2/https');
 const { requestAssetDocumentationLookup } = require('./openaiService');
 const { discoverManualDocumentation } = require('./manualDiscoveryService');
+const { findCatalogManualMatch } = require('./manualLookupCatalogService');
 
 const TRUSTED_MANUAL_HOST_TOKENS = [
   'ipdb.org',
@@ -780,7 +781,14 @@ async function runLookupPreview({ settings, traceId, draftAsset }) {
   const normalizedName = parsed?.normalizedName || draftAsset?.name || '';
   const manufacturerSuggestion = parsed?.likelyManufacturer || '';
   const manufacturerProfile = getManufacturerProfile(draftAsset?.manufacturer, manufacturerSuggestion, normalizedName, parsed?.likelyCategory);
-  const discovered = await discoverManualDocumentation({
+  const catalogMatch = findCatalogManualMatch({
+    assetName: draftAsset?.name || '',
+    normalizedName,
+    manufacturer: manufacturerSuggestion || draftAsset?.manufacturer || '',
+    manufacturerProfile,
+    alternateNames: Array.isArray(parsed?.alternateNames) ? parsed.alternateNames : []
+  });
+  const discovered = catalogMatch ? { documentationLinks: [], supportResources: [], queriesTried: [] } : await discoverManualDocumentation({
     assetName: draftAsset?.name || '',
     normalizedName,
     manufacturer: manufacturerSuggestion || draftAsset?.manufacturer || '',
@@ -790,21 +798,31 @@ async function runLookupPreview({ settings, traceId, draftAsset }) {
     traceId
   });
 
-  const documentationSuggestions = normalizeDocumentationSuggestions({
-    links: discovered.documentationLinks,
-    confidence,
-    asset: draftAsset || {},
-    normalizedName,
-    manufacturerSuggestion,
-    followupAnswer: context.followupAnswer
-  });
+  const documentationSuggestions = catalogMatch
+    ? normalizeDocumentationSuggestions({
+      links: catalogMatch.documentationSuggestions,
+      confidence: Math.max(confidence, Number(catalogMatch.confidence || 0.95)),
+      asset: draftAsset || {},
+      normalizedName,
+      manufacturerSuggestion,
+      followupAnswer: context.followupAnswer
+    })
+    : normalizeDocumentationSuggestions({
+      links: discovered.documentationLinks,
+      confidence,
+      asset: draftAsset || {},
+      normalizedName,
+      manufacturerSuggestion,
+      followupAnswer: context.followupAnswer
+    });
 
   const supportResourcesSuggestion = normalizeDocumentationSuggestions({
     links: [
+      ...(catalogMatch?.supportResources || []),
       ...(Array.isArray(discovered.supportResources) ? discovered.supportResources : []),
       ...(Array.isArray(parsed?.supportResources) ? parsed.supportResources : [])
     ],
-    confidence,
+    confidence: Math.max(confidence, Number(catalogMatch?.confidence || 0)),
     asset: draftAsset || {},
     normalizedName,
     manufacturerSuggestion,
@@ -831,7 +849,14 @@ async function runLookupPreview({ settings, traceId, draftAsset }) {
     documentationSuggestions,
     supportResourcesSuggestion,
     supportContactsSuggestion,
-    matchedManufacturer: manufacturerProfile?.key || ''
+    matchedManufacturer: manufacturerProfile?.key || '',
+    catalogMatch: catalogMatch ? {
+      catalogEntryId: catalogMatch.catalogEntryId,
+      matchStatus: catalogMatch.matchStatus,
+      confidence: catalogMatch.confidence,
+      lookupMethod: catalogMatch.lookupMethod,
+      notes: catalogMatch.notes
+    } : null
   };
 }
 
@@ -939,6 +964,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
   if (Array.isArray(preview.searchHints) && preview.searchHints.length) updatePayload.searchHints = preview.searchHints;
   if (preview.topMatchReason) updatePayload.topMatchReason = preview.topMatchReason;
   if (matchedManufacturer) updatePayload.matchedManufacturer = matchedManufacturer;
+  if (preview.catalogMatch) updatePayload.manualLookupCatalogMatch = preview.catalogMatch;
   if (shouldSetManufacturer) updatePayload.manufacturer = manufacturerSuggestion;
 
   await assetRef.set(updatePayload, { merge: true });

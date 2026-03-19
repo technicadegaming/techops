@@ -21,7 +21,8 @@ test('buildManualSearchQueries prioritizes official domains for known manufactur
   });
 
   assert.match(queries.officialQueries[0], /site:parts\.baytekent\.com/i);
-  assert.match(queries.fallbackQueries[0], /"Bay Tek Games" "Quik Drop" "service manual" pdf/);
+  assert.match(queries.exactTitleQueries[0], /"Bay Tek Games" "Quik Drop" "service manual" pdf/);
+  assert.match(queries.fallbackQueries[0], /site:betson\.com/i);
 });
 
 test('buildManufacturerDiscoveryAdapters exposes deterministic candidates for Bay Tek, ICE, and Raw Thrills', () => {
