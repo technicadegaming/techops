@@ -1,6 +1,7 @@
 const admin = require('firebase-admin');
 const { HttpsError } = require('firebase-functions/v2/https');
 const { requestAssetDocumentationLookup } = require('./openaiService');
+const { discoverManualDocumentation } = require('./manualDiscoveryService');
 
 const TRUSTED_MANUAL_HOST_TOKENS = [
   'ipdb.org',
@@ -596,9 +597,16 @@ async function runLookupPreview({ settings, traceId, draftAsset }) {
   const normalizedName = parsed?.normalizedName || draftAsset?.name || '';
   const manufacturerSuggestion = parsed?.likelyManufacturer || '';
   const manufacturerProfile = getManufacturerProfile(draftAsset?.manufacturer, manufacturerSuggestion, normalizedName, parsed?.likelyCategory);
+  const discovered = await discoverManualDocumentation({
+    assetName: draftAsset?.name || '',
+    normalizedName,
+    manufacturer: manufacturerSuggestion || draftAsset?.manufacturer || '',
+    manufacturerProfile,
+    searchHints: Array.isArray(parsed?.searchHints) ? parsed.searchHints : []
+  });
 
   const documentationSuggestions = normalizeDocumentationSuggestions({
-    links: parsed?.documentationLinks,
+    links: discovered.documentationLinks,
     confidence,
     asset: draftAsset || {},
     normalizedName,
@@ -607,7 +615,10 @@ async function runLookupPreview({ settings, traceId, draftAsset }) {
   });
 
   const supportResourcesSuggestion = normalizeDocumentationSuggestions({
-    links: parsed?.supportResources,
+    links: [
+      ...(Array.isArray(discovered.supportResources) ? discovered.supportResources : []),
+      ...(Array.isArray(parsed?.supportResources) ? parsed.supportResources : [])
+    ],
     confidence,
     asset: draftAsset || {},
     normalizedName,
@@ -631,7 +642,7 @@ async function runLookupPreview({ settings, traceId, draftAsset }) {
     oneFollowupQuestion: parsed?.oneFollowupQuestion || '',
     topMatchReason: parsed?.topMatchReason || '',
     alternateNames: Array.isArray(parsed?.alternateNames) ? parsed.alternateNames : [],
-    searchHints: Array.isArray(parsed?.searchHints) ? parsed.searchHints : [],
+    searchHints: Array.from(new Set([...(Array.isArray(parsed?.searchHints) ? parsed.searchHints : []), ...(Array.isArray(discovered.queriesTried) ? discovered.queriesTried : [])])).slice(0, 10),
     documentationSuggestions,
     supportResourcesSuggestion,
     supportContactsSuggestion,
