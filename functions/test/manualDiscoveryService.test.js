@@ -40,6 +40,29 @@ test('buildManufacturerDiscoveryAdapters exposes deterministic candidates for Ba
   assert.ok(rawThrills.some((row) => row.url === 'https://rawthrills.com/games/jurassic-park-arcade-support'));
 });
 
+test('classifyManualCandidate restores hostname-based manual intent for exact-title manual-library links while rejecting generic manual hubs', () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
+  const exactLibraryManual = classifyManualCandidate({
+    title: 'Bay Tek Quik Drop Operator Guide',
+    url: 'https://manuals.example.com/bay-tek/quik-drop',
+    manufacturer: 'Bay Tek Games',
+    titleVariants: ['quik drop'],
+    manufacturerProfile: profile
+  });
+  const genericLibraryHub = classifyManualCandidate({
+    title: 'Bay Tek Manuals Library',
+    url: 'https://manuals.example.com/library',
+    manufacturer: 'Bay Tek Games',
+    titleVariants: ['quik drop'],
+    manufacturerProfile: profile
+  });
+
+  assert.equal(exactLibraryManual.includeManual, true);
+  assert.equal(exactLibraryManual.rejectionReasons.includes('missing_manual_signal'), false);
+  assert.equal(genericLibraryHub.includeManual, false);
+  assert.ok(genericLibraryHub.rejectionReasons.includes('missing_title_match'));
+});
+
 test('classifyManualCandidate rejects generic support hubs with rejection reasons but keeps title-specific manual pdf links', () => {
   const profile = getManufacturerProfile('Raw Thrills', 'Jurassic Park Arcade');
   const generic = classifyManualCandidate({
@@ -190,4 +213,66 @@ test('discoverManualDocumentation regression coverage for Bay Tek, ICE, and Raw 
     assert.equal(result.documentationLinks[0]?.url, entry.expected);
     assert.ok(result.documentationLinks.every((row) => !/\/support\/?$|\/products\/?$/.test(new URL(row.url).pathname)));
   }
+});
+
+
+test('discoverManualDocumentation prioritizes search-discovered follow-up pages ahead of adapter support pages', async () => {
+  const profile = getManufacturerProfile('Raw Thrills', 'Jurassic Park Arcade');
+  const htmlFetchCounts = new Map();
+  const searchSupportPages = [
+    'https://rawthrills.com/games/jurassic-park-arcade-support-a',
+    'https://rawthrills.com/games/jurassic-park-arcade-support-b',
+    'https://rawthrills.com/games/jurassic-park-arcade-support-c',
+    'https://rawthrills.com/games/jurassic-park-arcade-support-d'
+  ];
+
+  const searchProvider = async () => searchSupportPages.map((url, index) => ({
+    title: `Raw Thrills Jurassic Park Arcade Support ${index + 1}`,
+    url
+  }));
+
+  const fetchMock = async (url) => {
+    htmlFetchCounts.set(url, Number(htmlFetchCounts.get(url) || 0) + 1);
+    if (url === 'https://rawthrills.com/games/jurassic-park-arcade-support') {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/html' },
+        text: async () => '<a href="/support">Generic Support</a>'
+      };
+    }
+    if (searchSupportPages.includes(url)) {
+      const suffix = url.slice(-1);
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/html' },
+        text: async () => `<a href="/wp-content/uploads/jurassic-park-arcade-operator-manual-${suffix}.pdf">Jurassic Park Arcade Operator Manual ${suffix.toUpperCase()}</a>`
+      };
+    }
+    if (/jurassic-park-arcade-operator-manual-[a-d]\.pdf$/.test(url)) {
+      return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+    }
+    return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+  };
+
+  const result = await discoverManualDocumentation({
+    assetName: 'Jurassic Park Arcade',
+    normalizedName: 'Jurassic Park Arcade',
+    manufacturer: 'Raw Thrills',
+    manufacturerProfile: profile,
+    searchProvider,
+    fetchImpl: fetchMock,
+    logger: { log: () => {} }
+  });
+
+  assert.deepEqual(result.documentationLinks.map((row) => row.url), [
+    'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual-a.pdf',
+    'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual-b.pdf',
+    'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual-c.pdf',
+    'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual-d.pdf'
+  ]);
+  assert.equal(htmlFetchCounts.get('https://rawthrills.com/games/jurassic-park-arcade-support'), 1);
+  assert.equal(htmlFetchCounts.get('https://rawthrills.com/games/jurassic-park-arcade-support-a'), 1);
+  assert.equal(htmlFetchCounts.get('https://rawthrills.com/games/jurassic-park-arcade-support-d'), 1);
 });

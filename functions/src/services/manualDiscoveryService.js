@@ -3,6 +3,8 @@ const MAX_SEARCH_RESULTS_PER_QUERY = 8;
 const MAX_DISCOVERY_RESULTS = 10;
 const MAX_FOLLOWUP_FETCHES = 4;
 const MAX_ADAPTER_FETCHES = 8;
+const SEARCH_FOLLOWUP_PRIORITY = 0;
+const ADAPTER_FOLLOWUP_PRIORITY = 1;
 const MANUAL_KEYWORDS = ['manual', 'operator', 'service', 'parts', 'install', 'installation', 'schematic', 'instruction', 'owners'];
 const DOWNLOAD_KEYWORDS = ['download', 'pdf', 'document', 'operators-manual', 'service-manual'];
 const GENERIC_SUPPORT_PATHS = [
@@ -194,18 +196,19 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
   const directPdf = /\.pdf($|[?#])/.test(path) || /\bpdf\b/.test(titleAndPath);
   const manualIntent = MANUAL_KEYWORDS.some((token) => titleAndPath.includes(token));
   const downloadIntent = DOWNLOAD_KEYWORDS.some((token) => titleAndPath.includes(token));
-  const exactMachineManual = titleMatch && manufacturerMatch && (directPdf || manualIntent || downloadIntent);
-  const titleSpecificSupport = titleMatch && manufacturerMatch && /support|product|parts|downloads?|manual|service|install/.test(path);
-  const genericSupport = isGenericSupportPath(path, titleVariants);
   const sourceType = detectSourceType(url, manufacturerProfile);
   const resourceType = detectResourceType(url, manufacturerProfile);
-  const includeManual = exactMachineManual && !genericSupport;
+  const hostManualIntent = sourceType === 'manual_library' && /manual/.test(normalizePhrase(host));
+  const exactMachineManual = titleMatch && manufacturerMatch && (directPdf || manualIntent || downloadIntent || hostManualIntent);
+  const titleSpecificSupport = titleMatch && manufacturerMatch && /support|product|parts|downloads?|manual|service|install/.test(path);
+  const genericSupport = isGenericSupportPath(path, titleVariants);
+  const includeManual = titleMatch && manufacturerMatch && !genericSupport && (directPdf || manualIntent || downloadIntent || hostManualIntent);
   const includeSupport = titleSpecificSupport || sourceType === 'manufacturer' || sourceType === 'support' || sourceType === 'parts';
   const rejectionReasons = [];
 
   if (!titleMatch) rejectionReasons.push('missing_title_match');
   if (!manufacturerMatch) rejectionReasons.push('missing_manufacturer_match');
-  if (!directPdf && !manualIntent && !downloadIntent) rejectionReasons.push('missing_manual_signal');
+  if (!directPdf && !manualIntent && !downloadIntent && !hostManualIntent) rejectionReasons.push('missing_manual_signal');
   if (genericSupport) rejectionReasons.push('generic_support_page');
   if (!includeSupport && !includeManual) rejectionReasons.push('not_support_or_manual');
 
@@ -297,6 +300,13 @@ function dedupeByUrl(rows) {
     seen.add(key);
     return true;
   });
+}
+
+function buildFollowupExecutionPlan(followupPages) {
+  const deduped = dedupeByUrl(followupPages);
+  const searchPages = deduped.filter((page) => Number(page.priority) === SEARCH_FOLLOWUP_PRIORITY);
+  const adapterPages = deduped.filter((page) => Number(page.priority) !== SEARCH_FOLLOWUP_PRIORITY);
+  return [...searchPages, ...adapterPages].slice(0, MAX_FOLLOWUP_FETCHES);
 }
 
 function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile }) {
@@ -432,7 +442,7 @@ async function probeAdapterCandidates({ candidates, manufacturer, titleVariants,
       }
 
       if (/text\/html|application\/xhtml\+xml/.test(contentType) && (classification.titleSpecificSupport || candidate.type === 'support_page')) {
-        followupPages.push({ title: candidate.label, url: candidate.url, adapter: candidate.adapter });
+        followupPages.push({ title: candidate.label, url: candidate.url, adapter: candidate.adapter, priority: ADAPTER_FOLLOWUP_PRIORITY });
       }
     } catch (error) {
       logEvent('adapter_probe_error', {
@@ -540,7 +550,7 @@ async function discoverManualDocumentation({ assetName, normalizedName, manufact
         continue;
       }
       if (classification.titleSpecificSupport && !classification.genericSupport) {
-        followupPages.push({ title: result.title, url: result.url, discoveredBy: mode });
+        followupPages.push({ title: result.title, url: result.url, discoveredBy: mode, priority: SEARCH_FOLLOWUP_PRIORITY });
       }
       if (classification.includeSupport) {
         supportRows.push({
@@ -554,8 +564,22 @@ async function discoverManualDocumentation({ assetName, normalizedName, manufact
     if (manualRows.length >= 2 && mode === 'official') break;
   }
 
+  const followupPlan = buildFollowupExecutionPlan(followupPages);
+  logEvent('followup_plan', {
+    selectedPages: followupPlan.map((page) => ({
+      url: page.url,
+      priority: page.priority,
+      discoveredBy: page.discoveredBy || page.adapter || 'unknown'
+    })),
+    queuedPages: dedupeByUrl(followupPages).map((page) => ({
+      url: page.url,
+      priority: page.priority,
+      discoveredBy: page.discoveredBy || page.adapter || 'unknown'
+    }))
+  });
+
   const followedRows = [];
-  for (const page of dedupeByUrl(followupPages).slice(0, MAX_FOLLOWUP_FETCHES)) {
+  for (const page of followupPlan) {
     const extracted = await extractManualLinksFromHtmlPage({
       pageUrl: page.url,
       pageTitle: page.title,
