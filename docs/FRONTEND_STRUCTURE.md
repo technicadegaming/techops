@@ -25,8 +25,8 @@ This frontend is a framework-less Firebase web app. The structure is partly modu
   - top-level state instance
   - cross-feature refresh/render sequencing
   - notification materialization
-  - task evidence upload/removal
-  - task save/reassign/closeout + AI action flows
+  - top-level composition of operations, assets, calendar, reports, account, and admin render passes
+  - final lifecycle sequencing around shared `refreshData()` / `render()` orchestration
   - glue code between generic data helpers and feature modules
 - Practical takeaway: this file is still the main shell and integration layer. Contributors should avoid adding new standalone feature logic here unless it truly coordinates multiple domains.
 
@@ -45,6 +45,7 @@ These modules support `src/app.js` but do not replace it.
 - `src/app/actionCenter.js`: shared action-center focus translation that mutates shell filters/routes for dashboard, reports, and notification-driven navigation.
 - `src/app/onboardingController.js`: onboarding/setup shell wiring for workspace creation, invite acceptance, setup-step orchestration, and readiness dismissal.
 - `src/app/notifications.js`: notification action-center shell wiring, including panel DOM listeners, badge rendering, and notification-to-route/app-context glue.
+- `src/app/operationsController.js`: operations/task shell wiring for callback bag assembly, task AI polling/readback, evidence upload/removal orchestration, closeout/save-fix flows, and operations-to-navigation coordination.
 
 **Important:** these are helper modules around a still-centralized app shell, not a fully separated app core.
 
