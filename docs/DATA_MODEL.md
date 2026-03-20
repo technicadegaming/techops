@@ -2,6 +2,8 @@
 
 This document summarizes the current Firestore + Storage model as implemented today. It is intentionally practical rather than exhaustive.
 
+If you are onboarding to the repo, read `README.md` first for the documentation map, then use this doc together with `docs/FRONTEND_STRUCTURE.md` so the current data model and frontend module boundaries stay aligned in your mental model.
+
 ## Scope and tenant rules
 
 - The primary tenant boundary is `companyId` on Firestore documents plus `companies/{companyId}/...` in Storage.
@@ -17,6 +19,13 @@ This document summarizes the current Firestore + Storage model as implemented to
 - **Tenant scoping:** not company-scoped. This is an identity/profile record used before and across company membership.
 - **Relationships:** `users/{uid}` is the anchor for Auth, audit attribution, Storage access checks, and company memberships.
 - **Rules/roles:** users can read/create their own profile; only admins can delete, and non-admin self-updates cannot freely change role. `enabled` and global `role` are used by rules and Storage checks.
+
+## Related docs
+
+- `docs/ARCHITECTURE.md` for the high-level system and module map.
+- `docs/FRONTEND_STRUCTURE.md` for where company-scoped data is read and rendered in the browser app.
+- `docs/SECURITY.md` for secrets/storage boundary guidance.
+- `docs/FIREBASE_MIGRATION_NOTES.md` for the staged company-scoping rollout and runtime-config notes.
 
 ### `companies`
 - **Purpose:** the top-level tenant/workspace record.

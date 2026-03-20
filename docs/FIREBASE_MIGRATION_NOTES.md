@@ -25,6 +25,7 @@
 - This repository does not currently ship a dedicated staging/production injector for `window.__APP_CONFIG__`; deployment should provide it before the app loads whenever an override is needed.
 - Privilege-affecting values such as `bootstrapAdmins` should be provided explicitly via `window.__APP_CONFIG__` only for intentional bootstrap/recovery scenarios. Leave them unset otherwise.
 - Conceptually, staging/production overrides should inject only the keys that differ from committed defaults so the runtime contract stays small and reviewable.
+- Start from `README.md` if you need the shorter contributor path to this document, `docs/DEPLOYMENT.md`, and `docs/SECURITY.md`.
 
 ## Backfill recommendation (manual/admin-driven)
 - Create an admin-only script or one-time utility to set `companyId` on legacy docs in batches.

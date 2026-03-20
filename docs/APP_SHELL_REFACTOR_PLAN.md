@@ -19,7 +19,7 @@ That central role is expected in the current transitional architecture, but it a
 
 This pass does **not** change runtime behavior. It only proposes a decomposition path that can be executed in small, reversible PRs.
 
-For the latest implementation-aware assessment of the remaining app-shell boundary, see `docs/APP_SHELL_REMAINING_SEAMS.md`.
+For the latest implementation-aware assessment of the remaining app-shell boundary, see `docs/APP_SHELL_REMAINING_SEAMS.md`. New contributors should usually read that seams document first, then come back here if they need the historical extraction sequence or the earlier candidate-slice rationale.
 
 ## Progress update
 

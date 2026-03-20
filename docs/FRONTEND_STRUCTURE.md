@@ -2,6 +2,8 @@
 
 This frontend is a framework-less Firebase web app. The structure is partly modularized, but the main app shell still coordinates a large amount of behavior.
 
+For the recommended contributor reading order, start from `README.md`, then pair this document with `docs/DATA_MODEL.md` for tenant/data context and `docs/APP_SHELL_REMAINING_SEAMS.md` for the current “what still belongs in the shell” boundary.
+
 ## Current entry flow
 
 1. `index.html` provides the entire static shell: auth forms, the top app header, tab container, section containers, and all global CSS.
@@ -136,6 +138,7 @@ This means a contributor usually should **not** hand-roll ad hoc `companyId` fil
 Be honest about the current shape: this is **not** a component framework app with strict boundaries yet. It is a progressively modularized vanilla JS application.
 
 See also: [`docs/APP_SHELL_REFACTOR_PLAN.md`](./APP_SHELL_REFACTOR_PLAN.md) for the current implementation-aware decomposition plan for `src/app.js`.
+For the current stabilization-oriented follow-up after those extractions, also see [`docs/APP_SHELL_REMAINING_SEAMS.md`](./APP_SHELL_REMAINING_SEAMS.md).
 
 ## Contribution guidance
 
@@ -155,3 +158,11 @@ See also: [`docs/APP_SHELL_REFACTOR_PLAN.md`](./APP_SHELL_REFACTOR_PLAN.md) for 
 - Treat `src/app/*` as controller support modules.
 - Treat `src/features/*` as the preferred home for domain-specific frontend work.
 - Treat `src/data.js` + `src/companyScope.js` as the client-side tenant boundary helpers.
+
+## Related docs
+
+- `README.md` for the contributor start path and validation commands.
+- `docs/DATA_MODEL.md` for the Firestore + Storage model behind the UI.
+- `docs/APP_SHELL_REFACTOR_PLAN.md` for the extraction history and decomposition plan.
+- `docs/APP_SHELL_REMAINING_SEAMS.md` for the current shell boundary and stabilization recommendation.
+- `docs/FIREBASE_MIGRATION_NOTES.md` for runtime-config/bootstrap context that still affects shell startup behavior.
