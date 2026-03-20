@@ -303,6 +303,7 @@ async function render() {
     normalizeAssetId,
     dedupeUrls,
     enrichAssetDocumentation,
+    approveAssetManual,
     isManager,
     createCompanyInvite,
     revokeInvite

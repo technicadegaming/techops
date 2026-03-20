@@ -1025,7 +1025,7 @@ async function shouldDiscoverAfterCatalogMatch({ catalogMatch, confidence, draft
   if (!normalizedCatalogSuggestions.length) return true;
 
   const verifiedCatalogSuggestions = await verifyDocumentationSuggestions(normalizedCatalogSuggestions, fetchImpl);
-  const hasHealthyCatalogSuggestion = verifiedCatalogSuggestions.some((entry) => entry.verified && !entry.deadPage && !entry.unreachable);
+  const hasHealthyCatalogSuggestion = cleanDocumentationSuggestions(verifiedCatalogSuggestions).length > 0;
   return !hasHealthyCatalogSuggestion;
 }
 

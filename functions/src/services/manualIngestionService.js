@@ -2,6 +2,7 @@ const admin = require('firebase-admin');
 const { gunzipSync, inflateSync, inflateRawSync } = require('node:zlib');
 const { randomUUID, createHash } = require('node:crypto');
 const { isoNow } = require('../lib/timestamps');
+const { cleanDocumentationSuggestions } = require('./assetEnrichmentService');
 
 function normalizeString(value, max = 240) {
   return `${value || ''}`.trim().slice(0, max);
@@ -200,10 +201,16 @@ async function approveAssetManual({
 
   const manualId = existingSnap.empty ? `manual_${randomUUID()}` : existingSnap.docs[0].id;
   const suggestions = Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : [];
-  const matchedSuggestion = suggestions.find((entry, index) => {
-    if (approvedSuggestionIndex !== null && Number(index) === Number(approvedSuggestionIndex)) return true;
-    return `${entry?.url || ''}`.trim() === cleanedSourceUrl;
-  }) || {};
+  const reviewableSuggestions = cleanDocumentationSuggestions(suggestions);
+  const matchedSuggestion = reviewableSuggestions.find((entry) => `${entry?.url || ''}`.trim() === cleanedSourceUrl)
+    || suggestions.find((entry, index) => {
+      if (approvedSuggestionIndex !== null && Number(index) === Number(approvedSuggestionIndex)) return true;
+      return `${entry?.url || ''}`.trim() === cleanedSourceUrl;
+    })
+    || {};
+  if (!reviewableSuggestions.some((entry) => `${entry?.url || ''}`.trim() === cleanedSourceUrl)) {
+    throw new Error('Selected documentation URL is not a reviewable manual candidate');
+  }
 
   const now = isoNow();
   const baseRecord = {

@@ -127,6 +127,40 @@ test('shouldDiscoverAfterCatalogMatch skips discovery for healthy catalog direct
   assert.equal(shouldDiscover, false);
 });
 
+
+
+test('shouldDiscoverAfterCatalogMatch keeps discovering when catalog only yields a generic surviving support hub', async () => {
+  const catalogMatch = {
+    confidence: 0.97,
+    documentationSuggestions: [{
+      title: 'Raw Thrills Service Support',
+      url: 'https://rawthrills.com/service-support/',
+      sourceType: 'support',
+      matchScore: 88,
+      exactTitleMatch: false,
+      exactManualMatch: false
+    }]
+  };
+
+  const shouldDiscover = await shouldDiscoverAfterCatalogMatch({
+    catalogMatch,
+    confidence: 0.8,
+    draftAsset: { name: 'Jurassic Park', manufacturer: 'Raw Thrills' },
+    normalizedName: 'Jurassic Park',
+    manufacturerSuggestion: 'Raw Thrills',
+    followupAnswer: '',
+    fetchImpl: async (url, options = {}) => ({
+      ok: true,
+      status: 200,
+      url,
+      headers: { get: () => 'text/html' },
+      text: async () => options.method === 'HEAD' ? '' : 'Raw Thrills service support manual downloads'
+    })
+  });
+
+  assert.equal(shouldDiscover, true);
+});
+
 test('shouldDiscoverAfterCatalogMatch continues to fallback when catalog manual verifies dead', async () => {
   const catalogMatch = {
     confidence: 0.99,

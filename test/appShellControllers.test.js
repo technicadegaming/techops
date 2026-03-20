@@ -17,6 +17,11 @@ async function loadAuthControllerHelpers() {
   return import('../src/app/authController.helpers.js');
 }
 
+
+async function loadDocumentationReviewHelpers() {
+  return import('../src/features/documentationReview.js');
+}
+
 function createSelectElement() {
   return {
     innerHTML: '',
@@ -252,4 +257,65 @@ test('auth controller password helpers report unmet requirements and confirm-sta
     buildRegisterPasswordHelpText('lowercase', 'different'),
     'ok at least 8 characters | missing one uppercase letter | ok one lowercase letter | missing one number | passwords do not match'
   );
+});
+
+
+test('documentation review helpers keep support-only links out of approval while sharing the same patch rules', async () => {
+  const {
+    getReviewableDocumentationSuggestions,
+    buildDocumentationApprovalSelection,
+    buildDocumentationApprovalPatch
+  } = await loadDocumentationReviewHelpers();
+
+  const asset = {
+    manualLinks: [],
+    documentationSuggestions: [
+      {
+        title: 'Raw Thrills Service Support',
+        url: 'https://rawthrills.com/service-support/',
+        sourceType: 'support',
+        verified: true,
+        exactTitleMatch: false,
+        exactManualMatch: false,
+        trustedSource: true,
+        verificationKind: 'support_html'
+      },
+      {
+        title: 'Quik Drop Service Manual PDF',
+        url: 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
+        sourceType: 'distributor',
+        verified: true,
+        exactTitleMatch: true,
+        exactManualMatch: true,
+        trustedSource: true,
+        matchScore: 96
+      },
+      {
+        title: 'Virtual Rabbids: The Big Ride Install Guide PDF',
+        url: 'https://laigames.com/downloads/virtual-rabbids-the-big-ride-install-guide.pdf',
+        sourceType: 'manufacturer',
+        verified: true,
+        exactTitleMatch: true,
+        exactManualMatch: true,
+        trustedSource: true,
+        matchScore: 92
+      }
+    ]
+  };
+
+  const reviewable = getReviewableDocumentationSuggestions(asset);
+  assert.deepEqual(reviewable.map((entry) => entry.url), [
+    'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
+    'https://laigames.com/downloads/virtual-rabbids-the-big-ride-install-guide.pdf'
+  ]);
+
+  const topTrusted = buildDocumentationApprovalSelection(asset, { mode: 'top_trusted' });
+  const singlePatch = buildDocumentationApprovalPatch(asset, [topTrusted[0]], { reviewAction: 'approve_single' });
+  const bulkPatch = buildDocumentationApprovalPatch(asset, topTrusted, { reviewAction: 'bulk_approve' });
+
+  assert.deepEqual(topTrusted.map((entry) => entry.url), reviewable.map((entry) => entry.url));
+  assert.deepEqual(singlePatch.manualLinks, ['https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf']);
+  assert.deepEqual(bulkPatch.manualLinks, reviewable.map((entry) => entry.url));
+  assert.equal(singlePatch.reviewState, 'approved');
+  assert.equal(bulkPatch.reviewState, 'approved');
 });
