@@ -82,26 +82,33 @@ function renderStatusChip(label, tone = 'muted') { return `<span class="state-ch
 
 function normalizeReviewState(asset = {}) {
   const current = `${asset.reviewState || ''}`.trim();
-  if (current) return current;
+  if (['approved', 'rejected'].includes(current)) return current;
   const suggestions = Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions.filter((entry) => entry?.url) : [];
-  return suggestions.length ? 'needs_review' : 'idle';
+  if (suggestions.length || `${asset.enrichmentStatus || ''}`.trim() === 'docs_found') return 'pending_review';
+  if (`${asset.enrichmentStatus || ''}`.trim() === 'followup_needed') return 'followup_needed';
+  if (`${asset.enrichmentStatus || ''}`.trim() === 'no_match_yet') return 'research_needed';
+  return current || 'idle';
 }
 
 function renderAssetReviewStatus(asset = {}) {
   const reviewState = normalizeReviewState(asset);
   if (reviewState === 'approved') return renderStatusChip('approved', 'success');
   if (reviewState === 'rejected') return renderStatusChip('rejected', 'error');
-  if (reviewState === 'needs_review') return renderStatusChip('needs review', 'warn');
+  if (reviewState === 'pending_review') return renderStatusChip('pending review', 'warn');
+  if (reviewState === 'followup_needed') return renderStatusChip('follow-up needed', 'info');
+  if (reviewState === 'research_needed') return renderStatusChip('manual research needed', 'warn');
   return renderStatusChip('idle', 'muted');
 }
 
-function buildReviewQueue(assets = [], filter = 'needs_review') {
+function buildReviewQueue(assets = [], filter = 'pending_review') {
   return assets.filter((asset) => {
     const suggestions = Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions.filter((entry) => entry?.url) : [];
     const hasDocs = Array.isArray(asset.manualLinks) && asset.manualLinks.length > 0;
     const reviewState = normalizeReviewState(asset);
     if (filter === 'all') return true;
-    if (filter === 'needs_review') return reviewState === 'needs_review';
+    if (filter === 'pending_review') return reviewState === 'pending_review';
+    if (filter === 'followup_needed') return reviewState === 'followup_needed';
+    if (filter === 'research_needed') return reviewState === 'research_needed';
     if (filter === 'has_suggestions') return suggestions.length > 0;
     if (filter === 'missing_docs') return !hasDocs;
     if (filter === 'approved') return reviewState === 'approved';
@@ -191,9 +198,11 @@ export function renderAdmin(el, state, actions) {
     { id: 'settings', label: 'Settings' }
   ];
   const auditEntries = (state.auditLogs || []).filter((entry) => auditCategory === 'all' || entry.category === auditCategory).slice(0, 80);
-  const reviewFilter = adminUi.assetReviewFilter || 'needs_review';
+  const reviewFilter = adminUi.assetReviewFilter || 'pending_review';
   const reviewFilterOptions = [
-    { id: 'needs_review', label: 'Needs review' },
+    { id: 'pending_review', label: 'Pending review' },
+    { id: 'followup_needed', label: 'Follow-up needed' },
+    { id: 'research_needed', label: 'Research needed' },
     { id: 'has_suggestions', label: 'Has suggestions' },
     { id: 'missing_docs', label: 'Missing docs' },
     { id: 'approved', label: 'Approved' },
@@ -204,7 +213,7 @@ export function renderAdmin(el, state, actions) {
   const filteredQueue = buildReviewQueue(state.assets || [], reviewFilter);
   const reviewQueue = filteredQueue.filter((asset) => matchesAssetReviewSearch(asset, reviewSearch));
   const reviewActiveFilters = [
-    reviewFilter !== 'needs_review' ? `queue: ${reviewFilter.replace('_', ' ')}` : '',
+    reviewFilter !== 'pending_review' ? `queue: ${reviewFilter.replace('_', ' ')}` : '',
     reviewSearch ? `search: "${reviewSearch}"` : ''
   ].filter(Boolean);
   const selectedAssetReviewIds = new Set(adminUi.selectedAssetReviewIds || []);

@@ -36,14 +36,17 @@ export function createAdminActions(deps) {
     .map((entry) => normalizeUrl(entry?.url))
     .filter(Boolean);
 
-  const getFilteredAssetReviewQueue = (filter = 'needs_review') => {
-    const normalizedFilter = `${filter || 'needs_review'}`.trim();
+  const getFilteredAssetReviewQueue = (filter = 'pending_review') => {
+    const normalizedFilter = `${filter || 'pending_review'}`.trim();
     return (state.assets || []).filter((asset) => {
       const suggestions = getReviewSuggestionUrls(asset);
       const manualLinks = Array.isArray(asset.manualLinks) ? asset.manualLinks.filter(Boolean) : [];
-      const reviewState = `${asset.reviewState || ''}`.trim() || (suggestions.length ? 'needs_review' : 'idle');
+      const reviewState = `${asset.reviewState || ''}`.trim()
+        || (suggestions.length ? 'pending_review' : (`${asset.enrichmentStatus || ''}`.trim() === 'followup_needed' ? 'followup_needed' : 'idle'));
       if (normalizedFilter === 'all') return true;
-      if (normalizedFilter === 'needs_review') return reviewState === 'needs_review';
+      if (normalizedFilter === 'pending_review') return reviewState === 'pending_review';
+      if (normalizedFilter === 'followup_needed') return reviewState === 'followup_needed';
+      if (normalizedFilter === 'research_needed') return reviewState === 'research_needed';
       if (normalizedFilter === 'has_suggestions') return suggestions.length > 0;
       if (normalizedFilter === 'missing_docs') return manualLinks.length === 0;
       if (normalizedFilter === 'approved') return reviewState === 'approved';
@@ -85,7 +88,7 @@ export function createAdminActions(deps) {
       render();
     },
     setAssetReviewFilter: (filter) => {
-      state.adminUi = { ...(state.adminUi || {}), assetReviewFilter: filter || 'needs_review' };
+      state.adminUi = { ...(state.adminUi || {}), assetReviewFilter: filter || 'pending_review' };
       render();
     },
     setAssetReviewSearch: (query) => {
@@ -95,7 +98,7 @@ export function createAdminActions(deps) {
     clearAssetReviewFilters: () => {
       state.adminUi = {
         ...(state.adminUi || {}),
-        assetReviewFilter: 'needs_review',
+        assetReviewFilter: 'pending_review',
         assetReviewSearch: ''
       };
       render();
@@ -120,7 +123,7 @@ export function createAdminActions(deps) {
     },
     runBulkAssetEnrichment: async (scope = 'filtered') => {
       if (!ensureManagerAccess()) return;
-      const reviewFilter = state.adminUi?.assetReviewFilter || 'needs_review';
+      const reviewFilter = state.adminUi?.assetReviewFilter || 'pending_review';
       const selectedIds = new Set(state.adminUi?.selectedAssetReviewIds || []);
       const filteredQueue = getFilteredAssetReviewQueue(reviewFilter);
       const baseQueue = scope === 'all'
@@ -243,7 +246,7 @@ export function createAdminActions(deps) {
       await upsertAssetReviewFields(current, {
         manualLinks: (current.manualLinks || []).filter((entry) => normalizeUrl(entry) !== cleanUrl),
         reviewLastAction: 'remove_attached_manual',
-        reviewState: `${current.reviewState || ''}`.trim() || 'needs_review'
+          reviewState: `${current.reviewState || ''}`.trim() || 'pending_review'
       });
       await refreshData();
       setAdminFeedback({ tone: 'success', message: 'Attached manual removed.' });

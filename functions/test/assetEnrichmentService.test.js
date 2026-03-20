@@ -14,7 +14,10 @@ const {
   shouldDiscoverAfterCatalogMatch,
   hasUsableVerifiedManualSuggestion,
   recoverCatalogSourcePageManuals,
-  enrichAssetDocumentation
+  enrichAssetDocumentation,
+  cleanFinalEnrichmentResult,
+  resolveTerminalEnrichmentStatus,
+  repairLegacyAssetEnrichmentRecord
 } = require('../src/services/assetEnrichmentService');
 const { findCatalogManualMatch } = require('../src/services/manualLookupCatalogService');
 
@@ -1013,6 +1016,110 @@ test('Sink It dead family manual falls back cleanly without dead final docs or i
   assert.equal(finalSuggestions.some((entry) => entry.url === 'https://www.betson.com/wp-content/uploads/2019/09/Sink-It-Shootout-Operator-Manual.pdf'), false);
 });
 
+test('cleanup pass removes dead docs, separates support resources, and strips junk anchors', () => {
+  const cleaned = cleanFinalEnrichmentResult({
+    documentationSuggestions: [
+      {
+        title: 'Jurassic Park Official PDF',
+        url: 'https://example.com/jurassic-park.pdf',
+        verified: false,
+        deadPage: true,
+        exactTitleMatch: true,
+        exactManualMatch: true
+      },
+      {
+        title: 'Jurassic Park Service Manual',
+        url: 'https://archive.org/jurassic-park-service-manual.pdf',
+        verified: true,
+        deadPage: false,
+        unreachable: false,
+        exactTitleMatch: true,
+        exactManualMatch: true,
+        sourceType: 'manual_library'
+      },
+      {
+        title: 'Product page duplicate',
+        url: 'https://manufacturer.example.com/jurassic-park#respond',
+        verified: true,
+        deadPage: false,
+        unreachable: false,
+        exactTitleMatch: true,
+        exactManualMatch: false,
+        sourceType: 'support'
+      }
+    ],
+    supportResourcesSuggestion: [
+      { title: 'Jurassic Park Product', url: 'https://manufacturer.example.com/jurassic-park#respond', sourceType: 'support', matchScore: 65 },
+      { title: 'Jurassic Park Help', url: 'https://manufacturer.example.com/jurassic-park#comments', sourceType: 'support', matchScore: 65 }
+    ],
+    enrichmentFollowupQuestion: ''
+  });
+
+  assert.deepEqual(cleaned.documentationSuggestions.map((entry) => entry.url), [
+    'https://archive.org/jurassic-park-service-manual.pdf'
+  ]);
+  assert.deepEqual(cleaned.supportResourcesSuggestion.map((entry) => entry.url), [
+    'https://manufacturer.example.com/jurassic-park'
+  ]);
+  assert.equal(cleaned.enrichmentStatus, 'docs_found');
+  assert.equal(cleaned.reviewState, 'pending_review');
+});
+
+test('terminal status resolver maps support-only and follow-up states without treating them as backend failures', () => {
+  assert.equal(resolveTerminalEnrichmentStatus({
+    documentationSuggestions: [],
+    supportResourcesSuggestion: [{ url: 'https://rawthrills.com/games/fast-furious-arcade/', sourceType: 'support', matchScore: 60 }],
+    followupQuestion: ''
+  }), 'followup_needed');
+  assert.equal(resolveTerminalEnrichmentStatus({
+    documentationSuggestions: [],
+    supportResourcesSuggestion: [],
+    followupQuestion: 'What exact subtitle is on the marquee?'
+  }), 'followup_needed');
+  assert.equal(resolveTerminalEnrichmentStatus({
+    documentationSuggestions: [],
+    supportResourcesSuggestion: [],
+    followupQuestion: ''
+  }), 'no_match_yet');
+});
+
+test('repairLegacyAssetEnrichmentRecord reclassifies stale lookup_failed asset with support context', async () => {
+  const repaired = await repairLegacyAssetEnrichmentRecord({
+    asset: {
+      name: 'King Kong',
+      enrichmentStatus: 'lookup_failed',
+      enrichmentErrorCode: '',
+      enrichmentErrorMessage: '',
+      documentationSuggestions: [{
+        title: 'Dead PDF',
+        url: 'https://example.com/king-kong.pdf',
+        exactTitleMatch: true,
+        exactManualMatch: true
+      }],
+      supportResourcesSuggestion: [
+        { title: 'King Kong support', url: 'https://manufacturer.example.com/king-kong#respond', sourceType: 'support', matchScore: 58 }
+      ],
+      enrichmentFollowupQuestion: 'Which cabinet version is this?'
+    },
+    verifySuggestions: async () => [{
+      title: 'Dead PDF',
+      url: 'https://example.com/king-kong.pdf',
+      exactTitleMatch: true,
+      exactManualMatch: true,
+      verified: false,
+      deadPage: true,
+      unreachable: false
+    }]
+  });
+
+  assert.equal(repaired.enrichmentStatus, 'followup_needed');
+  assert.equal(repaired.reviewState, 'followup_needed');
+  assert.equal(repaired.documentationSuggestions.length, 0);
+  assert.deepEqual(repaired.supportResourcesSuggestion.map((entry) => entry.url), ['https://manufacturer.example.com/king-kong']);
+  assert.equal(repaired.enrichmentErrorCode, '');
+  assert.equal(repaired.enrichmentErrorMessage, '');
+});
+
 
 function createEnrichmentDb(asset = {}) {
   const assetState = { id: 'asset-1', ...asset };
@@ -1097,6 +1204,111 @@ test('enrichAssetDocumentation degrades empty discovery results to terminal no_m
   assert.equal(result.status, 'no_match_yet');
   assert.equal(assetWrites[0].payload.enrichmentStatus, 'searching_docs');
   assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'no_match_yet');
+});
+
+test('enrichAssetDocumentation marks Fast & Furious support-only result as followup_needed instead of lookup_failed', async () => {
+  const { db, assetWrites } = createEnrichmentDb({ name: 'Fast & Furious', manufacturer: 'Raw Thrills', companyId: 'company-1' });
+
+  const result = await enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'manual',
+    followupAnswer: '',
+    traceId: 'trace-fast-furious',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.62,
+        normalizedName: 'Fast and Furious',
+        likelyManufacturer: 'Raw Thrills',
+        documentationSuggestions: [],
+        supportResourcesSuggestion: [{ title: 'Fast & Furious product page', url: 'https://rawthrills.com/games/fast-furious-arcade/#respond', sourceType: 'support', matchScore: 62 }],
+        supportContactsSuggestion: [],
+        alternateNames: [],
+        searchHints: [],
+        oneFollowupQuestion: '',
+        likelyCategory: 'video',
+        topMatchReason: ''
+      }),
+      findReusableVerifiedManuals: async () => [],
+      verifyDocumentationSuggestions: async () => []
+    }
+  });
+
+  assert.equal(result.status, 'followup_needed');
+  assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'followup_needed');
+  assert.deepEqual(assetWrites.at(-1).payload.supportResourcesSuggestion.map((entry) => entry.url), ['https://rawthrills.com/games/fast-furious-arcade/']);
+});
+
+test('enrichAssetDocumentation marks follow-up-plus-support cases as followup_needed and not lookup_failed', async () => {
+  const { db, assetWrites } = createEnrichmentDb({ name: 'King Kong', companyId: 'company-1' });
+
+  const result = await enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'manual',
+    followupAnswer: '',
+    traceId: 'trace-king-kong',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.41,
+        normalizedName: 'King Kong',
+        likelyManufacturer: 'Unknown',
+        documentationSuggestions: [],
+        supportResourcesSuggestion: [{ title: 'King Kong help', url: 'https://example.com/king-kong-support', sourceType: 'support', matchScore: 55 }],
+        supportContactsSuggestion: [],
+        alternateNames: [],
+        searchHints: [],
+        oneFollowupQuestion: 'Which cabinet version is this?',
+        likelyCategory: '',
+        topMatchReason: ''
+      }),
+      findReusableVerifiedManuals: async () => [],
+      verifyDocumentationSuggestions: async () => []
+    }
+  });
+
+  assert.equal(result.status, 'followup_needed');
+  assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'followup_needed');
+  assert.equal(assetWrites.at(-1).payload.reviewState, 'followup_needed');
+});
+
+test('enrichAssetDocumentation keeps Break the Plate unresolved results out of lookup_failed', async () => {
+  const { db, assetWrites } = createEnrichmentDb({ name: 'Break the Plate', companyId: 'company-1' });
+
+  const result = await enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'manual',
+    followupAnswer: '',
+    traceId: 'trace-break-the-plate',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.18,
+        normalizedName: 'Break the Plate',
+        likelyManufacturer: '',
+        documentationSuggestions: [],
+        supportResourcesSuggestion: [],
+        supportContactsSuggestion: [],
+        alternateNames: [],
+        searchHints: [],
+        oneFollowupQuestion: '',
+        likelyCategory: '',
+        topMatchReason: ''
+      }),
+      findReusableVerifiedManuals: async () => [],
+      verifyDocumentationSuggestions: async () => []
+    }
+  });
+
+  assert.equal(result.status, 'no_match_yet');
+  assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'no_match_yet');
+  assert.notEqual(assetWrites.at(-1).payload.enrichmentStatus, 'lookup_failed');
 });
 
 test('enrichAssetDocumentation writes defensive failure after terminal candidate calculation throws unexpectedly', async () => {

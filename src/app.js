@@ -818,7 +818,7 @@ async function render() {
                 locationName: row.locationName || defaultLocationName,
                 serialNumber: row.serialNumber || '',
                 status: 'active',
-                reviewState: shouldReview ? 'needs_review' : 'ready',
+                reviewState: shouldReview ? 'pending_review' : 'ready',
                 reviewReason: shouldReview ? 'onboarding_normalization' : '',
                 enrichmentStatus: state.settings.aiEnabled ? 'queued' : 'unavailable_disabled',
                 enrichmentRequestedAt: state.settings.aiEnabled ? new Date().toISOString() : null,
