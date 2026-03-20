@@ -51,7 +51,6 @@ import {
 import { buildCloseoutEvent, parseRouteState, pushRouteState } from './features/workflow.js';
 import { buildNotificationCandidates, formatRelativeTime } from './features/notifications.js';
 import { acceptInvite, createCompanyFromOnboarding, createCompanyInvite, revokeInvite } from './company.js';
-import { buildLocationOptions, getLocationSelection, getLocationScopeLabel } from './features/locationContext.js';
 import { createOperationsActions } from './features/operationsActions.js';
 import { createAssetActions } from './features/assetActions.js';
 import { createAdminActions } from './features/adminActions.js';
@@ -64,6 +63,7 @@ import { buildCompanyEvidencePath } from './storagePaths.js';
 import { hydrateInviteCodeFromRoute, resolveAppElements, syncPendingInviteCode } from './app/boot.js';
 import { reportActionError, withRequiredCompanyId } from './app/actions.js';
 import { applyActionCenterFocus as applyActionCenterFocusState, applyShellFocus } from './app/actionCenter.js';
+import { createContextSwitcherController } from './app/contextSwitcher.js';
 import { createNotificationController } from './app/notifications.js';
 import {
   bootstrapCompanyContext as bootstrapCompanyContextState,
@@ -379,20 +379,6 @@ async function bootstrapCompanyContext() {
   await bootstrapCompanyContextState(state, { refreshData, render });
 }
 
-function renderActiveLocationSwitcher() {
-  if (!activeLocationSwitcher || !locationScopeBadge) return;
-  const options = buildLocationOptions(state);
-  const selection = getLocationSelection(state);
-  locationScopeBadge.textContent = getLocationScopeLabel(selection);
-  activeLocationSwitcher.innerHTML = options.map((option) => `<option value="${option.key}" ${option.key === selection?.key ? 'selected' : ''}>${option.label}</option>`).join('');
-  activeLocationSwitcher.onchange = (event) => {
-    state.route = { ...state.route, locationKey: `${event.target.value || ''}`.trim() || null };
-    pushRouteState(state.route);
-    render();
-  };
-}
-
-
 const notificationController = createNotificationController({
   state,
   elements: { notificationBell, notificationBadge, notificationPanel },
@@ -414,32 +400,14 @@ function applyActionCenterFocus(focus) {
   return applyActionCenterFocusState(state, focus);
 }
 
-function renderActiveCompanySwitcher() {
-  if (!activeCompanySwitcher) return;
-  const memberships = state.memberships || [];
-  if (memberships.length <= 1 || state.onboardingRequired) {
-    activeCompanySwitcher.classList.add('hide');
-    activeCompanySwitcher.innerHTML = '';
-    activeCompanySwitcher.onchange = null;
-    return;
-  }
-
-  activeCompanySwitcher.classList.remove('hide');
-  activeCompanySwitcher.innerHTML = memberships.map((membership) => {
-    const companyName = state.membershipCompanies?.[membership.id]?.name || membership.companyId || 'Unknown company';
-    const role = membership.role || 'pending';
-    return `<option value="${membership.id}" ${membership.id === state.activeMembership?.id ? 'selected' : ''}>${companyName} (${role})</option>`;
-  }).join('');
-  activeCompanySwitcher.onchange = async (event) => {
-    const nextId = `${event.target.value || ''}`.trim();
-    if (!nextId || nextId === state.activeMembership?.id) return;
-    await runAction('switch_company', async () => {
-      await setActiveMembership(nextId);
-    }, {
-      fallbackMessage: 'Unable to switch company workspace.'
-    });
-  };
-}
+const contextSwitcherController = createContextSwitcherController({
+  state,
+  elements: { activeCompanySwitcher, activeLocationSwitcher, locationScopeBadge },
+  setActiveMembership,
+  pushRouteState,
+  render,
+  runAction
+});
 
 
 function normalizeAssetId(name = '') {
@@ -508,10 +476,7 @@ function normalizeSupportEntries(values = []) {
 
 async function render() {
   buildTabsUi({ state, sections, canViewAdminTab: () => isAdmin(state.permissions), onOpenTab: openTab });
-  const roleLabel = state.permissions.companyRole || state.profile?.role || 'pending';
-  renderActiveCompanySwitcher();
-  renderActiveLocationSwitcher();
-  document.getElementById('userBadge').textContent = `${state.user.email} (${roleLabel})${state.company?.name ? ` | ${state.company.name}` : ''}`;
+  contextSwitcherController.renderHeaderContext();
   notificationController.renderNotificationCenter();
 
   if (state.onboardingRequired || state.setupWizard?.active) {
