@@ -38,6 +38,11 @@ npm run test --prefix functions
 npm run test:rules
 ```
 
+### Root source of truth
+
+- The repository root files (for example `index.html`, Firebase config, and docs) are the authoritative source for the deployed app and operational workflows.
+- Legacy GitHub Pages export artifacts and root `CNAME` files are not part of the current Firebase Hosting deployment path and should not be reintroduced without a documented operational need.
+
 ### Security rules tests (Firestore + Storage)
 
 Rules tests use the Firebase Local Emulator Suite via `firebase emulators:exec` and Node's built-in test runner.
@@ -99,5 +104,5 @@ See `docs/SECURITY.md` and `docs/ARCHITECTURE.md` for details.
 ### Manual lookup registry
 
 - Workbook-backed manual seed data lives in `functions/src/data/manualLookupWorkbookSeed.json`.
-- Regenerate the curated catalog with `npm run manual-catalog:import --prefix functions`.
+- Regenerate the curated catalog with `npm run manual-catalog:import` from the repo root (or `npm run manual-catalog:import --prefix functions` if you are working directly in `functions/`).
 - See `docs/MANUAL_LOOKUP_REGISTRY.md` for verification/trust-tier guidance and regression expectations.
