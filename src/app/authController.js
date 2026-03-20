@@ -2,19 +2,7 @@ import { formatActionError } from '../uiActions.js';
 import { setActiveCompanyContext } from '../data.js';
 import { syncPendingInviteCode } from './boot.js';
 
-function evaluatePassword(password = '') {
-  const checks = [
-    { label: 'at least 8 characters', ok: password.length >= 8 },
-    { label: 'one uppercase letter', ok: /[A-Z]/.test(password) },
-    { label: 'one lowercase letter', ok: /[a-z]/.test(password) },
-    { label: 'one number', ok: /\d/.test(password) }
-  ];
-  return {
-    ok: checks.every((check) => check.ok),
-    checks,
-    message: checks.filter((check) => !check.ok).map((check) => check.label).join(', ')
-  };
-}
+import { evaluatePassword, buildRegisterPasswordHelpText } from './authController.helpers.js';
 
 export function createAuthController({
   state,
@@ -42,10 +30,7 @@ export function createAuthController({
   function syncRegisterPasswordHelp() {
     const password = `${registerPasswordInput?.value || ''}`;
     const confirmPassword = `${registerConfirmInput?.value || ''}`;
-    const passwordState = evaluatePassword(password);
-    const requirements = passwordState.checks.map((check) => `${check.ok ? 'ok' : 'missing'} ${check.label}`).join(' | ');
-    const confirmState = confirmPassword ? ` | ${password === confirmPassword ? 'passwords match' : 'passwords do not match'}` : '';
-    if (registerPasswordHelp) registerPasswordHelp.textContent = `${requirements}${confirmState}`;
+    if (registerPasswordHelp) registerPasswordHelp.textContent = buildRegisterPasswordHelpText(password, confirmPassword);
   }
 
   async function handleLoginSubmit(event) {
