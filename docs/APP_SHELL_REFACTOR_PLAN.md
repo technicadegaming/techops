@@ -19,6 +19,10 @@ That central role is expected in the current transitional architecture, but it a
 
 This pass does **not** change runtime behavior. It only proposes a decomposition path that can be executed in small, reversible PRs.
 
+## Progress update
+
+- Completed first extraction pass: notification/action-center shell wiring now lives in `src/app/notifications.js`, while `src/app.js` still owns top-level state, refresh/render orchestration, and action-center focus coordination.
+
 ## Current hotspot audit
 
 ### What still lives in `src/app.js`
