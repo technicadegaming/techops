@@ -13,6 +13,10 @@ async function loadNavigationController() {
   return import('../src/app/navigationController.js');
 }
 
+async function loadAuthControllerHelpers() {
+  return import('../src/app/authController.helpers.js');
+}
+
 function createSelectElement() {
   return {
     innerHTML: '',
@@ -231,4 +235,21 @@ test('navigation controller updates route, delegates focus pushes, and syncs adm
   controller.syncFromUrl();
   assert.equal(state.route.tab, 'admin');
   assert.equal(state.route.taskId, 't-1');
+});
+
+test('auth controller password helpers report unmet requirements and confirm-state text', async () => {
+  const { evaluatePassword, buildRegisterPasswordHelpText } = await loadAuthControllerHelpers();
+
+  assert.deepEqual(evaluatePassword('Short1').checks.map((check) => check.ok), [false, true, true, true]);
+  assert.equal(evaluatePassword('Short1').message, 'at least 8 characters');
+
+  assert.equal(
+    buildRegisterPasswordHelpText('ValidPass1', 'ValidPass1'),
+    'ok at least 8 characters | ok one uppercase letter | ok one lowercase letter | ok one number | passwords match'
+  );
+
+  assert.equal(
+    buildRegisterPasswordHelpText('lowercase', 'different'),
+    'ok at least 8 characters | missing one uppercase letter | ok one lowercase letter | missing one number | passwords do not match'
+  );
 });

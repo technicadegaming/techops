@@ -234,6 +234,6 @@ Instead of another mechanical extraction pass, the best next step is:
 
 For the earlier extraction history and candidate-slice reasoning that led to this stop-here recommendation, see `docs/APP_SHELL_REFACTOR_PLAN.md`.
 
-Current lightweight stabilization coverage now lives in `test/appShellControllers.test.js` for pure/shallow-injected shell seams (`src/app/actionCenter.js`, `src/app/contextSwitcher.js`, and `src/app/navigationController.js`). More DOM-heavy controllers still need either broader browser coverage or smaller helper seams before they are worth testing here.
+Current lightweight stabilization coverage now lives in `test/appShellControllers.test.js` for pure/shallow-injected shell seams (`src/app/actionCenter.js`, `src/app/contextSwitcher.js`, `src/app/navigationController.js`, plus the password-strength/help-text helpers used by `src/app/authController.js`). More DOM-heavy controllers still need either broader browser coverage or smaller helper seams before they are worth testing here.
 
 If a future hotspot emerges again inside `src/app.js`, revisit this map and only extract the auth/bootstrap session lifecycle if it becomes meaningfully harder to maintain than it is today.
