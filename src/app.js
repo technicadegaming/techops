@@ -63,6 +63,7 @@ import { storage } from './firebase.js';
 import { buildCompanyEvidencePath } from './storagePaths.js';
 import { hydrateInviteCodeFromRoute, resolveAppElements, syncPendingInviteCode } from './app/boot.js';
 import { reportActionError, withRequiredCompanyId } from './app/actions.js';
+import { applyActionCenterFocus as applyActionCenterFocusState, applyShellFocus } from './app/actionCenter.js';
 import { createNotificationController } from './app/notifications.js';
 import {
   bootstrapCompanyContext as bootstrapCompanyContextState,
@@ -410,21 +411,7 @@ const notificationController = createNotificationController({
 });
 
 function applyActionCenterFocus(focus) {
-  if (focus === 'priority') {
-    state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', exceptionFilter: 'priority' };
-  } else if (focus === 'blocked') {
-    state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', exceptionFilter: 'blocked' };
-  } else if (focus === 'followup') {
-    state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', ownershipFilter: 'followup' };
-  } else if (focus === 'unassigned') {
-    state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', ownershipFilter: 'unassigned' };
-  } else if (focus === 'overdue_open') {
-    state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', exceptionFilter: 'overdue' };
-  } else if (focus === 'overdue_pm') {
-    state.route = { ...(state.route || {}), pmFilter: 'overdue' };
-  } else if (focus === 'due_soon_pm') {
-    state.route = { ...(state.route || {}), pmFilter: 'due_soon' };
-  }
+  return applyActionCenterFocusState(state, focus);
 }
 
 function renderActiveCompanySwitcher() {
@@ -723,28 +710,12 @@ async function render() {
   }
 
   renderDashboard(document.getElementById('dashboard'), state, openTab, (focus) => {
-    if (focus === 'critical') {
-      state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', exceptionFilter: 'priority' };
-    } else if (focus === 'blocked') {
-      state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', exceptionFilter: 'blocked' };
-    } else if (focus === 'followup') {
-      state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', ownershipFilter: 'followup' };
-    } else if (focus === 'unassigned') {
-      state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', ownershipFilter: 'unassigned' };
-    } else if (focus === 'overdue_open') {
-      state.operationsUi = { ...(state.operationsUi || {}), statusFilter: 'open', exceptionFilter: 'overdue' };
-    } else if (focus === 'pending_invites') {
-      state.adminSection = 'invites';
-    } else if (focus === 'overdue_pm') {
-      state.route = { ...(state.route || {}), pmFilter: 'overdue' };
-      pushRouteState(state.route);
-    } else if (focus === 'due_soon_pm') {
-      state.route = { ...(state.route || {}), pmFilter: 'due_soon' };
-      pushRouteState(state.route);
-    } else if (focus === 'missing_docs') {
-      state.route = { ...(state.route || {}), assetFilter: 'missing_docs' };
-      pushRouteState(state.route);
-    }
+    const { routeChanged } = applyShellFocus(state, focus, {
+      setAdminSection: (value) => {
+        state.adminSection = value;
+      }
+    });
+    if (routeChanged) pushRouteState(state.route);
   });
 
   const operationsActions = createOperationsActions({
@@ -1214,10 +1185,12 @@ async function render() {
   renderAssets(document.getElementById('assets'), state, assetActions);
   renderCalendar(document.getElementById('calendar'), state);
   renderReports(document.getElementById('reports'), state, openTab, (focus) => {
-    if (focus) applyActionCenterFocus(focus);
-    if (focus === 'pending_invites') state.adminSection = 'invites';
-    if (focus === 'missing_docs') state.route = { ...(state.route || {}), assetFilter: 'missing_docs' };
-    if (focus === 'overdue_pm' || focus === 'due_soon_pm' || focus === 'missing_docs') pushRouteState(state.route);
+    const { routeChanged } = applyShellFocus(state, focus, {
+      setAdminSection: (value) => {
+        state.adminSection = value;
+      }
+    });
+    if (routeChanged) pushRouteState(state.route);
   });
   renderAccount(document.getElementById('account'), state, {
     resendVerification: async () => {

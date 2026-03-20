@@ -21,7 +21,8 @@ This pass does **not** change runtime behavior. It only proposes a decomposition
 
 ## Progress update
 
-- Completed first extraction pass: notification/action-center shell wiring now lives in `src/app/notifications.js`, while `src/app.js` still owns top-level state, refresh/render orchestration, and action-center focus coordination.
+- Completed first extraction pass: notification/action-center shell wiring now lives in `src/app/notifications.js`, while `src/app.js` still owns top-level state and refresh/render orchestration.
+- Completed second extraction pass: shared action-center focus and route-filter translation now lives in `src/app/actionCenter.js`, with `src/app.js` still acting as the integration seam that wires focus handlers into dashboard, reports, and notifications.
 
 ## Current hotspot audit
 
