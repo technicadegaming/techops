@@ -193,6 +193,60 @@
     }
   },
   {
+    "id": "lai-games-virtual-rabbids-the-big-ride",
+    "canonicalTitle": "Virtual Rabbids: The Big Ride",
+    "titleAliases": [
+      "Virtual Rabbids",
+      "Virtual Rabbids Arcade",
+      "Virtual Rabbids VR",
+      "Virtual Rabbids The Big Ride Arcade",
+      "Rabbids VR",
+      "Rabbids VR Arcade"
+    ],
+    "manufacturerCanonical": "LAI Games",
+    "manufacturerAliases": [
+      "LAI"
+    ],
+    "manualPdfUrl": "https://laigames.com/downloads/virtual-rabbids-the-big-ride-install-guide.pdf",
+    "alternateManualUrl": "",
+    "sourcePageUrl": "https://laigames.com/virtual-rabbids-upgrade-kit",
+    "linkType": "official_pdf",
+    "matchStatus": "verified_exact",
+    "confidence": 0.96,
+    "notes": "Workbook-seeded official LAI Games install guide for the canonical Virtual Rabbids: The Big Ride title family.",
+    "lookupMethod": "workbook_seed_exact_pdf",
+    "variantHints": [
+      "big ride"
+    ],
+    "familyHints": [
+      "Virtual Rabbids: The Big Ride"
+    ],
+    "trustTier": "official",
+    "manualType": "install_guide",
+    "family": "Virtual Rabbids: The Big Ride",
+    "allowFamilyFallback": true,
+    "assetName": "Virtual Rabbids: The Big Ride",
+    "assetAliases": [
+      "Virtual Rabbids",
+      "Virtual Rabbids Arcade",
+      "Virtual Rabbids VR",
+      "Virtual Rabbids The Big Ride Arcade",
+      "Rabbids VR",
+      "Rabbids VR Arcade"
+    ],
+    "manufacturer": "LAI Games",
+    "variants": [
+      "big ride"
+    ],
+    "verification": {
+      "seededFromWorkbook": true,
+      "hasDirectManual": true,
+      "hasAlternateManual": false,
+      "hasSourcePage": true,
+      "sourcePath": "manual_lookup_master"
+    }
+  },
+  {
     "id": "ice-air-fx",
     "canonicalTitle": "Air FX",
     "titleAliases": [

@@ -793,6 +793,37 @@ test('Quik Drop workbook-seeded verified catalog manual resolves to docs_found s
   assert.equal(suggestions[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
 });
 
+test('Jurassic Park generic Raw Thrills service hub does not verify as a reviewable manual_html suggestion', async () => {
+  const verified = await verifyDocumentationSuggestions([{
+    title: 'Jurassic Park service and support',
+    url: 'https://rawthrills.com/service/',
+    assetName: 'Jurassic Park',
+    normalizedName: 'Jurassic Park Arcade',
+    sourceType: 'support',
+    matchScore: 86,
+    exactTitleMatch: true,
+    exactManualMatch: true,
+    isOfficial: true,
+    trustedSource: true
+  }], async (url, options = {}) => ({
+    ok: true,
+    status: 200,
+    url,
+    headers: { get: () => 'text/html' },
+    text: async () => options.method === 'HEAD' ? '' : 'Jurassic Park service manuals and support'
+  }));
+  const cleaned = cleanFinalEnrichmentResult({
+    documentationSuggestions: verified,
+    supportResourcesSuggestion: [],
+    enrichmentFollowupQuestion: ''
+  });
+
+  assert.equal(verified[0].verificationKind, 'manual_html');
+  assert.equal(verified[0].verified, false);
+  assert.equal(cleaned.documentationSuggestions.length, 0);
+  assert.equal(cleaned.enrichmentStatus, 'no_match_yet');
+});
+
 test('collectReusableVerifiedManuals reuses previously approved exact-match Quik Drop manual from company records', () => {
   const reused = collectReusableVerifiedManuals({
     asset: { name: 'Quik Drop', normalizedName: 'Quik Drop' },
@@ -1141,6 +1172,8 @@ test('Quik Drop exact manual-bearing official page resolves terminal docs_found 
     documentationSuggestions: [{
       title: 'Quik Drop Support and Installation Guide',
       url: 'https://www.baytekent.com/games/quik-drop/',
+      assetName: 'Quik Drop',
+      normalizedName: 'Quik Drop',
       sourceType: 'support',
       matchScore: 78,
       exactTitleMatch: true,
@@ -1164,6 +1197,104 @@ test('Quik Drop exact manual-bearing official page resolves terminal docs_found 
   assert.equal(cleaned.enrichmentStatus, 'docs_found');
   assert.equal(cleaned.enrichmentFollowupQuestion, '');
   assert.equal(cleaned.documentationSuggestions[0].verificationKind, 'manual_html');
+});
+
+test('Quik Drop exact catalog manual persists as documentationSuggestions and avoids followup terminal state', async () => {
+  const { db, assetWrites, assetState } = createEnrichmentDb({ name: 'Quik Drop', manufacturer: 'Bay Tek Games', companyId: 'company-1' });
+  const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
+  const catalogMatch = findCatalogManualMatch({
+    assetName: 'Quik Drop',
+    normalizedName: 'Quik Drop',
+    manufacturer: 'Bay Tek Games',
+    manufacturerProfile: profile,
+    alternateNames: []
+  });
+
+  const result = await enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'manual',
+    followupAnswer: '',
+    traceId: 'trace-quik-drop-catalog',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.99,
+        normalizedName: 'Quik Drop',
+        likelyManufacturer: 'Bay Tek Games',
+        documentationSuggestions: catalogMatch.documentationSuggestions,
+        supportResourcesSuggestion: catalogMatch.supportResources,
+        supportContactsSuggestion: [],
+        alternateNames: ['Quick Drop'],
+        searchHints: [],
+        likelyCategory: 'redemption',
+        topMatchReason: 'catalog exact match',
+        oneFollowupQuestion: '',
+        catalogMatch: {
+          catalogEntryId: catalogMatch.catalogEntryId,
+          matchStatus: catalogMatch.matchStatus,
+          confidence: catalogMatch.confidence,
+          lookupMethod: catalogMatch.lookupMethod,
+          notes: catalogMatch.notes
+        }
+      }),
+      findReusableVerifiedManuals: async () => [],
+      verifyDocumentationSuggestions: async (rows) => rows.map((row) => ({
+        ...row,
+        verified: true,
+        deadPage: false,
+        unreachable: false,
+        verificationStatus: 'verified',
+        verificationKind: 'direct_pdf',
+        contentType: 'application/pdf'
+      }))
+    }
+  });
+
+  assert.equal(result.status, 'docs_found');
+  assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'docs_found');
+  assert.equal(assetWrites.at(-1).payload.reviewState, 'pending_review');
+  assert.equal(assetState.documentationSuggestions.length, 1);
+  assert.equal(assetState.documentationSuggestions[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
+  assert.equal(assetState.manualLookupCatalogMatch.matchStatus, 'catalog_exact');
+  assert.equal(assetState.enrichmentFollowupQuestion, '');
+});
+
+test('Virtual Rabbids workbook seed materializes a trustworthy official documentation suggestion', async () => {
+  const profile = getManufacturerProfile('LAI Games', 'Virtual Rabbids');
+  const catalogMatch = findCatalogManualMatch({
+    assetName: 'Virtual Rabbids',
+    normalizedName: 'Virtual Rabbids Arcade',
+    manufacturer: 'LAI Games',
+    manufacturerProfile: profile,
+    alternateNames: ['Virtual Rabbids Arcade']
+  });
+  const normalizedCatalogSuggestions = normalizeDocumentationSuggestions({
+    links: catalogMatch.documentationSuggestions,
+    confidence: 0.96,
+    asset: { name: 'Virtual Rabbids', manufacturer: 'LAI Games' },
+    normalizedName: 'Virtual Rabbids Arcade',
+    manufacturerSuggestion: 'LAI Games'
+  });
+  const verified = await verifyDocumentationSuggestions(normalizedCatalogSuggestions, async (url, options = {}) => ({
+    ok: true,
+    status: 200,
+    url,
+    headers: { get: () => (url.endsWith('.pdf') ? 'application/pdf' : 'text/html') },
+    text: async () => options.method === 'HEAD' ? '' : 'Virtual Rabbids The Big Ride install guide PDF'
+  }));
+  const cleaned = cleanFinalEnrichmentResult({
+    documentationSuggestions: verified,
+    supportResourcesSuggestion: catalogMatch.supportResources,
+    enrichmentFollowupQuestion: ''
+  });
+
+  assert.ok(catalogMatch);
+  assert.equal(cleaned.documentationSuggestions.length, 1);
+  assert.equal(cleaned.documentationSuggestions[0].url, 'https://laigames.com/downloads/virtual-rabbids-the-big-ride-install-guide.pdf');
+  assert.equal(cleaned.documentationSuggestions[0].verified, true);
+  assert.equal(cleaned.enrichmentStatus, 'docs_found');
 });
 
 test('repairLegacyAssetEnrichmentRecord reclassifies stale lookup_failed asset with support context', async () => {

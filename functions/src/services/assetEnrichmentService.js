@@ -207,6 +207,26 @@ function normalizeSuggestionTitle(entry = {}) {
   return `${entry?.title || entry?.label || ''}`.trim().replace(/\s+/g, ' ').slice(0, 180);
 }
 
+function isTitleSpecificManualBearingHtmlSuggestion(entry = {}) {
+  const verificationKind = `${entry?.verificationKind || ''}`.trim().toLowerCase();
+  if (verificationKind !== 'manual_html') return false;
+  if (!entry?.exactTitleMatch || !(entry?.trustedSource || entry?.isOfficial)) return false;
+
+  let lowerPath = '';
+  try {
+    lowerPath = new URL(`${entry?.resolvedUrl || entry?.url || ''}`).pathname.toLowerCase();
+  } catch {
+    return false;
+  }
+
+  const titleVariants = buildExactTitleVariants(entry?.assetName || entry?.normalizedName, entry?.normalizedName || entry?.assetName);
+  if (!titleVariants.length) return false;
+  if (isStrictlyGenericDocumentationPage(lowerPath, titleVariants) || isGenericSupportJunkPage(lowerPath, titleVariants)) return false;
+  const hasPathEvidence = pathHasTitleEvidence(lowerPath, titleVariants);
+  const hasManualPathSignal = /games?|support|product|parts|downloads?|manual|service|install/.test(lowerPath);
+  return hasPathEvidence && hasManualPathSignal;
+}
+
 function isReusableVerifiedManual(entry = {}, matchedManufacturer = '') {
   if (!isPreservableVerifiedManualSuggestion(entry)) return false;
   const entryManufacturer = normalizePhrase(entry.matchedManufacturer || entry.manufacturer || '');
@@ -623,6 +643,8 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   const suggestion = {
     title: row.title || row.label || 'Candidate documentation',
     url,
+    assetName: asset?.name || '',
+    normalizedName: normalizedName || asset?.normalizedName || asset?.name || '',
     confidence: fallbackConfidence,
     sourceType: sourceType || 'other',
     matchScore: bounded,
@@ -669,15 +691,14 @@ function isLiveManualCandidate(entry = {}) {
     && !entry?.unreachable
     && !!entry?.verified
     && !!entry?.exactTitleMatch
-    && (!!entry?.exactManualMatch || `${entry?.verificationKind || ''}`.toLowerCase() === 'manual_html');
+    && (!!entry?.exactManualMatch || isTitleSpecificManualBearingHtmlSuggestion(entry));
 }
 
 function isManualUsableSuggestion(entry = {}) {
   if (!isLiveManualCandidate(entry)) return false;
   const url = `${entry?.url || ''}`.toLowerCase();
   const sourceType = `${entry?.sourceType || entry?.resourceType || ''}`.toLowerCase();
-  const verificationKind = `${entry?.verificationKind || ''}`.toLowerCase();
-  const manualBearingHtml = verificationKind === 'manual_html' && !!entry?.exactTitleMatch && !!entry?.trustedSource;
+  const manualBearingHtml = isTitleSpecificManualBearingHtmlSuggestion(entry);
   if (SUPPORT_ONLY_SOURCE_TYPES.has(sourceType) && !manualBearingHtml && !/\.pdf($|\?|#)|manual|operator|service|install|parts/.test(url)) return false;
   return true;
 }
@@ -870,12 +891,17 @@ async function verifyDocumentationSuggestions(suggestions, fetchImpl = fetch) {
   const verifiedRows = await Promise.all(
     bounded.map(async (row) => {
       const verification = await verifySuggestionUrl(row.url, fetchImpl);
-      const strongMatch = Number(row.matchScore || 0) >= 72 && !!row.exactTitleMatch && !!row.exactManualMatch;
+      const manualHtmlCandidate = {
+        ...row,
+        ...verification
+      };
+      const strongExactManual = Number(row.matchScore || 0) >= 72 && !!row.exactTitleMatch && !!row.exactManualMatch;
+      const strongMatch = verification.verificationKind === 'manual_html'
+        ? (strongExactManual && isTitleSpecificManualBearingHtmlSuggestion(manualHtmlCandidate))
+        : strongExactManual;
       const strongManualBearingPage = verification.verified
-        && verification.verificationKind === 'manual_html'
         && Number(row.matchScore || 0) >= 68
-        && !!row.exactTitleMatch
-        && !!row.isOfficial;
+        && isTitleSpecificManualBearingHtmlSuggestion(manualHtmlCandidate);
       const aliveAndStrong = verification.verified && (strongMatch || strongManualBearingPage);
       return {
         ...row,
