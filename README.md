@@ -110,7 +110,15 @@ Rules tests use the Firebase Local Emulator Suite via `firebase emulators:exec` 
 npm run test:rules
 ```
 
-This command starts local Firestore + Storage emulators, runs `test/rules/security.rules.test.js`, and then shuts emulators down automatically.
+This command starts local Firestore + Storage emulators, runs `test/rules/security.rules.test.js`, and then shuts emulators down automatically. On the first run in a given environment, the Firebase CLI may download emulator artifacts into `~/.cache/firebase/emulators` before the tests start.
+
+If emulator downloads fail with a 403 or another fetch/network error, the rules assertions have not been skipped—the emulator process never became healthy enough to run them. In that case:
+
+1. Re-run the command after transient network issues clear.
+2. Verify the environment can reach Firebase emulator artifact downloads.
+3. If you want to warm the cache before running the suite, use `firebase setup:emulators:firestore` and `firebase setup:emulators:storage`.
+
+GitHub Actions now caches `~/.cache/firebase/emulators` so CI does not need to re-download emulator binaries on every run. Local machines still depend on the Firebase CLI being able to populate that cache at least once.
 
 ### Lightweight app-shell tests
 

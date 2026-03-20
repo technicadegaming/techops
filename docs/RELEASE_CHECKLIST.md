@@ -67,4 +67,6 @@ Keep this lightweight and practical:
 
 ## CI cache hygiene note
 
-Current CI already caches npm dependencies via `actions/setup-node` using lockfiles. If rules test runtime becomes slow, consider adding a cache for Firebase emulator binaries (`~/.cache/firebase/emulators`) in CI, while keeping workflow complexity low.
+CI already caches npm dependencies via `actions/setup-node` using lockfiles and now also caches Firebase emulator binaries in `~/.cache/firebase/emulators`. If `npm run test:rules` fails in CI because the Firebase CLI cannot fetch emulator artifacts, treat that as an environment/download problem rather than a silent pass: the rules suite still requires working Firestore + Storage emulators to execute.
+
+For local troubleshooting, re-run after transient network issues clear, or warm the emulator cache ahead of time with `firebase setup:emulators:firestore` and `firebase setup:emulators:storage`.
