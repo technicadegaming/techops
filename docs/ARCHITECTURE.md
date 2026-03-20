@@ -26,7 +26,7 @@ The app is framework-less JavaScript, intentionally preserved to avoid migration
   - `functions/src/lib/enrichmentAuthorization.js`
 - AI orchestration: `functions/src/services/taskAiOrchestrator.js`
 - Asset documentation enrichment: `functions/src/services/assetEnrichmentService.js`
-- Curated manual catalog lookup: `functions/src/services/manualLookupCatalogService.js` with source data in `functions/src/data/manualLookupCatalog.json`
+- Curated manual catalog lookup: `functions/src/services/manualLookupCatalogService.js` with workbook-seeded source data in `functions/src/data/manualLookupWorkbookSeed.json`, normalized via `functions/scripts/importManualLookupWorkbook.js` into `functions/src/data/manualLookupCatalog.json`
 - Manual live discovery fallback: `functions/src/services/manualDiscoveryService.js`
 - Manual ingestion/extraction: `functions/src/services/manualIngestionService.js`
 

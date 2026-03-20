@@ -33,10 +33,10 @@ function getCatalogEntries() {
 }
 
 function scoreCatalogEntry(entry, { assetCandidates, manufacturerCandidates }) {
-  const entryManufacturerCandidates = buildNameCandidates([entry.manufacturer, entry.manufacturerAliases]);
-  const entryExactCandidates = buildNameCandidates([entry.assetName, entry.assetAliases]);
-  const entryVariantCandidates = buildNameCandidates([entry.variants]);
-  const entryFamilyCandidates = entry.allowFamilyFallback ? buildNameCandidates([entry.family]) : [];
+  const entryManufacturerCandidates = buildNameCandidates([entry.manufacturerCanonical || entry.manufacturer, entry.manufacturerAliases]);
+  const entryExactCandidates = buildNameCandidates([entry.canonicalTitle || entry.assetName, entry.titleAliases || entry.assetAliases]);
+  const entryVariantCandidates = buildNameCandidates([entry.variantHints || entry.variants]);
+  const entryFamilyCandidates = entry.allowFamilyFallback ? buildNameCandidates([entry.familyHints || entry.family]) : [];
 
   const manufacturerExact = manufacturerCandidates.some((candidate) => entryManufacturerCandidates.includes(candidate));
   if (!manufacturerExact) return null;
@@ -64,19 +64,25 @@ function scoreCatalogEntry(entry, { assetCandidates, manufacturerCandidates }) {
 
 function buildCatalogSuggestion(entry, match) {
   const common = {
-    title: entry.assetName,
-    manufacturer: entry.manufacturer,
-    matchedManufacturer: normalizePhrase(entry.manufacturer),
-    sourceType: entry.linkType === 'official_pdf' ? 'manufacturer' : (entry.linkType === 'distributor_pdf' ? 'distributor' : 'other'),
+    title: entry.canonicalTitle || entry.assetName,
+    manufacturer: entry.manufacturerCanonical || entry.manufacturer,
+    matchedManufacturer: normalizePhrase(entry.manufacturerCanonical || entry.manufacturer),
+    sourceType: /official/.test(entry.linkType || '') ? 'manufacturer' : (/authorized|distributor/.test(entry.linkType || '') ? 'distributor' : 'other'),
     linkType: entry.linkType || 'official_pdf',
+    trustTier: entry.trustTier || '',
+    manualType: entry.manualType || '',
+    family: entry.family || entry.canonicalTitle || entry.assetName || '',
+    cabinetVariant: Array.isArray(entry.variantHints) ? entry.variantHints[0] || '' : '',
     matchStatus: match.matchStatus || entry.matchStatus || 'catalog_exact',
     confidence: Number(entry.confidence || 0.95),
     matchScore: match.score,
     exactTitleMatch: true,
     exactManualMatch: true,
     trustedSource: true,
-    isOfficial: entry.linkType === 'official_pdf',
+    isOfficial: /official/.test(entry.linkType || ''),
     verified: true,
+    verificationStatus: 'seed_verified',
+    verificationMetadata: entry.verification || { seededFromWorkbook: true },
     lookupMethod: entry.lookupMethod || 'catalog_curated',
     notes: entry.notes || '',
     catalogEntryId: entry.id || ''
@@ -85,14 +91,14 @@ function buildCatalogSuggestion(entry, match) {
   const documentationSuggestions = [
     entry.manualPdfUrl ? {
       ...common,
-      title: `${entry.assetName} manual`,
+      title: `${entry.canonicalTitle || entry.assetName} manual`,
       url: entry.manualPdfUrl,
       alternateManualUrl: entry.alternateManualUrl || '',
       sourcePageUrl: entry.sourcePageUrl || ''
     } : null,
     entry.alternateManualUrl ? {
       ...common,
-      title: `${entry.assetName} alternate manual`,
+      title: `${entry.canonicalTitle || entry.assetName} alternate manual`,
       url: entry.alternateManualUrl,
       primaryManualUrl: entry.manualPdfUrl || '',
       sourcePageUrl: entry.sourcePageUrl || '',
@@ -113,8 +119,10 @@ function buildCatalogSuggestion(entry, match) {
     exactTitleMatch: true,
     exactManualMatch: false,
     trustedSource: true,
-    isOfficial: entry.linkType === 'official_pdf',
+    isOfficial: /official/.test(entry.linkType || ''),
     verified: true,
+    verificationStatus: 'seed_verified',
+    verificationMetadata: entry.verification || { seededFromWorkbook: true },
     lookupMethod: common.lookupMethod,
     notes: common.notes,
     catalogEntryId: common.catalogEntryId

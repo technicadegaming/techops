@@ -35,9 +35,9 @@ test('catalog matches exact asset/manufacturer pairs first', () => {
   assert.ok(match);
   assert.equal(match.documentationSuggestions[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
   assert.equal(match.documentationSuggestions[0].matchStatus, 'catalog_exact');
-  assert.equal(match.supportResources[0].url, 'https://www.betson.com/amusement-products/quik-drop/');
+  assert.equal(match.supportResources[0].url, 'https://www.baytekent.com/games/quik-drop/');
   assert.equal(match.documentationSuggestions[0].sourceType, 'distributor');
-  assert.equal(match.documentationSuggestions[0].lookupMethod, 'catalog_curated_distributor_pdf');
+  assert.equal(match.documentationSuggestions[0].lookupMethod, 'workbook_seed_exact_pdf');
 });
 
 test('catalog matches alternate asset names and title normalization aliases', () => {
@@ -92,7 +92,8 @@ test('fallback discovery still works when catalog has no match', async () => {
     manufacturerProfile: profile,
     alternateNames: []
   });
-  assert.equal(catalogMatch, null);
+  assert.ok(catalogMatch);
+  assert.equal(catalogMatch.documentationSuggestions[0].url, 'https://support.icegame.com/manuals/air-fx-service-manual.pdf');
 
   const result = await discoverManualDocumentation({
     assetName: 'Air FX',
@@ -116,4 +117,44 @@ test('buildNameCandidates normalizes common marketing-name variants deterministi
   const candidates = buildNameCandidates(['Quick Drop DX']);
   assert.ok(candidates.includes('quick drop deluxe'));
   assert.ok(candidates.includes('quik drop deluxe'));
+});
+
+test('workbook-seeded catalog covers required regression titles', () => {
+  const entries = getCatalogEntries();
+  const titles = new Set(entries.map((entry) => entry.canonicalTitle || entry.assetName));
+  ['Quik Drop', 'Sink It Shootout', 'Fast and Furious Arcade', 'Jurassic Park Arcade', 'Air FX', 'StepManiaX', 'Break The Plate'].forEach((title) => {
+    assert.equal(titles.has(title), true);
+  });
+});
+
+test('Sink It alias resolves through workbook family mapping with honest family status', () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Sink It');
+  const match = findCatalogManualMatch({
+    assetName: 'Sink It',
+    normalizedName: 'Sink It',
+    manufacturer: 'Bay Tek Games',
+    manufacturerProfile: profile,
+    alternateNames: []
+  });
+
+  assert.ok(match);
+  assert.equal(match.documentationSuggestions[0].url, 'https://www.betson.com/wp-content/uploads/2019/09/Sink-It-Shootout-Operator-Manual.pdf');
+  assert.equal(match.documentationSuggestions[0].family, 'Sink It');
+  assert.match(match.documentationSuggestions[0].title, /Sink It Shootout/);
+});
+
+
+test('Fast and Furious workbook row preserves official source page without forcing stale direct pdf', () => {
+  const profile = getManufacturerProfile('Raw Thrills', 'Fast and Furious');
+  const match = findCatalogManualMatch({
+    assetName: 'Fast & Furious',
+    normalizedName: 'Fast and Furious',
+    manufacturer: 'Raw Thrills',
+    manufacturerProfile: profile,
+    alternateNames: []
+  });
+
+  assert.ok(match);
+  assert.equal(match.documentationSuggestions.length, 0);
+  assert.equal(match.supportResources[0].url, 'https://rawthrills.com/games/fast-furious-arcade/');
 });

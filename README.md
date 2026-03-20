@@ -95,3 +95,9 @@ firebase deploy --only hosting
 - Asset manual enrichment now checks a curated lookup catalog first (`functions/src/data/manualLookupCatalog.json`) before live rediscovery, then falls back to deterministic official-first/manual-repository-first discovery when no catalog match exists.
 
 See `docs/SECURITY.md` and `docs/ARCHITECTURE.md` for details.
+
+### Manual lookup registry
+
+- Workbook-backed manual seed data lives in `functions/src/data/manualLookupWorkbookSeed.json`.
+- Regenerate the curated catalog with `npm run manual-catalog:import --prefix functions`.
+- See `docs/MANUAL_LOOKUP_REGISTRY.md` for verification/trust-tier guidance and regression expectations.
