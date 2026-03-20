@@ -17,7 +17,8 @@ const {
   enrichAssetDocumentation,
   cleanFinalEnrichmentResult,
   resolveTerminalEnrichmentStatus,
-  repairLegacyAssetEnrichmentRecord
+  repairLegacyAssetEnrichmentRecord,
+  isSeededCatalogManualCandidate
 } = require('../src/services/assetEnrichmentService');
 const { findCatalogManualMatch } = require('../src/services/manualLookupCatalogService');
 
@@ -760,6 +761,44 @@ test('Quik Drop workbook-seeded catalog direct manual survives preview merge whi
   assert.equal(merged.some((entry) => entry.url === supportResourcesSuggestion[0].url), false);
 });
 
+
+
+test('seeded catalog direct pdf remains a reviewable manual candidate when runtime verification is temporarily unreachable', async () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
+  const catalogMatch = findCatalogManualMatch({
+    assetName: 'Quik Drop',
+    normalizedName: 'Quik Drop',
+    manufacturer: 'Bay Tek Games',
+    manufacturerProfile: profile,
+    alternateNames: ['Quik Drop']
+  });
+  const normalizedCatalogSuggestions = normalizeDocumentationSuggestions({
+    links: catalogMatch.documentationSuggestions,
+    confidence: 0.99,
+    asset: { name: 'Quik Drop', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Quik Drop',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+
+  const verified = await verifyDocumentationSuggestions(normalizedCatalogSuggestions, async () => {
+    throw new Error('temporary network failure');
+  });
+  const cleaned = cleanFinalEnrichmentResult({
+    documentationSuggestions: verified,
+    supportResourcesSuggestion: catalogMatch.supportResources,
+    enrichmentFollowupQuestion: 'What exact subtitle appears under the logo?'
+  });
+
+  assert.equal(isSeededCatalogManualCandidate(verified[0]), true);
+  assert.equal(verified[0].verified, true);
+  assert.equal(verified[0].verificationStatus, 'seed_verified');
+  assert.equal(cleaned.documentationSuggestions.length, 1);
+  assert.equal(cleaned.documentationSuggestions[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
+  assert.equal(cleaned.enrichmentStatus, 'docs_found');
+  assert.equal(cleaned.reviewState, 'pending_review');
+  assert.equal(cleaned.enrichmentFollowupQuestion, '');
+});
+
 test('Quik Drop workbook-seeded verified catalog manual resolves to docs_found status signal', async () => {
   const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
   const catalogMatch = findCatalogManualMatch({
@@ -1297,6 +1336,47 @@ test('Virtual Rabbids workbook seed materializes a trustworthy official document
   assert.equal(cleaned.enrichmentStatus, 'docs_found');
 });
 
+
+
+test('repairLegacyAssetEnrichmentRecord strips stale Jurassic generic Raw Thrills service page out of documentation suggestions', async () => {
+  const repaired = await repairLegacyAssetEnrichmentRecord({
+    asset: {
+      name: 'Jurassic Park',
+      normalizedName: 'Jurassic Park Arcade',
+      enrichmentStatus: 'docs_found',
+      documentationSuggestions: [{
+        title: 'Jurassic Park service and support',
+        url: 'https://rawthrills.com/service/',
+        assetName: 'Jurassic Park',
+        normalizedName: 'Jurassic Park Arcade',
+        sourceType: 'support',
+        matchScore: 86,
+        exactTitleMatch: true,
+        exactManualMatch: true,
+        verified: true,
+        trustedSource: true,
+        verificationKind: 'manual_html',
+        verificationStatus: 'verified',
+        deadPage: false,
+        unreachable: false
+      }],
+      supportResourcesSuggestion: [{
+        title: 'Raw Thrills service',
+        url: 'https://rawthrills.com/service/',
+        sourceType: 'support',
+        matchScore: 60
+      }],
+      enrichmentFollowupQuestion: ''
+    },
+    verifySuggestions: async (rows) => rows
+  });
+
+  assert.equal(repaired.documentationSuggestions.length, 0);
+  assert.equal(repaired.supportResourcesSuggestion.length, 1);
+  assert.equal(repaired.supportResourcesSuggestion[0].url, 'https://rawthrills.com/service/');
+  assert.equal(repaired.enrichmentStatus, 'followup_needed');
+  assert.equal(repaired.reviewState, 'followup_needed');
+});
 test('repairLegacyAssetEnrichmentRecord reclassifies stale lookup_failed asset with support context', async () => {
   const repaired = await repairLegacyAssetEnrichmentRecord({
     asset: {
