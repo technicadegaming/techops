@@ -70,4 +70,6 @@ After deploy, verify:
 
 ## CI alignment notes
 
-The repository CI (`.github/workflows/ci.yml`) runs lint, functions tests, and emulator-based rules tests. Keep local and CI commands aligned with `package.json` scripts.
+The repository CI (`.github/workflows/ci.yml`) runs lint, functions tests, and emulator-based rules tests. Keep local and CI commands aligned with `package.json` scripts. CI now also caches Firebase emulator binaries in `~/.cache/firebase/emulators` so `npm run test:rules` is less exposed to repeated download failures on every workflow run.
+
+For local runs, remember that `npm run test:rules` still depends on the Firebase CLI being able to download emulator artifacts at least once per machine/cache. If the CLI hits a 403 or another artifact-fetch failure, resolve that environment/network issue first and then retry the rules suite.
