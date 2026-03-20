@@ -23,7 +23,6 @@ import { renderDashboard } from './features/dashboard.js';
 import { renderOperations } from './features/operations.js';
 import { renderAssets } from './features/assets.js';
 import { renderCalendar } from './features/calendar.js';
-import { renderReports } from './features/reports.js';
 import { renderOnboarding } from './onboarding.js';
 import { formatActionError, runActionFactory } from './uiActions.js';
 import { buildPermissionContext, canDelete, isAdmin, isManager } from './roles.js';
@@ -64,6 +63,7 @@ import { createNavigationController } from './app/navigationController.js';
 import { createOperationsController } from './app/operationsController.js';
 import { createAssetsController } from './app/assetsController.js';
 import { createAdminController } from './app/adminController.js';
+import { createReportsController } from './app/reportsController.js';
 import {
   bootstrapCompanyContext as bootstrapCompanyContextState,
   refreshData as refreshAppData,
@@ -179,6 +179,10 @@ const onboardingController = createOnboardingController({
   enrichAssetDocumentation
 });
 
+const reportsController = createReportsController({
+  state,
+  navigationController
+});
 
 function normalizeAssetId(name = '') {
   const base = `${name}`.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 40) || 'asset';
@@ -271,9 +275,7 @@ async function render() {
   });
   renderAssets(document.getElementById('assets'), state, assetsController.createActions());
   renderCalendar(document.getElementById('calendar'), state);
-  renderReports(document.getElementById('reports'), state, navigationController.openTab, (focus) => {
-    navigationController.applyShellFocusAndPush(focus);
-  });
+  reportsController.renderReportsSection(document.getElementById('reports'));
   renderAccount(document.getElementById('account'), state, {
     resendVerification: async () => {
       await resendVerificationEmail();
