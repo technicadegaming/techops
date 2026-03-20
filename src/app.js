@@ -47,12 +47,11 @@ import {
   saveTaskFixToTroubleshootingLibrary
 } from './aiAdapter.js';
 import { buildNotificationCandidates, formatRelativeTime } from './features/notifications.js';
-import { acceptInvite, createCompanyFromOnboarding, createCompanyInvite, revokeInvite } from './company.js';
-import { getWorkspaceReadiness } from './features/workspaceReadiness.js';
+import { createCompanyInvite, revokeInvite } from './company.js';
 import { logAudit } from './audit.js';
 import { storage } from './firebase.js';
 import { buildCompanyEvidencePath } from './storagePaths.js';
-import { hydrateInviteCodeFromRoute, resolveAppElements, syncPendingInviteCode } from './app/boot.js';
+import { hydrateInviteCodeFromRoute, resolveAppElements } from './app/boot.js';
 import { reportActionError, withRequiredCompanyId } from './app/actions.js';
 import { applyActionCenterFocus as applyActionCenterFocusState, applyShellFocus } from './app/actionCenter.js';
 import { createContextSwitcherController } from './app/contextSwitcher.js';
@@ -64,6 +63,7 @@ import { createAssetsController } from './app/assetsController.js';
 import { createAdminController } from './app/adminController.js';
 import { createReportsController } from './app/reportsController.js';
 import { createAccountController } from './app/accountController.js';
+import { createAuthController } from './app/authController.js';
 import {
   bootstrapCompanyContext as bootstrapCompanyContextState,
   refreshData as refreshAppData,
@@ -75,7 +75,7 @@ import {
   ref as storageRef,
   uploadBytes
 } from 'https://www.gstatic.com/firebasejs/10.12.3/firebase-storage.js';
-import { createEmptyAssetDraft, createInitialState, sections } from './app/state.js';
+import { createEmptyAssetDraft, createInitialState, sections, setOnboardingFeedback } from './app/state.js';
 
 const {
   authView,
@@ -100,20 +100,6 @@ function isPermissionRelatedError(error) {
 function buildBootstrapErrorMessage(error) {
   if (!isPermissionRelatedError(error)) return formatActionError(error, 'Unable to finish account setup.');
   return 'Unable to finish account setup due to a workspace permission check. Your account was created, but bootstrap could not complete. Please retry in a moment or contact support if it keeps happening.';
-}
-
-function evaluatePassword(password = '') {
-  const checks = [
-    { label: 'at least 8 characters', ok: password.length >= 8 },
-    { label: 'one uppercase letter', ok: /[A-Z]/.test(password) },
-    { label: 'one lowercase letter', ok: /[a-z]/.test(password) },
-    { label: 'one number', ok: /\d/.test(password) }
-  ];
-  return {
-    ok: checks.every((check) => check.ok),
-    checks,
-    message: checks.filter((check) => !check.ok).map((check) => check.label).join(', ')
-  };
 }
 
 const runAction = runActionFactory({ reportActionError });
@@ -182,6 +168,15 @@ const onboardingController = createOnboardingController({
 const reportsController = createReportsController({
   state,
   navigationController
+});
+
+const authController = createAuthController({
+  state,
+  authMessage,
+  login,
+  register,
+  loginWithGoogle,
+  sendForgotPasswordEmail
 });
 
 function normalizeAssetId(name = '') {
@@ -324,91 +319,8 @@ window.addEventListener('popstate', () => {
   navigationController.syncFromUrl();
 });
 
-document.getElementById('loginForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const fd = new FormData(e.currentTarget);
-  syncPendingInviteCode(state);
-  try {
-    await login(fd.get('email'), fd.get('password'));
-  } catch (err) { authMessage.textContent = err.message; }
-});
-
-document.getElementById('registerForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const fd = new FormData(e.currentTarget);
-  const fullName = `${fd.get('fullName') || ''}`.trim();
-  const password = `${fd.get('password') || ''}`;
-  const confirmPassword = `${fd.get('confirmPassword') || ''}`;
-  const passwordState = evaluatePassword(password);
-  if (!fullName) {
-    authMessage.textContent = 'Full name is required.';
-    return;
-  }
-  if (password !== confirmPassword) {
-    authMessage.textContent = 'Passwords do not match.';
-    return;
-  }
-  if (!passwordState.ok) {
-    authMessage.textContent = `Password must include ${passwordState.message}.`;
-    return;
-  }
-  try {
-    syncPendingInviteCode(state);
-    setActiveCompanyContext(null);
-    await register(fd.get('email'), password, { fullName });
-    authMessage.textContent = 'Account created. Handing off to workspace setup...';
-  } catch (err) { authMessage.textContent = err.message; }
-});
-
-document.getElementById('googleLoginBtn')?.addEventListener('click', async () => {
-  syncPendingInviteCode(state);
-  try {
-    await loginWithGoogle();
-    authMessage.textContent = 'Google sign-in successful. Finishing setup...';
-  } catch (error) {
-    authMessage.textContent = formatActionError(error, 'Google sign-in failed.');
-  }
-});
-
-document.getElementById('googleRegisterBtn')?.addEventListener('click', async () => {
-  syncPendingInviteCode(state);
-  try {
-    await loginWithGoogle();
-    authMessage.textContent = 'Google sign-in successful. Finishing setup...';
-  } catch (error) {
-    authMessage.textContent = formatActionError(error, 'Google sign-in failed.');
-  }
-});
-
-document.getElementById('forgotPasswordBtn')?.addEventListener('click', async () => {
-  const email = `${document.querySelector('#loginForm [name="email"]')?.value || ''}`.trim();
-  try {
-    await sendForgotPasswordEmail(email);
-    authMessage.textContent = 'Password reset email sent. Check your inbox.';
-  } catch (error) {
-    authMessage.textContent = formatActionError(error, 'Unable to start password reset.');
-  }
-});
-
-document.getElementById('authInviteCode')?.addEventListener('input', syncPendingInviteCode);
-
-const registerForm = document.getElementById('registerForm');
-const registerPasswordInput = registerForm?.querySelector('[name="password"]');
-const registerConfirmInput = registerForm?.querySelector('[name="confirmPassword"]');
-const registerPasswordHelp = document.getElementById('registerPasswordHelp');
-const syncRegisterPasswordHelp = () => {
-  const password = `${registerPasswordInput?.value || ''}`;
-  const confirmPassword = `${registerConfirmInput?.value || ''}`;
-  const passwordState = evaluatePassword(password);
-  const requirements = passwordState.checks.map((check) => `${check.ok ? 'ok' : 'missing'} ${check.label}`).join(' | ');
-  const confirmState = confirmPassword ? ` | ${password === confirmPassword ? 'passwords match' : 'passwords do not match'}` : '';
-  if (registerPasswordHelp) registerPasswordHelp.textContent = `${requirements}${confirmState}`;
-};
-registerPasswordInput?.addEventListener('input', syncRegisterPasswordHelp);
-registerConfirmInput?.addEventListener('input', syncRegisterPasswordHelp);
-
+authController.bindAuthUi();
 document.getElementById('logoutBtn').addEventListener('click', () => logout());
-
 
 notificationController.bindNotificationUi();
 
@@ -429,7 +341,7 @@ watchAuth(async (user) => {
     return;
   }
   try {
-    authMessage.textContent = 'Finishing workspace setup…';
+    authController.setAuthMessage('Finishing workspace setup…');
     authView.classList.remove('hide');
     appView.classList.add('hide');
     setActiveCompanyContext(null);
@@ -440,10 +352,10 @@ watchAuth(async (user) => {
     state.permissions = buildPermissionContext({ profile: state.profile, membership: null });
     if (state.profile.enabled === false) {
       await logout();
-      authMessage.textContent = 'This account is disabled.';
+      authController.setAuthMessage('This account is disabled.');
       return;
     }
-    authMessage.textContent = '';
+    authController.setAuthMessage('');
     authView.classList.add('hide');
     appView.classList.remove('hide');
     await bootstrapCompanyContext();
@@ -451,7 +363,7 @@ watchAuth(async (user) => {
     await render();
   } catch (error) {
     console.error('[watchAuth]', error);
-    authMessage.textContent = buildBootstrapErrorMessage(error);
+    authController.setAuthMessage(buildBootstrapErrorMessage(error));
     setOnboardingFeedback(state, authMessage.textContent, 'error', { pendingAction: '', handoffStatus: 'error' });
     authView.classList.remove('hide');
     appView.classList.add('hide');

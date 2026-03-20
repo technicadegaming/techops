@@ -50,6 +50,7 @@ These modules support `src/app.js` but do not replace it.
 - `src/app/adminController.js`: admin shell wiring for callback/dependency assembly, backup/export action composition, documentation-review action glue, and admin render invocation support.
 - `src/app/reportsController.js`: reports shell wiring for render-time navigation/focus callback assembly and report section render invocation support.
 - `src/app/accountController.js`: account shell wiring for profile/security callback assembly and account section render invocation support.
+- `src/app/authController.js`: signed-out auth shell wiring for login/register/Google/forgot-password form listeners, invite-code handoff syncing, and auth-form message orchestration.
 
 **Important:** these are helper modules around a still-centralized app shell, not a fully separated app core.
 
