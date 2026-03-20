@@ -13,7 +13,8 @@ const {
   buildFollowupQuestion,
   shouldDiscoverAfterCatalogMatch,
   hasUsableVerifiedManualSuggestion,
-  recoverCatalogSourcePageManuals
+  recoverCatalogSourcePageManuals,
+  enrichAssetDocumentation
 } = require('../src/services/assetEnrichmentService');
 const { findCatalogManualMatch } = require('../src/services/manualLookupCatalogService');
 
@@ -1010,4 +1011,164 @@ test('Sink It dead family manual falls back cleanly without dead final docs or i
   assert.equal(hasUsableVerifiedManualSuggestion(finalSuggestions), false);
   assert.equal(supportResourcesSuggestion.some((entry) => entry.url === 'https://www.baytekent.com/games/sink-it-shootout/'), true);
   assert.equal(finalSuggestions.some((entry) => entry.url === 'https://www.betson.com/wp-content/uploads/2019/09/Sink-It-Shootout-Operator-Manual.pdf'), false);
+});
+
+
+function createEnrichmentDb(asset = {}) {
+  const assetState = { id: 'asset-1', ...asset };
+  const assetWrites = [];
+  const auditWrites = [];
+  const assetRef = {
+    async get() {
+      return { exists: true, data: () => ({ ...assetState }) };
+    },
+    async set(payload, options = {}) {
+      assetWrites.push({ payload, options });
+      Object.assign(assetState, payload);
+    }
+  };
+  return {
+    db: {
+      collection(name) {
+        if (name === 'assets') return { doc: () => assetRef };
+        if (name === 'auditLogs') return { add: async (payload) => auditWrites.push(payload) };
+        throw new Error(`Unexpected collection ${name}`);
+      }
+    },
+    assetWrites,
+    auditWrites,
+    assetState
+  };
+}
+
+test('enrichAssetDocumentation writes lookup_failed when discovery repeatedly fails after searching state', async () => {
+  const { db, assetWrites, assetState } = createEnrichmentDb({ name: 'Broken Search', companyId: 'company-1' });
+
+  await assert.rejects(() => enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'manual',
+    followupAnswer: '',
+    traceId: 'trace-fail',
+    dependencies: {
+      runLookupPreview: async () => { throw new Error('fetch failed'); }
+    }
+  }), /fetch failed/);
+
+  assert.equal(assetWrites[0].payload.enrichmentStatus, 'in_progress');
+  assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'lookup_failed');
+  assert.equal(assetState.enrichmentErrorCode, 'unknown');
+  assert.match(assetState.enrichmentErrorMessage, /fetch failed/);
+  assert.ok(assetState.enrichmentFailedAt);
+});
+
+test('enrichAssetDocumentation degrades empty discovery results to terminal no_match_yet', async () => {
+  const { db, assetWrites } = createEnrichmentDb({ name: 'Missing Manual', companyId: 'company-1' });
+
+  const result = await enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'post_save',
+    followupAnswer: '',
+    traceId: 'trace-empty',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.2,
+        normalizedName: 'Missing Manual',
+        likelyManufacturer: 'Unknown',
+        documentationSuggestions: [],
+        supportResourcesSuggestion: [],
+        supportContactsSuggestion: [],
+        alternateNames: [],
+        searchHints: [],
+        oneFollowupQuestion: '',
+        likelyCategory: '',
+        topMatchReason: ''
+      }),
+      findReusableVerifiedManuals: async () => [],
+      verifyDocumentationSuggestions: async () => []
+    }
+  });
+
+  assert.equal(result.status, 'no_match_yet');
+  assert.equal(assetWrites[0].payload.enrichmentStatus, 'searching_docs');
+  assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'no_match_yet');
+});
+
+test('enrichAssetDocumentation writes defensive failure after terminal candidate calculation throws unexpectedly', async () => {
+  const { db, assetWrites } = createEnrichmentDb({ name: 'Throw Later', companyId: 'company-1' });
+
+  await assert.rejects(() => enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'manual',
+    followupAnswer: '',
+    traceId: 'trace-late-throw',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.8,
+        normalizedName: 'Throw Later',
+        likelyManufacturer: 'Bay Tek Games',
+        documentationSuggestions: [{ title: 'Candidate', url: 'https://example.com/manual.pdf', sourceType: 'manufacturer' }],
+        supportResourcesSuggestion: [],
+        supportContactsSuggestion: [],
+        alternateNames: [],
+        searchHints: []
+      }),
+      findReusableVerifiedManuals: async () => [],
+      verifyDocumentationSuggestions: async () => { throw new Error('verification exploded'); }
+    }
+  }), /verification exploded/);
+
+  assert.equal(assetWrites[0].payload.enrichmentStatus, 'in_progress');
+  assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'lookup_failed');
+  assert.match(assetWrites.at(-1).payload.enrichmentErrorMessage, /verification exploded/);
+});
+
+test('enrichAssetDocumentation preserves Quik Drop exact manual success path', async () => {
+  const { db, assetWrites, assetState } = createEnrichmentDb({ name: 'Quik Drop', manufacturer: 'Bay Tek Games', companyId: 'company-1' });
+
+  const result = await enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'manual',
+    followupAnswer: '',
+    traceId: 'trace-quik-drop',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.92,
+        normalizedName: 'Quik Drop',
+        likelyManufacturer: 'Bay Tek Games',
+        documentationSuggestions: [{
+          title: 'Quik Drop Service Manual PDF',
+          url: 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
+          sourceType: 'distributor',
+          exactTitleMatch: true,
+          exactManualMatch: true,
+          matchScore: 96,
+          trustedSource: true,
+          verified: true
+        }],
+        supportResourcesSuggestion: [],
+        supportContactsSuggestion: [],
+        alternateNames: [],
+        searchHints: [],
+        likelyCategory: 'redemption'
+      }),
+      findReusableVerifiedManuals: async () => [],
+      verifyDocumentationSuggestions: async (rows) => rows
+    }
+  });
+
+  assert.equal(result.status, 'docs_found');
+  assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'docs_found');
+  assert.equal(assetState.documentationSuggestions[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
 });

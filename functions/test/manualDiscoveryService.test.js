@@ -606,3 +606,48 @@ test('discoverManualDocumentation rejects Bay Tek utility links and extracts Qui
   assert.equal(result.documentationLinks.some((row) => /cart\.php|login\.php|baytekent\.com\/?$|parts\.baytekent\.com\/?$/.test(row.url)), false);
   assert.equal(result.supportResources.some((row) => /cart\.php|login\.php|https:\/\/baytekent\.com\/?$|https:\/\/parts\.baytekent\.com\/?$/.test(row.url)), false);
 });
+
+
+test('discoverManualDocumentation caps slow search work and degrades repeated provider failures to empty terminal results', async () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Broken Search');
+  const queries = [];
+  const result = await discoverManualDocumentation({
+    assetName: 'Broken Search',
+    normalizedName: 'Broken Search',
+    manufacturer: 'Bay Tek Games',
+    manufacturerProfile: profile,
+    searchProvider: async (query) => {
+      queries.push(query);
+      throw new Error('fetch failed');
+    },
+    fetchImpl: async () => ({ ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' }),
+    logger: { log: () => {} },
+    traceId: 'trace-provider-fail'
+  });
+
+  assert.equal(result.documentationLinks.length, 0);
+  assert.equal(result.supportResources.length, 0);
+  assert.equal(queries.length, 6);
+  assert.equal(result.queriesTried.length, 6);
+});
+
+test('extractManualLinksFromHtmlPage returns empty rows when source fetch aborts', async () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
+  const events = [];
+  const error = new Error('operation aborted');
+  error.name = 'AbortError';
+
+  const rows = await extractManualLinksFromHtmlPage({
+    pageUrl: 'https://parts.baytekent.com/support/quik-drop',
+    pageTitle: 'Quik Drop Support',
+    manufacturer: 'Bay Tek Games',
+    titleVariants: ['quik drop'],
+    manufacturerProfile: profile,
+    fetchImpl: async () => { throw error; },
+    logEvent: (event, payload) => events.push({ event, payload })
+  });
+
+  assert.deepEqual(rows, []);
+  assert.equal(events.at(-1).event, 'html_followup_error');
+  assert.equal(events.at(-1).payload.reason, 'timeout');
+});
