@@ -124,7 +124,14 @@ function normalizePhrase(value) {
 }
 
 function buildExactTitleVariants(assetName, normalizedName) {
-  const variants = new Set([normalizePhrase(normalizedName), normalizePhrase(assetName)]);
+  const rawVariants = [normalizePhrase(normalizedName), normalizePhrase(assetName)];
+  const variants = new Set();
+  for (const variant of rawVariants.filter((entry) => entry && entry.length >= 3)) {
+    variants.add(variant);
+    variants.add(variant.replace(/\band\b/g, ' ').replace(/\s+/g, ' ').trim());
+    variants.add(variant.replace(/\barcade\b/g, ' ').replace(/\s+/g, ' ').trim());
+    variants.add(variant.replace(/\band\b/g, ' ').replace(/\barcade\b/g, ' ').replace(/\s+/g, ' ').trim());
+  }
   return Array.from(variants).filter((entry) => entry && entry.length >= 3);
 }
 
@@ -813,7 +820,12 @@ async function recoverCatalogSourcePageManuals({ catalogMatch, draftAsset, norma
   if (!sourcePages.length) return [];
   const recovered = [];
   for (const page of sourcePages.slice(0, 2)) {
-    const verification = await verifySuggestionUrl(page.url, fetchImpl);
+    let verification = null;
+    try {
+      verification = await verifySuggestionUrl(page.url, fetchImpl);
+    } catch {
+      verification = { deadPage: false, unreachable: true };
+    }
     if (verification.deadPage || verification.unreachable) continue;
     const extracted = await extractManualLinksFromHtmlPage({
       pageUrl: page.url,
@@ -875,6 +887,10 @@ async function runLookupPreview({ settings, traceId, draftAsset, fetchImpl = fet
       followupAnswer: context.followupAnswer
     })
     : [];
+  const verifiedCatalogSuggestions = normalizedCatalogSuggestions.length
+    ? await verifyDocumentationSuggestions(normalizedCatalogSuggestions, fetchImpl)
+    : [];
+  const survivingCatalogSuggestions = verifiedCatalogSuggestions.filter((entry) => !entry.deadPage && !entry.unreachable);
   const shouldRunDiscovery = await shouldDiscoverAfterCatalogMatch({
     catalogMatch,
     confidence,
@@ -915,7 +931,7 @@ async function runLookupPreview({ settings, traceId, draftAsset, fetchImpl = fet
   });
 
   const documentationSuggestions = mergeDocumentationSuggestions({
-    existingSuggestions: normalizedCatalogSuggestions,
+    existingSuggestions: survivingCatalogSuggestions,
     nextSuggestions: discoveredDocumentationSuggestions,
     preserveExistingCandidates: true
   });
@@ -936,7 +952,8 @@ async function runLookupPreview({ settings, traceId, draftAsset, fetchImpl = fet
 
   const supportContactsSuggestion = normalizeSupportContacts(parsed?.supportContacts);
   const confidenceThreshold = settings.aiConfidenceThreshold || 0.45;
-  const status = confidence >= confidenceThreshold && documentationSuggestions.length
+  const hasPreviewManual = documentationSuggestions.some((entry) => !entry.deadPage && !entry.unreachable && !!entry.exactManualMatch);
+  const status = confidence >= confidenceThreshold && hasPreviewManual
     ? 'found_suggestions'
     : (parsed?.oneFollowupQuestion ? 'needs_follow_up' : 'no_strong_match');
 
@@ -1157,7 +1174,9 @@ module.exports = {
   getManufacturerProfile,
   buildFollowupQuestion,
   shouldDiscoverAfterCatalogMatch,
-  hasUsableVerifiedManualSuggestion
+  hasUsableVerifiedManualSuggestion,
+  runLookupPreview,
+  recoverCatalogSourcePageManuals
 };
 
 

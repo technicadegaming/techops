@@ -203,12 +203,18 @@ async function searchDuckDuckGoHtml(query, fetchImpl = fetch) {
 
 function detectSourceType(url, manufacturerProfile) {
   let host = '';
+  let path = '';
   try {
-    host = new URL(url).hostname.toLowerCase();
+    const parsed = new URL(url);
+    host = parsed.hostname.toLowerCase();
+    path = parsed.pathname.toLowerCase();
   } catch {
     return 'other';
   }
-  if ((manufacturerProfile?.preferredSourceTokens || []).some((token) => host.includes(token))) return host.includes('parts.') ? 'parts' : 'support';
+  if ((manufacturerProfile?.preferredSourceTokens || []).some((token) => host.includes(token))) {
+    if (/\.(pdf|docx?)($|[?#])/.test(path) || /\/(manuals?|downloads?)\//.test(path)) return 'manufacturer';
+    return host.includes('parts.') ? 'parts' : 'support';
+  }
   if ((manufacturerProfile?.sourceTokens || []).some((token) => host.includes(token))) return 'manufacturer';
   if (/betson|moss|distribut/i.test(host)) return 'distributor';
   if (/archive\.org|ipdb|arcade-museum|arcade-history|manual/.test(host)) return 'manual_library';
@@ -476,7 +482,7 @@ async function extractManualLinksFromHtmlPage({ pageUrl, pageTitle, manufacturer
     .filter((row) => row.classification.includeManual)
     .slice(0, 3)
     .map((row) => ({
-      title: row.title,
+      title: [pageTitle, row.title].filter(Boolean).join(' - '),
       url: row.url,
       sourceType: row.classification.sourceType,
       discoverySource: 'html_followup'
