@@ -48,6 +48,7 @@ These modules support `src/app.js` but do not replace it.
 - `src/app/operationsController.js`: operations/task shell wiring for callback bag assembly, task AI polling/readback, evidence upload/removal orchestration, closeout/save-fix flows, and operations-to-navigation coordination.
 - `src/app/assetsController.js`: assets shell wiring for callback/dependency assembly, asset save/edit/delete orchestration, intake review callbacks, documentation preview/enrichment coordination, and assets-to-navigation glue.
 - `src/app/adminController.js`: admin shell wiring for callback/dependency assembly, backup/export action composition, documentation-review action glue, and admin render invocation support.
+- `src/app/reportsController.js`: reports shell wiring for render-time navigation/focus callback assembly and report section render invocation support.
 
 **Important:** these are helper modules around a still-centralized app shell, not a fully separated app core.
 
