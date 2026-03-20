@@ -50,10 +50,8 @@ import {
 } from './aiAdapter.js';
 import { buildNotificationCandidates, formatRelativeTime } from './features/notifications.js';
 import { acceptInvite, createCompanyFromOnboarding, createCompanyInvite, revokeInvite } from './company.js';
-import { createAssetActions } from './features/assetActions.js';
 import { createAdminActions } from './features/adminActions.js';
 import { getWorkspaceReadiness } from './features/workspaceReadiness.js';
-import { parseAssetCsv, parseBulkAssetList, normalizeAssetCandidate } from './features/assetIntake.js';
 import { logAudit } from './audit.js';
 import { renderAccount } from './account.js';
 import { storage } from './firebase.js';
@@ -66,6 +64,7 @@ import { createNotificationController } from './app/notifications.js';
 import { createOnboardingController } from './app/onboardingController.js';
 import { createNavigationController } from './app/navigationController.js';
 import { createOperationsController } from './app/operationsController.js';
+import { createAssetsController } from './app/assetsController.js';
 import {
   bootstrapCompanyContext as bootstrapCompanyContextState,
   refreshData as refreshAppData,
@@ -77,12 +76,7 @@ import {
   ref as storageRef,
   uploadBytes
 } from 'https://www.gstatic.com/firebasejs/10.12.3/firebase-storage.js';
-import {
-  buildPreviewQueryKey,
-  createEmptyAssetDraft,
-  createInitialState,
-  sections
-} from './app/state.js';
+import { createEmptyAssetDraft, createInitialState, sections } from './app/state.js';
 
 const {
   authView,
@@ -104,50 +98,10 @@ function isPermissionRelatedError(error) {
 }
 
 
-
 function buildBootstrapErrorMessage(error) {
   if (!isPermissionRelatedError(error)) return formatActionError(error, 'Unable to finish account setup.');
   return 'Unable to finish account setup due to a workspace permission check. Your account was created, but bootstrap could not complete. Please retry in a moment or contact support if it keeps happening.';
 }
-
-function getEnrichmentFailureState(error) {
-  const blocked = isPermissionRelatedError(error);
-  return {
-    status: blocked ? 'permission_blocked' : 'lookup_failed',
-    message: blocked
-      ? 'Asset saved. Access blocked while checking manuals/support links.'
-      : 'Asset saved. Lookup failed; retry when ready.'
-  };
-}
-
-async function markAssetEnrichmentFailure(assetId, error, preserveFollowup = false) {
-  const current = state.assets.find((entry) => entry.id === assetId) || {};
-  const failure = getEnrichmentFailureState(error);
-  await upsertEntity('assets', assetId, {
-    ...current,
-    enrichmentStatus: failure.status,
-    enrichmentUpdatedAt: new Date().toISOString(),
-    enrichmentFailedAt: new Date().toISOString(),
-    enrichmentErrorCode: `${error?.code || ''}`.trim() || 'unknown',
-    enrichmentErrorMessage: `${error?.message || error || ''}`.trim().slice(0, 240),
-    enrichmentFollowupQuestion: preserveFollowup ? (current.enrichmentFollowupQuestion || '') : '',
-    enrichmentFollowupAnswer: preserveFollowup ? (current.enrichmentFollowupAnswer || '') : ''
-  }, state.user);
-  return failure;
-}
-
-function buildAssetSaveErrorMessage(error) {
-  if (!isPermissionRelatedError(error)) return formatActionError(error, 'Unable to save asset.');
-  return 'Unable to save asset due to company permissions. Verify your company access and try again.';
-}
-
-function buildAssetSaveDebugContext() {
-  return {
-    companyId: `${state.company?.id || state.activeMembership?.companyId || ''}`.trim() || 'unknown',
-    companyRole: state.permissions?.companyRole || 'unknown'
-  };
-}
-
 
 function evaluatePassword(password = '') {
   const checks = [
@@ -232,30 +186,6 @@ function normalizeAssetId(name = '') {
   return `asset-${base}`;
 }
 
-function pickUniqueAssetId(desiredId, assets) {
-  const used = new Set((assets || []).map((a) => a.id));
-  const clean = `${desiredId || ''}`.trim();
-  if (clean && !used.has(clean)) return clean;
-  const root = clean || normalizeAssetId(clean);
-  if (!used.has(root)) return root;
-  let i = 2;
-  while (used.has(`${root}-${i}`)) i += 1;
-  return `${root}-${i}`;
-}
-
-async function withTimeout(promise, ms, timeoutMessage) {
-  let timeoutId;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), ms);
-      })
-    ]);
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
-}
 
 function downloadFile(filename, payload, type = 'application/json') {
   const content = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
@@ -277,18 +207,7 @@ function dedupeUrls(values = []) {
   return [...new Set((values || []).map((v) => `${v || ''}`.trim()).filter(Boolean))];
 }
 
-function normalizeSupportEntries(values = []) {
-  const mapped = (values || []).map((entry) => {
-    if (typeof entry === 'string') return { url: entry.trim() };
-    return { ...entry, url: `${entry?.url || ''}`.trim() };
-  }).filter((entry) => entry.url);
-  const seen = new Set();
-  return mapped.filter((entry) => {
-    if (seen.has(entry.url)) return false;
-    seen.add(entry.url);
-    return true;
-  });
-}
+
 
 
 async function render() {
@@ -335,12 +254,9 @@ async function render() {
   const operationsActions = operationsController.createActions();
   renderOperations(document.getElementById('operations'), state, operationsActions);
 
-  const assetActions = createAssetActions({
+  const assetsController = createAssetsController({
     state,
-    onLocationFilter: (locationKey) => {
-      navigationController.showAssetsForLocation(locationKey);
-      render();
-    },
+    navigationController,
     render,
     refreshData,
     runAction,
@@ -350,22 +266,11 @@ async function render() {
     approveAssetManual,
     enrichAssetDocumentation,
     previewAssetDocumentationLookup,
-    markAssetEnrichmentFailure,
-    normalizeAssetId,
-    pickUniqueAssetId,
-    createEmptyAssetDraft,
-    withTimeout,
-    dedupeUrls,
-    normalizeSupportEntries,
     canDelete,
     isAdmin,
-    isManager,
-    buildAssetSaveErrorMessage,
-    buildAssetSaveDebugContext,
-    isPermissionRelatedError,
-    buildPreviewQueryKey
+    isManager
   });
-  renderAssets(document.getElementById('assets'), state, assetActions);
+  renderAssets(document.getElementById('assets'), state, assetsController.createActions());
   renderCalendar(document.getElementById('calendar'), state);
   renderReports(document.getElementById('reports'), state, navigationController.openTab, (focus) => {
     navigationController.applyShellFocusAndPush(focus);
