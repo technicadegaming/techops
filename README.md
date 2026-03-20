@@ -35,8 +35,48 @@ npm install --prefix functions
 ```bash
 npm run lint
 npm run test --prefix functions
+npm run test:app-shell
 npm run test:rules
 ```
+
+### Start here: contributor path
+
+If you are new to this repository, use this order first:
+
+1. Read this `README.md` for the repo shape, validation commands, and deployment/runtime-config pointers.
+2. Read `docs/ARCHITECTURE.md` for the high-level Firebase architecture and backend/frontend module map.
+3. Read `docs/DATA_MODEL.md` for the current Firestore + Storage tenant model (`companyId`, storage path scoping, and major collections).
+4. Read `docs/FRONTEND_STRUCTURE.md` for where frontend code lives today and how `src/app.js`, `src/app/*`, and `src/features/*` fit together.
+5. If your work touches the app shell, then read `docs/APP_SHELL_REMAINING_SEAMS.md` first and `docs/APP_SHELL_REFACTOR_PLAN.md` second.
+6. Before shipping or reviewing operational changes, use the deploy/security docs in the documentation map below.
+
+### Documentation map
+
+Use this map to reduce doc-hunting:
+
+#### Core contributor docs
+
+- `docs/ARCHITECTURE.md` — high-level system overview and current module map.
+- `docs/DATA_MODEL.md` — implementation-aware Firestore + Storage model and tenant scoping rules.
+- `docs/FRONTEND_STRUCTURE.md` — current browser app structure, shell boundaries, and preferred frontend contribution seams.
+
+#### App-shell stabilization docs
+
+- `docs/APP_SHELL_REMAINING_SEAMS.md` — the current “stop here and stabilize” view of what still belongs in `src/app.js`.
+- `docs/APP_SHELL_REFACTOR_PLAN.md` — historical/current decomposition plan for the shell, including what has already been extracted.
+
+#### Runtime config, migration, deploy, and security docs
+
+- `docs/FIREBASE_MIGRATION_NOTES.md` — company-scoping rollout notes and the `window.__APP_CONFIG__` bootstrap/runtime-config guidance.
+- `docs/DEPLOYMENT.md` — recommended deploy order, pre/post deploy checks, and rollback guidance.
+- `docs/RELEASE_CHECKLIST.md` — pre-merge, pre-deploy, and post-deploy checklist form.
+- `docs/SECURITY.md` — secrets handling, tenant storage boundaries, and security-focused operational checks.
+- `docs/FIREBASE_COMPANY_ONBOARDING_SETUP.md` — historical Firebase setup notes for company onboarding and scoped workspace rollout.
+
+#### Other operational docs
+
+- `docs/MANUAL_LOOKUP_REGISTRY.md` — manual catalog import/verification workflow.
+- `docs/NEXT_PHASE_EXECUTION_PLAN.md` — near-term phased implementation sequence when planning follow-up work.
 
 ### Root source of truth
 
@@ -60,6 +100,7 @@ npm run test:rules
 
 - Leave `bootstrapAdmins` unset in normal local/staging/production operation unless you are deliberately enabling a bootstrap path for a specific rollout or recovery case.
 - Staging and production overrides should follow the same pattern: inject only the environment-specific keys that differ from committed defaults, and keep the injected object small and explicit.
+- See `docs/FIREBASE_MIGRATION_NOTES.md` for the current rollout-safe runtime-config guidance in the broader company-scoping migration context.
 
 ### Security rules tests (Firestore + Storage)
 
@@ -70,6 +111,17 @@ npm run test:rules
 ```
 
 This command starts local Firestore + Storage emulators, runs `test/rules/security.rules.test.js`, and then shuts emulators down automatically.
+
+### Lightweight app-shell tests
+
+The repo also includes a lightweight Node-based shell test harness:
+
+```bash
+npm run test:app-shell
+```
+
+- Use it for focused tests around pure/lightly-coupled shell modules such as route helpers, state helpers, or controller support code that does not require a browser DOM + Firebase emulator stack.
+- It is intentionally not full end-to-end coverage for the signed-in app shell; auth/bootstrap, full render sequencing, and Firebase-backed integration flows still rely on higher-level manual or broader test coverage.
 
 ## Deployment overview
 
@@ -106,6 +158,7 @@ firebase deploy --only hosting
 - Repository-level Codex guidance and completion criteria live in `AGENTS.md`.
 - Near-term phased implementation sequence lives in `docs/NEXT_PHASE_EXECUTION_PLAN.md`.
 - Keep changes incremental and non-destructive to current Firebase tenancy architecture.
+- If you only read three docs before making a change, read `docs/DATA_MODEL.md`, `docs/FRONTEND_STRUCTURE.md`, and then the relevant deploy/security doc for your change area.
 
 ## Security and tenancy model (high-level)
 
@@ -118,7 +171,7 @@ firebase deploy --only hosting
 - Asset manual enrichment now checks a curated lookup catalog first (`functions/src/data/manualLookupCatalog.json`) before live rediscovery, then falls back to deterministic official-first/manual-repository-first discovery when no catalog match exists.
 
 See `docs/SECURITY.md` and `docs/ARCHITECTURE.md` for details.
-For current implementation-oriented contributor docs, also see `docs/DATA_MODEL.md` and `docs/FRONTEND_STRUCTURE.md`.
+For current implementation-oriented contributor docs, also see `docs/DATA_MODEL.md`, `docs/FRONTEND_STRUCTURE.md`, `docs/APP_SHELL_REMAINING_SEAMS.md`, and `docs/APP_SHELL_REFACTOR_PLAN.md`.
 
 ### Manual lookup registry
 

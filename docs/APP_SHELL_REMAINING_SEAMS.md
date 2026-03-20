@@ -2,6 +2,8 @@
 
 This document captures the **current** implementation-aware hotspot audit for `src/app.js` after the controller extraction passes already landed. It is intentionally grounded in the code that exists today rather than in a target architecture.
 
+If you are approaching the shell for the first time, read `README.md` for the documentation map and `docs/FRONTEND_STRUCTURE.md` for the broader frontend module layout before using this seams audit as the “what still lives here and why” reference.
+
 ## Audit scope
 
 This audit reviewed:
@@ -218,6 +220,8 @@ Instead of another mechanical extraction pass, the best next step is:
 - keep `src/app.js` as the top-level integration seam
 - add or strengthen tests around the remaining high-coupling flows
 - use this document as the boundary reference when future feature changes touch the shell
+
+For the earlier extraction history and candidate-slice reasoning that led to this stop-here recommendation, see `docs/APP_SHELL_REFACTOR_PLAN.md`.
 
 Current lightweight stabilization coverage now lives in `test/appShellControllers.test.js` for pure/shallow-injected shell seams (`src/app/actionCenter.js`, `src/app/contextSwitcher.js`, and `src/app/navigationController.js`). More DOM-heavy controllers still need either broader browser coverage or smaller helper seams before they are worth testing here.
 
