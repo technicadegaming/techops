@@ -50,7 +50,6 @@ import { buildNotificationCandidates, formatRelativeTime } from './features/noti
 import { acceptInvite, createCompanyFromOnboarding, createCompanyInvite, revokeInvite } from './company.js';
 import { getWorkspaceReadiness } from './features/workspaceReadiness.js';
 import { logAudit } from './audit.js';
-import { renderAccount } from './account.js';
 import { storage } from './firebase.js';
 import { buildCompanyEvidencePath } from './storagePaths.js';
 import { hydrateInviteCodeFromRoute, resolveAppElements, syncPendingInviteCode } from './app/boot.js';
@@ -64,6 +63,7 @@ import { createOperationsController } from './app/operationsController.js';
 import { createAssetsController } from './app/assetsController.js';
 import { createAdminController } from './app/adminController.js';
 import { createReportsController } from './app/reportsController.js';
+import { createAccountController } from './app/accountController.js';
 import {
   bootstrapCompanyContext as bootstrapCompanyContextState,
   refreshData as refreshAppData,
@@ -276,23 +276,15 @@ async function render() {
   renderAssets(document.getElementById('assets'), state, assetsController.createActions());
   renderCalendar(document.getElementById('calendar'), state);
   reportsController.renderReportsSection(document.getElementById('reports'));
-  renderAccount(document.getElementById('account'), state, {
-    resendVerification: async () => {
-      await resendVerificationEmail();
-      const refreshed = await refreshAuthUser();
-      state.profile = await syncSecuritySnapshot(refreshed || { uid: state.user?.uid, email: state.user?.email }, state.profile || {});
-      render();
-    },
-    refreshVerification: async () => {
-      const refreshed = await refreshAuthUser();
-      if (!refreshed) throw new Error('No authenticated user found.');
-      state.profile = await syncSecuritySnapshot(refreshed, state.profile || {});
-      render();
-    },
-    sendPasswordReset: async () => {
-      await sendForgotPasswordEmail(state.user?.email || '');
-    }
+  const accountController = createAccountController({
+    state,
+    render,
+    resendVerificationEmail,
+    refreshAuthUser,
+    syncSecuritySnapshot,
+    sendForgotPasswordEmail
   });
+  accountController.renderAccountSection(document.getElementById('account'));
   const adminController = createAdminController({
     state,
     render,
