@@ -16,6 +16,7 @@ const {
   getActiveMembershipForCompany,
   isGlobalAdminRole,
 } = require('./lib/enrichmentAuthorization');
+const { normalizeAssetEnrichmentTriggerSource } = require('./lib/assetEnrichmentTriggers');
 const {
   enrichAssetDocumentation,
   previewAssetDocumentationLookup,
@@ -339,7 +340,7 @@ exports.enrichAssetDocumentation = onCall({ secrets: [OPENAI_API_KEY] }, async (
     assetId: request.data.assetId,
     userId: request.auth.uid,
     settings,
-    triggerSource: request.data?.trigger || 'manual',
+    triggerSource: normalizeAssetEnrichmentTriggerSource(request.data?.trigger),
     followupAnswer: `${request.data?.followupAnswer || ''}`.trim(),
     traceId: request.rawRequest.headers['x-cloud-trace-context'] || `asset-${Date.now()}`,
   });

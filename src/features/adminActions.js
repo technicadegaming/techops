@@ -1,5 +1,6 @@
 import { buildDocumentationApprovalPatch, buildDocumentationApprovalSelection, getReviewableDocumentationSuggestions } from './documentationReview.js';
 import { buildUsageSummary, normalizeBillingAddress } from '../billing.js';
+import { approveSuggestedManualSources, buildManualEnrichmentRequest } from './assetEnrichmentPipeline.js';
 
 export function createAdminActions(deps) {
   const {
@@ -38,29 +39,14 @@ export function createAdminActions(deps) {
     .map((entry) => normalizeUrl(entry?.url))
     .filter(Boolean);
 
-  const approveManualSources = async (assetId, urls = [], current = {}, metadataByUrl = {}) => {
-    const uniqueUrls = Array.from(new Set((urls || []).map((url) => `${url || ''}`.trim()).filter(Boolean))).slice(0, 2);
-    if (!uniqueUrls.length) return { completed: 0, failed: 0 };
-    let completed = 0;
-    let failed = 0;
-    for (const url of uniqueUrls) {
-      try {
-        const meta = metadataByUrl[url] || {};
-        await approveAssetManual({
-          assetId,
-          sourceUrl: url,
-          sourceTitle: meta.title || current.name || url,
-          sourceType: meta.sourceType || 'approved_doc',
-          approvedSuggestionIndex: Number.isInteger(meta.index) ? meta.index : undefined
-        });
-        completed += 1;
-      } catch (error) {
-        failed += 1;
-        console.error('[approve_asset_manual_admin]', { assetId, url, error });
-      }
-    }
-    return { completed, failed };
-  };
+  const approveManualSources = (assetId, urls = [], current = {}, metadataByUrl = {}) => approveSuggestedManualSources({
+    assetId,
+    urls,
+    current,
+    metadataByUrl,
+    approveAssetManual,
+    logLabel: 'approve_asset_manual_admin'
+  });
 
   const getFilteredAssetReviewQueue = (filter = 'pending_review') => {
     const normalizedFilter = `${filter || 'pending_review'}`.trim();
@@ -167,7 +153,7 @@ export function createAdminActions(deps) {
       let failed = 0;
       for (const asset of queue) {
         try {
-          await enrichAssetDocumentation(asset.id, { trigger: 'bulk_admin_review' });
+          await enrichAssetDocumentation(asset.id, buildManualEnrichmentRequest());
           completed += 1;
         } catch (error) {
           console.error('[admin_bulk_asset_enrichment]', { assetId: asset.id, error });
