@@ -48,6 +48,8 @@ npm run test:rules
 
 - Run `npm run test:app-shell` when you touch `src/app.js`, `src/app/*`, or frontend shell/controller seams that feed the signed-in app shell.
 - Run `npm run test:rules` when you touch `firestore.rules`, `storage.rules`, tenant-scoped data access, storage path enforcement, or other security-sensitive access boundaries.
+- GitHub CI enforces the baseline lint/functions suites plus the emulator-backed rules suite; app-shell coverage is still a conditional reviewer/local expectation rather than a blanket CI gate.
+- Use `.github/pull_request_template.md` to record which conditional checks applied and which implementation docs you consulted.
 - If you need deploy/release-specific gates, use `docs/DEPLOYMENT.md` and `docs/RELEASE_CHECKLIST.md` as the source of truth rather than copying those steps into feature docs.
 
 ### Start here: contributor path
@@ -74,7 +76,7 @@ Use this map to reduce doc-hunting:
 
 #### App-shell stabilization docs
 
-- `docs/APP_SHELL_REMAINING_SEAMS.md` — the current “stop here and stabilize” view of what still belongs in `src/app.js`.
+- `docs/APP_SHELL_REMAINING_SEAMS.md` — the current “stop here and stabilize” view of what still belongs in `src/app.js`, and the default guidance before proposing more shell extraction.
 - `docs/APP_SHELL_REFACTOR_PLAN.md` — historical/current decomposition plan for the shell, including what has already been extracted.
 
 #### Runtime config, migration, deploy, and security docs

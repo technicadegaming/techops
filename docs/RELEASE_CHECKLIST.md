@@ -8,8 +8,9 @@ Use this checklist for safe, repeatable releases.
 - [ ] No destructive schema/data migrations are introduced.
 - [ ] Multi-tenant boundaries are preserved (`companyId`, `companies/{companyId}/...`).
 - [ ] Docs are updated for any command/workflow changes.
-- [ ] CI is green for the suites that apply to the change.
+- [ ] CI is green for the enforced suites (lint, functions tests, rules tests) and the PR notes any additional conditional local checks that applied.
 - [ ] Reviewer can tell which implementation docs were used (`docs/DATA_MODEL.md`, `docs/FRONTEND_STRUCTURE.md`, `docs/DEPLOYMENT.md`, `docs/SECURITY.md`, `docs/APP_SHELL_REMAINING_SEAMS.md`) based on the area touched.
+- [ ] PR description/template states whether `npm run test:app-shell` and `npm run test:rules` were applicable.
 
 Recommended local verification:
 
@@ -72,9 +73,10 @@ Keep this lightweight and practical:
    - CI lint
    - CI functions tests
    - CI rules tests
-3. Require branch to be up to date before merge.
-4. Restrict direct pushes to `main`.
-5. Optionally require at least one approving review.
+3. Treat app-shell coverage as a documented PR/reviewer expectation when `src/app.js`, `src/app/*`, or shell/controller seams change, rather than forcing it as a blanket branch-protection check.
+4. Require branch to be up to date before merge.
+5. Restrict direct pushes to `main`.
+6. Optionally require at least one approving review.
 
 ## CI cache hygiene note
 
