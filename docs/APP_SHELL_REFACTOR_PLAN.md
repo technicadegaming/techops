@@ -19,6 +19,8 @@ That central role is expected in the current transitional architecture, but it a
 
 This pass does **not** change runtime behavior. It only proposes a decomposition path that can be executed in small, reversible PRs.
 
+For the latest implementation-aware assessment of the remaining app-shell boundary, see `docs/APP_SHELL_REMAINING_SEAMS.md`.
+
 ## Progress update
 
 - Completed first extraction pass: notification/action-center shell wiring now lives in `src/app/notifications.js`, while `src/app.js` still owns top-level state and refresh/render orchestration.
@@ -31,6 +33,7 @@ This pass does **not** change runtime behavior. It only proposes a decomposition
 - Completed eighth extraction pass: reports shell wiring now lives in `src/app/reportsController.js`, while `src/app.js` still owns top-level render ordering, lifecycle sequencing, and final report-section inclusion in the overall shell render.
 - Completed ninth extraction pass: account shell wiring now lives in `src/app/accountController.js`, while `src/app.js` still owns top-level render ordering, lifecycle sequencing, auth/bootstrap state, and final account-section inclusion in the overall shell render.
 - Completed tenth extraction pass: signed-out auth form wiring now lives in `src/app/authController.js`, while `src/app.js` still owns auth state watching, signed-in versus signed-out shell switching, bootstrap/profile resolution, and final lifecycle sequencing.
+- Completed remaining-seams audit pass: `docs/APP_SHELL_REMAINING_SEAMS.md` now documents what legitimately remains in `src/app.js`, what should stay centralized, and why the recommended next phase is stabilization/tests/docs rather than continued extraction by default.
 
 ## Current hotspot audit
 
