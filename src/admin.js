@@ -1,3 +1,4 @@
+import { getReviewableDocumentationSuggestions } from './features/documentationReview.js';
 import { defaultAiSettings } from './data.js';
 import { canChangeAISettings, canManageBackups, isAdmin } from './roles.js';
 import { buildLocationOptions } from './features/locationContext.js';
@@ -83,7 +84,7 @@ function renderStatusChip(label, tone = 'muted') { return `<span class="state-ch
 function normalizeReviewState(asset = {}) {
   const current = `${asset.reviewState || ''}`.trim();
   if (['approved', 'rejected'].includes(current)) return current;
-  const suggestions = Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions.filter((entry) => entry?.url) : [];
+  const suggestions = getReviewableDocumentationSuggestions(asset);
   if (suggestions.length || `${asset.enrichmentStatus || ''}`.trim() === 'docs_found') return 'pending_review';
   if (`${asset.enrichmentStatus || ''}`.trim() === 'followup_needed') return 'followup_needed';
   if (`${asset.enrichmentStatus || ''}`.trim() === 'no_match_yet') return 'research_needed';
@@ -102,7 +103,7 @@ function renderAssetReviewStatus(asset = {}) {
 
 function buildReviewQueue(assets = [], filter = 'pending_review') {
   return assets.filter((asset) => {
-    const suggestions = Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions.filter((entry) => entry?.url) : [];
+    const suggestions = getReviewableDocumentationSuggestions(asset);
     const hasDocs = Array.isArray(asset.manualLinks) && asset.manualLinks.length > 0;
     const reviewState = normalizeReviewState(asset);
     if (filter === 'all') return true;
@@ -407,7 +408,7 @@ export function renderAdmin(el, state, actions) {
       <div class="tiny mt">Active filters: ${reviewActiveFilters.length ? reviewActiveFilters.join(' · ') : 'default queue view'}</div>
       <div class="list mt">
         ${reviewQueue.map((asset) => {
-    const suggestions = (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).filter((entry) => entry?.url && !entry?.deadPage && !entry?.unreachable);
+    const suggestions = getReviewableDocumentationSuggestions(asset);
     const attached = Array.isArray(asset.manualLinks) ? asset.manualLinks : [];
     const selectedSuggestions = new Set(selectedSuggestionsByAsset[asset.id] || []);
     return `<div class="item" style="padding:10px; margin-bottom:8px;">

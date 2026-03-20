@@ -1,3 +1,4 @@
+import { buildDocumentationApprovalPatch, buildDocumentationApprovalSelection, getReviewableDocumentationSuggestions } from './documentationReview.js';
 import { buildUsageSummary, normalizeBillingAddress } from '../billing.js';
 
 export function createAdminActions(deps) {
@@ -24,6 +25,7 @@ export function createAdminActions(deps) {
     normalizeAssetId,
     dedupeUrls,
     enrichAssetDocumentation,
+    approveAssetManual,
     isManager,
     createCompanyInvite,
     revokeInvite
@@ -32,9 +34,33 @@ export function createAdminActions(deps) {
   const normalizeUrl = (value) => `${value || ''}`.trim();
   const normalizeUserIdentity = () => `${state.user?.email || state.user?.uid || 'unknown'}`.trim();
 
-  const getReviewSuggestionUrls = (asset = {}) => (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : [])
+  const getReviewSuggestionUrls = (asset = {}) => getReviewableDocumentationSuggestions(asset)
     .map((entry) => normalizeUrl(entry?.url))
     .filter(Boolean);
+
+  const approveManualSources = async (assetId, urls = [], current = {}, metadataByUrl = {}) => {
+    const uniqueUrls = Array.from(new Set((urls || []).map((url) => `${url || ''}`.trim()).filter(Boolean))).slice(0, 2);
+    if (!uniqueUrls.length) return { completed: 0, failed: 0 };
+    let completed = 0;
+    let failed = 0;
+    for (const url of uniqueUrls) {
+      try {
+        const meta = metadataByUrl[url] || {};
+        await approveAssetManual({
+          assetId,
+          sourceUrl: url,
+          sourceTitle: meta.title || current.name || url,
+          sourceType: meta.sourceType || 'approved_doc',
+          approvedSuggestionIndex: Number.isInteger(meta.index) ? meta.index : undefined
+        });
+        completed += 1;
+      } catch (error) {
+        failed += 1;
+        console.error('[approve_asset_manual_admin]', { assetId, url, error });
+      }
+    }
+    return { completed, failed };
+  };
 
   const getFilteredAssetReviewQueue = (filter = 'pending_review') => {
     const normalizedFilter = `${filter || 'pending_review'}`.trim();
@@ -164,17 +190,13 @@ export function createAdminActions(deps) {
       for (const assetId of selectedAssetIds) {
         const current = state.assets.find((asset) => asset.id === assetId);
         if (!current) continue;
-        const selectedUrls = selectedSuggestionsByAsset[assetId].map(normalizeUrl).filter(Boolean);
-        const approved = dedupeUrls([...(current.reviewApprovedSuggestionUrls || []), ...selectedUrls]);
-        const rejected = (current.reviewRejectedSuggestionUrls || []).filter((url) => !selectedUrls.includes(url));
-        await upsertAssetReviewFields(current, {
-          manualLinks: dedupeUrls([...(current.manualLinks || []), ...selectedUrls]),
-          reviewSelectedSuggestionUrls: (current.reviewSelectedSuggestionUrls || []).filter((url) => !selectedUrls.includes(url)),
-          reviewApprovedSuggestionUrls: approved,
-          reviewRejectedSuggestionUrls: rejected,
-          reviewState: 'approved',
-          reviewLastAction: 'bulk_approve'
-        });
+        const originalSuggestions = Array.isArray(current.documentationSuggestions) ? current.documentationSuggestions : [];
+        const approvedEntries = buildDocumentationApprovalSelection(current, { mode: 'selected', selectedUrls: selectedSuggestionsByAsset[assetId] });
+        const selectedUrls = approvedEntries.map((entry) => normalizeUrl(entry?.url)).filter(Boolean);
+        if (!selectedUrls.length) continue;
+        const metadataByUrl = Object.fromEntries(approvedEntries.map((entry, index) => [entry.url, { title: entry.title, sourceType: entry.sourceType, index: originalSuggestions.indexOf(entry) >= 0 ? originalSuggestions.indexOf(entry) : index }]));
+        await upsertAssetReviewFields(current, buildDocumentationApprovalPatch(current, approvedEntries, { reviewAction: 'bulk_approve' }));
+        await approveManualSources(assetId, selectedUrls, current, metadataByUrl);
       }
       state.adminUi = { ...(state.adminUi || {}), selectedSuggestionsByAsset: {} };
       await refreshData();
@@ -211,14 +233,16 @@ export function createAdminActions(deps) {
       const current = state.assets.find((asset) => asset.id === assetId);
       const cleanUrl = normalizeUrl(url);
       if (!current || !cleanUrl) return;
-      await upsertAssetReviewFields(current, {
-        manualLinks: dedupeUrls([...(current.manualLinks || []), cleanUrl]),
-        reviewSelectedSuggestionUrls: dedupeUrls([...(current.reviewSelectedSuggestionUrls || []), cleanUrl]),
-        reviewApprovedSuggestionUrls: dedupeUrls([...(current.reviewApprovedSuggestionUrls || []), cleanUrl]),
-        reviewRejectedSuggestionUrls: (current.reviewRejectedSuggestionUrls || []).filter((entry) => normalizeUrl(entry) !== cleanUrl),
-        reviewState: 'approved',
-        reviewLastAction: 'approve_single'
-      });
+      const originalSuggestions = Array.isArray(current.documentationSuggestions) ? current.documentationSuggestions : [];
+      const approvedEntries = buildDocumentationApprovalSelection(current, { mode: 'single', selectedUrls: [cleanUrl] });
+      if (!approvedEntries.length) {
+        setAdminFeedback({ tone: 'info', message: 'Selected suggestion is not a reviewable manual candidate.' });
+        render();
+        return;
+      }
+      await upsertAssetReviewFields(current, buildDocumentationApprovalPatch(current, approvedEntries, { reviewAction: 'approve_single' }));
+      const approvedSuggestionIndex = originalSuggestions.indexOf(approvedEntries[0]);
+      await approveManualSources(assetId, [cleanUrl], current, { [cleanUrl]: { title: approvedEntries[0].title, sourceType: approvedEntries[0].sourceType, index: approvedSuggestionIndex >= 0 ? approvedSuggestionIndex : 0 } });
       await refreshData();
       setAdminFeedback({ tone: 'success', message: 'Suggestion approved and attached.' });
       render();

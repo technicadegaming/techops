@@ -1,4 +1,4 @@
-import { sortDocumentationSuggestions } from './documentationSuggestions.js';
+import { buildDocumentationApprovalPatch, buildDocumentationApprovalSelection } from './documentationReview.js';
 
 export function createAssetActions(deps) {
   const {
@@ -17,7 +17,6 @@ export function createAssetActions(deps) {
     pickUniqueAssetId,
     createEmptyAssetDraft,
     withTimeout,
-    dedupeUrls,
     normalizeSupportEntries,
     canDelete,
     isAdmin,
@@ -343,15 +342,9 @@ export function createAssetActions(deps) {
       if (!isAdmin(state.permissions)) return;
       const current = state.assets.find((asset) => asset.id === id) || {};
       const originalSuggestions = Array.isArray(current.documentationSuggestions) ? current.documentationSuggestions : [];
-      const suggestions = sortDocumentationSuggestions(originalSuggestions);
-      const strongSuggestions = suggestions
-        .filter((entry) => {
-          const score = Number(entry?.matchScore || 0);
-          const isStrong = score >= 70 || (entry?.isOfficial && score >= 62) || (entry?.sourceType === 'manufacturer' && score >= 60);
-          return isStrong && !!entry?.verified;
-        });
-      const links = strongSuggestions.slice(0, 2).map((entry) => entry.url).filter(Boolean);
-      const metadataByUrl = Object.fromEntries(strongSuggestions.slice(0, 2).map((entry, index) => [entry.url, { title: entry.title, sourceType: entry.sourceType, index: originalSuggestions.indexOf(entry) >= 0 ? originalSuggestions.indexOf(entry) : index }]));
+      const approvedEntries = buildDocumentationApprovalSelection(current, { mode: 'top_trusted' });
+      const links = approvedEntries.map((entry) => entry.url).filter(Boolean);
+      const metadataByUrl = Object.fromEntries(approvedEntries.map((entry, index) => [entry.url, { title: entry.title, sourceType: entry.sourceType, index: originalSuggestions.indexOf(entry) >= 0 ? originalSuggestions.indexOf(entry) : index }]));
       if (!links.length) {
         const weakQuestion = current.enrichmentFollowupQuestion || 'Can you confirm cabinet type/version from the manufacturer plate?';
         await upsertEntity('assets', id, { ...current, enrichmentStatus: 'followup_needed', enrichmentFollowupQuestion: weakQuestion }, state.user);
@@ -360,7 +353,7 @@ export function createAssetActions(deps) {
         render();
         return;
       }
-      await upsertEntity('assets', id, { ...current, manualLinks: dedupeUrls([...(current.manualLinks || []), ...links]), enrichmentStatus: 'verified_manual_found', enrichmentFollowupQuestion: '' }, state.user);
+      await upsertEntity('assets', id, { ...current, ...buildDocumentationApprovalPatch(current, approvedEntries, { reviewAction: 'asset_apply_top_trusted_docs' }) }, state.user);
       const approval = await approveManualSources(id, links, current, metadataByUrl);
       setAssetActionFeedback(id, `Applied ${links.length} trusted documentation link${links.length === 1 ? '' : 's'}${approval.completed ? ` and ingested ${approval.completed}` : ''}${approval.failed ? ` (${approval.failed} ingestion failed)` : ''}.`, approval.failed ? 'info' : 'success');
       await refreshData();
@@ -376,15 +369,13 @@ export function createAssetActions(deps) {
       }
       if (mode === 'manuals' || mode === 'all') {
         const originalSuggestions = Array.isArray(current.documentationSuggestions) ? current.documentationSuggestions : [];
-        const strongManuals = sortDocumentationSuggestions(originalSuggestions)
-          .filter((entry) => !!entry?.verified)
-          .slice(0, 2);
-        const manualUrls = strongManuals.map((entry) => entry?.url).filter(Boolean);
+        const approvedEntries = buildDocumentationApprovalSelection(current, { mode: 'best' });
+        const manualUrls = approvedEntries.map((entry) => entry?.url).filter(Boolean);
         patch.__manualApproval = {
           urls: manualUrls,
-          metadataByUrl: Object.fromEntries(strongManuals.map((entry) => [entry.url, { title: entry.title, sourceType: entry.sourceType, index: originalSuggestions.indexOf(entry) }]))
+          metadataByUrl: Object.fromEntries(approvedEntries.map((entry, index) => [entry.url, { title: entry.title, sourceType: entry.sourceType, index: originalSuggestions.indexOf(entry) >= 0 ? originalSuggestions.indexOf(entry) : index }]))
         };
-        if (manualUrls.length) patch.manualLinks = dedupeUrls([...(current.manualLinks || []), ...manualUrls]);
+        if (manualUrls.length) Object.assign(patch, buildDocumentationApprovalPatch(current, approvedEntries, { reviewAction: 'asset_apply_best_verified_manual' }));
       }
       if (mode === 'support' || mode === 'all') {
         const supportLinks = (Array.isArray(current.supportResourcesSuggestion) ? current.supportResourcesSuggestion : [])
@@ -414,12 +405,12 @@ export function createAssetActions(deps) {
       if (!isAdmin(state.permissions)) return;
       const current = state.assets.find((asset) => asset.id === id) || {};
       const originalSuggestions = Array.isArray(current.documentationSuggestions) ? current.documentationSuggestions : [];
-      const suggestions = sortDocumentationSuggestions(originalSuggestions);
-      const selected = suggestions[index];
+      const approvedEntries = buildDocumentationApprovalSelection(current, { mode: 'top_trusted' });
+      const selected = approvedEntries[index];
       const url = `${selected?.url || ''}`.trim();
       if (!url) return;
       const approvedSuggestionIndex = originalSuggestions.indexOf(selected);
-      await upsertEntity('assets', id, { ...current, manualLinks: dedupeUrls([...(current.manualLinks || []), url]), enrichmentStatus: 'verified_manual_found' }, state.user);
+      await upsertEntity('assets', id, { ...current, ...buildDocumentationApprovalPatch(current, [selected], { reviewAction: 'asset_apply_single_manual' }) }, state.user);
       const approval = await approveManualSources(id, [url], current, { [url]: { title: selected?.title, sourceType: selected?.sourceType, index: approvedSuggestionIndex >= 0 ? approvedSuggestionIndex : index } });
       setAssetActionFeedback(id, `Applied one documentation link${approval.completed ? ' and ingested it' : ''}${approval.failed ? ' (ingestion failed)' : ''}.`, approval.failed ? 'info' : 'success');
       await refreshData();

@@ -97,7 +97,11 @@ test('approved manual metadata preserves type, variant, family, manufacturer, an
         cabinetVariant: '2 player',
         family: 'Fast and Furious Arcade',
         matchedManufacturer: 'raw thrills',
-        confidence: 0.88
+        confidence: 0.88,
+        verified: true,
+        exactTitleMatch: true,
+        exactManualMatch: true,
+        trustedSource: true
       }],
       locationName: 'Front Room'
     },
@@ -111,4 +115,46 @@ test('approved manual metadata preserves type, variant, family, manufacturer, an
   assert.equal(manual.manufacturer, 'Raw Thrills');
   assert.equal(manual.manualConfidence, 0.88);
   assert.equal(manual.assetLocationName, 'Front Room');
+});
+
+
+test('approveAssetManual rejects support-only URLs that are not reviewable manual candidates', async () => {
+  const { approveAssetManual } = require('../src/services/manualIngestionService');
+  const db = {
+    collection() {
+      return {
+        where() { return this; },
+        limit() { return this; },
+        async get() { return { empty: true, docs: [] }; },
+        doc() { return { set: async () => {}, collection() { return { doc() { return { id: '0' }; } }; } }; },
+        add: async () => {}
+      };
+    },
+    batch() { return { set() {}, async commit() {} }; },
+    recursiveDelete: async () => {}
+  };
+  const storage = { bucket() { return { file() { return { save: async () => {} }; } }; } };
+
+  await assert.rejects(() => approveAssetManual({
+    db,
+    storage,
+    asset: {
+      id: 'asset1',
+      companyId: 'company-a',
+      name: 'Jurassic Park',
+      manufacturer: 'Raw Thrills',
+      documentationSuggestions: [{
+        url: 'https://rawthrills.com/service-support/',
+        title: 'Raw Thrills Service Support',
+        sourceType: 'support',
+        verified: true,
+        exactTitleMatch: false,
+        exactManualMatch: false,
+        trustedSource: true,
+        verificationKind: 'support_html'
+      }]
+    },
+    userId: 'user1',
+    sourceUrl: 'https://rawthrills.com/service-support/'
+  }), /not a reviewable manual candidate/);
 });

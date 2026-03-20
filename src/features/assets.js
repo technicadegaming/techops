@@ -9,6 +9,7 @@ import {
 } from './locationContext.js';
 import { formatRelativeTime } from './notifications.js';
 import { sortDocumentationSuggestions } from './documentationSuggestions.js';
+import { getReviewableDocumentationSuggestions } from './documentationReview.js';
 
 function renderAssetCardFallback(asset, error) {
   const id = `${asset?.id || 'unknown'}`;
@@ -209,7 +210,7 @@ function renderPreviewPanel(state) {
 function renderEnrichmentDetails(asset, manager, state) {
   const status = normalizeEnrichmentStatus(asset.enrichmentStatus || 'idle');
   const stale = isEnrichmentStale(asset);
-  const suggestions = sortDocumentationSuggestions((Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).filter((entry) => !entry?.deadPage && !entry?.unreachable));
+  const suggestions = getReviewableDocumentationSuggestions(asset);
   const supportLinks = (Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []).filter((entry) => !entry?.deadPage && !entry?.unreachable);
   const hiddenDeadLinks = (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).length - suggestions.length;
   const contacts = Array.isArray(asset.supportContactsSuggestion) ? asset.supportContactsSuggestion : [];
