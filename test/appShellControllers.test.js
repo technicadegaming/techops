@@ -22,6 +22,10 @@ async function loadDocumentationReviewHelpers() {
   return import('../src/features/documentationReview.js');
 }
 
+async function loadAssetEnrichmentPipeline() {
+  return import('../src/features/assetEnrichmentPipeline.js');
+}
+
 function createSelectElement() {
   return {
     innerHTML: '',
@@ -257,6 +261,46 @@ test('auth controller password helpers report unmet requirements and confirm-sta
     buildRegisterPasswordHelpText('lowercase', 'different'),
     'ok at least 8 characters | missing one uppercase letter | ok one lowercase letter | missing one number | passwords do not match'
   );
+});
+
+test('asset and admin enrichment surfaces share the same manual trigger request and approval helper', async () => {
+  const {
+    approveSuggestedManualSources,
+    buildFollowupEnrichmentRequest,
+    buildManualEnrichmentRequest
+  } = await loadAssetEnrichmentPipeline();
+
+  assert.deepEqual(buildManualEnrichmentRequest(), { trigger: 'manual' });
+  assert.deepEqual(buildFollowupEnrichmentRequest('  exact subtitle  '), {
+    trigger: 'followup_answer',
+    followupAnswer: 'exact subtitle'
+  });
+
+  const approvalCalls = [];
+  const approvalResult = await approveSuggestedManualSources({
+    assetId: 'asset-1',
+    urls: ['https://example.com/manual.pdf', 'https://example.com/manual.pdf'],
+    current: { name: 'Quik Drop' },
+    metadataByUrl: {
+      'https://example.com/manual.pdf': {
+        title: 'Quik Drop Service Manual',
+        sourceType: 'distributor',
+        index: 0
+      }
+    },
+    approveAssetManual: async (payload) => {
+      approvalCalls.push(payload);
+    }
+  });
+
+  assert.deepEqual(approvalResult, { completed: 1, failed: 0 });
+  assert.deepEqual(approvalCalls, [{
+    assetId: 'asset-1',
+    sourceUrl: 'https://example.com/manual.pdf',
+    sourceTitle: 'Quik Drop Service Manual',
+    sourceType: 'distributor',
+    approvedSuggestionIndex: 0
+  }]);
 });
 
 
