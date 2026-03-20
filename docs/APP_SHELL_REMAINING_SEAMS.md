@@ -4,6 +4,17 @@ This document captures the **current** implementation-aware hotspot audit for `s
 
 If you are approaching the shell for the first time, read `README.md` for the documentation map and `docs/FRONTEND_STRUCTURE.md` for the broader frontend module layout before using this seams audit as the “what still lives here and why” reference.
 
+## Stabilization guidance: where this effort stops for now
+
+The current recommendation is to **stop at the present controller/support-module split and stabilize here** unless a concrete bug, testability gap, or release-blocking maintenance problem justifies another extraction.
+
+In practice that means:
+
+- treat this document as the source of truth for what still intentionally stays in `src/app.js`;
+- prefer adding single-domain behavior in `src/features/*` or focused `src/app/*` helpers instead of reopening broad shell decomposition work;
+- run `npm run test:app-shell` for shell/controller seam changes so stabilization stays backed by a lightweight regression suite;
+- use `docs/FRONTEND_STRUCTURE.md` for module-placement guidance and `docs/APP_SHELL_REFACTOR_PLAN.md` only when historical extraction context is actually needed.
+
 ## Audit scope
 
 This audit reviewed:

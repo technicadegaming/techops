@@ -15,13 +15,22 @@ npm install --prefix functions
 
 ## Pre-deploy validation
 
-Run all checks before merging and before deploying:
+Use `README.md` for the contributor start path and `docs/RELEASE_CHECKLIST.md` for the full release gate. Before merging and before deploying, run the baseline checks plus any change-specific suites that apply:
 
 ```bash
 npm run lint
 npm run test --prefix functions
+```
+
+Add these when relevant:
+
+```bash
+npm run test:app-shell
 npm run test:rules
 ```
+
+- Run `npm run test:app-shell` when a change touches `src/app.js`, `src/app/*`, or the app-shell/controller seams described in `docs/APP_SHELL_REMAINING_SEAMS.md`.
+- Run `npm run test:rules` for Firestore rules, Storage rules, tenant-scoping behavior, storage path enforcement, or other security-sensitive access changes.
 
 ## Recommended deploy order
 

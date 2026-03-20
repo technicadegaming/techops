@@ -32,12 +32,23 @@ npm install --prefix functions
 
 ### Verify locally
 
+Start with the baseline checks on every contributor-facing change:
+
 ```bash
 npm run lint
 npm run test --prefix functions
+```
+
+Then add the change-specific checks that match your touch points:
+
+```bash
 npm run test:app-shell
 npm run test:rules
 ```
+
+- Run `npm run test:app-shell` when you touch `src/app.js`, `src/app/*`, or frontend shell/controller seams that feed the signed-in app shell.
+- Run `npm run test:rules` when you touch `firestore.rules`, `storage.rules`, tenant-scoped data access, storage path enforcement, or other security-sensitive access boundaries.
+- If you need deploy/release-specific gates, use `docs/DEPLOYMENT.md` and `docs/RELEASE_CHECKLIST.md` as the source of truth rather than copying those steps into feature docs.
 
 ### Start here: contributor path
 
@@ -47,8 +58,9 @@ If you are new to this repository, use this order first:
 2. Read `docs/ARCHITECTURE.md` for the high-level Firebase architecture and backend/frontend module map.
 3. Read `docs/DATA_MODEL.md` for the current Firestore + Storage tenant model (`companyId`, storage path scoping, and major collections).
 4. Read `docs/FRONTEND_STRUCTURE.md` for where frontend code lives today and how `src/app.js`, `src/app/*`, and `src/features/*` fit together.
-5. If your work touches the app shell, then read `docs/APP_SHELL_REMAINING_SEAMS.md` first and `docs/APP_SHELL_REFACTOR_PLAN.md` second.
-6. Before shipping or reviewing operational changes, use the deploy/security docs in the documentation map below.
+5. If your work touches the app shell, read `docs/APP_SHELL_REMAINING_SEAMS.md` first for the current stabilization boundary, then `docs/APP_SHELL_REFACTOR_PLAN.md` only if you need the extraction history.
+6. Before touching deploy flow, release gates, or security-sensitive boundaries, read `docs/DEPLOYMENT.md`, `docs/RELEASE_CHECKLIST.md`, and `docs/SECURITY.md`.
+7. Before touching schema or storage conventions, re-check `docs/DATA_MODEL.md`; before moving frontend structure, re-check `docs/FRONTEND_STRUCTURE.md`.
 
 ### Documentation map
 

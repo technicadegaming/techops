@@ -15,6 +15,8 @@ This repository is a Firebase-based, multi-tenant operations platform evolving i
 - Install functions deps: `npm install --prefix functions`
 - Lint: `npm run lint`
 - Functions tests: `npm run test --prefix functions`
+- App-shell tests: `npm run test:app-shell`
+- Rules tests: `npm run test:rules`
 - Deploy hosting: `firebase deploy --only hosting`
 - Deploy functions: `firebase deploy --only functions`
 - Deploy rules: `firebase deploy --only firestore:rules,storage`
@@ -30,4 +32,8 @@ A change is done only when all are true:
 2. Docs are updated when commands/architecture/workflows changed.
 3. `npm run lint` passes.
 4. `npm run test --prefix functions` passes.
-5. PR description includes risk notes + any manual follow-up.
+5. `npm run test:app-shell` passes when shell modules, shell controllers, or `src/app.js`/`src/features/*` seams are touched.
+6. `npm run test:rules` passes when Firestore rules, Storage rules, tenant boundaries, or other security-sensitive access paths are touched, and the required Firebase emulators are available.
+7. PR description includes risk notes + any manual follow-up.
+
+For contributor/reviewer reading order, use `README.md` as the start path, then jump to `docs/DATA_MODEL.md`, `docs/FRONTEND_STRUCTURE.md`, `docs/DEPLOYMENT.md`, `docs/RELEASE_CHECKLIST.md`, `docs/SECURITY.md`, and `docs/APP_SHELL_REMAINING_SEAMS.md` based on the area being changed.
