@@ -30,6 +30,7 @@ This pass does **not** change runtime behavior. It only proposes a decomposition
 - Completed seventh extraction pass: admin action/dependency assembly now lives in `src/app/adminController.js`, while `src/app.js` still owns top-level lifecycle sequencing and final admin render ordering.
 - Completed eighth extraction pass: reports shell wiring now lives in `src/app/reportsController.js`, while `src/app.js` still owns top-level render ordering, lifecycle sequencing, and final report-section inclusion in the overall shell render.
 - Completed ninth extraction pass: account shell wiring now lives in `src/app/accountController.js`, while `src/app.js` still owns top-level render ordering, lifecycle sequencing, auth/bootstrap state, and final account-section inclusion in the overall shell render.
+- Completed tenth extraction pass: signed-out auth form wiring now lives in `src/app/authController.js`, while `src/app.js` still owns auth state watching, signed-in versus signed-out shell switching, bootstrap/profile resolution, and final lifecycle sequencing.
 
 ## Current hotspot audit
 
