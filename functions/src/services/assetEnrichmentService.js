@@ -74,6 +74,37 @@ const VERIFY_TIMEOUT_MS = 3500;
 const VERIFY_MAX_SUGGESTIONS = 5;
 const COMMON_SHORT_TITLE_WORDS = new Set(['the', 'pro', 'plus', 'super', 'game', 'deluxe', 'sport']);
 const MANUAL_INTENT_TOKENS = ['manual', 'operator', 'service', 'parts', 'install', 'installation', 'schematic', 'instruction'];
+
+const TERMINAL_ENRICHMENT_STATUSES = new Set(['docs_found', 'no_match_yet', 'followup_needed', 'lookup_failed']);
+
+function buildAssetEnrichmentLogger({ traceId = '', assetId = '', triggerSource = '' } = {}) {
+  return (event, payload = {}) => {
+    console.log(`assetEnrichment:${event}`, { traceId, assetId, triggerSource, ...payload });
+  };
+}
+
+function isTerminalEnrichmentStatus(status) {
+  return TERMINAL_ENRICHMENT_STATUSES.has(`${status || ''}`.trim());
+}
+
+async function writeTerminalFailureState({ assetRef, userId, code, message, log, phase = 'defensive_failure_write' }) {
+  const payload = {
+    enrichmentStatus: 'lookup_failed',
+    enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    enrichmentFailedAt: admin.firestore.FieldValue.serverTimestamp(),
+    enrichmentErrorCode: `${code || 'unknown'}`.trim() || 'unknown',
+    enrichmentErrorMessage: `${message || 'Asset docs lookup failed.'}`.trim().slice(0, 240),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: userId
+  };
+  await assetRef.set(payload, { merge: true });
+  log(phase, {
+    enrichmentStatus: payload.enrichmentStatus,
+    enrichmentErrorCode: payload.enrichmentErrorCode,
+    enrichmentErrorMessage: payload.enrichmentErrorMessage
+  });
+}
+
 const SOFT_404_TEXT_PATTERNS = [
   /sorry[,\s]+the page you are looking for/i,
   /we (?:could|can) not find/i,
@@ -981,11 +1012,20 @@ async function runLookupPreview({ settings, traceId, draftAsset, fetchImpl = fet
   };
 }
 
-async function enrichAssetDocumentation({ db, assetId, userId, settings, triggerSource, followupAnswer, traceId }) {
+async function enrichAssetDocumentation({ db, assetId, userId, settings, triggerSource, followupAnswer, traceId, dependencies = {} }) {
   const assetRef = db.collection('assets').doc(assetId);
   const assetSnap = await assetRef.get();
   if (!assetSnap.exists) throw new HttpsError('not-found', 'Asset not found');
   const asset = assetSnap.data() || {};
+  const runLookup = dependencies.runLookupPreview || runLookupPreview;
+  const verifySuggestions = dependencies.verifyDocumentationSuggestions || verifyDocumentationSuggestions;
+  const findReusableManuals = dependencies.findReusableVerifiedManuals || findReusableVerifiedManuals;
+  const log = buildAssetEnrichmentLogger({ traceId, assetId, triggerSource });
+
+  log('start', {
+    existingStatus: asset.enrichmentStatus || 'idle',
+    followupProvided: Boolean(`${followupAnswer || ''}`.trim())
+  });
 
   await assetRef.set({
     enrichmentStatus: triggerSource === 'post_save' ? 'searching_docs' : 'in_progress',
@@ -997,133 +1037,155 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     updatedBy: userId
   }, { merge: true });
 
+  let terminalStatus = '';
   try {
-    const preview = await runLookupPreview({
-    settings,
-    traceId,
-    draftAsset: { ...asset, assetId, followupAnswer }
-  });
+    const preview = await runLookup({
+      settings,
+      traceId,
+      draftAsset: { ...asset, assetId, followupAnswer }
+    });
 
-  const confidence = Number(preview?.confidence || 0);
-  const normalizedName = preview?.normalizedName || asset.name || '';
-  const manufacturerSuggestion = preview?.likelyManufacturer || '';
-  const manufacturerProfile = getManufacturerProfile(asset?.manufacturer, manufacturerSuggestion, normalizedName, preview?.likelyCategory);
-  const matchedManufacturer = manufacturerProfile?.key || normalizePhrase(manufacturerSuggestion);
-  const reusedSuggestions = await findReusableVerifiedManuals({
-    db,
-    asset: { ...asset, normalizedName },
-    assetId,
-    companyId: asset.companyId || '',
-    matchedManufacturer
-  });
-  const suggestions = mergeDocumentationSuggestions({
-    existingSuggestions: asset.documentationSuggestions || [],
-    nextSuggestions: [
-      ...(await verifyDocumentationSuggestions(preview.documentationSuggestions || [])),
-      ...reusedSuggestions
-    ]
-  });
-  const confidenceThreshold = settings.aiConfidenceThreshold || 0.45;
+    const confidence = Number(preview?.confidence || 0);
+    const normalizedName = preview?.normalizedName || asset.name || '';
+    const manufacturerSuggestion = preview?.likelyManufacturer || '';
+    const manufacturerProfile = getManufacturerProfile(asset?.manufacturer, manufacturerSuggestion, normalizedName, preview?.likelyCategory);
+    const matchedManufacturer = manufacturerProfile?.key || normalizePhrase(manufacturerSuggestion);
 
-  const strongSuggestions = suggestions.filter((s) => {
-    const scoreGate = s.matchScore >= 80 || (s.isOfficial && s.matchScore >= 76);
-    const exactGate = !!s.exactTitleMatch && !!s.exactManualMatch;
-    return scoreGate && exactGate;
-  });
-  const strongVerifiedSuggestions = strongSuggestions.filter((s) => s.verified && s.trustedSource);
-  const hasUsableVerifiedManual = hasUsableVerifiedManualSuggestion(suggestions);
-  const hasConfidentSingleMatch = confidence >= confidenceThreshold && strongVerifiedSuggestions.length === 1;
-  const topSuggestionScore = suggestions[0]?.matchScore || 0;
-  const isAmbiguousTitle = suggestions.length > 1 && topSuggestionScore < 78;
-  const hasUnverifiedCandidates = suggestions.some((s) => !s.verified && !s.deadPage && !s.unreachable);
-  const hasOnlyFailedVerification = suggestions.length > 0 && !strongVerifiedSuggestions.length;
+    log('catalog_match_decision', {
+      matchedManufacturer: matchedManufacturer || '',
+      catalogMatch: Boolean(preview?.catalogMatch),
+      previewDocumentationSuggestions: Array.isArray(preview?.documentationSuggestions) ? preview.documentationSuggestions.length : 0
+    });
+    log('discovery_start', {
+      searchHints: Array.isArray(preview?.searchHints) ? preview.searchHints.length : 0
+    });
+    log('discovery_complete', {
+      documentationSuggestions: Array.isArray(preview?.documentationSuggestions) ? preview.documentationSuggestions.length : 0,
+      supportResourcesSuggestion: Array.isArray(preview?.supportResourcesSuggestion) ? preview.supportResourcesSuggestion.length : 0
+    });
 
-  const followupQuestion = hasUsableVerifiedManual
-    ? ''
-    : (hasConfidentSingleMatch
-    ? ''
-    : (isAmbiguousTitle
-      ? 'What exact cabinet nameplate text or subtitle/version appears under the logo (for example DX/Deluxe/SDX)?'
-      : buildFollowupQuestion({
-        parsedQuestion: preview?.oneFollowupQuestion,
-        profile: manufacturerProfile,
-        likelyCategory: preview?.likelyCategory,
-        hasOnlyFailedVerification
-      })));
-  const shouldSetManufacturer = !asset.manufacturer && confidence >= Math.max(0.75, confidenceThreshold) && manufacturerSuggestion;
+    const reusedSuggestions = await findReusableManuals({
+      db,
+      asset: { ...asset, normalizedName },
+      assetId,
+      companyId: asset.companyId || '',
+      matchedManufacturer
+    });
+    const suggestions = mergeDocumentationSuggestions({
+      existingSuggestions: asset.documentationSuggestions || [],
+      nextSuggestions: [
+        ...(await verifySuggestions(preview.documentationSuggestions || [])),
+        ...reusedSuggestions
+      ]
+    });
+    const confidenceThreshold = settings.aiConfidenceThreshold || 0.45;
 
-  const status = hasUsableVerifiedManual
-    ? 'docs_found'
-    : (hasUnverifiedCandidates ? 'needs_follow_up' : 'no_match_yet');
+    const strongSuggestions = suggestions.filter((s) => {
+      const scoreGate = s.matchScore >= 80 || (s.isOfficial && s.matchScore >= 76);
+      const exactGate = !!s.exactTitleMatch && !!s.exactManualMatch;
+      return scoreGate && exactGate;
+    });
+    const strongVerifiedSuggestions = strongSuggestions.filter((s) => s.verified && s.trustedSource);
+    const hasUsableVerifiedManual = hasUsableVerifiedManualSuggestion(suggestions);
+    const hasConfidentSingleMatch = confidence >= confidenceThreshold && strongVerifiedSuggestions.length === 1;
+    const topSuggestionScore = suggestions[0]?.matchScore || 0;
+    const isAmbiguousTitle = suggestions.length > 1 && topSuggestionScore < 78;
+    const hasUnverifiedCandidates = suggestions.some((s) => !s.verified && !s.deadPage && !s.unreachable);
+    const hasOnlyFailedVerification = suggestions.length > 0 && !strongVerifiedSuggestions.length;
 
-  const updatePayload = {
-    normalizedName,
-    documentationSuggestions: suggestions,
-    enrichmentConfidence: confidence,
-    enrichmentFollowupQuestion: followupQuestion,
-    enrichmentStatus: status,
-    enrichmentFailedAt: null,
-    enrichmentErrorCode: '',
-    enrichmentErrorMessage: '',
-    enrichmentCandidates: [
-      manufacturerSuggestion,
-      preview?.likelyCategory,
-      preview?.normalizedName
-    ].filter(Boolean).slice(0, 5),
-    enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    updatedBy: userId
-  };
+    const followupQuestion = hasUsableVerifiedManual
+      ? ''
+      : (hasConfidentSingleMatch
+        ? ''
+        : (isAmbiguousTitle
+          ? 'What exact cabinet nameplate text or subtitle/version appears under the logo (for example DX/Deluxe/SDX)?'
+          : buildFollowupQuestion({
+            parsedQuestion: preview?.oneFollowupQuestion,
+            profile: manufacturerProfile,
+            likelyCategory: preview?.likelyCategory,
+            hasOnlyFailedVerification
+          })));
+    const shouldSetManufacturer = !asset.manufacturer && confidence >= Math.max(0.75, confidenceThreshold) && manufacturerSuggestion;
 
-  const followupAnswerText = `${followupAnswer || asset.enrichmentFollowupAnswer || ''}`.trim();
-  if (followupAnswerText) {
-    updatePayload.enrichmentFollowupAnswer = followupAnswerText;
-    updatePayload.enrichmentFollowupAnsweredAt = admin.firestore.FieldValue.serverTimestamp();
-  }
+    const status = hasUsableVerifiedManual
+      ? 'docs_found'
+      : (hasUnverifiedCandidates ? 'followup_needed' : 'no_match_yet');
+    terminalStatus = status;
 
-  if (manufacturerSuggestion) updatePayload.manufacturerSuggestion = manufacturerSuggestion;
-  if (Array.isArray(preview.supportResourcesSuggestion) && preview.supportResourcesSuggestion.length) updatePayload.supportResourcesSuggestion = preview.supportResourcesSuggestion;
-  if (Array.isArray(preview.supportContactsSuggestion) && preview.supportContactsSuggestion.length) updatePayload.supportContactsSuggestion = preview.supportContactsSuggestion;
-  if (Array.isArray(preview.alternateNames) && preview.alternateNames.length) updatePayload.alternateNames = preview.alternateNames;
-  if (Array.isArray(preview.searchHints) && preview.searchHints.length) updatePayload.searchHints = preview.searchHints;
-  if (preview.topMatchReason) updatePayload.topMatchReason = preview.topMatchReason;
-  if (matchedManufacturer) updatePayload.matchedManufacturer = matchedManufacturer;
-  if (preview.catalogMatch) updatePayload.manualLookupCatalogMatch = preview.catalogMatch;
-  if (shouldSetManufacturer) updatePayload.manufacturer = manufacturerSuggestion;
+    log('final_counts', {
+      documentationSuggestions: suggestions.length,
+      supportResourcesSuggestion: Array.isArray(preview.supportResourcesSuggestion) ? preview.supportResourcesSuggestion.length : 0
+    });
 
-  await assetRef.set(updatePayload, { merge: true });
+    const updatePayload = {
+      normalizedName,
+      documentationSuggestions: suggestions,
+      enrichmentConfidence: confidence,
+      enrichmentFollowupQuestion: followupQuestion,
+      enrichmentStatus: status,
+      enrichmentFailedAt: null,
+      enrichmentErrorCode: '',
+      enrichmentErrorMessage: '',
+      enrichmentCandidates: [
+        manufacturerSuggestion,
+        preview?.likelyCategory,
+        preview?.normalizedName
+      ].filter(Boolean).slice(0, 5),
+      enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedBy: userId
+    };
 
-  await db.collection('auditLogs').add({
-    action: 'asset_enrichment_run',
-    entityType: 'assets',
-    entityId: assetId,
-    summary: `Asset enrichment ${triggerSource || 'manual'} for ${assetId}`,
-    userUid: userId,
-    timestamp: admin.firestore.FieldValue.serverTimestamp(),
-    confidence,
-    suggestions: suggestions.length
-  });
+    const followupAnswerText = `${followupAnswer || asset.enrichmentFollowupAnswer || ''}`.trim();
+    if (followupAnswerText) {
+      updatePayload.enrichmentFollowupAnswer = followupAnswerText;
+      updatePayload.enrichmentFollowupAnsweredAt = admin.firestore.FieldValue.serverTimestamp();
+    }
 
-  return {
-    ok: true,
-    assetId,
-    confidence,
-    status,
-    followupQuestion,
-    suggestions
-  };
+    if (manufacturerSuggestion) updatePayload.manufacturerSuggestion = manufacturerSuggestion;
+    if (Array.isArray(preview.supportResourcesSuggestion) && preview.supportResourcesSuggestion.length) updatePayload.supportResourcesSuggestion = preview.supportResourcesSuggestion;
+    if (Array.isArray(preview.supportContactsSuggestion) && preview.supportContactsSuggestion.length) updatePayload.supportContactsSuggestion = preview.supportContactsSuggestion;
+    if (Array.isArray(preview.alternateNames) && preview.alternateNames.length) updatePayload.alternateNames = preview.alternateNames;
+    if (Array.isArray(preview.searchHints) && preview.searchHints.length) updatePayload.searchHints = preview.searchHints;
+    if (preview.topMatchReason) updatePayload.topMatchReason = preview.topMatchReason;
+    if (matchedManufacturer) updatePayload.matchedManufacturer = matchedManufacturer;
+    if (preview.catalogMatch) updatePayload.manualLookupCatalogMatch = preview.catalogMatch;
+    if (shouldSetManufacturer) updatePayload.manufacturer = manufacturerSuggestion;
+
+    await assetRef.set(updatePayload, { merge: true });
+    log('terminal_status_write', { enrichmentStatus: status });
+
+    await db.collection('auditLogs').add({
+      action: 'asset_enrichment_run',
+      entityType: 'assets',
+      entityId: assetId,
+      summary: `Asset enrichment ${triggerSource || 'manual'} for ${assetId}`,
+      userUid: userId,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      confidence,
+      suggestions: suggestions.length
+    });
+
+    return {
+      ok: true,
+      assetId,
+      confidence,
+      status,
+      followupQuestion,
+      suggestions
+    };
   } catch (error) {
     const code = `${error?.code || ''}`.trim() || 'unknown';
     const message = `${error?.message || error || 'Asset docs lookup failed.'}`.trim();
-    await assetRef.set({
-      enrichmentStatus: 'docs_failed',
-      enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      enrichmentFailedAt: admin.firestore.FieldValue.serverTimestamp(),
-      enrichmentErrorCode: code,
-      enrichmentErrorMessage: message.slice(0, 240),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedBy: userId
-    }, { merge: true });
+    if (!isTerminalEnrichmentStatus(terminalStatus)) {
+      await writeTerminalFailureState({
+        assetRef,
+        userId,
+        code,
+        message,
+        log
+      });
+    }
     throw error;
   }
 }

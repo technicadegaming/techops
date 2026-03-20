@@ -4,6 +4,8 @@ const MAX_DISCOVERY_RESULTS = 10;
 const MAX_FOLLOWUP_FETCHES = 4;
 const MAX_ADAPTER_FETCHES = 8;
 const MAX_SEED_FETCHES = 6;
+const MAX_SEARCH_QUERIES = 6;
+const FETCH_TIMEOUT_MS = 3500;
 const SEARCH_FOLLOWUP_PRIORITY = 0;
 const ADAPTER_FOLLOWUP_PRIORITY = 1;
 const MANUAL_KEYWORDS = ['manual', 'operator', 'service', 'parts', 'install', 'installation', 'schematic', 'instruction', 'owners'];
@@ -143,6 +145,23 @@ function extractHref(rawHref) {
   return '';
 }
 
+
+function isAbortLikeError(error) {
+  const code = `${error?.code || ''}`.toLowerCase();
+  const name = `${error?.name || ''}`.toLowerCase();
+  return code === 'abort_err' || code === 'aborted' || name === 'aborterror';
+}
+
+async function fetchWithTimeout(url, options = {}, fetchImpl = fetch, timeoutMs = FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetchImpl(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function buildManufacturerQueryTerms(manufacturer, manufacturerProfile) {
   return Array.from(new Set([
     `${manufacturer || ''}`.trim(),
@@ -191,7 +210,7 @@ function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) 
 
 async function searchDuckDuckGoHtml(query, fetchImpl = fetch) {
   const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-  const response = await fetchImpl(url, { headers: { 'user-agent': SEARCH_USER_AGENT } });
+  const response = await fetchWithTimeout(url, { headers: { 'user-agent': SEARCH_USER_AGENT } }, fetchImpl);
   if (!response.ok) throw new Error(`Search request failed with status ${response.status}`);
   const html = await response.text();
   const matches = Array.from(html.matchAll(/<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi));
@@ -454,7 +473,16 @@ function extractAnchorCandidates(html, pageUrl, { mode = 'default' } = {}) {
 }
 
 async function extractManualLinksFromHtmlPage({ pageUrl, pageTitle, manufacturer, titleVariants, manufacturerProfile, fetchImpl = fetch, logEvent = () => {} }) {
-  const response = await fetchImpl(pageUrl, { headers: { 'user-agent': SEARCH_USER_AGENT } });
+  let response;
+  try {
+    response = await fetchWithTimeout(pageUrl, { headers: { 'user-agent': SEARCH_USER_AGENT } }, fetchImpl);
+  } catch (error) {
+    logEvent('html_followup_error', {
+      pageUrl,
+      reason: isAbortLikeError(error) ? 'timeout' : sanitizeDiagnosticValue(error?.message || String(error), 120)
+    });
+    return [];
+  }
   if (!response.ok) {
     logEvent('html_followup_error', { pageUrl, status: response.status });
     return [];
@@ -561,7 +589,7 @@ function buildManufacturerDiscoverySeedPages({ title, manufacturerProfile }) {
 async function crawlManufacturerSeedPages({ candidates, manufacturer, titleVariants, manufacturerProfile, fetchImpl, manualRows, supportRows, followupPages, logEvent }) {
   for (const candidate of dedupeByUrl(candidates).slice(0, MAX_SEED_FETCHES)) {
     try {
-      const response = await fetchImpl(candidate.url, { headers: { 'user-agent': SEARCH_USER_AGENT } });
+      const response = await fetchWithTimeout(candidate.url, { headers: { 'user-agent': SEARCH_USER_AGENT } }, fetchImpl);
       if (!response.ok) {
         logEvent('seed_probe_rejected', { adapter: candidate.adapter, url: candidate.url, status: response.status, reason: 'http_error' });
         continue;
@@ -618,7 +646,7 @@ async function crawlManufacturerSeedPages({ candidates, manufacturer, titleVaria
       logEvent('seed_probe_error', {
         adapter: candidate.adapter,
         url: candidate.url,
-        reason: sanitizeDiagnosticValue(error?.message || String(error), 120)
+        reason: isAbortLikeError(error) ? 'timeout' : sanitizeDiagnosticValue(error?.message || String(error), 120)
       });
     }
   }
@@ -721,7 +749,7 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile }) {
 async function probeAdapterCandidates({ candidates, manufacturer, titleVariants, manufacturerProfile, fetchImpl, manualRows, supportRows, followupPages, logEvent }) {
   for (const candidate of dedupeByUrl(candidates).slice(0, MAX_ADAPTER_FETCHES)) {
     try {
-      const response = await fetchImpl(candidate.url, { headers: { 'user-agent': SEARCH_USER_AGENT } });
+      const response = await fetchWithTimeout(candidate.url, { headers: { 'user-agent': SEARCH_USER_AGENT } }, fetchImpl);
       const contentType = `${response.headers?.get?.('content-type') || ''}`.toLowerCase();
       if (!response.ok) {
         logEvent('adapter_probe_rejected', {
@@ -775,7 +803,7 @@ async function probeAdapterCandidates({ candidates, manufacturer, titleVariants,
       logEvent('adapter_probe_error', {
         adapter: candidate.adapter,
         url: candidate.url,
-        reason: sanitizeDiagnosticValue(error?.message || String(error), 120)
+        reason: isAbortLikeError(error) ? 'timeout' : sanitizeDiagnosticValue(error?.message || String(error), 120)
       });
     }
   }
@@ -791,7 +819,7 @@ async function discoverManualDocumentation({ assetName, normalizedName, manufact
     ...exactTitleQueries.map((query) => ({ query, mode: 'exact_pdf' })),
     ...fallbackQueries.map((query) => ({ query, mode: 'fallback' })),
     ...searchHints.slice(0, 3).map((query) => ({ query, mode: 'hint' }))
-  ];
+  ].slice(0, MAX_SEARCH_QUERIES);
 
   const manualRows = [];
   const supportRows = [];
@@ -853,7 +881,7 @@ async function discoverManualDocumentation({ assetName, normalizedName, manufact
         provider: searchProvider?.name || 'anonymous_search_provider',
         mode,
         query: sanitizeDiagnosticValue(query, 160),
-        reason: sanitizeDiagnosticValue(error?.message || String(error), 120)
+        reason: isAbortLikeError(error) ? 'timeout' : sanitizeDiagnosticValue(error?.message || String(error), 120)
       });
       return [];
     });
@@ -938,7 +966,7 @@ async function discoverManualDocumentation({ assetName, normalizedName, manufact
     }).catch((error) => {
       logEvent('html_followup_error', {
         pageUrl: page.url,
-        reason: sanitizeDiagnosticValue(error?.message || String(error), 120)
+        reason: isAbortLikeError(error) ? 'timeout' : sanitizeDiagnosticValue(error?.message || String(error), 120)
       });
       return [];
     });
