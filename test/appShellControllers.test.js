@@ -229,12 +229,12 @@ test('navigation controller updates route, delegates focus pushes, and syncs adm
 
   const nextRoute = controller.updateRoute({ locationKey: 'loc-2', tab: 'operations' });
   assert.deepEqual(nextRoute, { tab: 'operations', locationKey: 'loc-2' });
-  assert.equal(history.pushes.at(-1), '/app?tab=operations&taskId=t-1&locationKey=loc-2');
+  assert.equal(global.history.pushes.at(-1), '/app?tab=operations&taskId=t-1&locationKey=loc-2');
 
   const focusResult = controller.applyShellFocusAndPush('missing_docs');
   assert.deepEqual(focusResult, { routeChanged: true });
   assert.equal(state.route.assetFilter, 'missing_docs');
-  assert.equal(history.pushes.at(-1), '/app?tab=operations&taskId=t-1&locationKey=loc-2&assetFilter=missing_docs');
+  assert.equal(global.history.pushes.at(-1), '/app?tab=operations&taskId=t-1&locationKey=loc-2&assetFilter=missing_docs');
   assert.deepEqual(focusCalls[0], { focus: 'missing_docs', options: ['setAdminSection'] });
 
   controller.openAdminTools();
