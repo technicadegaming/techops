@@ -17,13 +17,13 @@
     ],
     "family": "Quik Drop",
     "allowFamilyFallback": false,
-    "manualPdfUrl": "https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf",
-    "alternateManualUrl": "https://parts.baytekent.com/manuals/quik-drop-operator-manual.pdf",
-    "sourcePageUrl": "https://parts.baytekent.com/support/quik-drop",
-    "linkType": "official_pdf",
+    "manualPdfUrl": "https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf",
+    "alternateManualUrl": "",
+    "sourcePageUrl": "https://www.betson.com/amusement-products/quik-drop/",
+    "linkType": "distributor_pdf",
     "matchStatus": "catalog_exact",
     "confidence": 0.99,
-    "notes": "Known-good curated Bay Tek match from workbook process; prefer direct official PDF over generic support/distributor pages.",
-    "lookupMethod": "catalog_curated_official_pdf"
+    "notes": "Known-good curated Quik Drop match from verified Betson distributor PDF; avoid dead Bay Tek parts/manual URLs and preserve fallback discovery when curated links fail verification.",
+    "lookupMethod": "catalog_curated_distributor_pdf"
   }
 ]

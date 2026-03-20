@@ -769,7 +769,24 @@ function buildLookupContext(asset, assetId, followupAnswer = '') {
   };
 }
 
-async function runLookupPreview({ settings, traceId, draftAsset }) {
+async function shouldDiscoverAfterCatalogMatch({ catalogMatch, confidence, draftAsset, normalizedName, manufacturerSuggestion, followupAnswer, fetchImpl = fetch }) {
+  if (!catalogMatch) return true;
+  const normalizedCatalogSuggestions = normalizeDocumentationSuggestions({
+    links: catalogMatch.documentationSuggestions,
+    confidence: Math.max(confidence, Number(catalogMatch.confidence || 0.95)),
+    asset: draftAsset || {},
+    normalizedName,
+    manufacturerSuggestion,
+    followupAnswer
+  });
+  if (!normalizedCatalogSuggestions.length) return true;
+
+  const verifiedCatalogSuggestions = await verifyDocumentationSuggestions(normalizedCatalogSuggestions, fetchImpl);
+  const hasHealthyCatalogSuggestion = verifiedCatalogSuggestions.some((entry) => entry.verified && !entry.deadPage && !entry.unreachable);
+  return !hasHealthyCatalogSuggestion;
+}
+
+async function runLookupPreview({ settings, traceId, draftAsset, fetchImpl = fetch }) {
   const context = buildLookupContext(draftAsset || {}, draftAsset?.assetId, draftAsset?.followupAnswer);
   const { parsed } = await requestAssetDocumentationLookup({
     model: settings.aiModel || 'gpt-4.1-mini',
@@ -788,17 +805,7 @@ async function runLookupPreview({ settings, traceId, draftAsset }) {
     manufacturerProfile,
     alternateNames: Array.isArray(parsed?.alternateNames) ? parsed.alternateNames : []
   });
-  const discovered = catalogMatch ? { documentationLinks: [], supportResources: [], queriesTried: [] } : await discoverManualDocumentation({
-    assetName: draftAsset?.name || '',
-    normalizedName,
-    manufacturer: manufacturerSuggestion || draftAsset?.manufacturer || '',
-    manufacturerProfile,
-    searchHints: Array.isArray(parsed?.searchHints) ? parsed.searchHints : [],
-    logger: console,
-    traceId
-  });
-
-  const documentationSuggestions = catalogMatch
+  const normalizedCatalogSuggestions = catalogMatch
     ? normalizeDocumentationSuggestions({
       links: catalogMatch.documentationSuggestions,
       confidence: Math.max(confidence, Number(catalogMatch.confidence || 0.95)),
@@ -807,14 +814,40 @@ async function runLookupPreview({ settings, traceId, draftAsset }) {
       manufacturerSuggestion,
       followupAnswer: context.followupAnswer
     })
-    : normalizeDocumentationSuggestions({
-      links: discovered.documentationLinks,
-      confidence,
-      asset: draftAsset || {},
-      normalizedName,
-      manufacturerSuggestion,
-      followupAnswer: context.followupAnswer
-    });
+    : [];
+  const shouldRunDiscovery = await shouldDiscoverAfterCatalogMatch({
+    catalogMatch,
+    confidence,
+    draftAsset,
+    normalizedName,
+    manufacturerSuggestion,
+    followupAnswer: context.followupAnswer,
+    fetchImpl
+  });
+  const discovered = shouldRunDiscovery ? await discoverManualDocumentation({
+    assetName: draftAsset?.name || '',
+    normalizedName,
+    manufacturer: manufacturerSuggestion || draftAsset?.manufacturer || '',
+    manufacturerProfile,
+    searchHints: Array.isArray(parsed?.searchHints) ? parsed.searchHints : [],
+    logger: console,
+    traceId,
+    fetchImpl
+  }) : { documentationLinks: [], supportResources: [], queriesTried: [] };
+
+  const discoveredDocumentationSuggestions = normalizeDocumentationSuggestions({
+    links: discovered.documentationLinks,
+    confidence,
+    asset: draftAsset || {},
+    normalizedName,
+    manufacturerSuggestion,
+    followupAnswer: context.followupAnswer
+  });
+
+  const documentationSuggestions = mergeDocumentationSuggestions({
+    existingSuggestions: normalizedCatalogSuggestions,
+    nextSuggestions: discoveredDocumentationSuggestions
+  });
 
   const supportResourcesSuggestion = normalizeDocumentationSuggestions({
     links: [
@@ -1048,7 +1081,8 @@ module.exports = {
   collectReusableVerifiedManuals,
   findReusableVerifiedManuals,
   getManufacturerProfile,
-  buildFollowupQuestion
+  buildFollowupQuestion,
+  shouldDiscoverAfterCatalogMatch
 };
 
 
