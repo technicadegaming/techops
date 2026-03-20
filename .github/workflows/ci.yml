@@ -6,7 +6,8 @@ on:
   pull_request:
 
 jobs:
-  test:
+  lint:
+    name: CI lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,6 +18,45 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             functions/package-lock.json
+      - name: Install root tooling for repo-level checks
+        run: npm install
+      - name: Run baseline lint check
+        run: npm run lint
+
+  functions-tests:
+    name: CI functions tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
+      - name: Install root tooling for shared scripts
+        run: npm install
+      - name: Install functions dependencies
+        run: npm install --prefix functions
+      - name: Run baseline Cloud Functions test suite
+        run: npm run test --prefix functions
+
+  rules-tests:
+    name: CI rules tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
+      # Rules coverage depends on Firebase emulator binaries. Keep this separate from
+      # the app-shell test guidance: app-shell remains a conditional reviewer/local check,
+      # while rules coverage stays enforced in CI because tenant boundaries are critical.
       - name: Cache Firebase emulator binaries
         uses: actions/cache@v4
         with:
@@ -24,13 +64,9 @@ jobs:
           key: ${{ runner.os }}-firebase-emulators-${{ hashFiles('package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-firebase-emulators-
-      - name: Install root tooling
+      - name: Install root tooling for rules harness
         run: npm install
-      - name: Install functions deps
+      - name: Install functions dependencies used by emulator-backed tests
         run: npm install --prefix functions
-      - name: Lint
-        run: npm run lint
-      - name: Functions tests
-        run: npm run test --prefix functions
-      - name: Firebase rules tests
+      - name: Run Firebase rules test suite
         run: npm run test:rules

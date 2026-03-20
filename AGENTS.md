@@ -32,8 +32,13 @@ A change is done only when all are true:
 2. Docs are updated when commands/architecture/workflows changed.
 3. `npm run lint` passes.
 4. `npm run test --prefix functions` passes.
-5. `npm run test:app-shell` passes when shell modules, shell controllers, or `src/app.js`/`src/features/*` seams are touched.
+5. `npm run test:app-shell` passes when `src/app.js`, `src/app/*`, or shell/controller seams are touched.
 6. `npm run test:rules` passes when Firestore rules, Storage rules, tenant boundaries, or other security-sensitive access paths are touched, and the required Firebase emulators are available.
-7. PR description includes risk notes + any manual follow-up.
+7. PR description clearly records which conditional checks applied, which implementation docs were consulted, and any risk notes or manual follow-up.
 
 For contributor/reviewer reading order, use `README.md` as the start path, then jump to `docs/DATA_MODEL.md`, `docs/FRONTEND_STRUCTURE.md`, `docs/DEPLOYMENT.md`, `docs/RELEASE_CHECKLIST.md`, `docs/SECURITY.md`, and `docs/APP_SHELL_REMAINING_SEAMS.md` based on the area being changed.
+
+## Reviewer/CI surface notes
+- GitHub Actions currently enforces the baseline lint/functions suites and the emulator-backed rules suite.
+- `npm run test:app-shell` remains a conditional local/reviewer expectation, not a blanket CI requirement.
+- Keep app-shell work aligned with stabilization guidance in `docs/APP_SHELL_REMAINING_SEAMS.md`; broader shell extraction is not the default next step for routine changes.
