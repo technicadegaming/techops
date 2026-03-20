@@ -1,22 +1,20 @@
 const catalogEntries = require('../data/manualLookupCatalog.json');
+const { normalizePhrase, expandArcadeTitleAliases } = require('./arcadeTitleAliasService');
 
-function normalizePhrase(value) {
-  return `${value || ''}`
-    .toLowerCase()
-    .replace(/&/g, ' and ')
+function normalizeCatalogPhrase(value) {
+  return normalizePhrase(value)
     .replace(/\bdeluxe\b/g, ' dx ')
     .replace(/\bdx\b/g, ' deluxe ')
-    .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
 function buildNameCandidates(values = []) {
   const candidates = new Set();
-  values
+  expandArcadeTitleAliases(values.flatMap((value) => Array.isArray(value) ? value : [value]))
     .flatMap((value) => Array.isArray(value) ? value : [value])
     .forEach((value) => {
-      const normalized = normalizePhrase(value);
+      const normalized = normalizeCatalogPhrase(value);
       if (!normalized) return;
       candidates.add(normalized);
       candidates.add(normalized.replace(/\bii\b/g, ' 2 ').replace(/\biii\b/g, ' 3 ').replace(/\s+/g, ' ').trim());
@@ -66,7 +64,7 @@ function buildCatalogSuggestion(entry, match) {
   const common = {
     title: entry.canonicalTitle || entry.assetName,
     manufacturer: entry.manufacturerCanonical || entry.manufacturer,
-    matchedManufacturer: normalizePhrase(entry.manufacturerCanonical || entry.manufacturer),
+    matchedManufacturer: normalizeCatalogPhrase(entry.manufacturerCanonical || entry.manufacturer),
     sourceType: /official/.test(entry.linkType || '') ? 'manufacturer' : (/authorized|distributor/.test(entry.linkType || '') ? 'distributor' : 'other'),
     linkType: entry.linkType || 'official_pdf',
     trustTier: entry.trustTier || '',

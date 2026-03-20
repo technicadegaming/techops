@@ -3,6 +3,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const { requestAssetDocumentationLookup } = require('./openaiService');
 const { discoverManualDocumentation, extractManualLinksFromHtmlPage } = require('./manualDiscoveryService');
 const { findCatalogManualMatch } = require('./manualLookupCatalogService');
+const { normalizePhrase, expandArcadeTitleAliases } = require('./arcadeTitleAliasService');
 
 const TRUSTED_MANUAL_HOST_TOKENS = [
   'ipdb.org',
@@ -116,6 +117,8 @@ const GENERIC_DOCUMENTATION_PATH_PATTERNS = [
   /^\/$/,
   /^\/(home|index(\.html?)?)?$/,
   /^\/support\/?$/,
+  /^\/service-support\/?$/,
+  /^\/services?\/?$/,
   /^\/products\/?$/,
   /^\/downloads?\/?$/,
   /^\/docs?\/?$/,
@@ -126,6 +129,8 @@ const GENERIC_DOCUMENTATION_PATH_PATTERNS = [
 const GENERIC_SUPPORT_JUNK_PATH_PATTERNS = [
   /^\/$/,
   /^\/(home|index(\.html?)?)?$/,
+  /^\/service-support\/?$/,
+  /^\/services?\/?$/,
   /^\/parts-service\/?$/,
   /^\/parts\/?$/,
   /^\/blog\/?$/,
@@ -150,17 +155,8 @@ function tokenize(value) {
     .filter((v) => v.length >= 2);
 }
 
-function normalizePhrase(value) {
-  return `${value || ''}`
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 function buildExactTitleVariants(assetName, normalizedName) {
-  const rawVariants = [normalizePhrase(normalizedName), normalizePhrase(assetName)];
+  const rawVariants = expandArcadeTitleAliases([normalizedName, assetName]).map((value) => normalizePhrase(value));
   const variants = new Set();
   for (const variant of rawVariants.filter((entry) => entry && entry.length >= 3)) {
     variants.add(variant);
@@ -355,13 +351,16 @@ function getDocumentationSuggestionRank(entry = {}) {
   const verified = !!entry.verified;
   const exactTitleMatch = !!entry.exactTitleMatch;
   const exactManualMatch = !!entry.exactManualMatch;
+  const verificationKind = `${entry.verificationKind || ''}`.trim().toLowerCase();
   const isDirectFile = /\.pdf($|\?|#)|\/wp-content\/uploads\/|\/manuals?\/[^/]+\.(pdf|docx?)($|\?|#)/.test(url);
   const isManualLibrary = sourceType === 'manual_library';
   const isSupportResource = ['support', 'official_site', 'contact'].includes(sourceType) && !exactManualMatch;
   const isMirror = ['distributor', 'other'].includes(sourceType);
   const isTitleSpecificPage = exactTitleMatch && /support|parts|downloads?|manual|service|install|product/.test(url);
+  const isVerifiedManualBearingPage = verified && verificationKind === 'manual_html' && exactTitleMatch && !isDirectFile;
 
   if (verified && isDirectFile) return 0;
+  if (isVerifiedManualBearingPage) return 1;
   if (verified && exactTitleMatch && exactManualMatch) return 1;
   if (verified && isTitleSpecificPage) return 2;
   if (verified && isManualLibrary) return 3;
@@ -670,14 +669,16 @@ function isLiveManualCandidate(entry = {}) {
     && !entry?.unreachable
     && !!entry?.verified
     && !!entry?.exactTitleMatch
-    && !!entry?.exactManualMatch;
+    && (!!entry?.exactManualMatch || `${entry?.verificationKind || ''}`.toLowerCase() === 'manual_html');
 }
 
 function isManualUsableSuggestion(entry = {}) {
   if (!isLiveManualCandidate(entry)) return false;
   const url = `${entry?.url || ''}`.toLowerCase();
   const sourceType = `${entry?.sourceType || entry?.resourceType || ''}`.toLowerCase();
-  if (SUPPORT_ONLY_SOURCE_TYPES.has(sourceType) && !/\.pdf($|\?|#)|manual|operator|service|install|parts/.test(url)) return false;
+  const verificationKind = `${entry?.verificationKind || ''}`.toLowerCase();
+  const manualBearingHtml = verificationKind === 'manual_html' && !!entry?.exactTitleMatch && !!entry?.trustedSource;
+  if (SUPPORT_ONLY_SOURCE_TYPES.has(sourceType) && !manualBearingHtml && !/\.pdf($|\?|#)|manual|operator|service|install|parts/.test(url)) return false;
   return true;
 }
 
@@ -870,7 +871,12 @@ async function verifyDocumentationSuggestions(suggestions, fetchImpl = fetch) {
     bounded.map(async (row) => {
       const verification = await verifySuggestionUrl(row.url, fetchImpl);
       const strongMatch = Number(row.matchScore || 0) >= 72 && !!row.exactTitleMatch && !!row.exactManualMatch;
-      const aliveAndStrong = verification.verified && strongMatch;
+      const strongManualBearingPage = verification.verified
+        && verification.verificationKind === 'manual_html'
+        && Number(row.matchScore || 0) >= 68
+        && !!row.exactTitleMatch
+        && !!row.isOfficial;
+      const aliveAndStrong = verification.verified && (strongMatch || strongManualBearingPage);
       return {
         ...row,
         ...verification,
