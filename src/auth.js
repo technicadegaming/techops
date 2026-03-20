@@ -11,7 +11,7 @@ import {
   updateProfile
 } from 'https://www.gstatic.com/firebasejs/10.12.3/firebase-auth.js';
 import { auth } from './firebase.js';
-import { appConfig } from './config.js';
+import { isBootstrapAdminEmail } from './config.js';
 import { loadUserProfile, saveUserProfile } from './data.js';
 
 function buildProfilePersistenceError(error) {
@@ -114,9 +114,7 @@ export async function resolveProfile(user) {
   let isNewProfile = false;
   if (!profile) {
     const normalizedEmail = `${user?.email || ''}`.trim().toLowerCase();
-    const shouldBootstrapAdmin = appConfig.bootstrapAdmins
-      .map((email) => `${email || ''}`.trim().toLowerCase())
-      .includes(normalizedEmail);
+    const shouldBootstrapAdmin = isBootstrapAdminEmail(normalizedEmail);
     profile = {
       email: normalizedEmail,
       emailLower: normalizedEmail,

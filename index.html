@@ -116,7 +116,7 @@
         </form>
         <form id="registerForm" class="card">
           <h3>Create account</h3>
-          <p class="tiny">First account can be auto-bootstrapped as admin if configured in `src/config.js`.</p>
+          <p class="tiny">Bootstrap admin access is off by default and only applies when `window.__APP_CONFIG__.bootstrapAdmins` is explicitly supplied at runtime.</p>
           <input name="fullName" type="text" placeholder="Full name" autocomplete="name" required />
           <input name="email" type="email" placeholder="Email" required />
           <input name="password" type="password" placeholder="Password" autocomplete="new-password" required />
