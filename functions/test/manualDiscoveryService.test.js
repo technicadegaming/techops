@@ -522,6 +522,57 @@ test('buildManufacturerDiscoverySeedPages exposes deterministic Bay Tek official
   ]);
 });
 
+test('Virtual Rabbids aliases expand official search and seed coverage to canonical Big Ride naming', () => {
+  const profile = getManufacturerProfile('LAI Games', 'Virtual Rabbids');
+  const queries = buildManualSearchQueries({
+    manufacturer: 'LAI Games',
+    title: 'Virtual Rabbids Arcade',
+    manufacturerProfile: profile
+  });
+  const pages = buildManufacturerDiscoverySeedPages({
+    title: 'Virtual Rabbids Arcade',
+    manufacturerProfile: profile
+  });
+
+  assert.equal(queries.officialQueries.some((query) => /virtual rabbids.*big ride/i.test(query)), true);
+  assert.equal(queries.exactTitleQueries.some((query) => /virtual rabbids arcade/i.test(query)), true);
+  assert.equal(pages.some((page) => /Virtual%20Rabbids.*Big%20Ride/i.test(page.url)), true);
+});
+
+test('discoverManualDocumentation matches Virtual Rabbids canonical Big Ride manual results from alias-driven lookup', async () => {
+  const profile = getManufacturerProfile('LAI Games', 'Virtual Rabbids');
+  const fetchMock = async (url) => {
+    if (url === 'https://laigames.com/virtual-rabbids-upgrade-kit') {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/html' },
+        text: async () => '<a href="/downloads/virtual-rabbids-the-big-ride-install-guide.pdf">Virtual Rabbids: The Big Ride Install Guide PDF</a>'
+      };
+    }
+    if (url === 'https://laigames.com/downloads/virtual-rabbids-the-big-ride-install-guide.pdf') {
+      return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+    }
+    return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+  };
+
+  const result = await discoverManualDocumentation({
+    assetName: 'Virtual Rabbids',
+    normalizedName: 'Virtual Rabbids Arcade',
+    manufacturer: 'LAI Games',
+    manufacturerProfile: profile,
+    searchProvider: async () => [{
+      title: 'Virtual Rabbids: The Big Ride Upgrade Kit',
+      url: 'https://laigames.com/virtual-rabbids-upgrade-kit'
+    }],
+    fetchImpl: fetchMock,
+    logger: { log: () => {} }
+  });
+
+  assert.equal(result.documentationLinks[0]?.url, 'https://laigames.com/downloads/virtual-rabbids-the-big-ride-install-guide.pdf');
+  assert.equal(result.documentationLinks[0]?.sourceType, 'manufacturer');
+});
+
 test('discoverManualDocumentation can recover Quik Drop direct pdf from deterministic Bay Tek seed crawling without DuckDuckGo hits', async () => {
   const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
   const fetchMock = async (url) => {

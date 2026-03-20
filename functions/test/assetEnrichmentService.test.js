@@ -264,6 +264,25 @@ test('exact title official support/product page outranks generic distributor lis
   assert.equal(suggestions[0].exactTitleMatch, true);
 });
 
+test('Jurassic Park exact-title Raw Thrills page outranks generic service-support hub', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Raw Thrills Service Support', url: 'https://rawthrills.com/service-support/', sourceType: 'support' },
+      { title: 'Jurassic Park Arcade support', url: 'https://rawthrills.com/games/jurassic-park-arcade-support', sourceType: 'support' },
+      { title: 'Jurassic Park Arcade operator manual', url: 'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf', sourceType: 'manufacturer' }
+    ],
+    confidence: 0.82,
+    asset: { name: 'Jurassic Park', manufacturer: 'Raw Thrills' },
+    normalizedName: 'Jurassic Park',
+    manufacturerSuggestion: 'Raw Thrills'
+  });
+
+  assert.deepEqual(suggestions.map((entry) => entry.url), [
+    'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf',
+    'https://rawthrills.com/games/jurassic-park-arcade-support'
+  ]);
+});
+
 test('short/common title does not overmatch weak generic results', () => {
   const suggestions = normalizeDocumentationSuggestions({
     links: [
@@ -1081,6 +1100,36 @@ test('terminal status resolver maps support-only and follow-up states without tr
     supportResourcesSuggestion: [],
     followupQuestion: ''
   }), 'no_match_yet');
+});
+
+test('Quik Drop exact manual-bearing official page resolves terminal docs_found without followup', () => {
+  const cleaned = cleanFinalEnrichmentResult({
+    documentationSuggestions: [{
+      title: 'Quik Drop Support and Installation Guide',
+      url: 'https://www.baytekent.com/games/quik-drop/',
+      sourceType: 'support',
+      matchScore: 78,
+      exactTitleMatch: true,
+      exactManualMatch: false,
+      isOfficial: true,
+      trustedSource: true,
+      verified: true,
+      verificationKind: 'manual_html',
+      deadPage: false,
+      unreachable: false
+    }],
+    supportResourcesSuggestion: [{
+      title: 'Quik Drop source page',
+      url: 'https://www.baytekent.com/games/quik-drop/',
+      sourceType: 'support',
+      matchScore: 78
+    }],
+    enrichmentFollowupQuestion: 'What exact subtitle appears under the logo?'
+  });
+
+  assert.equal(cleaned.enrichmentStatus, 'docs_found');
+  assert.equal(cleaned.enrichmentFollowupQuestion, '');
+  assert.equal(cleaned.documentationSuggestions[0].verificationKind, 'manual_html');
 });
 
 test('repairLegacyAssetEnrichmentRecord reclassifies stale lookup_failed asset with support context', async () => {

@@ -119,6 +119,12 @@ test('buildNameCandidates normalizes common marketing-name variants deterministi
   assert.ok(candidates.includes('quik drop deluxe'));
 });
 
+test('buildNameCandidates expands explicit arcade family aliases deterministically', () => {
+  const candidates = buildNameCandidates(['Virtual Rabbids Arcade']);
+  assert.equal(candidates.includes('virtual rabbids the big ride'), true);
+  assert.equal(candidates.includes('virtual rabbids'), true);
+});
+
 test('workbook-seeded catalog covers required regression titles', () => {
   const entries = getCatalogEntries();
   const titles = new Set(entries.map((entry) => entry.canonicalTitle || entry.assetName));

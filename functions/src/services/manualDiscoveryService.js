@@ -1,4 +1,5 @@
 const SEARCH_USER_AGENT = 'techops-manual-discovery/1.0';
+const { normalizePhrase, expandArcadeTitleAliases } = require('./arcadeTitleAliasService');
 const MAX_SEARCH_RESULTS_PER_QUERY = 8;
 const MAX_DISCOVERY_RESULTS = 10;
 const MAX_FOLLOWUP_FETCHES = 4;
@@ -78,17 +79,10 @@ const BETSON_UTILITY_PATHS = [
   /^\/support\/?$/
 ];
 
-function normalizePhrase(value) {
-  return `${value || ''}`
-    .toLowerCase()
-    .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 function buildExactTitleVariants(title, normalizedTitle) {
-  return Array.from(new Set([normalizePhrase(title), normalizePhrase(normalizedTitle)])).filter((value) => value.length >= 3);
+  return expandArcadeTitleAliases([title, normalizedTitle])
+    .map((value) => normalizePhrase(value))
+    .filter((value) => value.length >= 3);
 }
 
 function slugifyTitle(title) {
@@ -173,6 +167,7 @@ function buildManufacturerQueryTerms(manufacturer, manufacturerProfile) {
 function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) {
   const cleanTitle = `${title || ''}`.trim();
   if (!cleanTitle) return { officialQueries: [], exactTitleQueries: [], fallbackQueries: [] };
+  const titleQueryVariants = expandArcadeTitleAliases(cleanTitle).slice(0, 3);
   const preferredDomains = manufacturerProfile?.preferredSourceTokens?.length
     ? manufacturerProfile.preferredSourceTokens
     : (manufacturerProfile?.sourceTokens || []).slice(0, 2);
@@ -181,25 +176,25 @@ function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) 
     ? `(${manufacturerTerms.map((term) => `"${term}"`).join(' OR ')})`
     : '';
 
-  const exactTitleQueries = manufacturerTerms.flatMap((term) => ([
-    `"${term}" "${cleanTitle}" "service manual" pdf`,
-    `"${term}" "${cleanTitle}" "operator manual" pdf`,
-    `"${term}" "${cleanTitle}" "parts manual" pdf`,
-    `"${term}" "${cleanTitle}" "installation manual" pdf`,
-    `"${term}" "${cleanTitle}" manual pdf`,
-    `"${term}" "${cleanTitle}" exact title pdf`
-  ]));
+  const exactTitleQueries = titleQueryVariants.flatMap((titleVariant) => manufacturerTerms.flatMap((term) => ([
+    `"${term}" "${titleVariant}" "service manual" pdf`,
+    `"${term}" "${titleVariant}" "operator manual" pdf`,
+    `"${term}" "${titleVariant}" "parts manual" pdf`,
+    `"${term}" "${titleVariant}" "installation manual" pdf`,
+    `"${term}" "${titleVariant}" manual pdf`,
+    `"${term}" "${titleVariant}" exact title pdf`
+  ])));
 
-  const fallbackQueries = manufacturerProfile?.lowTrustSourceTokens?.flatMap((domain) => ([
-    `site:${domain} "${cleanTitle}" ${manufacturerOrClause} (manual OR "service manual" OR "operator manual") (pdf OR download)`,
-    `site:${domain} "${cleanTitle}" ${manufacturerOrClause} (support OR product OR manual)`
-  ].map((query) => query.replace(/\s+/g, ' ').trim()))) || [];
+  const fallbackQueries = manufacturerProfile?.lowTrustSourceTokens?.flatMap((domain) => titleQueryVariants.flatMap((titleVariant) => ([
+    `site:${domain} "${titleVariant}" ${manufacturerOrClause} (manual OR "service manual" OR "operator manual") (pdf OR download)`,
+    `site:${domain} "${titleVariant}" ${manufacturerOrClause} (support OR product OR manual)`
+  ].map((query) => query.replace(/\s+/g, ' ').trim())))) || [];
 
-  const officialQueries = preferredDomains.flatMap((domain) => ([
-    `site:${domain} "${cleanTitle}" ("service manual" OR "operator manual" OR manual) (pdf OR download)`,
-    `site:${domain} ${manufacturerOrClause} "${cleanTitle}" ("service manual" OR "operator manual" OR manual) (pdf OR download)`,
-    `site:${domain} ${manufacturerOrClause} "${cleanTitle}" ("parts manual" OR "install manual" OR support) (pdf OR download)`
-  ].map((query) => query.replace(/\s+/g, ' ').trim())));
+  const officialQueries = preferredDomains.flatMap((domain) => titleQueryVariants.flatMap((titleVariant) => ([
+    `site:${domain} "${titleVariant}" ("service manual" OR "operator manual" OR manual) (pdf OR download)`,
+    `site:${domain} ${manufacturerOrClause} "${titleVariant}" ("service manual" OR "operator manual" OR manual) (pdf OR download)`,
+    `site:${domain} ${manufacturerOrClause} "${titleVariant}" ("parts manual" OR "install manual" OR support) (pdf OR download)`
+  ].map((query) => query.replace(/\s+/g, ' ').trim()))));
 
   return {
     officialQueries: Array.from(new Set(officialQueries)).filter(Boolean),
@@ -553,34 +548,34 @@ function buildFollowupExecutionPlan(followupPages) {
 function buildManufacturerDiscoverySeedPages({ title, manufacturerProfile }) {
   const cleanTitle = `${title || ''}`.trim();
   if (!cleanTitle || !manufacturerProfile?.key) return [];
-  const encodedTitle = encodeURIComponent(cleanTitle);
+  const titleVariants = expandArcadeTitleAliases(cleanTitle).slice(0, 2);
   const adapters = {
-    'bay tek': [
-      { adapter: 'bay_tek_seed', type: 'search_page', label: `${cleanTitle} Bay Tek parts search`, url: `https://parts.baytekent.com/?s=${encodedTitle}` },
-      { adapter: 'bay_tek_seed', type: 'search_page', label: `${cleanTitle} Bay Tek support search`, url: `https://baytekent.com/?s=${encodedTitle}` },
-      { adapter: 'bay_tek_seed', type: 'search_page', label: `${cleanTitle} Betson search`, url: `https://www.betson.com/?s=${encodeURIComponent(`${cleanTitle} Bay Tek`)}` },
-      { adapter: 'bay_tek_seed', type: 'search_page', label: `${cleanTitle} Betson product search`, url: `https://www.betson.com/amusement-products/?s=${encodeURIComponent(cleanTitle)}` }
-    ],
-    'raw thrills': [
-      { adapter: 'raw_thrills_seed', type: 'search_page', label: `${cleanTitle} Raw Thrills search`, url: `https://rawthrills.com/?s=${encodedTitle}` },
-      { adapter: 'raw_thrills_seed', type: 'search_page', label: `${cleanTitle} Raw Thrills games`, url: `https://rawthrills.com/games/?s=${encodedTitle}` }
-    ],
-    'ice': [
-      { adapter: 'ice_seed', type: 'search_page', label: `${cleanTitle} ICE support search`, url: `https://support.icegame.com/portal/en/kb/search/${encodedTitle}` },
-      { adapter: 'ice_seed', type: 'search_page', label: `${cleanTitle} ICE site search`, url: `https://www.icegame.com/?s=${encodedTitle}` }
-    ],
-    'unis': [
-      { adapter: 'unis_seed', type: 'search_page', label: `${cleanTitle} UNIS search`, url: `https://www.unistechnology.com/?s=${encodedTitle}` }
-    ],
-    'coastal amusements': [
-      { adapter: 'coastal_seed', type: 'search_page', label: `${cleanTitle} Coastal search`, url: `https://coastalamusements.com/?s=${encodedTitle}` }
-    ],
-    'lai games': [
-      { adapter: 'lai_seed', type: 'search_page', label: `${cleanTitle} LAI Games search`, url: `https://laigames.com/?s=${encodedTitle}` }
-    ],
-    'adrenaline amusements': [
-      { adapter: 'adrenaline_seed', type: 'search_page', label: `${cleanTitle} Adrenaline search`, url: `https://adrenalineamusements.com/?s=${encodedTitle}` }
-    ]
+    'bay tek': titleVariants.flatMap((titleVariant) => [
+      { adapter: 'bay_tek_seed', type: 'search_page', label: `${titleVariant} Bay Tek parts search`, url: `https://parts.baytekent.com/?s=${encodeURIComponent(titleVariant)}` },
+      { adapter: 'bay_tek_seed', type: 'search_page', label: `${titleVariant} Bay Tek support search`, url: `https://baytekent.com/?s=${encodeURIComponent(titleVariant)}` },
+      { adapter: 'bay_tek_seed', type: 'search_page', label: `${titleVariant} Betson search`, url: `https://www.betson.com/?s=${encodeURIComponent(`${titleVariant} Bay Tek`)}` },
+      { adapter: 'bay_tek_seed', type: 'search_page', label: `${titleVariant} Betson product search`, url: `https://www.betson.com/amusement-products/?s=${encodeURIComponent(titleVariant)}` }
+    ]),
+    'raw thrills': titleVariants.flatMap((titleVariant) => [
+      { adapter: 'raw_thrills_seed', type: 'search_page', label: `${titleVariant} Raw Thrills search`, url: `https://rawthrills.com/?s=${encodeURIComponent(titleVariant)}` },
+      { adapter: 'raw_thrills_seed', type: 'search_page', label: `${titleVariant} Raw Thrills games`, url: `https://rawthrills.com/games/?s=${encodeURIComponent(titleVariant)}` }
+    ]),
+    'ice': titleVariants.flatMap((titleVariant) => [
+      { adapter: 'ice_seed', type: 'search_page', label: `${titleVariant} ICE support search`, url: `https://support.icegame.com/portal/en/kb/search/${encodeURIComponent(titleVariant)}` },
+      { adapter: 'ice_seed', type: 'search_page', label: `${titleVariant} ICE site search`, url: `https://www.icegame.com/?s=${encodeURIComponent(titleVariant)}` }
+    ]),
+    'unis': titleVariants.map((titleVariant) => (
+      { adapter: 'unis_seed', type: 'search_page', label: `${titleVariant} UNIS search`, url: `https://www.unistechnology.com/?s=${encodeURIComponent(titleVariant)}` }
+    )),
+    'coastal amusements': titleVariants.map((titleVariant) => (
+      { adapter: 'coastal_seed', type: 'search_page', label: `${titleVariant} Coastal search`, url: `https://coastalamusements.com/?s=${encodeURIComponent(titleVariant)}` }
+    )),
+    'lai games': titleVariants.map((titleVariant) => (
+      { adapter: 'lai_seed', type: 'search_page', label: `${titleVariant} LAI Games search`, url: `https://laigames.com/?s=${encodeURIComponent(titleVariant)}` }
+    )),
+    'adrenaline amusements': titleVariants.map((titleVariant) => (
+      { adapter: 'adrenaline_seed', type: 'search_page', label: `${titleVariant} Adrenaline search`, url: `https://adrenalineamusements.com/?s=${encodeURIComponent(titleVariant)}` }
+    ))
   };
 
   return adapters[manufacturerProfile.key] || [];
@@ -653,97 +648,106 @@ async function crawlManufacturerSeedPages({ candidates, manufacturer, titleVaria
 }
 
 function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile }) {
-  const slug = slugifyTitle(title);
-  if (!slug || !manufacturerProfile?.key) return [];
+  const titleVariants = expandArcadeTitleAliases(title).slice(0, 2);
+  if (!titleVariants.length || !manufacturerProfile?.key) return [];
 
   const adapters = {
-    'bay tek': [
-      {
-        adapter: 'bay_tek',
-        type: 'direct_pdf',
-        label: `${title} service manual`,
-        url: `https://parts.baytekent.com/manuals/${slug}-service-manual.pdf`
-      },
-      {
-        adapter: 'bay_tek',
-        type: 'direct_pdf',
-        label: `${title} operator manual`,
-        url: `https://parts.baytekent.com/manuals/${slug}-operator-manual.pdf`
-      },
-      {
-        adapter: 'bay_tek',
-        type: 'support_page',
-        label: `${title} support`,
-        url: `https://parts.baytekent.com/support/${slug}`
-      },
-      {
-        adapter: 'bay_tek',
-        type: 'support_page',
-        label: `${title} support`,
-        url: `https://baytekent.com/support/${slug}`
-      },
-      {
-        adapter: 'betson',
-        type: 'search_page',
-        label: `${title} Betson search`,
-        url: `https://www.betson.com/?s=${encodeURIComponent(`${title} Bay Tek`)}`
-      },
-      {
-        adapter: 'betson',
-        type: 'support_page',
-        label: `${title} Betson product`,
-        url: `https://www.betson.com/amusement-products/${slug}/`
-      }
-    ],
-    ice: [
-      {
-        adapter: 'ice',
-        type: 'direct_pdf',
-        label: `${title} service manual`,
-        url: `https://support.icegame.com/manuals/${slug}-service-manual.pdf`
-      },
-      {
-        adapter: 'ice',
-        type: 'direct_pdf',
-        label: `${title} operator manual`,
-        url: `https://support.icegame.com/manuals/${slug}-operator-manual.pdf`
-      },
-      {
-        adapter: 'ice',
-        type: 'support_page',
-        label: `${title} support`,
-        url: `https://support.icegame.com/support/${slug}`
-      },
-      {
-        adapter: 'ice',
-        type: 'support_page',
-        label: `${title} support`,
-        url: `https://icegame.com/games/${slug}`
-      }
-    ],
-    'raw thrills': [
-      {
-        adapter: 'raw_thrills',
-        type: 'support_page',
-        label: `${title} support`,
-        url: `https://rawthrills.com/games/${slug}-support`
-      },
-      {
-        adapter: 'raw_thrills',
-        type: 'direct_pdf',
-        label: `${title} operator manual`,
-        url: `https://rawthrills.com/wp-content/uploads/${slug}-operator-manual.pdf`
-      },
-      {
-        adapter: 'raw_thrills',
-        type: 'direct_pdf',
-        label: `${title} service manual`,
-        url: `https://rawthrills.com/wp-content/uploads/${slug}-service-manual.pdf`
-      }
-    ]
+    'bay tek': titleVariants.flatMap((titleVariant) => {
+      const slug = slugifyTitle(titleVariant);
+      return [
+        {
+          adapter: 'bay_tek',
+          type: 'direct_pdf',
+          label: `${titleVariant} service manual`,
+          url: `https://parts.baytekent.com/manuals/${slug}-service-manual.pdf`
+        },
+        {
+          adapter: 'bay_tek',
+          type: 'direct_pdf',
+          label: `${titleVariant} operator manual`,
+          url: `https://parts.baytekent.com/manuals/${slug}-operator-manual.pdf`
+        },
+        {
+          adapter: 'bay_tek',
+          type: 'support_page',
+          label: `${titleVariant} support`,
+          url: `https://parts.baytekent.com/support/${slug}`
+        },
+        {
+          adapter: 'bay_tek',
+          type: 'support_page',
+          label: `${titleVariant} support`,
+          url: `https://baytekent.com/support/${slug}`
+        },
+        {
+          adapter: 'betson',
+          type: 'search_page',
+          label: `${titleVariant} Betson search`,
+          url: `https://www.betson.com/?s=${encodeURIComponent(`${titleVariant} Bay Tek`)}`
+        },
+        {
+          adapter: 'betson',
+          type: 'support_page',
+          label: `${titleVariant} Betson product`,
+          url: `https://www.betson.com/amusement-products/${slug}/`
+        }
+      ];
+    }),
+    ice: titleVariants.flatMap((titleVariant) => {
+      const slug = slugifyTitle(titleVariant);
+      return [
+        {
+          adapter: 'ice',
+          type: 'direct_pdf',
+          label: `${titleVariant} service manual`,
+          url: `https://support.icegame.com/manuals/${slug}-service-manual.pdf`
+        },
+        {
+          adapter: 'ice',
+          type: 'direct_pdf',
+          label: `${titleVariant} operator manual`,
+          url: `https://support.icegame.com/manuals/${slug}-operator-manual.pdf`
+        },
+        {
+          adapter: 'ice',
+          type: 'support_page',
+          label: `${titleVariant} support`,
+          url: `https://support.icegame.com/support/${slug}`
+        },
+        {
+          adapter: 'ice',
+          type: 'support_page',
+          label: `${titleVariant} support`,
+          url: `https://icegame.com/games/${slug}`
+        }
+      ];
+    }),
+    'raw thrills': titleVariants.flatMap((titleVariant) => {
+      const slug = slugifyTitle(titleVariant);
+      return [
+        {
+          adapter: 'raw_thrills',
+          type: 'support_page',
+          label: `${titleVariant} support`,
+          url: `https://rawthrills.com/games/${slug}-support`
+        },
+        {
+          adapter: 'raw_thrills',
+          type: 'direct_pdf',
+          label: `${titleVariant} operator manual`,
+          url: `https://rawthrills.com/wp-content/uploads/${slug}-operator-manual.pdf`
+        },
+        {
+          adapter: 'raw_thrills',
+          type: 'direct_pdf',
+          label: `${titleVariant} service manual`,
+          url: `https://rawthrills.com/wp-content/uploads/${slug}-service-manual.pdf`
+        }
+      ];
+    })
   };
 
-  return adapters[manufacturerProfile.key] || [];
+  return dedupeByUrl(adapters[manufacturerProfile.key] || []);
 }
 
 async function probeAdapterCandidates({ candidates, manufacturer, titleVariants, manufacturerProfile, fetchImpl, manualRows, supportRows, followupPages, logEvent }) {
