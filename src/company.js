@@ -1,6 +1,6 @@
 import { collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from 'https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore.js';
 import { db } from './firebase.js';
-import { appConfig } from './config.js';
+import { appConfig, isBootstrapAdminEmail } from './config.js';
 import { logAudit } from './audit.js';
 import { buildInitialBillingScaffold } from './billing.js';
 
@@ -94,7 +94,7 @@ export async function ensureBootstrapCompanyForLegacyUser(user, profile, hasLega
 export function canAutoAdoptLegacyWorkspace(user, profile) {
   const normalizedEmail = `${user?.email || ''}`.trim().toLowerCase();
   if (!normalizedEmail) return false;
-  if (appConfig.bootstrapAdmins.map((email) => `${email || ''}`.trim().toLowerCase()).includes(normalizedEmail)) return true;
+  if (isBootstrapAdminEmail(normalizedEmail)) return true;
   if (profile?.suppressLegacyAutoAdopt === true) return false;
   if (profile?.legacyBootstrapEligible === true) return true;
   return profile?.role === 'admin';
