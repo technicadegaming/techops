@@ -8,15 +8,25 @@ Use this checklist for safe, repeatable releases.
 - [ ] No destructive schema/data migrations are introduced.
 - [ ] Multi-tenant boundaries are preserved (`companyId`, `companies/{companyId}/...`).
 - [ ] Docs are updated for any command/workflow changes.
-- [ ] CI is green for lint, functions tests, and rules tests.
+- [ ] CI is green for the suites that apply to the change.
+- [ ] Reviewer can tell which implementation docs were used (`docs/DATA_MODEL.md`, `docs/FRONTEND_STRUCTURE.md`, `docs/DEPLOYMENT.md`, `docs/SECURITY.md`, `docs/APP_SHELL_REMAINING_SEAMS.md`) based on the area touched.
 
 Recommended local verification:
 
 ```bash
 npm run lint
 npm run test --prefix functions
+```
+
+Add these when relevant:
+
+```bash
+npm run test:app-shell
 npm run test:rules
 ```
+
+- `npm run test:app-shell` is expected for `src/app.js`, `src/app/*`, and shell/controller seam changes.
+- `npm run test:rules` is expected for rules changes and security-sensitive tenant/storage boundary changes; it depends on working local Firestore + Storage emulators via the Firebase CLI.
 
 ## 2) Pre-deploy checklist (release gate)
 
@@ -25,6 +35,7 @@ npm run test:rules
 - [ ] Required secrets/configuration are present and validated.
 - [ ] Any rules/index/function changes are included in deploy plan.
 - [ ] Operator has rollback references (last known-good commit/deploy).
+- [ ] If the release includes app-shell work, the team has confirmed it stayed within the stabilization guidance in `docs/APP_SHELL_REMAINING_SEAMS.md` rather than reopening broad shell extraction work mid-release.
 
 Recommended deploy order:
 
