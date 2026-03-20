@@ -1,29 +1,328 @@
 [
   {
     "id": "bay-tek-quik-drop",
-    "manufacturer": "Bay Tek Games",
+    "canonicalTitle": "Quik Drop",
+    "titleAliases": [
+      "Quick Drop"
+    ],
+    "manufacturerCanonical": "Bay Tek Games",
     "manufacturerAliases": [
       "Bay Tek",
       "Baytek",
       "Bay Tek Entertainment",
       "Baytek Entertainment"
     ],
+    "manualPdfUrl": "https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf",
+    "alternateManualUrl": "",
+    "sourcePageUrl": "https://www.baytekent.com/games/quik-drop/",
+    "linkType": "authorized_pdf",
+    "matchStatus": "verified_exact",
+    "confidence": 0.99,
+    "notes": "Workbook-seeded exact Quik Drop manual. Keep Bay Tek product/support source page separate from the direct PDF because legacy Bay Tek parts/manual URLs can be dead.",
+    "lookupMethod": "workbook_seed_exact_pdf",
+    "variantHints": [
+      "standard cabinet"
+    ],
+    "familyHints": [
+      "Quik Drop"
+    ],
+    "trustTier": "authorized_distributor",
+    "manualType": "service_manual",
+    "family": "Quik Drop",
+    "allowFamilyFallback": true,
     "assetName": "Quik Drop",
     "assetAliases": [
       "Quick Drop"
     ],
+    "manufacturer": "Bay Tek Games",
     "variants": [
-      "Quik Drop"
+      "standard cabinet"
     ],
-    "family": "Quik Drop",
-    "allowFamilyFallback": false,
-    "manualPdfUrl": "https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf",
+    "verification": {
+      "seededFromWorkbook": true,
+      "hasDirectManual": true,
+      "hasAlternateManual": false,
+      "hasSourcePage": true,
+      "sourcePath": "manual_lookup_master"
+    }
+  },
+  {
+    "id": "raw-thrills-fast-and-furious-arcade",
+    "canonicalTitle": "Fast and Furious Arcade",
+    "titleAliases": [
+      "Fast & Furious",
+      "Fast and Furious",
+      "Fast and Furious Arcade DX"
+    ],
+    "manufacturerCanonical": "Raw Thrills",
+    "manufacturerAliases": [
+      "RawThrills"
+    ],
+    "manualPdfUrl": "",
     "alternateManualUrl": "",
-    "sourcePageUrl": "https://www.betson.com/amusement-products/quik-drop/",
-    "linkType": "distributor_pdf",
-    "matchStatus": "catalog_exact",
-    "confidence": 0.99,
-    "notes": "Known-good curated Quik Drop match from verified Betson distributor PDF; avoid dead Bay Tek parts/manual URLs and preserve fallback discovery when curated links fail verification.",
-    "lookupMethod": "catalog_curated_distributor_pdf"
+    "sourcePageUrl": "https://rawthrills.com/games/fast-furious-arcade/",
+    "linkType": "source_page",
+    "matchStatus": "verified_source_page",
+    "confidence": 0.9,
+    "notes": "Use official Raw Thrills product page as source of truth and extract available docs/alternate variants from the page instead of relying on stale direct seeds.",
+    "lookupMethod": "workbook_seed_source_page",
+    "variantHints": [
+      "2 player",
+      "43 inch",
+      "motion",
+      "sd"
+    ],
+    "familyHints": [
+      "Fast and Furious Arcade"
+    ],
+    "trustTier": "official",
+    "manualType": "operator_manual",
+    "family": "Fast and Furious Arcade",
+    "allowFamilyFallback": true,
+    "assetName": "Fast and Furious Arcade",
+    "assetAliases": [
+      "Fast & Furious",
+      "Fast and Furious",
+      "Fast and Furious Arcade DX"
+    ],
+    "manufacturer": "Raw Thrills",
+    "variants": [
+      "2 player",
+      "43 inch",
+      "motion",
+      "sd"
+    ],
+    "verification": {
+      "seededFromWorkbook": true,
+      "hasDirectManual": false,
+      "hasAlternateManual": false,
+      "hasSourcePage": true,
+      "sourcePath": "manual_lookup_master"
+    }
+  },
+  {
+    "id": "bay-tek-sink-it-shootout",
+    "canonicalTitle": "Sink It Shootout",
+    "titleAliases": [
+      "Sink It",
+      "Sink It Shootout"
+    ],
+    "manufacturerCanonical": "Bay Tek Games",
+    "manufacturerAliases": [
+      "Bay Tek",
+      "Baytek"
+    ],
+    "manualPdfUrl": "https://www.betson.com/wp-content/uploads/2019/09/Sink-It-Shootout-Operator-Manual.pdf",
+    "alternateManualUrl": "",
+    "sourcePageUrl": "https://www.baytekent.com/games/sink-it-shootout/",
+    "linkType": "authorized_pdf",
+    "matchStatus": "verified_family",
+    "confidence": 0.82,
+    "notes": "Family-level mapping is allowed because the workbook explicitly maps Sink It assets into the Sink It Shootout family and the PDF is an authorized title-specific operator manual.",
+    "lookupMethod": "workbook_seed_family_pdf",
+    "variantHints": [
+      "sink it"
+    ],
+    "familyHints": [
+      "Sink It",
+      "Sink It Shootout"
+    ],
+    "trustTier": "authorized_distributor",
+    "manualType": "operator_manual",
+    "family": "Sink It",
+    "allowFamilyFallback": true,
+    "assetName": "Sink It Shootout",
+    "assetAliases": [
+      "Sink It",
+      "Sink It Shootout"
+    ],
+    "manufacturer": "Bay Tek Games",
+    "variants": [
+      "sink it"
+    ],
+    "verification": {
+      "seededFromWorkbook": true,
+      "hasDirectManual": true,
+      "hasAlternateManual": false,
+      "hasSourcePage": true,
+      "sourcePath": "manual_lookup_master"
+    }
+  },
+  {
+    "id": "raw-thrills-jurassic-park-arcade",
+    "canonicalTitle": "Jurassic Park Arcade",
+    "titleAliases": [
+      "Jurassic Park"
+    ],
+    "manufacturerCanonical": "Raw Thrills",
+    "manufacturerAliases": [
+      "RawThrills"
+    ],
+    "manualPdfUrl": "https://rawthrills.com/wp-content/uploads/2015/12/Jurassic-Park-Arcade-Manual.pdf",
+    "alternateManualUrl": "",
+    "sourcePageUrl": "https://rawthrills.com/games/jurassic-park-arcade/",
+    "linkType": "official_pdf",
+    "matchStatus": "verified_exact",
+    "confidence": 0.97,
+    "notes": "Workbook-seeded official Raw Thrills manual.",
+    "lookupMethod": "workbook_seed_exact_pdf",
+    "variantHints": [
+      "standard"
+    ],
+    "familyHints": [
+      "Jurassic Park Arcade"
+    ],
+    "trustTier": "official",
+    "manualType": "operator_manual",
+    "family": "Jurassic Park Arcade",
+    "allowFamilyFallback": true,
+    "assetName": "Jurassic Park Arcade",
+    "assetAliases": [
+      "Jurassic Park"
+    ],
+    "manufacturer": "Raw Thrills",
+    "variants": [
+      "standard"
+    ],
+    "verification": {
+      "seededFromWorkbook": true,
+      "hasDirectManual": true,
+      "hasAlternateManual": false,
+      "hasSourcePage": true,
+      "sourcePath": "manual_lookup_master"
+    }
+  },
+  {
+    "id": "ice-air-fx",
+    "canonicalTitle": "Air FX",
+    "titleAliases": [
+      "AirFX"
+    ],
+    "manufacturerCanonical": "ICE",
+    "manufacturerAliases": [
+      "Innovative Concepts in Entertainment"
+    ],
+    "manualPdfUrl": "https://support.icegame.com/manuals/air-fx-service-manual.pdf",
+    "alternateManualUrl": "",
+    "sourcePageUrl": "https://support.icegame.com/portal/en/kb/articles/air-fx",
+    "linkType": "official_pdf",
+    "matchStatus": "verified_exact",
+    "confidence": 0.97,
+    "notes": "Workbook-seeded official ICE manual.",
+    "lookupMethod": "workbook_seed_exact_pdf",
+    "variantHints": [
+      "standard"
+    ],
+    "familyHints": [
+      "Air FX"
+    ],
+    "trustTier": "official",
+    "manualType": "service_manual",
+    "family": "Air FX",
+    "allowFamilyFallback": true,
+    "assetName": "Air FX",
+    "assetAliases": [
+      "AirFX"
+    ],
+    "manufacturer": "ICE",
+    "variants": [
+      "standard"
+    ],
+    "verification": {
+      "seededFromWorkbook": true,
+      "hasDirectManual": true,
+      "hasAlternateManual": false,
+      "hasSourcePage": true,
+      "sourcePath": "manual_lookup_master"
+    }
+  },
+  {
+    "id": "step-revolution-stepmaniax",
+    "canonicalTitle": "StepManiaX",
+    "titleAliases": [
+      "Step Mania X"
+    ],
+    "manufacturerCanonical": "Step Revolution",
+    "manufacturerAliases": [
+      "StepRevolution"
+    ],
+    "manualPdfUrl": "https://steprevolution.com/wp-content/uploads/StepManiaX-Operator-Manual.pdf",
+    "alternateManualUrl": "",
+    "sourcePageUrl": "https://steprevolution.com/stepmaniax/",
+    "linkType": "official_pdf",
+    "matchStatus": "verified_exact",
+    "confidence": 0.95,
+    "notes": "Workbook-seeded StepManiaX operator manual.",
+    "lookupMethod": "workbook_seed_exact_pdf",
+    "variantHints": [
+      "dedicated cabinet"
+    ],
+    "familyHints": [
+      "StepManiaX"
+    ],
+    "trustTier": "official",
+    "manualType": "operator_manual",
+    "family": "StepManiaX",
+    "allowFamilyFallback": true,
+    "assetName": "StepManiaX",
+    "assetAliases": [
+      "Step Mania X"
+    ],
+    "manufacturer": "Step Revolution",
+    "variants": [
+      "dedicated cabinet"
+    ],
+    "verification": {
+      "seededFromWorkbook": true,
+      "hasDirectManual": true,
+      "hasAlternateManual": false,
+      "hasSourcePage": true,
+      "sourcePath": "manual_lookup_master"
+    }
+  },
+  {
+    "id": "bay-tek-break-the-plate",
+    "canonicalTitle": "Break The Plate",
+    "titleAliases": [
+      "Break the Plate"
+    ],
+    "manufacturerCanonical": "Bay Tek Games",
+    "manufacturerAliases": [
+      "Bay Tek",
+      "Baytek"
+    ],
+    "manualPdfUrl": "https://www.betson.com/wp-content/uploads/2021/05/Break-The-Plate-Operator-Manual.pdf",
+    "alternateManualUrl": "",
+    "sourcePageUrl": "https://www.baytekent.com/games/break-the-plate/",
+    "linkType": "authorized_pdf",
+    "matchStatus": "verified_exact",
+    "confidence": 0.94,
+    "notes": "Workbook-seeded Break The Plate manual.",
+    "lookupMethod": "workbook_seed_exact_pdf",
+    "variantHints": [
+      "standard cabinet"
+    ],
+    "familyHints": [
+      "Break The Plate"
+    ],
+    "trustTier": "authorized_distributor",
+    "manualType": "operator_manual",
+    "family": "Break The Plate",
+    "allowFamilyFallback": false,
+    "assetName": "Break The Plate",
+    "assetAliases": [
+      "Break the Plate"
+    ],
+    "manufacturer": "Bay Tek Games",
+    "variants": [
+      "standard cabinet"
+    ],
+    "verification": {
+      "seededFromWorkbook": true,
+      "hasDirectManual": true,
+      "hasAlternateManual": false,
+      "hasSourcePage": true,
+      "sourcePath": "manual_lookup_master"
+    }
   }
 ]

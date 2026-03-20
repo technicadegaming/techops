@@ -395,7 +395,8 @@ test('bay tek preferred parts host outranks generic manual-library and distribut
 test('bay tek manufacturer profile exposes preferred and low-trust sources', () => {
   const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
   assert.deepEqual(profile?.preferredSourceTokens, ['parts.baytekent.com', 'baytekent.com']);
-  assert.deepEqual(profile?.lowTrustSourceTokens, ['betson.com']);
+  assert.equal(profile?.lowTrustSourceTokens.includes('betson.com'), true);
+  assert.equal(profile?.lowTrustSourceTokens.includes('manualslib.com'), true);
 });
 
 test('ice and raw thrills manufacturer profiles expose official-domain-first preferences', () => {
@@ -691,4 +692,85 @@ test('collectReusableVerifiedManuals reuses previously approved exact-match Quik
   assert.equal(reused[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
   assert.equal(reused[0].reusedVerifiedManual, true);
   assert.equal(reused[0].verified, true);
+});
+
+test('verifySuggestionUrl returns verification metadata for direct pdfs', async () => {
+  const result = await verifySuggestionUrl('https://example.com/manual.pdf', async () => ({
+    ok: true,
+    status: 200,
+    url: 'https://example.com/manual.pdf',
+    headers: { get: () => 'application/pdf' },
+    text: async () => ''
+  }));
+
+  assert.equal(result.verified, true);
+  assert.equal(result.directPdf, true);
+  assert.equal(result.verificationKind, 'direct_pdf');
+  assert.equal(result.contentType, 'application/pdf');
+});
+
+test('verified direct pdf outranks support page and manual library html', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Fast and Furious Manual PDF', url: 'https://rawthrills.com/manuals/fast-and-furious.pdf', sourceType: 'manufacturer' },
+      { title: 'Fast and Furious Support', url: 'https://rawthrills.com/games/fast-furious-arcade/', sourceType: 'support' },
+      { title: 'Fast and Furious Manual', url: 'https://www.manualslib.com/manual/123/fast-and-furious.html', sourceType: 'manual_library' }
+    ],
+    confidence: 0.8,
+    asset: { name: 'Fast and Furious Arcade', manufacturer: 'Raw Thrills' },
+    normalizedName: 'Fast and Furious Arcade',
+    manufacturerSuggestion: 'Raw Thrills'
+  });
+
+  assert.equal(suggestions[0].url, 'https://rawthrills.com/manuals/fast-and-furious.pdf');
+});
+
+test('source page extraction can recover official Raw Thrills manuals', async () => {
+  const fetchMock = async (url) => {
+    if (url === 'https://rawthrills.com/games/fast-furious-arcade/') {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/html' },
+        text: async () => '<a href="https://rawthrills.com/manuals/fast-furious-arcade-2-player.pdf">2 Player Manual PDF</a><a href="https://rawthrills.com/manuals/fast-furious-arcade-motion.pdf">Motion Manual PDF</a>'
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => 'application/pdf' },
+      text: async () => ''
+    };
+  };
+
+  const extracted = await require('../src/services/manualDiscoveryService').extractManualLinksFromHtmlPage({
+    pageUrl: 'https://rawthrills.com/games/fast-furious-arcade/',
+    pageTitle: 'Fast and Furious Arcade',
+    manufacturer: 'Raw Thrills',
+    titleVariants: ['fast and furious arcade', 'fast and furious'],
+    manufacturerProfile: getManufacturerProfile('Raw Thrills', 'Fast and Furious Arcade'),
+    fetchImpl: fetchMock,
+    logEvent: () => {}
+  });
+
+  assert.deepEqual(extracted.map((row) => row.url), [
+    'https://rawthrills.com/manuals/fast-furious-arcade-2-player.pdf',
+    'https://rawthrills.com/manuals/fast-furious-arcade-motion.pdf'
+  ]);
+});
+
+test('family fallback requires explicit Sink It family evidence', () => {
+  const suggestions = normalizeDocumentationSuggestions({
+    links: [
+      { title: 'Sink It Shootout Operator Manual', url: 'https://www.betson.com/wp-content/uploads/2019/09/Sink-It-Shootout-Operator-Manual.pdf', sourceType: 'distributor' },
+      { title: 'Random Shootout Manual', url: 'https://example.com/shootout-manual.pdf', sourceType: 'other' }
+    ],
+    confidence: 0.74,
+    asset: { name: 'Sink It', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Sink It',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+
+  assert.equal(suggestions[0].url, 'https://www.betson.com/wp-content/uploads/2019/09/Sink-It-Shootout-Operator-Manual.pdf');
+  assert.equal(suggestions.some((row) => row.url === 'https://example.com/shootout-manual.pdf'), false);
 });

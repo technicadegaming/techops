@@ -45,3 +45,70 @@ test('extractPdfText extracts simple flate-compressed text operators', () => {
   assert.match(extractPdfText(pdf), /Operator Manual/);
   assert.match(extractTextFromBuffer(pdf, 'application/pdf', 'https://example.com/manual.pdf'), /Check fuse F1/);
 });
+
+test('approved manual metadata preserves type, variant, family, manufacturer, and confidence fields', async () => {
+  const { approveAssetManual } = require('../src/services/manualIngestionService');
+  const writes = { manuals: {}, assets: {}, auditLogs: [], chunks: [] };
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => 'application/pdf' },
+    arrayBuffer: async () => Buffer.from('%PDF-1.4\n')
+  });
+  const db = {
+    collection(name) {
+      return {
+        where() { return this; },
+        limit() { return this; },
+        async get() { return { empty: true, docs: [] }; },
+        doc(id) {
+          return {
+            id,
+            set: async (payload, options = {}) => {
+              writes[name][id] = options.merge ? { ...(writes[name][id] || {}), ...payload } : payload;
+            },
+            collection() {
+              return { doc(chunkId) { return { id: chunkId }; } };
+            }
+          };
+        },
+        add: async (payload) => { writes.auditLogs.push(payload); }
+      };
+    },
+    batch() {
+      const ops = [];
+      return { set(ref, payload) { ops.push({ ref, payload }); }, async commit() { writes.chunks = ops; } };
+    },
+    recursiveDelete: async () => {}
+  };
+  const storage = { bucket() { return { file() { return { save: async () => {} }; } }; } };
+  await approveAssetManual({
+    db,
+    storage,
+    asset: {
+      id: 'asset1',
+      companyId: 'company-a',
+      name: 'Fast and Furious Arcade',
+      manufacturer: 'Raw Thrills',
+      documentationSuggestions: [{
+        url: 'https://rawthrills.com/manuals/fast-furious.pdf',
+        title: 'Manual',
+        manualType: 'operator_manual',
+        cabinetVariant: '2 player',
+        family: 'Fast and Furious Arcade',
+        matchedManufacturer: 'raw thrills',
+        confidence: 0.88
+      }],
+      locationName: 'Front Room'
+    },
+    userId: 'user1',
+    sourceUrl: 'https://rawthrills.com/manuals/fast-furious.pdf'
+  });
+  const manual = Object.values(writes.manuals)[0];
+  assert.equal(manual.manualType, 'operator_manual');
+  assert.equal(manual.cabinetVariant, '2 player');
+  assert.equal(manual.family, 'Fast and Furious Arcade');
+  assert.equal(manual.manufacturer, 'Raw Thrills');
+  assert.equal(manual.manualConfidence, 0.88);
+  assert.equal(manual.assetLocationName, 'Front Room');
+});

@@ -107,15 +107,25 @@ Approved-manual ingestion path:
 - buildDocumentationContext now prefers approved chunk excerpts first, then linked manual/support URLs.
 */
 
-async function buildDocumentationContext(db, asset = null) {
+async function buildDocumentationContext(db, asset = null, troubleshootingLibrary = []) {
   if (!asset) return { mode: 'web_internal_only', items: [] };
   const approvedChunkItems = await fetchApprovedManualChunkContext(db, asset).catch(() => []);
+  const troubleshootingItems = (Array.isArray(troubleshootingLibrary) ? troubleshootingLibrary : [])
+    .filter((row) => row && (row.resolutionSummary || row.fixSummary || row.notes || row.title))
+    .slice(0, approvedChunkItems.length ? 3 : 4)
+    .map((row) => ({
+      title: row.title || row.gameTitle || row.assetType || 'Saved troubleshooting fix',
+      url: '',
+      sourceType: 'troubleshooting_fix',
+      excerpts: [compactExcerpt(row.resolutionSummary || row.fixSummary || row.notes || '', 500)].filter(Boolean),
+      confidence: row.confidence || null
+    }));
   const manualCandidates = (asset.manualLinks || []).filter(Boolean).slice(0, 3).map((url) => ({ title: url, url, sourceType: 'manual' }));
   const fallbackCandidates = manualCandidates.length || approvedChunkItems.length ? [] : pickApprovedSuggestions(asset);
-  const supportCandidates = manualCandidates.length || approvedChunkItems.length ? [] : (Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion.slice(0, 2).map((s) => ({ title: s.label || s.title || s.url, url: s.url || s, sourceType: 'support' })) : []);
+  const supportCandidates = Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion.slice(0, approvedChunkItems.length ? 1 : 2).map((s) => ({ title: s.label || s.title || s.url, url: s.url || s, sourceType: 'support' })) : [];
 
   const selected = [...manualCandidates, ...fallbackCandidates, ...supportCandidates].filter((x) => !!x.url).slice(0, 4);
-  const items = [...approvedChunkItems];
+  const items = [...approvedChunkItems, ...troubleshootingItems];
   for (const source of selected) {
     try {
       const fetched = await fetchDocExcerpt(source.url);
@@ -140,6 +150,8 @@ async function buildDocumentationContext(db, asset = null) {
 
   const mode = items.some((x) => x.sourceType === 'approved_manual_chunk')
     ? 'approved_manual_internal'
+    : items.some((x) => x.sourceType === 'troubleshooting_fix')
+    ? 'troubleshooting_backed'
     : items.some((x) => x.sourceType === 'manual')
     ? 'manual_backed'
     : (items.some((x) => x.sourceType === 'approved_doc') ? 'approved_doc_backed' : (items.length ? 'support_backed' : 'web_internal_only'));
@@ -169,10 +181,10 @@ async function gatherContext(db, taskId) {
   const recentNotes = notesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const libraryRecords = librarySnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((row) => {
     if (!asset) return true;
-    return [row.manufacturer, row.gameTitle, row.assetType].some((x) => x && [asset.manufacturer, asset.gameTitle, asset.type].includes(x));
+    return [row.manufacturer, row.gameTitle, row.assetType].some((x) => x && [asset.manufacturer, asset.gameTitle, asset.type, asset.name, asset.normalizedName, asset.family].includes(x));
   }).slice(0, 10);
 
-  const documentationContext = await buildDocumentationContext(db, asset).catch(() => ({ mode: 'web_internal_only', items: [] }));
+  const documentationContext = await buildDocumentationContext(db, asset, libraryRecords).catch(() => ({ mode: 'web_internal_only', items: [] }));
 
   return {
     task,
@@ -182,7 +194,13 @@ async function gatherContext(db, taskId) {
     recentNotes,
     manuals: asset?.manualLinks || [],
     troubleshootingLibrary: libraryRecords,
-    documentationContext
+    documentationContext,
+    assetContext: asset ? {
+      locationId: asset.locationId || asset.assetLocationId || null,
+      locationName: asset.locationName || asset.locationLabel || null,
+      cabinetVariant: asset.cabinetVariant || null,
+      family: asset.family || null
+    } : null
   };
 }
 
@@ -384,5 +402,7 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
 module.exports = {
   DEFAULT_SETTINGS,
   runPipeline,
-  isWeakTaskDescription
+  isWeakTaskDescription,
+  buildDocumentationContext,
+  gatherContext
 };

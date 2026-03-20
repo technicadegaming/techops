@@ -1,7 +1,7 @@
 const admin = require('firebase-admin');
 const { HttpsError } = require('firebase-functions/v2/https');
 const { requestAssetDocumentationLookup } = require('./openaiService');
-const { discoverManualDocumentation } = require('./manualDiscoveryService');
+const { discoverManualDocumentation, extractManualLinksFromHtmlPage } = require('./manualDiscoveryService');
 const { findCatalogManualMatch } = require('./manualLookupCatalogService');
 
 const TRUSTED_MANUAL_HOST_TOKENS = [
@@ -18,7 +18,7 @@ const MANUFACTURER_SOURCE_MAP = [
     aliases: ['rawthrills'],
     sourceTokens: ['rawthrills.com', 'betson.com'],
     preferredSourceTokens: ['rawthrills.com'],
-    lowTrustSourceTokens: ['betson.com'],
+    lowTrustSourceTokens: ['betson.com', 'manualslib.com', 'all-guidesbox.com', 'manualzz.com', 'scribd.com'],
     categories: ['video', 'motion', 'simulator']
   },
   {
@@ -26,7 +26,8 @@ const MANUFACTURER_SOURCE_MAP = [
     aliases: ['baytek', 'bay tek games', 'baytek games', 'bay tek entertainment', 'baytek entertainment'],
     sourceTokens: ['parts.baytekent.com', 'baytekent.com', 'betson.com'],
     preferredSourceTokens: ['parts.baytekent.com', 'baytekent.com'],
-    lowTrustSourceTokens: ['betson.com'],
+    lowTrustSourceTokens: ['betson.com', 'manualslib.com', 'all-guidesbox.com', 'manualzz.com', 'scribd.com'],
+    authorizedSourceTokens: ['betson.com'],
     categories: ['redemption', 'ticket']
   },
   {
@@ -34,14 +35,15 @@ const MANUFACTURER_SOURCE_MAP = [
     aliases: ['innovative concepts in entertainment'],
     sourceTokens: ['support.icegame.com', 'icegame.com', 'betson.com'],
     preferredSourceTokens: ['support.icegame.com', 'icegame.com'],
-    lowTrustSourceTokens: ['betson.com'],
+    lowTrustSourceTokens: ['betson.com', 'manualslib.com', 'all-guidesbox.com', 'manualzz.com', 'scribd.com'],
+    authorizedSourceTokens: ['betson.com'],
     categories: ['redemption', 'ticket']
   },
   { key: 'betson', aliases: ['betson enterprises'], sourceTokens: ['betson.com'], categories: ['parts', 'distribution'] },
-  { key: 'unis', aliases: ['unis technology', 'unis technologies'], sourceTokens: ['unistop.com', 'unistechnology.com', 'betson.com'], categories: ['video', 'redemption'] },
+  { key: 'unis', aliases: ['unis technology', 'unis technologies'], sourceTokens: ['unistop.com', 'unistechnology.com', 'betson.com'], preferredSourceTokens: ['unistop.com', 'unistechnology.com'], authorizedSourceTokens: ['betson.com'], lowTrustSourceTokens: ['manualslib.com', 'all-guidesbox.com'], categories: ['video', 'redemption'] },
   { key: 'sega', aliases: ['sega amusements'], sourceTokens: ['segaarcade.com', 'segaarcade.co.uk', 'arcade', 'manual'], categories: ['video', 'arcade'] },
-  { key: 'adrenaline amusements', aliases: ['adrenaline games'], sourceTokens: ['adrenalineamusements.com', 'betson.com'], categories: ['redemption', 'ticket'] },
-  { key: 'coastal amusements', aliases: [], sourceTokens: ['coastalamusements.com', 'betson.com'], categories: ['redemption', 'crane', 'prize'] },
+  { key: 'adrenaline amusements', aliases: ['adrenaline games'], sourceTokens: ['adrenalineamusements.com', 'betson.com'], preferredSourceTokens: ['adrenalineamusements.com'], authorizedSourceTokens: ['betson.com'], lowTrustSourceTokens: ['manualslib.com', 'all-guidesbox.com'], categories: ['redemption', 'ticket'] },
+  { key: 'coastal amusements', aliases: [], sourceTokens: ['coastalamusements.com', 'betson.com'], preferredSourceTokens: ['coastalamusements.com'], authorizedSourceTokens: ['betson.com'], lowTrustSourceTokens: ['manualslib.com', 'all-guidesbox.com'], categories: ['redemption', 'crane', 'prize'] },
   { key: 'smart industries', aliases: [], sourceTokens: ['smartind.com', 'betson.com'], categories: ['crane', 'prize'] },
   { key: 'people games', aliases: ['peoplegames'], sourceTokens: ['peoplegames.com', 'betson.com'], categories: ['redemption'] },
   { key: 'moss', aliases: ['moss distributors'], sourceTokens: ['mossdistributing.com'], categories: ['distribution', 'parts'] },
@@ -55,7 +57,7 @@ const MANUFACTURER_SOURCE_MAP = [
   { key: 'touchmagix', aliases: ['touch magix'], sourceTokens: ['touchmagix.com'], categories: ['interactive', 'video'] },
   { key: 'wahlap', aliases: ['wahlap technology'], sourceTokens: ['wahlap.com', 'betson.com'], categories: ['video', 'redemption'] },
   { key: 'falgas', aliases: ['falgas usa'], sourceTokens: ['falgas.com', 'falgasusa.com'], categories: ['kiddie', 'ride'] },
-  { key: 'lai games', aliases: ['lai'], sourceTokens: ['laigames.com', 'betson.com'], categories: ['redemption', 'video'] },
+  { key: 'lai games', aliases: ['lai'], sourceTokens: ['laigames.com', 'betson.com'], preferredSourceTokens: ['laigames.com'], authorizedSourceTokens: ['betson.com'], lowTrustSourceTokens: ['manualslib.com', 'all-guidesbox.com'], categories: ['redemption', 'video'] },
   { key: 'magic play', aliases: ['magicplay'], sourceTokens: ['magicplay.com.br', 'magicplay'], categories: ['redemption'] },
   { key: 'zamperla', aliases: [], sourceTokens: ['zamperla.com'], categories: ['attraction', 'ride'] }
 ];
@@ -367,6 +369,7 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     .some((alias) => combinedText.includes(alias));
   const hasTitleManufacturerCombo = hasStrongTitleMatch && ((!!manufacturerPhrase && combinedText.includes(manufacturerPhrase)) || hasManufacturerAliasMatch);
   const preferredSourceMatch = !!manufacturerProfile && (manufacturerProfile.preferredSourceTokens || []).some((token) => lowerHost.includes(token));
+  const authorizedSourceMatch = !!manufacturerProfile && (manufacturerProfile.authorizedSourceTokens || []).some((token) => lowerHost.includes(token));
   const lowTrustSourceMatch = !!manufacturerProfile && (manufacturerProfile.lowTrustSourceTokens || []).some((token) => lowerHost.includes(token));
   const sourceType = normalizeSuggestionSourceType(row.sourceType || row.resourceType, { lowerHost, lowTrustSourceMatch });
   const isOfficial = !!manufacturerToken && (lowerHost.includes(manufacturerToken) || sourceType === 'manufacturer');
@@ -407,6 +410,10 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
   if (preferredSourceMatch) {
     score += 16;
     reasons.push('manufacturer_preferred_source_match');
+  }
+  if (authorizedSourceMatch) {
+    score += 10;
+    reasons.push('manufacturer_authorized_source_match');
   }
   if (manufacturerProfile && /manual|support|docs|service|operators?/.test(lowerPath)) {
     score += 7;
@@ -664,6 +671,19 @@ function detectDeadPageText(rawText) {
   return DEAD_PAGE_PATTERNS.some((pattern) => pattern.test(text)) || SOFT_404_TEXT_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+function detectVerificationKind(url = '', contentType = '', snippet = '') {
+  const lowerUrl = `${url || ''}`.toLowerCase();
+  const lowerType = `${contentType || ''}`.toLowerCase();
+  const lowerSnippet = `${snippet || ''}`.toLowerCase();
+  const isPdf = /application\/pdf/.test(lowerType) || /\.pdf($|\?|#)/.test(lowerUrl);
+  const isHtml = /text\/html|application\/xhtml\+xml/.test(lowerType) || (!lowerType && /^https?:/.test(lowerUrl));
+  const manualSignal = /manual|operator|service|parts|install|instruction/.test(`${lowerUrl} ${lowerSnippet}`);
+  if (isPdf) return 'direct_pdf';
+  if (isHtml && manualSignal) return 'manual_html';
+  if (isHtml) return 'support_html';
+  return 'other';
+}
+
 async function verifySuggestionUrl(url, fetchImpl = fetch) {
   let headResponse = null;
   try {
@@ -721,15 +741,22 @@ async function verifySuggestionUrl(url, fetchImpl = fetch) {
   const deadByStatus = httpStatus === 404 || httpStatus === 410 || httpStatus >= 500;
   const deadByContentType = !!contentType && !/text\/html|application\/pdf|text\/plain/.test(contentType);
   const deadByText = !!pageSnippet && detectDeadPageText(pageSnippet);
+  const verificationKind = detectVerificationKind(url, contentType, pageSnippet);
+  const directPdf = verificationKind === 'direct_pdf';
   const deadPage = deadByStatus || deadByText || redirectedToLikelyError || deadByContentType;
-  const verified = response.ok && !deadPage;
+  const verified = response.ok && !deadPage && (directPdf || verificationKind === 'manual_html');
 
   return {
     verified,
     unreachable: false,
     deadPage,
     verificationStatus: verified ? 'verified' : (deadPage ? 'dead_page' : 'unverified'),
-    httpStatus
+    httpStatus,
+    contentType,
+    directPdf,
+    verificationKind,
+    soft404: deadByText,
+    resolvedUrl: response.url || url
   };
 }
 
@@ -767,6 +794,27 @@ function buildLookupContext(asset, assetId, followupAnswer = '') {
     preferredSourceHints: preferredSources,
     notes: 'Prioritize exact title + manufacturer documentation for arcade/FEC equipment. Prefer official manufacturer-domain-first searches using exact title + manufacturer. Prefer manufacturer-specific parts/support/manual hosts (Bay Tek: parts.baytekent.com before baytekent.com before distributors/manual libraries; ICE: support.icegame.com before icegame.com; Raw Thrills: rawthrills.com), then exact-title official support/download pages, and only then exact-title secondary sources. Generic homepages, generic /support, /products, and manual-library hubs are support resources only and must not count as manual results without exact-title manual/download evidence. Ask one short actionable follow-up question only if needed.'
   };
+}
+
+async function recoverCatalogSourcePageManuals({ catalogMatch, draftAsset, normalizedName, manufacturerSuggestion, manufacturerProfile, fetchImpl = fetch }) {
+  const sourcePages = (catalogMatch?.supportResources || []).filter((entry) => entry?.url);
+  if (!sourcePages.length) return [];
+  const recovered = [];
+  for (const page of sourcePages.slice(0, 2)) {
+    const verification = await verifySuggestionUrl(page.url, fetchImpl);
+    if (verification.deadPage || verification.unreachable) continue;
+    const extracted = await extractManualLinksFromHtmlPage({
+      pageUrl: page.url,
+      pageTitle: page.title || draftAsset?.name || normalizedName,
+      manufacturer: manufacturerSuggestion || draftAsset?.manufacturer || '',
+      titleVariants: buildExactTitleVariants(draftAsset?.name, normalizedName),
+      manufacturerProfile,
+      fetchImpl,
+      logEvent: () => {}
+    }).catch(() => []);
+    recovered.push(...extracted.map((entry) => ({ ...entry, sourcePageUrl: page.url, recoveredFromCatalogSourcePage: true })));
+  }
+  return recovered;
 }
 
 async function shouldDiscoverAfterCatalogMatch({ catalogMatch, confidence, draftAsset, normalizedName, manufacturerSuggestion, followupAnswer, fetchImpl = fetch }) {
@@ -834,9 +882,19 @@ async function runLookupPreview({ settings, traceId, draftAsset, fetchImpl = fet
     traceId,
     fetchImpl
   }) : { documentationLinks: [], supportResources: [], queriesTried: [] };
+  const recoveredCatalogManuals = shouldRunDiscovery
+    ? await recoverCatalogSourcePageManuals({
+      catalogMatch,
+      draftAsset,
+      normalizedName,
+      manufacturerSuggestion,
+      manufacturerProfile,
+      fetchImpl
+    })
+    : [];
 
   const discoveredDocumentationSuggestions = normalizeDocumentationSuggestions({
-    links: discovered.documentationLinks,
+    links: [...(discovered.documentationLinks || []), ...recoveredCatalogManuals],
     confidence,
     asset: draftAsset || {},
     normalizedName,

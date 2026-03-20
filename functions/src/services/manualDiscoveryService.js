@@ -522,30 +522,30 @@ function buildManufacturerDiscoverySeedPages({ title, manufacturerProfile }) {
   const encodedTitle = encodeURIComponent(cleanTitle);
   const adapters = {
     'bay tek': [
-      {
-        adapter: 'bay_tek_seed',
-        type: 'search_page',
-        label: `${cleanTitle} Bay Tek parts search`,
-        url: `https://parts.baytekent.com/?s=${encodedTitle}`
-      },
-      {
-        adapter: 'bay_tek_seed',
-        type: 'search_page',
-        label: `${cleanTitle} Bay Tek support search`,
-        url: `https://baytekent.com/?s=${encodedTitle}`
-      },
-      {
-        adapter: 'bay_tek_seed',
-        type: 'search_page',
-        label: `${cleanTitle} Betson search`,
-        url: `https://www.betson.com/?s=${encodeURIComponent(`${cleanTitle} Bay Tek`)}`
-      },
-      {
-        adapter: 'bay_tek_seed',
-        type: 'search_page',
-        label: `${cleanTitle} Betson product search`,
-        url: `https://www.betson.com/amusement-products/?s=${encodeURIComponent(cleanTitle)}`
-      }
+      { adapter: 'bay_tek_seed', type: 'search_page', label: `${cleanTitle} Bay Tek parts search`, url: `https://parts.baytekent.com/?s=${encodedTitle}` },
+      { adapter: 'bay_tek_seed', type: 'search_page', label: `${cleanTitle} Bay Tek support search`, url: `https://baytekent.com/?s=${encodedTitle}` },
+      { adapter: 'bay_tek_seed', type: 'search_page', label: `${cleanTitle} Betson search`, url: `https://www.betson.com/?s=${encodeURIComponent(`${cleanTitle} Bay Tek`)}` },
+      { adapter: 'bay_tek_seed', type: 'search_page', label: `${cleanTitle} Betson product search`, url: `https://www.betson.com/amusement-products/?s=${encodeURIComponent(cleanTitle)}` }
+    ],
+    'raw thrills': [
+      { adapter: 'raw_thrills_seed', type: 'search_page', label: `${cleanTitle} Raw Thrills search`, url: `https://rawthrills.com/?s=${encodedTitle}` },
+      { adapter: 'raw_thrills_seed', type: 'search_page', label: `${cleanTitle} Raw Thrills games`, url: `https://rawthrills.com/games/?s=${encodedTitle}` }
+    ],
+    'ice': [
+      { adapter: 'ice_seed', type: 'search_page', label: `${cleanTitle} ICE support search`, url: `https://support.icegame.com/portal/en/kb/search/${encodedTitle}` },
+      { adapter: 'ice_seed', type: 'search_page', label: `${cleanTitle} ICE site search`, url: `https://www.icegame.com/?s=${encodedTitle}` }
+    ],
+    'unis': [
+      { adapter: 'unis_seed', type: 'search_page', label: `${cleanTitle} UNIS search`, url: `https://www.unistechnology.com/?s=${encodedTitle}` }
+    ],
+    'coastal amusements': [
+      { adapter: 'coastal_seed', type: 'search_page', label: `${cleanTitle} Coastal search`, url: `https://coastalamusements.com/?s=${encodedTitle}` }
+    ],
+    'lai games': [
+      { adapter: 'lai_seed', type: 'search_page', label: `${cleanTitle} LAI Games search`, url: `https://laigames.com/?s=${encodedTitle}` }
+    ],
+    'adrenaline amusements': [
+      { adapter: 'adrenaline_seed', type: 'search_page', label: `${cleanTitle} Adrenaline search`, url: `https://adrenalineamusements.com/?s=${encodedTitle}` }
     ]
   };
 
