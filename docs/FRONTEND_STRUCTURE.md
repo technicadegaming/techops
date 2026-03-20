@@ -42,6 +42,7 @@ These modules support `src/app.js` but do not replace it.
 - `src/app/contextSwitcher.js`: header context shell wiring for active company/location selectors, scope badge sync, and related header DOM updates.
 - `src/app/actions.js`: common action helpers for company-context enforcement and error reporting.
 - `src/app/actionCenter.js`: shared action-center focus translation that mutates shell filters/routes for dashboard, reports, and notification-driven navigation.
+- `src/app/onboardingController.js`: onboarding/setup shell wiring for workspace creation, invite acceptance, setup-step orchestration, and readiness dismissal.
 - `src/app/notifications.js`: notification action-center shell wiring, including panel DOM listeners, badge rendering, and notification-to-route/app-context glue.
 
 **Important:** these are helper modules around a still-centralized app shell, not a fully separated app core.
