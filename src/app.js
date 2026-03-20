@@ -24,7 +24,6 @@ import { renderOperations } from './features/operations.js';
 import { renderAssets } from './features/assets.js';
 import { renderCalendar } from './features/calendar.js';
 import { renderReports } from './features/reports.js';
-import { renderAdmin } from './admin.js';
 import { renderOnboarding } from './onboarding.js';
 import { formatActionError, runActionFactory } from './uiActions.js';
 import { buildPermissionContext, canDelete, isAdmin, isManager } from './roles.js';
@@ -50,7 +49,6 @@ import {
 } from './aiAdapter.js';
 import { buildNotificationCandidates, formatRelativeTime } from './features/notifications.js';
 import { acceptInvite, createCompanyFromOnboarding, createCompanyInvite, revokeInvite } from './company.js';
-import { createAdminActions } from './features/adminActions.js';
 import { getWorkspaceReadiness } from './features/workspaceReadiness.js';
 import { logAudit } from './audit.js';
 import { renderAccount } from './account.js';
@@ -65,6 +63,7 @@ import { createOnboardingController } from './app/onboardingController.js';
 import { createNavigationController } from './app/navigationController.js';
 import { createOperationsController } from './app/operationsController.js';
 import { createAssetsController } from './app/assetsController.js';
+import { createAdminController } from './app/adminController.js';
 import {
   bootstrapCompanyContext as bootstrapCompanyContextState,
   refreshData as refreshAppData,
@@ -292,7 +291,7 @@ async function render() {
       await sendForgotPasswordEmail(state.user?.email || '');
     }
   });
-  renderAdmin(document.getElementById('admin'), state, createAdminActions({
+  const adminController = createAdminController({
     state,
     render,
     refreshData,
@@ -318,7 +317,8 @@ async function render() {
     isManager,
     createCompanyInvite,
     revokeInvite
-  }));
+  });
+  adminController.renderAdminSection(document.getElementById('admin'));
   if (state.route?.tab === 'operations' && Number.isFinite(state.operationsUi?.scrollY)) {
     requestAnimationFrame(() => window.scrollTo({ top: state.operationsUi.scrollY, behavior: 'auto' }));
   }

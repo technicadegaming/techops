@@ -27,6 +27,7 @@ This pass does **not** change runtime behavior. It only proposes a decomposition
 - Completed fourth extraction pass: onboarding/setup callback wiring now lives in `src/app/onboardingController.js`, while `src/app.js` still decides when onboarding/setup renders and still owns top-level lifecycle sequencing.
 - Completed fifth extraction pass: route/tab/navigation shell coordination now lives in `src/app/navigationController.js`, while `src/app/router.js` remains the low-level tab/URL helper layer and `src/app.js` still owns final render/lifecycle sequencing.
 - Completed sixth extraction pass: operations/task action wiring now lives in `src/app/operationsController.js`, while `src/app.js` still owns top-level render ordering and cross-feature lifecycle sequencing.
+- Completed seventh extraction pass: admin action/dependency assembly now lives in `src/app/adminController.js`, while `src/app.js` still owns top-level lifecycle sequencing and final admin render ordering.
 
 ## Current hotspot audit
 

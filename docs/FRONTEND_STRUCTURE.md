@@ -47,6 +47,7 @@ These modules support `src/app.js` but do not replace it.
 - `src/app/notifications.js`: notification action-center shell wiring, including panel DOM listeners, badge rendering, and notification-to-route/app-context glue.
 - `src/app/operationsController.js`: operations/task shell wiring for callback bag assembly, task AI polling/readback, evidence upload/removal orchestration, closeout/save-fix flows, and operations-to-navigation coordination.
 - `src/app/assetsController.js`: assets shell wiring for callback/dependency assembly, asset save/edit/delete orchestration, intake review callbacks, documentation preview/enrichment coordination, and assets-to-navigation glue.
+- `src/app/adminController.js`: admin shell wiring for callback/dependency assembly, backup/export action composition, documentation-review action glue, and admin render invocation support.
 
 **Important:** these are helper modules around a still-centralized app shell, not a fully separated app core.
 
@@ -56,7 +57,7 @@ These modules support `src/app.js` but do not replace it.
 
 Examples:
 - `dashboard.js`, `operations.js`, `assets.js`, `calendar.js`, `reports.js`: tab renderers.
-- `operationsActions.js`, `assetActions.js`, `adminActions.js`: action factories that let `src/app.js` pass shared dependencies/state into more focused feature behavior.
+- `operationsActions.js`, `assetActions.js`, `adminActions.js`: action factories that let shell controllers pass shared dependencies/state into more focused feature behavior.
 - `locationContext.js`, `workspaceReadiness.js`, `notifications.js`, `workflow.js`, `reportingSummary.js`, `documentationSuggestions.js`, `assetIntake.js`: smaller reusable domain helpers.
 
 **Practical rule:** if you are adding logic for one area of the product, prefer placing pure helpers, rendering, and area-specific actions in `src/features/*` instead of expanding `src/app.js`.
