@@ -109,7 +109,7 @@ function renderAuditChip(label, tone = 'muted') {
 function renderAssetScanChips(asset, { docsStatus = 'missing', openTasks = [], overduePm = [] } = {}) {
   const chips = [];
   chips.push(docsStatus === 'linked' ? renderAuditChip('docs found', 'good') : renderAuditChip('docs missing', 'warn'));
-  if ((asset.reviewState || '') === 'needs_review') chips.push(renderAuditChip('review needed', 'warn'));
+  if (['needs_review', 'pending_review'].includes((asset.reviewState || ''))) chips.push(renderAuditChip('review needed', 'warn'));
   if (['queued', 'searching_docs', 'in_progress'].includes(normalizeEnrichmentStatus(asset.enrichmentStatus))) chips.push(renderAuditChip('enrichment running', 'info'));
   if (openTasks.length) chips.push(renderAuditChip('open issue', 'bad'));
   if (overduePm.length) chips.push(renderAuditChip('PM due', 'warn'));
@@ -295,7 +295,7 @@ export function renderAssets(el, state, actions) {
     if (state.assetUi.statusFilter === 'has_docs') return hasDocs;
     return true;
   }).filter((asset) => {
-    const reviewState = `${asset.reviewState || ''}`.trim() || ((asset.documentationSuggestions || []).some((entry) => entry?.url) ? 'needs_review' : 'idle');
+    const reviewState = `${asset.reviewState || ''}`.trim() || ((asset.documentationSuggestions || []).some((entry) => entry?.url) ? 'pending_review' : 'idle');
     if (state.assetUi.reviewFilter === 'all') return true;
     if (state.assetUi.reviewFilter === 'missing_docs') return !(asset.manualLinks || []).length;
     return reviewState === state.assetUi.reviewFilter;
@@ -350,7 +350,7 @@ export function renderAssets(el, state, actions) {
         <label class="tiny">Review state
           <select data-asset-review-filter>
             <option value="all" ${state.assetUi.reviewFilter === 'all' ? 'selected' : ''}>All review states</option>
-            <option value="needs_review" ${state.assetUi.reviewFilter === 'needs_review' ? 'selected' : ''}>Needs review</option>
+            <option value="pending_review" ${state.assetUi.reviewFilter === 'pending_review' ? 'selected' : ''}>Pending review</option>
             <option value="approved" ${state.assetUi.reviewFilter === 'approved' ? 'selected' : ''}>Approved</option>
             <option value="rejected" ${state.assetUi.reviewFilter === 'rejected' ? 'selected' : ''}>Rejected</option>
             <option value="idle" ${state.assetUi.reviewFilter === 'idle' ? 'selected' : ''}>Idle</option>

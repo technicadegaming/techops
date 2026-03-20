@@ -19,6 +19,7 @@ const {
 const {
   enrichAssetDocumentation,
   previewAssetDocumentationLookup,
+  repairLegacyAssetEnrichmentRecord,
 } = require('./services/assetEnrichmentService');
 const { approveAssetManual } = require('./services/manualIngestionService');
 
@@ -374,6 +375,44 @@ exports.previewAssetDocumentationLookup = onCall({ secrets: [OPENAI_API_KEY] }, 
       followupAnswer: `${request.data?.followupAnswer || ''}`.trim(),
     },
   });
+});
+
+exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+  assertString(request.data?.assetId, 'assetId');
+
+  const authz = await authorizeAssetEnrichment({
+    db,
+    assetId: request.data.assetId,
+    uid: request.auth.uid,
+    getUserRole,
+  });
+
+  if (!authz.allowed) {
+    if (authz.scope === 'asset_not_found') throw new HttpsError('not-found', 'Asset not found');
+    throw new HttpsError('permission-denied', 'Insufficient role for asset enrichment');
+  }
+
+  const assetRef = db.collection('assets').doc(request.data.assetId);
+  const assetSnap = await assetRef.get();
+  if (!assetSnap.exists) throw new HttpsError('not-found', 'Asset not found');
+  const repaired = await repairLegacyAssetEnrichmentRecord({ asset: assetSnap.data() || {} });
+
+  await assetRef.set({
+    documentationSuggestions: repaired.documentationSuggestions,
+    supportResourcesSuggestion: repaired.supportResourcesSuggestion,
+    enrichmentFollowupQuestion: repaired.enrichmentFollowupQuestion,
+    enrichmentStatus: repaired.enrichmentStatus,
+    reviewState: repaired.reviewState,
+    enrichmentFailedAt: repaired.enrichmentFailedAt,
+    enrichmentErrorCode: repaired.enrichmentErrorCode,
+    enrichmentErrorMessage: repaired.enrichmentErrorMessage,
+    enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: request.auth.uid
+  }, { merge: true });
+
+  return { ok: true, assetId: request.data.assetId, ...repaired };
 });
 
 exports.approveAssetManual = onCall({}, async (request) => {

@@ -134,6 +134,11 @@ const GENERIC_SUPPORT_JUNK_PATH_PATTERNS = [
   /^\/privacy(?:-policy)?\/?$/,
   /^\/contact(?:-us)?\/?$/
 ];
+const JUNK_URL_FRAGMENT_PATTERNS = [/^respond$/i, /^comments?$/i, /^comment-\d+$/i];
+const SUPPORT_ONLY_SOURCE_TYPES = new Set(['support', 'official_site', 'contact', 'parts']);
+const REVIEWABLE_DOC_STATE = 'pending_review';
+const FOLLOWUP_RESEARCH_STATE = 'followup_needed';
+const NO_MATCH_RESEARCH_STATE = 'research_needed';
 
 
 function tokenize(value) {
@@ -185,6 +190,25 @@ function isGenericSupportJunkPage(lowerPath, titleVariants) {
 
 function normalizeAssetMatchKey(assetName = '', normalizedName = '') {
   return normalizePhrase(normalizedName || assetName);
+}
+
+function sanitizeSuggestionUrl(rawUrl = '') {
+  const value = `${rawUrl || ''}`.trim();
+  if (!value) return '';
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return '';
+  }
+  if (!/^https?:$/.test(parsed.protocol)) return '';
+  const fragment = `${parsed.hash || ''}`.replace(/^#/, '').trim();
+  if (fragment && JUNK_URL_FRAGMENT_PATTERNS.some((pattern) => pattern.test(fragment))) parsed.hash = '';
+  return parsed.toString();
+}
+
+function normalizeSuggestionTitle(entry = {}) {
+  return `${entry?.title || entry?.label || ''}`.trim().replace(/\s+/g, ' ').slice(0, 180);
 }
 
 function isReusableVerifiedManual(entry = {}, matchedManufacturer = '') {
@@ -640,20 +664,56 @@ function normalizeDocumentationSuggestions({ links, confidence, asset, normalize
     .slice(0, 5);
 }
 
+function isLiveManualCandidate(entry = {}) {
+  return !!entry?.url
+    && !entry?.deadPage
+    && !entry?.unreachable
+    && !!entry?.verified
+    && !!entry?.exactTitleMatch
+    && !!entry?.exactManualMatch;
+}
+
+function isManualUsableSuggestion(entry = {}) {
+  if (!isLiveManualCandidate(entry)) return false;
+  const url = `${entry?.url || ''}`.toLowerCase();
+  const sourceType = `${entry?.sourceType || entry?.resourceType || ''}`.toLowerCase();
+  if (SUPPORT_ONLY_SOURCE_TYPES.has(sourceType) && !/\.pdf($|\?|#)|manual|operator|service|install|parts/.test(url)) return false;
+  return true;
+}
+
+function isMeaningfulSupportResource(entry = {}) {
+  const url = `${entry?.url || ''}`.trim();
+  if (!url || entry?.deadPage || entry?.unreachable) return false;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  const lowerPath = parsed.pathname.toLowerCase();
+  const lowerUrl = url.toLowerCase();
+  if (isGenericSupportJunkPage(lowerPath, buildExactTitleVariants(entry?.assetName, entry?.normalizedName))) return false;
+  if (/\/wp-comments-post\.php|\/feed\/?$/.test(lowerPath)) return false;
+  if (JUNK_URL_FRAGMENT_PATTERNS.some((pattern) => pattern.test(`${parsed.hash || ''}`.replace(/^#/, '')))) return false;
+  return /support|manual|service|help|product|game|parts|download|docs?/.test(lowerUrl)
+    || SUPPORT_ONLY_SOURCE_TYPES.has(`${entry?.sourceType || entry?.resourceType || ''}`.toLowerCase())
+    || Number(entry?.matchScore || 0) >= 45;
+}
+
 
 function isPreservableVerifiedManualSuggestion(entry = {}) {
   const url = `${entry?.url || ''}`.trim().toLowerCase();
   if (!url) return false;
-  if (!entry?.verified || entry?.deadPage || entry?.unreachable) return false;
-  if (!entry?.exactTitleMatch || !entry?.exactManualMatch) return false;
+  if (!isManualUsableSuggestion(entry)) return false;
   const directFile = /\.pdf($|\?|#)|\/wp-content\/uploads\/|\/manuals?\/[^/]+\.(pdf|docx?)($|\?|#)/.test(url);
   return directFile || getDocumentationSuggestionRank(entry) <= 1;
 }
 
 function dedupeDocumentationSuggestions(rows = []) {
   const sorted = rows
+    .map((row) => ({ ...row, url: sanitizeSuggestionUrl(row?.url || '') }))
     .filter((row) => row?.url)
-    .map((row) => ({ ...row, rankTier: getDocumentationSuggestionRank(row) }))
+    .map((row) => ({ ...row, title: normalizeSuggestionTitle(row) || row.title || row.url, rankTier: getDocumentationSuggestionRank(row) }))
     .sort(compareDocumentationSuggestions);
   const seen = new Set();
   return sorted.filter((row) => {
@@ -675,13 +735,7 @@ function mergeDocumentationSuggestions({ existingSuggestions, nextSuggestions, p
 }
 
 function hasUsableVerifiedManualSuggestion(suggestions = []) {
-  return (Array.isArray(suggestions) ? suggestions : []).some((entry) => (
-    !!entry?.verified
-    && !entry?.deadPage
-    && !entry?.unreachable
-    && !!entry?.exactTitleMatch
-    && !!entry?.exactManualMatch
-  ));
+  return (Array.isArray(suggestions) ? suggestions : []).some((entry) => isManualUsableSuggestion(entry));
 }
 
 function normalizeSupportContacts(rows) {
@@ -829,6 +883,86 @@ async function verifyDocumentationSuggestions(suggestions, fetchImpl = fetch) {
   return verifiedRows
     .map((row) => ({ ...row, rankTier: getDocumentationSuggestionRank(row) }))
     .sort(compareDocumentationSuggestions);
+}
+
+function cleanDocumentationSuggestions(rows = []) {
+  return dedupeDocumentationSuggestions(rows).filter((entry) => isManualUsableSuggestion(entry));
+}
+
+function cleanSupportResourcesSuggestion(rows = [], documentationSuggestions = []) {
+  const docUrls = new Set(cleanDocumentationSuggestions(documentationSuggestions).map((entry) => `${entry.url || ''}`.trim().toLowerCase()));
+  return dedupeDocumentationSuggestions(rows)
+    .filter((entry) => !docUrls.has(`${entry.url || ''}`.trim().toLowerCase()))
+    .filter((entry) => !isManualUsableSuggestion(entry))
+    .filter((entry) => isMeaningfulSupportResource(entry))
+    .slice(0, 5);
+}
+
+function hasMeaningfulSupportContext(rows = []) {
+  return cleanSupportResourcesSuggestion(rows).length > 0;
+}
+
+function resolveTerminalEnrichmentStatus({ documentationSuggestions = [], supportResourcesSuggestion = [], followupQuestion = '', hadFailure = false }) {
+  if (hadFailure) return 'lookup_failed';
+  if (cleanDocumentationSuggestions(documentationSuggestions).length > 0) return 'docs_found';
+  if (`${followupQuestion || ''}`.trim() || hasMeaningfulSupportContext(supportResourcesSuggestion)) return 'followup_needed';
+  return 'no_match_yet';
+}
+
+function deriveDocumentationReviewState(asset = {}) {
+  const current = `${asset.reviewState || ''}`.trim();
+  if (['approved', 'rejected'].includes(current)) return current;
+  const status = `${asset.enrichmentStatus || ''}`.trim();
+  const liveDocs = cleanDocumentationSuggestions(asset.documentationSuggestions || []);
+  if (liveDocs.length || status === 'docs_found') return REVIEWABLE_DOC_STATE;
+  if (status === 'followup_needed' || `${asset.enrichmentFollowupQuestion || ''}`.trim() || hasMeaningfulSupportContext(asset.supportResourcesSuggestion || [])) return FOLLOWUP_RESEARCH_STATE;
+  if (status === 'no_match_yet') return NO_MATCH_RESEARCH_STATE;
+  return current || 'idle';
+}
+
+function cleanFinalEnrichmentResult(asset = {}) {
+  const documentationSuggestions = cleanDocumentationSuggestions(asset.documentationSuggestions || []);
+  const supportResourcesSuggestion = cleanSupportResourcesSuggestion(asset.supportResourcesSuggestion || [], documentationSuggestions);
+  const enrichmentFollowupQuestion = `${asset.enrichmentFollowupQuestion || ''}`.trim();
+  const enrichmentStatus = resolveTerminalEnrichmentStatus({
+    documentationSuggestions,
+    supportResourcesSuggestion,
+    followupQuestion: enrichmentFollowupQuestion,
+    hadFailure: false
+  });
+  const reviewState = deriveDocumentationReviewState({
+    ...asset,
+    documentationSuggestions,
+    supportResourcesSuggestion,
+    enrichmentStatus,
+    enrichmentFollowupQuestion
+  });
+  return {
+    documentationSuggestions,
+    supportResourcesSuggestion,
+    enrichmentFollowupQuestion: enrichmentStatus === 'docs_found' ? '' : enrichmentFollowupQuestion,
+    enrichmentStatus,
+    reviewState
+  };
+}
+
+async function repairLegacyAssetEnrichmentRecord({ asset = {}, verifySuggestions = verifyDocumentationSuggestions }) {
+  const verifiedDocs = Array.isArray(asset.documentationSuggestions) && asset.documentationSuggestions.length
+    ? await verifySuggestions(asset.documentationSuggestions)
+    : [];
+  const cleaned = cleanFinalEnrichmentResult({
+    ...asset,
+    documentationSuggestions: verifiedDocs.length ? verifiedDocs : (asset.documentationSuggestions || []),
+    supportResourcesSuggestion: asset.supportResourcesSuggestion || []
+  });
+  const hasExceptionContext = !!(`${asset.enrichmentErrorCode || ''}`.trim() || `${asset.enrichmentErrorMessage || ''}`.trim() || asset.enrichmentFailedAt);
+  const shouldRetainFailureMetadata = cleaned.enrichmentStatus === 'lookup_failed' && hasExceptionContext;
+  return {
+    ...cleaned,
+    enrichmentFailedAt: shouldRetainFailureMetadata ? asset.enrichmentFailedAt : null,
+    enrichmentErrorCode: shouldRetainFailureMetadata ? asset.enrichmentErrorCode : '',
+    enrichmentErrorMessage: shouldRetainFailureMetadata ? asset.enrichmentErrorMessage : ''
+  };
 }
 
 function buildLookupContext(asset, assetId, followupAnswer = '') {
@@ -1090,11 +1224,14 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     const hasConfidentSingleMatch = confidence >= confidenceThreshold && strongVerifiedSuggestions.length === 1;
     const topSuggestionScore = suggestions[0]?.matchScore || 0;
     const isAmbiguousTitle = suggestions.length > 1 && topSuggestionScore < 78;
-    const hasUnverifiedCandidates = suggestions.some((s) => !s.verified && !s.deadPage && !s.unreachable);
     const hasOnlyFailedVerification = suggestions.length > 0 && !strongVerifiedSuggestions.length;
+    const hasMeaningfulSupportOrFollowupContext = hasMeaningfulSupportContext(preview.supportResourcesSuggestion || [])
+      || !!(`${preview?.oneFollowupQuestion || ''}`.trim());
 
     const followupQuestion = hasUsableVerifiedManual
       ? ''
+      : (!suggestions.length && !hasMeaningfulSupportOrFollowupContext
+        ? ''
       : (hasConfidentSingleMatch
         ? ''
         : (isAmbiguousTitle
@@ -1104,28 +1241,36 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
             profile: manufacturerProfile,
             likelyCategory: preview?.likelyCategory,
             hasOnlyFailedVerification
-          })));
+          }))));
     const shouldSetManufacturer = !asset.manufacturer && confidence >= Math.max(0.75, confidenceThreshold) && manufacturerSuggestion;
 
-    const status = hasUsableVerifiedManual
-      ? 'docs_found'
-      : (hasUnverifiedCandidates ? 'followup_needed' : 'no_match_yet');
+    const cleanedResult = cleanFinalEnrichmentResult({
+      documentationSuggestions: suggestions,
+      supportResourcesSuggestion: preview.supportResourcesSuggestion || [],
+      enrichmentFollowupQuestion: followupQuestion
+    });
+    const status = resolveTerminalEnrichmentStatus({
+      documentationSuggestions: cleanedResult.documentationSuggestions,
+      supportResourcesSuggestion: cleanedResult.supportResourcesSuggestion,
+      followupQuestion: cleanedResult.enrichmentFollowupQuestion
+    });
     terminalStatus = status;
 
     log('final_counts', {
-      documentationSuggestions: suggestions.length,
-      supportResourcesSuggestion: Array.isArray(preview.supportResourcesSuggestion) ? preview.supportResourcesSuggestion.length : 0
+      documentationSuggestions: cleanedResult.documentationSuggestions.length,
+      supportResourcesSuggestion: cleanedResult.supportResourcesSuggestion.length
     });
 
     const updatePayload = {
       normalizedName,
-      documentationSuggestions: suggestions,
+      documentationSuggestions: cleanedResult.documentationSuggestions,
       enrichmentConfidence: confidence,
-      enrichmentFollowupQuestion: followupQuestion,
+      enrichmentFollowupQuestion: cleanedResult.enrichmentFollowupQuestion,
       enrichmentStatus: status,
       enrichmentFailedAt: null,
       enrichmentErrorCode: '',
       enrichmentErrorMessage: '',
+      reviewState: cleanedResult.reviewState,
       enrichmentCandidates: [
         manufacturerSuggestion,
         preview?.likelyCategory,
@@ -1143,7 +1288,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     }
 
     if (manufacturerSuggestion) updatePayload.manufacturerSuggestion = manufacturerSuggestion;
-    if (Array.isArray(preview.supportResourcesSuggestion) && preview.supportResourcesSuggestion.length) updatePayload.supportResourcesSuggestion = preview.supportResourcesSuggestion;
+    updatePayload.supportResourcesSuggestion = cleanedResult.supportResourcesSuggestion;
     if (Array.isArray(preview.supportContactsSuggestion) && preview.supportContactsSuggestion.length) updatePayload.supportContactsSuggestion = preview.supportContactsSuggestion;
     if (Array.isArray(preview.alternateNames) && preview.alternateNames.length) updatePayload.alternateNames = preview.alternateNames;
     if (Array.isArray(preview.searchHints) && preview.searchHints.length) updatePayload.searchHints = preview.searchHints;
@@ -1163,7 +1308,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       userUid: userId,
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
       confidence,
-      suggestions: suggestions.length
+      suggestions: cleanedResult.documentationSuggestions.length
     });
 
     return {
@@ -1171,8 +1316,8 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       assetId,
       confidence,
       status,
-      followupQuestion,
-      suggestions
+      followupQuestion: cleanedResult.enrichmentFollowupQuestion,
+      suggestions: cleanedResult.documentationSuggestions
     };
   } catch (error) {
     const code = `${error?.code || ''}`.trim() || 'unknown';
@@ -1237,6 +1382,12 @@ module.exports = {
   buildFollowupQuestion,
   shouldDiscoverAfterCatalogMatch,
   hasUsableVerifiedManualSuggestion,
+  cleanDocumentationSuggestions,
+  cleanSupportResourcesSuggestion,
+  cleanFinalEnrichmentResult,
+  resolveTerminalEnrichmentStatus,
+  deriveDocumentationReviewState,
+  repairLegacyAssetEnrichmentRecord,
   runLookupPreview,
   recoverCatalogSourcePageManuals
 };
