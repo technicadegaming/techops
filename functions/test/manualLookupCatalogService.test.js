@@ -128,9 +128,25 @@ test('buildNameCandidates expands explicit arcade family aliases deterministical
 test('workbook-seeded catalog covers required regression titles', () => {
   const entries = getCatalogEntries();
   const titles = new Set(entries.map((entry) => entry.canonicalTitle || entry.assetName));
-  ['Quik Drop', 'Sink It Shootout', 'Fast and Furious Arcade', 'Jurassic Park Arcade', 'Air FX', 'StepManiaX', 'Break The Plate'].forEach((title) => {
+  ['Quik Drop', 'Sink It Shootout', 'Fast and Furious Arcade', 'Jurassic Park Arcade', 'Virtual Rabbids: The Big Ride', 'Air FX', 'StepManiaX', 'Break The Plate'].forEach((title) => {
     assert.equal(titles.has(title), true);
   });
+});
+
+test('Virtual Rabbids alias resolves to curated canonical Big Ride documentation seed', () => {
+  const profile = getManufacturerProfile('LAI Games', 'Virtual Rabbids');
+  const match = findCatalogManualMatch({
+    assetName: 'Virtual Rabbids',
+    normalizedName: 'Virtual Rabbids Arcade',
+    manufacturer: 'LAI Games',
+    manufacturerProfile: profile,
+    alternateNames: ['Virtual Rabbids Arcade']
+  });
+
+  assert.ok(match);
+  assert.equal(match.documentationSuggestions[0].url, 'https://laigames.com/downloads/virtual-rabbids-the-big-ride-install-guide.pdf');
+  assert.equal(match.documentationSuggestions[0].matchStatus, 'catalog_exact');
+  assert.equal(match.supportResources[0].url, 'https://laigames.com/virtual-rabbids-upgrade-kit');
 });
 
 test('Sink It alias resolves through workbook family mapping with honest family status', () => {
