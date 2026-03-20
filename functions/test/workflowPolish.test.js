@@ -35,7 +35,7 @@ test('repeat issue detection helper', () => {
 
 
 test('deep-link selection parsing', () => {
-  const route = parseDeepLink('https://wow.technicade.tech/?tab=operations&taskId=t7');
+  const route = parseDeepLink('https://portal.scootbusiness.com/?tab=operations&taskId=t7');
   assert.equal(route.tab, 'operations');
   assert.equal(route.taskId, 't7');
 });

@@ -1,6 +1,7 @@
-// Centralized runtime config.
-// Safe to commit: Firebase web client config and other non-privileged defaults required by the browser app.
-// Must be supplied explicitly at runtime: any environment-specific operational overrides, including bootstrap admin emails.
+// Centralized browser config.
+// Safe to commit here: Firebase web client config and other non-privileged defaults required by the app.
+// Runtime overrides come from window.__APP_CONFIG__, which must be defined before app modules load if environment-specific values are needed.
+// Privilege-affecting overrides, including bootstrap admin emails, must be supplied intentionally at runtime rather than committed as defaults.
 const defaults = {
   firebase: {
     apiKey: 'AIzaSyAzTD9O87wTEhBlWdmDr5fbgES8o7a2Hbg',

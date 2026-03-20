@@ -21,7 +21,10 @@
 
 ## Runtime config notes
 - Firebase web client config is safe to keep in committed browser config.
-- Privilege-affecting values such as `bootstrapAdmins` should be provided explicitly via `window.__APP_CONFIG__` at runtime when needed.
+- `src/config.js` reads `window.__APP_CONFIG__` during browser startup and merges those values over committed defaults.
+- This repository does not currently ship a dedicated staging/production injector for `window.__APP_CONFIG__`; deployment should provide it before the app loads whenever an override is needed.
+- Privilege-affecting values such as `bootstrapAdmins` should be provided explicitly via `window.__APP_CONFIG__` only for intentional bootstrap/recovery scenarios. Leave them unset otherwise.
+- Conceptually, staging/production overrides should inject only the keys that differ from committed defaults so the runtime contract stays small and reviewable.
 
 ## Backfill recommendation (manual/admin-driven)
 - Create an admin-only script or one-time utility to set `companyId` on legacy docs in batches.

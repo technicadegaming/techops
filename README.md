@@ -1,6 +1,6 @@
 # Scoot Business TechOps Portal
 
-Scoot Business TechOps is a multi-tenant operations platform for FEC/arcade-style businesses. The codebase still contains some legacy WOW Technicade naming in low-risk internals, but user-facing and operational docs are now standardized toward Scoot Business.
+Scoot Business TechOps is a multi-tenant operations platform for FEC/arcade-style businesses. Some low-risk internal and historical references still use pre-Scoot naming where changing them could create migration ambiguity, but current contributor-facing guidance should default to Scoot Business or neutral terminology.
 
 ## What this repo contains
 
@@ -42,6 +42,24 @@ npm run test:rules
 
 - The repository root files (for example `index.html`, Firebase config, and docs) are the authoritative source for the deployed app and operational workflows.
 - Legacy GitHub Pages export artifacts and root `CNAME` files are not part of the current Firebase Hosting deployment path and should not be reintroduced without a documented operational need.
+
+### Runtime config injection (`window.__APP_CONFIG__`)
+
+- `src/config.js` reads runtime overrides from `window.__APP_CONFIG__` during browser startup and merges them over the committed defaults.
+- This repo currently documents the contract, but it does **not** include an environment-specific injector for staging/production. In practice, the hosting layer must define `window.__APP_CONFIG__` before the app modules load if you need overrides.
+- Safe committed defaults may stay in `src/config.js` (for example the Firebase web client config and non-privileged defaults).
+- Privilege-affecting values such as `bootstrapAdmins` must be supplied intentionally at runtime, for example with an inline script placed ahead of the app bundle:
+
+```html
+<script>
+  window.__APP_CONFIG__ = {
+    bootstrapAdmins: ['owner@example.com']
+  };
+</script>
+```
+
+- Leave `bootstrapAdmins` unset in normal local/staging/production operation unless you are deliberately enabling a bootstrap path for a specific rollout or recovery case.
+- Staging and production overrides should follow the same pattern: inject only the environment-specific keys that differ from committed defaults, and keep the injected object small and explicit.
 
 ### Security rules tests (Firestore + Storage)
 
