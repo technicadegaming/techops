@@ -11,8 +11,10 @@ const {
   collectReusableVerifiedManuals,
   getManufacturerProfile,
   buildFollowupQuestion,
-  shouldDiscoverAfterCatalogMatch
+  shouldDiscoverAfterCatalogMatch,
+  hasUsableVerifiedManualSuggestion
 } = require('../src/services/assetEnrichmentService');
+const { findCatalogManualMatch } = require('../src/services/manualLookupCatalogService');
 
 test('normalizeDocumentationSuggestions filters weak and malformed links and ranks strong matches first', () => {
   const suggestions = normalizeDocumentationSuggestions({
@@ -659,6 +661,78 @@ test('mergeDocumentationSuggestions keeps Quik Drop verified direct pdf ahead of
 
   assert.equal(merged[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
   assert.equal(merged.some((row) => row.url === 'https://www.baytekent.com/support/quik-drop'), true);
+});
+
+test('Quik Drop workbook-seeded catalog direct manual survives preview merge while source page stays support-only', () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
+  const catalogMatch = findCatalogManualMatch({
+    assetName: 'Quik Drop',
+    normalizedName: 'Quik Drop',
+    manufacturer: 'Bay Tek Games',
+    manufacturerProfile: profile,
+    alternateNames: ['Quik Drop']
+  });
+
+  const normalizedCatalogSuggestions = normalizeDocumentationSuggestions({
+    links: catalogMatch.documentationSuggestions,
+    confidence: 0.99,
+    asset: { name: 'Quik Drop', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Quik Drop',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+  const supportResourcesSuggestion = normalizeDocumentationSuggestions({
+    links: catalogMatch.supportResources,
+    confidence: 0.99,
+    asset: { name: 'Quik Drop', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Quik Drop',
+    manufacturerSuggestion: 'Bay Tek Games',
+    kind: 'support'
+  });
+
+  const merged = mergeDocumentationSuggestions({
+    existingSuggestions: normalizedCatalogSuggestions,
+    nextSuggestions: [],
+    preserveExistingCandidates: true
+  });
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
+  assert.equal(supportResourcesSuggestion.length, 1);
+  assert.match(supportResourcesSuggestion[0].url, /quik-drop/);
+  assert.equal(merged.some((entry) => entry.url === supportResourcesSuggestion[0].url), false);
+});
+
+test('Quik Drop workbook-seeded verified catalog manual resolves to docs_found status signal', async () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
+  const catalogMatch = findCatalogManualMatch({
+    assetName: 'Quik Drop',
+    normalizedName: 'Quik Drop',
+    manufacturer: 'Bay Tek Games',
+    manufacturerProfile: profile,
+    alternateNames: ['Quik Drop']
+  });
+
+  const normalizedCatalogSuggestions = normalizeDocumentationSuggestions({
+    links: catalogMatch.documentationSuggestions,
+    confidence: 0.99,
+    asset: { name: 'Quik Drop', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Quik Drop',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+  const verified = await verifyDocumentationSuggestions(normalizedCatalogSuggestions, async (url, options = {}) => ({
+    ok: true,
+    status: 200,
+    url,
+    headers: { get: () => (url.endsWith('.pdf') ? 'application/pdf' : 'text/html') },
+    text: async () => options.method === 'HEAD' ? '' : 'Quik Drop service manual PDF'
+  }));
+  const suggestions = mergeDocumentationSuggestions({
+    existingSuggestions: [],
+    nextSuggestions: verified
+  });
+
+  assert.equal(hasUsableVerifiedManualSuggestion(suggestions), true);
+  assert.equal(suggestions[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
 });
 
 test('collectReusableVerifiedManuals reuses previously approved exact-match Quik Drop manual from company records', () => {
