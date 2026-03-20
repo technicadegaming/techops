@@ -46,6 +46,7 @@ These modules support `src/app.js` but do not replace it.
 - `src/app/onboardingController.js`: onboarding/setup shell wiring for workspace creation, invite acceptance, setup-step orchestration, and readiness dismissal.
 - `src/app/notifications.js`: notification action-center shell wiring, including panel DOM listeners, badge rendering, and notification-to-route/app-context glue.
 - `src/app/operationsController.js`: operations/task shell wiring for callback bag assembly, task AI polling/readback, evidence upload/removal orchestration, closeout/save-fix flows, and operations-to-navigation coordination.
+- `src/app/assetsController.js`: assets shell wiring for callback/dependency assembly, asset save/edit/delete orchestration, intake review callbacks, documentation preview/enrichment coordination, and assets-to-navigation glue.
 
 **Important:** these are helper modules around a still-centralized app shell, not a fully separated app core.
 
