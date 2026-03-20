@@ -25,6 +25,7 @@ This pass does **not** change runtime behavior. It only proposes a decomposition
 - Completed second extraction pass: shared action-center focus and route-filter translation now lives in `src/app/actionCenter.js`, with `src/app.js` still acting as the integration seam that wires focus handlers into dashboard, reports, and notifications.
 - Completed third extraction pass: company/location header context shell wiring now lives in `src/app/contextSwitcher.js`, while membership/data hydration and route/render orchestration remain in `src/app.js` and `src/app/dataRefresh.js`.
 - Completed fourth extraction pass: onboarding/setup callback wiring now lives in `src/app/onboardingController.js`, while `src/app.js` still decides when onboarding/setup renders and still owns top-level lifecycle sequencing.
+- Completed fifth extraction pass: route/tab/navigation shell coordination now lives in `src/app/navigationController.js`, while `src/app/router.js` remains the low-level tab/URL helper layer and `src/app.js` still owns final render/lifecycle sequencing.
 
 ## Current hotspot audit
 
@@ -63,7 +64,8 @@ This pass does **not** change runtime behavior. It only proposes a decomposition
 The app already has support modules that can absorb more shell logic without changing architecture:
 
 - `src/app/boot.js` for DOM/bootstrap helpers
-- `src/app/router.js` for tab/router state changes
+- `src/app/router.js` for low-level tab/router state changes
+- `src/app/navigationController.js` for shell-level route/tab/navigation coordination across dashboard, reports, notifications, and tab-opening callbacks
 - `src/app/dataRefresh.js` for membership/company/data hydration
 - `src/app/state.js` for shared state helpers
 - `src/app/actions.js` for common action wrappers

@@ -35,7 +35,8 @@ This frontend is a framework-less Firebase web app. The structure is partly modu
 These modules support `src/app.js` but do not replace it.
 
 - `src/app/boot.js`: resolves shared DOM elements and handles invite-code hydration/persistence for onboarding.
-- `src/app/router.js`: tab visibility/building and lightweight route syncing for query-string deep links.
+- `src/app/router.js`: low-level tab visibility/building and lightweight route syncing for query-string deep links.
+- `src/app/navigationController.js`: shell-level route/tab/navigation coordination, including shared tab opening, route mutation wrappers, focus-to-navigation glue, and popstate sync.
 - `src/app/state.js`: initial state shape, shared constants, setup/onboarding UI state helpers, and some pure helpers like asset preview query keys.
 - `src/app/renderApp.js`: light shell rendering helpers such as the tab strip and user badge.
 - `src/app/dataRefresh.js`: company bootstrap, active membership persistence, company hydration, and bulk Firestore refresh into app state.

@@ -48,7 +48,7 @@ import {
   regenerateTaskTroubleshooting,
   saveTaskFixToTroubleshootingLibrary
 } from './aiAdapter.js';
-import { buildCloseoutEvent, parseRouteState, pushRouteState } from './features/workflow.js';
+import { buildCloseoutEvent } from './features/workflow.js';
 import { buildNotificationCandidates, formatRelativeTime } from './features/notifications.js';
 import { acceptInvite, createCompanyFromOnboarding, createCompanyInvite, revokeInvite } from './company.js';
 import { createOperationsActions } from './features/operationsActions.js';
@@ -66,6 +66,7 @@ import { applyActionCenterFocus as applyActionCenterFocusState, applyShellFocus 
 import { createContextSwitcherController } from './app/contextSwitcher.js';
 import { createNotificationController } from './app/notifications.js';
 import { createOnboardingController } from './app/onboardingController.js';
+import { createNavigationController } from './app/navigationController.js';
 import {
   bootstrapCompanyContext as bootstrapCompanyContextState,
   refreshData as refreshAppData,
@@ -77,7 +78,6 @@ import {
   ref as storageRef,
   uploadBytes
 } from 'https://www.gstatic.com/firebasejs/10.12.3/firebase-storage.js';
-import { buildTabs as buildTabsUi, openTab as openTabUi } from './app/router.js';
 import {
   buildPreviewQueryKey,
   createEmptyAssetDraft,
@@ -361,10 +361,6 @@ const runAction = runActionFactory({ reportActionError });
 const withActiveCompanyId = (payload = {}, actionLabel = 'continue') => withRequiredCompanyId(state, payload, actionLabel);
 
 
-function openTab(name, taskId = null, assetId = null) {
-  openTabUi({ state, name, taskId, assetId });
-}
-
 async function refreshData() {
   await refreshAppData(state, { syncNotifications: notificationController.syncNotifications });
 }
@@ -377,6 +373,13 @@ async function bootstrapCompanyContext() {
   await bootstrapCompanyContextState(state, { refreshData, render });
 }
 
+const navigationController = createNavigationController({
+  state,
+  sections,
+  canViewAdminTab: () => isAdmin(state.permissions),
+  applyShellFocus: (focus, options = {}) => applyShellFocus(state, focus, options)
+});
+
 const notificationController = createNotificationController({
   state,
   elements: { notificationBell, notificationBadge, notificationPanel },
@@ -386,12 +389,10 @@ const notificationController = createNotificationController({
   upsertEntity: (collection, id, payload) => upsertEntity(collection, id, payload, state.user),
   refreshData,
   render,
-  openTab,
-  pushRouteState,
+  openTab: navigationController.openTab,
+  pushRouteState: navigationController.updateRoute,
   applyActionCenterFocus,
-  setAdminSection: (value) => {
-    state.adminSection = value;
-  }
+  setAdminSection: navigationController.setAdminSection
 });
 
 function applyActionCenterFocus(focus) {
@@ -402,7 +403,7 @@ const contextSwitcherController = createContextSwitcherController({
   state,
   elements: { activeCompanySwitcher, activeLocationSwitcher, locationScopeBadge },
   setActiveMembership,
-  pushRouteState,
+  pushRouteState: navigationController.updateRoute,
   render,
   runAction
 });
@@ -485,30 +486,24 @@ function normalizeSupportEntries(values = []) {
 
 
 async function render() {
-  buildTabsUi({ state, sections, canViewAdminTab: () => isAdmin(state.permissions), onOpenTab: openTab });
+  navigationController.renderTabs();
   contextSwitcherController.renderHeaderContext();
   notificationController.renderNotificationCenter();
 
   if (state.onboardingRequired || state.setupWizard?.active) {
     renderOnboarding(document.getElementById('dashboard'), state, onboardingController);
-    openTab('dashboard');
+    navigationController.openTab('dashboard');
     return;
   }
 
-  renderDashboard(document.getElementById('dashboard'), state, openTab, (focus) => {
-    const { routeChanged } = applyShellFocus(state, focus, {
-      setAdminSection: (value) => {
-        state.adminSection = value;
-      }
-    });
-    if (routeChanged) pushRouteState(state.route);
+  renderDashboard(document.getElementById('dashboard'), state, navigationController.openTab, (focus) => {
+    navigationController.applyShellFocusAndPush(focus);
   });
 
   const operationsActions = createOperationsActions({
     state,
     onLocationFilter: (locationKey) => {
-      state.route = { ...state.route, locationKey, tab: 'operations' };
-      pushRouteState(state.route);
+      navigationController.showOperationsForLocation(locationKey);
       render();
     },
     saveTask: async (_id, payload) => {
@@ -601,8 +596,7 @@ async function render() {
         name: `${assetName || ''}`.trim(),
         locationName: `${locationName || ''}`.trim()
       };
-      state.route = { ...state.route, tab: 'assets', assetId: null, taskId: null };
-      pushRouteState(state.route);
+      navigationController.prepareAssetTab();
       render();
     },
     uploadTaskEvidence: async (taskId, file) => {
@@ -929,9 +923,7 @@ async function render() {
       render();
     },
     openAiSettings: () => {
-      state.adminSection = 'tools';
-      state.route = { ...state.route, tab: 'admin' };
-      pushRouteState(state.route);
+      navigationController.openAdminTools();
       render();
     }
   });
@@ -940,8 +932,7 @@ async function render() {
   const assetActions = createAssetActions({
     state,
     onLocationFilter: (locationKey) => {
-      state.route = { ...state.route, locationKey, tab: 'assets' };
-      pushRouteState(state.route);
+      navigationController.showAssetsForLocation(locationKey);
       render();
     },
     render,
@@ -970,13 +961,8 @@ async function render() {
   });
   renderAssets(document.getElementById('assets'), state, assetActions);
   renderCalendar(document.getElementById('calendar'), state);
-  renderReports(document.getElementById('reports'), state, openTab, (focus) => {
-    const { routeChanged } = applyShellFocus(state, focus, {
-      setAdminSection: (value) => {
-        state.adminSection = value;
-      }
-    });
-    if (routeChanged) pushRouteState(state.route);
+  renderReports(document.getElementById('reports'), state, navigationController.openTab, (focus) => {
+    navigationController.applyShellFocusAndPush(focus);
   });
   renderAccount(document.getElementById('account'), state, {
     resendVerification: async () => {
@@ -1026,12 +1012,11 @@ async function render() {
     requestAnimationFrame(() => window.scrollTo({ top: state.operationsUi.scrollY, behavior: 'auto' }));
   }
 
-  openTab(state.route.tab, state.route.taskId, state.route.assetId);
+  navigationController.openTab(state.route.tab, state.route.taskId, state.route.assetId);
 }
 
 window.addEventListener('popstate', () => {
-  state.route = parseRouteState();
-  openTab(state.route.tab, state.route.taskId, state.route.assetId);
+  navigationController.syncFromUrl();
 });
 
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
