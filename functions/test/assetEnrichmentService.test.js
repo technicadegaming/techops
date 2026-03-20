@@ -12,7 +12,8 @@ const {
   getManufacturerProfile,
   buildFollowupQuestion,
   shouldDiscoverAfterCatalogMatch,
-  hasUsableVerifiedManualSuggestion
+  hasUsableVerifiedManualSuggestion,
+  recoverCatalogSourcePageManuals
 } = require('../src/services/assetEnrichmentService');
 const { findCatalogManualMatch } = require('../src/services/manualLookupCatalogService');
 
@@ -847,4 +848,166 @@ test('family fallback requires explicit Sink It family evidence', () => {
 
   assert.equal(suggestions[0].url, 'https://www.betson.com/wp-content/uploads/2019/09/Sink-It-Shootout-Operator-Manual.pdf');
   assert.equal(suggestions.some((row) => row.url === 'https://example.com/shootout-manual.pdf'), false);
+});
+
+
+
+
+test('Fast and Furious official source page extraction yields surviving final documentation suggestions', async () => {
+  const profile = getManufacturerProfile('Raw Thrills', 'Fast & Furious');
+  const catalogMatch = findCatalogManualMatch({
+    assetName: 'Fast & Furious',
+    normalizedName: 'Fast and Furious',
+    manufacturer: 'Raw Thrills',
+    manufacturerProfile: profile,
+    alternateNames: []
+  });
+
+  const fetchMock = async (url, options = {}) => {
+    if (url === 'https://rawthrills.com/games/fast-furious-arcade/') {
+      return {
+        ok: true,
+        status: 200,
+        url,
+        headers: { get: () => 'text/html' },
+        text: async () => options.method === 'HEAD'
+          ? ''
+          : '<a href="https://rawthrills.com/manuals/fast-furious-arcade-2-player.pdf">2 Player Manual PDF</a><a href="https://rawthrills.com/manuals/fast-furious-arcade-motion.pdf">Motion Manual PDF</a>'
+      };
+    }
+    if (/rawthrills\.com\/manuals\//.test(url)) {
+      return {
+        ok: true,
+        status: 200,
+        url,
+        headers: { get: () => 'application/pdf' },
+        text: async () => ''
+      };
+    }
+    return {
+      ok: false,
+      status: 404,
+      url,
+      headers: { get: () => 'text/html' },
+      text: async () => options.method === 'HEAD' ? '' : 'manual not found'
+    };
+  };
+
+  const recovered = await recoverCatalogSourcePageManuals({
+    catalogMatch,
+    draftAsset: { name: 'Fast & Furious', manufacturer: 'Raw Thrills' },
+    normalizedName: 'Fast and Furious',
+    manufacturerSuggestion: 'Raw Thrills',
+    manufacturerProfile: profile,
+    fetchImpl: fetchMock
+  });
+  const normalizedRecovered = normalizeDocumentationSuggestions({
+    links: recovered,
+    confidence: 0.9,
+    asset: { name: 'Fast & Furious', manufacturer: 'Raw Thrills' },
+    normalizedName: 'Fast and Furious',
+    manufacturerSuggestion: 'Raw Thrills'
+  });
+  const verified = await verifyDocumentationSuggestions(normalizedRecovered, fetchMock);
+  const finalSuggestions = mergeDocumentationSuggestions({ existingSuggestions: [], nextSuggestions: verified });
+  const supportResourcesSuggestion = normalizeDocumentationSuggestions({
+    links: catalogMatch.supportResources,
+    confidence: 0.9,
+    asset: { name: 'Fast & Furious', manufacturer: 'Raw Thrills' },
+    normalizedName: 'Fast and Furious',
+    manufacturerSuggestion: 'Raw Thrills',
+    kind: 'support'
+  });
+
+  assert.deepEqual(finalSuggestions.map((entry) => entry.url), [
+    'https://rawthrills.com/manuals/fast-furious-arcade-2-player.pdf',
+    'https://rawthrills.com/manuals/fast-furious-arcade-motion.pdf'
+  ]);
+  assert.equal(finalSuggestions.every((entry) => entry.verified), true);
+  assert.equal(hasUsableVerifiedManualSuggestion(finalSuggestions), true);
+  assert.equal(supportResourcesSuggestion.some((entry) => entry.url === 'https://rawthrills.com/games/fast-furious-arcade/'), true);
+  assert.equal(finalSuggestions.some((entry) => entry.url === 'https://rawthrills.com/games/fast-furious-arcade/'), false);
+});
+
+test('Sink It dead family manual falls back cleanly without dead final docs or internal-failure behavior', async () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Sink It');
+  const catalogMatch = findCatalogManualMatch({
+    assetName: 'Sink It',
+    normalizedName: 'Sink It',
+    manufacturer: 'Bay Tek Games',
+    manufacturerProfile: profile,
+    alternateNames: []
+  });
+
+  const fetchMock = async (url, options = {}) => {
+    if (url === 'https://www.betson.com/wp-content/uploads/2019/09/Sink-It-Shootout-Operator-Manual.pdf') {
+      return {
+        ok: false,
+        status: 404,
+        url,
+        headers: { get: () => 'text/html' },
+        text: async () => options.method === 'HEAD' ? '' : 'manual not found'
+      };
+    }
+    if (url === 'https://www.baytekent.com/games/sink-it-shootout/') {
+      return {
+        ok: true,
+        status: 200,
+        url,
+        headers: { get: () => 'text/html' },
+        text: async () => '<html><body><a href="/support">Support</a><p>Sink It Shootout</p></body></html>'
+      };
+    }
+    return {
+      ok: false,
+      status: 404,
+      url,
+      headers: { get: () => 'text/html' },
+      text: async () => options.method === 'HEAD' ? '' : 'page not found'
+    };
+  };
+
+  const normalizedCatalogSuggestions = normalizeDocumentationSuggestions({
+    links: catalogMatch.documentationSuggestions,
+    confidence: 0.82,
+    asset: { name: 'Sink It', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Sink It',
+    manufacturerSuggestion: 'Bay Tek Games'
+  });
+  const verifiedCatalog = await verifyDocumentationSuggestions(normalizedCatalogSuggestions, fetchMock);
+  const survivingCatalog = verifiedCatalog.filter((entry) => !entry.deadPage && !entry.unreachable);
+  const recovered = await recoverCatalogSourcePageManuals({
+    catalogMatch,
+    draftAsset: { name: 'Sink It', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Sink It',
+    manufacturerSuggestion: 'Bay Tek Games',
+    manufacturerProfile: profile,
+    fetchImpl: fetchMock
+  });
+  const finalSuggestions = mergeDocumentationSuggestions({
+    existingSuggestions: survivingCatalog,
+    nextSuggestions: normalizeDocumentationSuggestions({
+      links: recovered,
+      confidence: 0.82,
+      asset: { name: 'Sink It', manufacturer: 'Bay Tek Games' },
+      normalizedName: 'Sink It',
+      manufacturerSuggestion: 'Bay Tek Games'
+    }),
+    preserveExistingCandidates: true
+  });
+  const supportResourcesSuggestion = normalizeDocumentationSuggestions({
+    links: catalogMatch.supportResources,
+    confidence: 0.82,
+    asset: { name: 'Sink It', manufacturer: 'Bay Tek Games' },
+    normalizedName: 'Sink It',
+    manufacturerSuggestion: 'Bay Tek Games',
+    kind: 'support'
+  });
+
+  assert.equal(verifiedCatalog[0].deadPage, true);
+  assert.equal(survivingCatalog.length, 0);
+  assert.equal(finalSuggestions.length, 0);
+  assert.equal(hasUsableVerifiedManualSuggestion(finalSuggestions), false);
+  assert.equal(supportResourcesSuggestion.some((entry) => entry.url === 'https://www.baytekent.com/games/sink-it-shootout/'), true);
+  assert.equal(finalSuggestions.some((entry) => entry.url === 'https://www.betson.com/wp-content/uploads/2019/09/Sink-It-Shootout-Operator-Manual.pdf'), false);
 });
