@@ -6,7 +6,8 @@
     "test": "npm run test:functions && npm run test:rules",
     "test:functions": "npm run test --prefix functions",
     "test:rules": "firebase emulators:exec --project techops-rules --only firestore,storage \"node --test test/rules/security.rules.test.js\"",
-    "lint": "eslint src/**/*.js functions/src/**/*.js functions/test/**/*.js test/**/*.js"
+    "lint": "eslint src/**/*.js functions/src/**/*.js functions/test/**/*.js test/**/*.js",
+    "test:app-shell": "node --test test/appShellControllers.test.js"
   },
   "devDependencies": {
     "eslint": "^9.22.0",

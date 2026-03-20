@@ -219,4 +219,6 @@ Instead of another mechanical extraction pass, the best next step is:
 - add or strengthen tests around the remaining high-coupling flows
 - use this document as the boundary reference when future feature changes touch the shell
 
+Current lightweight stabilization coverage now lives in `test/appShellControllers.test.js` for pure/shallow-injected shell seams (`src/app/actionCenter.js`, `src/app/contextSwitcher.js`, and `src/app/navigationController.js`). More DOM-heavy controllers still need either broader browser coverage or smaller helper seams before they are worth testing here.
+
 If a future hotspot emerges again inside `src/app.js`, revisit this map and only extract the auth/bootstrap session lifecycle if it becomes meaningfully harder to maintain than it is today.
