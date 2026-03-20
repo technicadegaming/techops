@@ -124,6 +124,8 @@ This means a contributor usually should **not** hand-roll ad hoc `companyId` fil
 
 Be honest about the current shape: this is **not** a component framework app with strict boundaries yet. It is a progressively modularized vanilla JS application.
 
+See also: [`docs/APP_SHELL_REFACTOR_PLAN.md`](./APP_SHELL_REFACTOR_PLAN.md) for the current implementation-aware decomposition plan for `src/app.js`.
+
 ## Contribution guidance
 
 ### Prefer adding code in:
