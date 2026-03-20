@@ -29,6 +29,7 @@ This pass does **not** change runtime behavior. It only proposes a decomposition
 - Completed sixth extraction pass: operations/task action wiring now lives in `src/app/operationsController.js`, while `src/app.js` still owns top-level render ordering and cross-feature lifecycle sequencing.
 - Completed seventh extraction pass: admin action/dependency assembly now lives in `src/app/adminController.js`, while `src/app.js` still owns top-level lifecycle sequencing and final admin render ordering.
 - Completed eighth extraction pass: reports shell wiring now lives in `src/app/reportsController.js`, while `src/app.js` still owns top-level render ordering, lifecycle sequencing, and final report-section inclusion in the overall shell render.
+- Completed ninth extraction pass: account shell wiring now lives in `src/app/accountController.js`, while `src/app.js` still owns top-level render ordering, lifecycle sequencing, auth/bootstrap state, and final account-section inclusion in the overall shell render.
 
 ## Current hotspot audit
 
