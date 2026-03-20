@@ -626,12 +626,24 @@ function dedupeDocumentationSuggestions(rows = []) {
   });
 }
 
-function mergeDocumentationSuggestions({ existingSuggestions, nextSuggestions }) {
-  const preserved = (Array.isArray(existingSuggestions) ? existingSuggestions : []).filter(isPreservableVerifiedManualSuggestion);
+function mergeDocumentationSuggestions({ existingSuggestions, nextSuggestions, preserveExistingCandidates = false }) {
+  const preserved = preserveExistingCandidates
+    ? (Array.isArray(existingSuggestions) ? existingSuggestions : [])
+    : (Array.isArray(existingSuggestions) ? existingSuggestions : []).filter(isPreservableVerifiedManualSuggestion);
   return dedupeDocumentationSuggestions([
     ...(Array.isArray(nextSuggestions) ? nextSuggestions : []),
     ...preserved
   ]).slice(0, 5);
+}
+
+function hasUsableVerifiedManualSuggestion(suggestions = []) {
+  return (Array.isArray(suggestions) ? suggestions : []).some((entry) => (
+    !!entry?.verified
+    && !entry?.deadPage
+    && !entry?.unreachable
+    && !!entry?.exactTitleMatch
+    && !!entry?.exactManualMatch
+  ));
 }
 
 function normalizeSupportContacts(rows) {
@@ -904,7 +916,8 @@ async function runLookupPreview({ settings, traceId, draftAsset, fetchImpl = fet
 
   const documentationSuggestions = mergeDocumentationSuggestions({
     existingSuggestions: normalizedCatalogSuggestions,
-    nextSuggestions: discoveredDocumentationSuggestions
+    nextSuggestions: discoveredDocumentationSuggestions,
+    preserveExistingCandidates: true
   });
 
   const supportResourcesSuggestion = normalizeDocumentationSuggestions({
@@ -1001,13 +1014,16 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     return scoreGate && exactGate;
   });
   const strongVerifiedSuggestions = strongSuggestions.filter((s) => s.verified && s.trustedSource);
+  const hasUsableVerifiedManual = hasUsableVerifiedManualSuggestion(suggestions);
   const hasConfidentSingleMatch = confidence >= confidenceThreshold && strongVerifiedSuggestions.length === 1;
   const topSuggestionScore = suggestions[0]?.matchScore || 0;
   const isAmbiguousTitle = suggestions.length > 1 && topSuggestionScore < 78;
   const hasUnverifiedCandidates = suggestions.some((s) => !s.verified && !s.deadPage && !s.unreachable);
   const hasOnlyFailedVerification = suggestions.length > 0 && !strongVerifiedSuggestions.length;
 
-  const followupQuestion = hasConfidentSingleMatch
+  const followupQuestion = hasUsableVerifiedManual
+    ? ''
+    : (hasConfidentSingleMatch
     ? ''
     : (isAmbiguousTitle
       ? 'What exact cabinet nameplate text or subtitle/version appears under the logo (for example DX/Deluxe/SDX)?'
@@ -1016,11 +1032,11 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
         profile: manufacturerProfile,
         likelyCategory: preview?.likelyCategory,
         hasOnlyFailedVerification
-      }));
+      })));
   const shouldSetManufacturer = !asset.manufacturer && confidence >= Math.max(0.75, confidenceThreshold) && manufacturerSuggestion;
 
-  const status = strongVerifiedSuggestions.length
-    ? (hasConfidentSingleMatch ? 'docs_found' : 'needs_follow_up')
+  const status = hasUsableVerifiedManual
+    ? 'docs_found'
     : (hasUnverifiedCandidates ? 'needs_follow_up' : 'no_match_yet');
 
   const updatePayload = {
@@ -1140,7 +1156,8 @@ module.exports = {
   findReusableVerifiedManuals,
   getManufacturerProfile,
   buildFollowupQuestion,
-  shouldDiscoverAfterCatalogMatch
+  shouldDiscoverAfterCatalogMatch,
+  hasUsableVerifiedManualSuggestion
 };
 
 
