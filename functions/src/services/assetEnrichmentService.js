@@ -207,6 +207,24 @@ function normalizeSuggestionTitle(entry = {}) {
   return `${entry?.title || entry?.label || ''}`.trim().replace(/\s+/g, ' ').slice(0, 180);
 }
 
+function isDirectDocumentationFileSuggestion(entry = {}) {
+  const url = `${entry?.resolvedUrl || entry?.url || ''}`.trim().toLowerCase();
+  if (!url) return false;
+  return /\.pdf($|\?|#)|\/wp-content\/uploads\/|\/manuals?\/[^/]+\.(pdf|docx?)($|\?|#)/.test(url);
+}
+
+function isSeededCatalogManualCandidate(entry = {}) {
+  const matchStatus = `${entry?.matchStatus || ''}`.trim().toLowerCase();
+  const lookupMethod = `${entry?.lookupMethod || ''}`.trim().toLowerCase();
+  const seededFromWorkbook = !!entry?.verificationMetadata?.seededFromWorkbook;
+  return isDirectDocumentationFileSuggestion(entry)
+    && !!entry?.exactTitleMatch
+    && !!entry?.exactManualMatch
+    && !!entry?.trustedSource
+    && !entry?.deadPage
+    && (seededFromWorkbook || matchStatus === 'catalog_exact' || lookupMethod === 'workbook_seed_exact_pdf');
+}
+
 function isTitleSpecificManualBearingHtmlSuggestion(entry = {}) {
   const verificationKind = `${entry?.verificationKind || ''}`.trim().toLowerCase();
   if (verificationKind !== 'manual_html') return false;
@@ -657,7 +675,13 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     sourceTrustReason: (preferredSourceMatch
       ? 'manufacturer_preferred_source_match'
       : (reasons.find((reason) => /manufacturer_trusted_source_match|trusted_manual_host|official_host_match/.test(reason)) || '')),
-    reason: reasons.slice(0, 8).join(',') || 'basic_match'
+    reason: reasons.slice(0, 8).join(',') || 'basic_match',
+    lookupMethod: row.lookupMethod || '',
+    matchStatus: row.matchStatus || '',
+    verificationMetadata: row.verificationMetadata || null,
+    notes: row.notes || '',
+    catalogEntryId: row.catalogEntryId || '',
+    linkType: row.linkType || ''
   };
 
   return {
@@ -686,12 +710,17 @@ function normalizeDocumentationSuggestions({ links, confidence, asset, normalize
 }
 
 function isLiveManualCandidate(entry = {}) {
-  return !!entry?.url
-    && !entry?.deadPage
-    && !entry?.unreachable
-    && !!entry?.verified
-    && !!entry?.exactTitleMatch
-    && (!!entry?.exactManualMatch || isTitleSpecificManualBearingHtmlSuggestion(entry));
+  if (!entry?.url || entry?.deadPage) return false;
+  const directFile = isDirectDocumentationFileSuggestion(entry);
+  const manualBearingHtml = isTitleSpecificManualBearingHtmlSuggestion(entry);
+  if (isSeededCatalogManualCandidate(entry)) return true;
+  if (entry?.unreachable) return false;
+  if (!entry?.verified || !entry?.exactTitleMatch) return false;
+  if (manualBearingHtml) return true;
+  if (directFile) return !!entry?.exactManualMatch;
+  const sourceType = `${entry?.sourceType || entry?.resourceType || ''}`.toLowerCase();
+  if (SUPPORT_ONLY_SOURCE_TYPES.has(sourceType)) return false;
+  return !!entry?.exactManualMatch;
 }
 
 function isManualUsableSuggestion(entry = {}) {
@@ -714,7 +743,9 @@ function isMeaningfulSupportResource(entry = {}) {
   }
   const lowerPath = parsed.pathname.toLowerCase();
   const lowerUrl = url.toLowerCase();
-  if (isGenericSupportJunkPage(lowerPath, buildExactTitleVariants(entry?.assetName, entry?.normalizedName))) return false;
+  const genericSupportHub = /^\/(support|service-support|services?)\/?$/.test(lowerPath);
+  const supportishSourceType = SUPPORT_ONLY_SOURCE_TYPES.has(`${entry?.sourceType || entry?.resourceType || ''}`.toLowerCase());
+  if (isGenericSupportJunkPage(lowerPath, buildExactTitleVariants(entry?.assetName, entry?.normalizedName)) && !(genericSupportHub && supportishSourceType)) return false;
   if (/\/wp-comments-post\.php|\/feed\/?$/.test(lowerPath)) return false;
   if (JUNK_URL_FRAGMENT_PATTERNS.some((pattern) => pattern.test(`${parsed.hash || ''}`.replace(/^#/, '')))) return false;
   return /support|manual|service|help|product|game|parts|download|docs?/.test(lowerUrl)
@@ -727,7 +758,7 @@ function isPreservableVerifiedManualSuggestion(entry = {}) {
   const url = `${entry?.url || ''}`.trim().toLowerCase();
   if (!url) return false;
   if (!isManualUsableSuggestion(entry)) return false;
-  const directFile = /\.pdf($|\?|#)|\/wp-content\/uploads\/|\/manuals?\/[^/]+\.(pdf|docx?)($|\?|#)/.test(url);
+  const directFile = isDirectDocumentationFileSuggestion(entry);
   return directFile || getDocumentationSuggestionRank(entry) <= 1;
 }
 
@@ -896,18 +927,24 @@ async function verifyDocumentationSuggestions(suggestions, fetchImpl = fetch) {
         ...verification
       };
       const strongExactManual = Number(row.matchScore || 0) >= 72 && !!row.exactTitleMatch && !!row.exactManualMatch;
+      const seededCatalogManual = isSeededCatalogManualCandidate({
+        ...row,
+        ...verification
+      });
       const strongMatch = verification.verificationKind === 'manual_html'
         ? (strongExactManual && isTitleSpecificManualBearingHtmlSuggestion(manualHtmlCandidate))
         : strongExactManual;
       const strongManualBearingPage = verification.verified
         && Number(row.matchScore || 0) >= 68
         && isTitleSpecificManualBearingHtmlSuggestion(manualHtmlCandidate);
-      const aliveAndStrong = verification.verified && (strongMatch || strongManualBearingPage);
+      const aliveAndStrong = seededCatalogManual || (verification.verified && (strongMatch || strongManualBearingPage));
       return {
         ...row,
         ...verification,
         verified: aliveAndStrong,
-        verificationStatus: aliveAndStrong ? 'verified' : verification.verificationStatus
+        verificationStatus: aliveAndStrong
+          ? (seededCatalogManual && !verification.verified ? 'seed_verified' : 'verified')
+          : verification.verificationStatus
       };
     })
   );
@@ -1421,7 +1458,8 @@ module.exports = {
   deriveDocumentationReviewState,
   repairLegacyAssetEnrichmentRecord,
   runLookupPreview,
-  recoverCatalogSourcePageManuals
+  recoverCatalogSourcePageManuals,
+  isSeededCatalogManualCandidate
 };
 
 
