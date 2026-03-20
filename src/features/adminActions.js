@@ -518,7 +518,7 @@ export function createAdminActions(deps) {
       invites: state.invites || [],
       locations: state.companyLocations || []
     })),
-    exportBackup: async () => downloadJson(`wow-backup-${Date.now()}.json`, await exportBackupJson()),
+    exportBackup: async () => downloadJson(`scoot-business-backup-${Date.now()}.json`, await exportBackupJson()),
     clearTasks: async () => {
       const tasksCleared = await clearEntitySet('tasks', state.user);
       const operationsCleared = await clearEntitySet('operations', state.user);
