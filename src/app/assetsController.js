@@ -77,6 +77,7 @@ export function createAssetsController({
   approveAssetManual,
   enrichAssetDocumentation,
   previewAssetDocumentationLookup,
+  researchAssetTitles,
   canDelete,
   isAdmin,
   isManager
@@ -126,6 +127,7 @@ export function createAssetsController({
         approveAssetManual,
         enrichAssetDocumentation,
         previewAssetDocumentationLookup,
+        researchAssetTitles,
         markAssetEnrichmentFailure,
         normalizeAssetId,
         pickUniqueAssetId,

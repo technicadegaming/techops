@@ -18,6 +18,7 @@ export function createAssetActions(deps) {
     approveAssetManual,
     enrichAssetDocumentation,
     previewAssetDocumentationLookup,
+    researchAssetTitles,
     markAssetEnrichmentFailure,
     normalizeAssetId,
     pickUniqueAssetId,
@@ -247,7 +248,27 @@ export function createAssetActions(deps) {
       if (!existingRows.length) return;
       state.assetUi = { ...(state.assetUi || {}), bulkIntakeStatus: 'enriching', bulkIntakeErrors: [] };
       render();
-      const enrichedRows = await enrichAssetIntakeRows(existingRows.map((row) => ({ ...row, locationName: row.locationName || options.defaultLocationName || '' })), { lookup: previewAssetDocumentationLookup });
+      const companyId = `${state.company?.id || state.activeMembership?.companyId || ''}`.trim();
+      const lookupRows = existingRows.map((row) => ({ ...row, locationName: row.locationName || options.defaultLocationName || '' }));
+      const enrichedRows = await enrichAssetIntakeRows(lookupRows, {
+        lookup: async (payload) => {
+          if (companyId && typeof researchAssetTitles === 'function') {
+            const preview = (await researchAssetTitles({
+              companyId,
+              locationId: `${options.locationId || ''}`.trim(),
+              titles: [{
+                originalTitle: payload.assetName,
+                manufacturerHint: payload.manufacturer || '',
+                assetId: payload.assetId || '',
+              }],
+              includeInternalDocs: true,
+              maxWebSources: 5,
+            }))?.results?.[0];
+            if (preview) return { ok: true, ...preview, assetResearchSummary: preview.manualMatchSummary || preview };
+          }
+          return previewAssetDocumentationLookup(payload);
+        }
+      });
       state.assetUi = { ...(state.assetUi || {}), bulkIntakeRows: enrichedRows, bulkIntakeStatus: 'review' };
       render();
     },

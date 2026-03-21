@@ -38,6 +38,10 @@ export function previewAssetDocumentationLookup(payload) {
   return call('previewAssetDocumentationLookup', payload);
 }
 
+export function researchAssetTitles(payload) {
+  return call('researchAssetTitles', payload);
+}
+
 export function approveAssetManual(payload) {
   return call('approveAssetManual', payload);
 }

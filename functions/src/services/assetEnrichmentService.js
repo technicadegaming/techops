@@ -1,13 +1,11 @@
 const admin = require('firebase-admin');
 const { HttpsError } = require('firebase-functions/v2/https');
-const { requestAssetDocumentationLookup } = require('./openaiService');
-const { discoverManualDocumentation, extractManualLinksFromHtmlPage } = require('./manualDiscoveryService');
+const { extractManualLinksFromHtmlPage } = require('./manualDiscoveryService');
 const { findCatalogManualMatch, findCatalogManualMatchByEntryId } = require('./manualLookupCatalogService');
 const {
   normalizePhrase,
   expandArcadeTitleAliases,
-  resolveArcadeTitleFamily,
-  normalizeManufacturerName
+  resolveArcadeTitleFamily
 } = require('./arcadeTitleAliasService');
 
 const TRUSTED_MANUAL_HOST_TOKENS = [
@@ -402,30 +400,6 @@ async function findReusableVerifiedManuals({ db, asset = {}, assetId = '', compa
     manualRecords,
     siblingAssets
   });
-}
-
-function buildLookupTargets(assetName, manufacturer, manufacturerProfile) {
-  const cleanTitle = `${assetName || '[title]'}`.trim() || '[title]';
-  const cleanManufacturer = `${manufacturer || '[manufacturer]'}`.trim() || '[manufacturer]';
-  const preferredDomains = manufacturerProfile?.preferredSourceTokens?.length
-    ? manufacturerProfile.preferredSourceTokens
-    : (manufacturerProfile?.sourceTokens || []).slice(0, 2);
-
-  const baseTargets = [
-    `"${cleanManufacturer}" "${cleanTitle}" "service manual" pdf`,
-    `"${cleanManufacturer}" "${cleanTitle}" "operator manual" pdf`,
-    `"${cleanManufacturer}" "${cleanTitle}" "parts manual" pdf`,
-    `"${cleanManufacturer}" "${cleanTitle}" "install manual" pdf`,
-    `"${cleanManufacturer}" "${cleanTitle}" manual pdf`,
-    `"${cleanManufacturer}" "${cleanTitle}" download manual`
-  ];
-
-  const domainTargets = preferredDomains.flatMap((domain) => [
-    `site:${domain} "${cleanTitle}" ("service manual" OR "operator manual" OR manual) (pdf OR download)`,
-    `site:${domain} "${cleanTitle}" ("parts manual" OR "install manual" OR support) (pdf OR download)`
-  ]);
-
-  return [...baseTargets, ...domainTargets];
 }
 
 function getManufacturerProfile(...values) {
@@ -973,24 +947,6 @@ function hasUsableVerifiedManualSuggestion(suggestions = []) {
   return (Array.isArray(suggestions) ? suggestions : []).some((entry) => isManualUsableSuggestion(entry));
 }
 
-function normalizeSupportContacts(rows) {
-  if (!Array.isArray(rows)) return [];
-  const trustedContact = rows
-    .map((row) => ({
-      label: `${row?.label || ''}`.trim().slice(0, 80),
-      value: `${row?.value || ''}`.trim().slice(0, 180),
-      contactType: `${row?.contactType || 'other'}`.trim().toLowerCase() || 'other'
-    }))
-    .filter((row) => row.value)
-    .filter((row) => {
-      if (row.contactType === 'email') return /@/.test(row.value);
-      if (row.contactType === 'phone') return /\d{7,}/.test(row.value.replace(/\D/g, ''));
-      if (row.contactType === 'form') return /^https?:\/\//i.test(row.value);
-      return row.value.length >= 4;
-    });
-  return trustedContact.slice(0, 5);
-}
-
 async function fetchWithTimeout(url, options = {}, timeoutMs = VERIFY_TIMEOUT_MS, fetchImpl = fetch) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -1255,24 +1211,6 @@ async function repairLegacyAssetEnrichmentRecord({ asset = {}, verifySuggestions
   };
 }
 
-function buildLookupContext(asset, assetId, followupAnswer = '') {
-  const titleFamily = resolveArcadeTitleFamily({ title: asset.name, manufacturer: asset.manufacturer });
-  const normalizedManufacturer = titleFamily.manufacturer || asset.manufacturer || '';
-  const normalizedTitle = titleFamily.canonicalTitle || asset.name || '';
-  const manufacturerProfile = getManufacturerProfile(normalizedManufacturer, normalizedTitle, followupAnswer);
-  const preferredSources = manufacturerProfile?.sourceTokens || [];
-  return {
-    assetName: normalizedTitle,
-    manufacturer: normalizedManufacturer,
-    serialNumber: asset.serialNumber || '',
-    assetId: asset.id || assetId,
-    followupAnswer: `${followupAnswer || asset.enrichmentFollowupAnswer || ''}`.trim(),
-    lookupTargets: buildLookupTargets(normalizedTitle, normalizedManufacturer, manufacturerProfile),
-    preferredSourceHints: preferredSources,
-    notes: 'Prioritize exact title + manufacturer documentation for arcade/FEC equipment. Prefer official manufacturer-domain-first searches using exact title + manufacturer. Prefer manufacturer-specific parts/support/manual hosts (Bay Tek: parts.baytekent.com before baytekent.com before distributors/manual libraries; ICE: support.icegame.com before icegame.com; Raw Thrills: rawthrills.com), then exact-title official support/download pages, and only then exact-title secondary sources. Generic homepages, generic /support, /products, and manual-library hubs are support resources only and must not count as manual results without exact-title manual/download evidence. Ask one short actionable follow-up question only if needed.'
-  };
-}
-
 async function recoverCatalogSourcePageManuals({ catalogMatch, draftAsset, normalizedName, manufacturerSuggestion, manufacturerProfile, fetchImpl = fetch }) {
   const sourcePages = (catalogMatch?.supportResources || []).filter((entry) => entry?.url);
   if (!sourcePages.length) return [];
@@ -1317,152 +1255,61 @@ async function shouldDiscoverAfterCatalogMatch({ catalogMatch, confidence, draft
 }
 
 async function runLookupPreview({ settings, traceId, draftAsset, fetchImpl = fetch }) {
+  const { researchAssetTitles } = require('./manualResearchService');
+  const result = await researchAssetTitles({
+    db: admin.firestore(),
+    settings,
+    companyId: `${draftAsset?.companyId || ''}`.trim() || 'preview',
+    titles: [{
+      originalTitle: `${draftAsset?.name || ''}`.trim(),
+      manufacturerHint: `${draftAsset?.manufacturer || ''}`.trim(),
+      assetId: `${draftAsset?.assetId || ''}`.trim(),
+    }],
+    includeInternalDocs: true,
+    maxWebSources: Number(settings.manualResearchMaxWebSources || 5),
+    traceId,
+    fetchImpl,
+  });
+  const [entry] = result.results || [];
   const titleFamily = resolveArcadeTitleFamily({
     title: draftAsset?.name || '',
-    manufacturer: draftAsset?.manufacturer || ''
+    manufacturer: draftAsset?.manufacturer || '',
   });
-  const context = buildLookupContext(draftAsset || {}, draftAsset?.assetId, draftAsset?.followupAnswer);
-  const { parsed } = await requestAssetDocumentationLookup({
-    model: settings.aiModel || 'gpt-4.1-mini',
-    traceId,
-    context
-  });
-
-  const confidence = Number(parsed?.confidence || 0);
-  const normalizedName = titleFamily.canonicalTitle || parsed?.normalizedName || draftAsset?.name || '';
-  const manufacturerSuggestion = normalizeManufacturerName(titleFamily.manufacturer || parsed?.likelyManufacturer || draftAsset?.manufacturer || '');
-  const manufacturerProfile = getManufacturerProfile(draftAsset?.manufacturer, manufacturerSuggestion, normalizedName, parsed?.likelyCategory);
-  const catalogMatch = findCatalogManualMatch({
-    assetName: draftAsset?.name || '',
-    normalizedName,
-    manufacturer: manufacturerSuggestion || draftAsset?.manufacturer || '',
-    manufacturerProfile,
-    alternateNames: Array.isArray(parsed?.alternateNames) ? parsed.alternateNames : []
-  });
-  const normalizedCatalogSuggestions = catalogMatch
-    ? normalizeDocumentationSuggestions({
-      links: catalogMatch.documentationSuggestions,
-      confidence: Math.max(confidence, Number(catalogMatch.confidence || 0.95)),
-      asset: draftAsset || {},
-      normalizedName,
-      manufacturerSuggestion,
-      followupAnswer: context.followupAnswer
-    })
-    : [];
-  const verifiedCatalogSuggestions = normalizedCatalogSuggestions.length
-    ? await verifyDocumentationSuggestions(normalizedCatalogSuggestions, fetchImpl)
-    : [];
-  const survivingCatalogSuggestions = verifiedCatalogSuggestions.filter((entry) => !entry.deadPage && !entry.unreachable);
-  const shouldRunDiscovery = await shouldDiscoverAfterCatalogMatch({
-    catalogMatch,
-    confidence,
-    draftAsset,
-    normalizedName,
-    manufacturerSuggestion,
-    followupAnswer: context.followupAnswer,
-    fetchImpl
-  });
-  const discovered = shouldRunDiscovery ? await discoverManualDocumentation({
-    assetName: draftAsset?.name || '',
-    normalizedName,
-    manufacturer: manufacturerSuggestion || draftAsset?.manufacturer || '',
-    manufacturerProfile,
-    searchHints: Array.isArray(parsed?.searchHints) ? parsed.searchHints : [],
-    logger: console,
-    traceId,
-    fetchImpl
-  }) : { documentationLinks: [], supportResources: [], queriesTried: [] };
-  const recoveredCatalogManuals = shouldRunDiscovery
-    ? await recoverCatalogSourcePageManuals({
-      catalogMatch,
-      draftAsset,
-      normalizedName,
-      manufacturerSuggestion,
-      manufacturerProfile,
-      fetchImpl
-    })
-    : [];
-
-  const discoveredDocumentationSuggestions = normalizeDocumentationSuggestions({
-    links: [...(discovered.documentationLinks || []), ...recoveredCatalogManuals],
-    confidence,
-    asset: draftAsset || {},
-    normalizedName,
-    manufacturerSuggestion,
-    followupAnswer: context.followupAnswer
-  });
-
-  const documentationSuggestions = mergeDocumentationSuggestions({
-    existingSuggestions: survivingCatalogSuggestions,
-    nextSuggestions: discoveredDocumentationSuggestions,
-    preserveExistingCandidates: true
-  });
-
-  const supportResourcesSuggestion = normalizeDocumentationSuggestions({
-    links: [
-      ...(catalogMatch?.supportResources || []),
-      ...(Array.isArray(discovered.supportResources) ? discovered.supportResources : []),
-      ...(Array.isArray(parsed?.supportResources) ? parsed.supportResources : [])
-    ],
-    confidence: Math.max(confidence, Number(catalogMatch?.confidence || 0)),
-    asset: draftAsset || {},
-    normalizedName,
-    manufacturerSuggestion,
-    followupAnswer: context.followupAnswer,
-    kind: 'support'
-  });
-
-  const supportContactsSuggestion = normalizeSupportContacts(parsed?.supportContacts);
+  const confidence = Number(entry?.confidence || 0);
   const confidenceThreshold = settings.aiConfidenceThreshold || 0.45;
-  const hasPreviewManual = documentationSuggestions.some((entry) => !entry.deadPage && !entry.unreachable && !!entry.exactManualMatch);
+  const hasPreviewManual = Array.isArray(entry?.documentationSuggestions)
+    && entry.documentationSuggestions.some((doc) => `${doc?.url || ''}`.trim() && doc.exactManualMatch);
   const status = confidence >= confidenceThreshold && hasPreviewManual
     ? 'found_suggestions'
-    : (parsed?.oneFollowupQuestion ? 'needs_follow_up' : 'no_strong_match');
-  const manualMatchSummary = classifyManualMatchSummary({
-    inputTitle: draftAsset?.name || '',
-    titleFamily,
-    documentationSuggestions,
-    supportResourcesSuggestion,
-    supportContactsSuggestion,
-    confidence,
-    topMatchReason: parsed?.topMatchReason || '',
-    catalogMatch
-  });
+    : (entry?.reviewRequired ? 'needs_follow_up' : 'no_strong_match');
 
   return {
     status,
-    normalizedName,
-    likelyManufacturer: manufacturerSuggestion,
-    likelyCategory: parsed?.likelyCategory || '',
+    normalizedName: entry?.normalizedTitle || draftAsset?.name || '',
+    likelyManufacturer: entry?.manufacturer || draftAsset?.manufacturer || '',
+    likelyCategory: '',
     confidence,
-    oneFollowupQuestion: parsed?.oneFollowupQuestion || '',
-    topMatchReason: parsed?.topMatchReason || '',
-    alternateNames: Array.from(new Set([...(titleFamily.alternateTitles || []), ...(Array.isArray(parsed?.alternateNames) ? parsed.alternateNames : [])])).filter(Boolean),
-    searchHints: Array.from(new Set([...(Array.isArray(parsed?.searchHints) ? parsed.searchHints : []), ...(Array.isArray(discovered.queriesTried) ? discovered.queriesTried : [])])).slice(0, 10),
-    documentationSuggestions,
-    supportResourcesSuggestion,
-    supportContactsSuggestion,
-    assetResearchSummary: manualMatchSummary,
-    manualMatchSummary,
-    matchType: manualMatchSummary.matchType,
-    manualReady: manualMatchSummary.manualReady,
-    manualUrl: manualMatchSummary.manualUrl,
-    manualSourceUrl: manualMatchSummary.manualSourceUrl,
-    supportUrl: manualMatchSummary.supportUrl,
-    supportEmail: manualMatchSummary.supportEmail,
-    supportPhone: manualMatchSummary.supportPhone,
-    matchNotes: manualMatchSummary.matchNotes,
-    variantWarning: manualMatchSummary.variantWarning,
-    reviewRequired: manualMatchSummary.reviewRequired,
-    matchedManufacturer: manufacturerProfile?.key || '',
-    catalogMatch: catalogMatch ? {
-      catalogEntryId: catalogMatch.catalogEntryId,
-      matchStatus: catalogMatch.matchStatus,
-      confidence: catalogMatch.confidence,
-      lookupMethod: catalogMatch.lookupMethod,
-      notes: catalogMatch.notes,
-      verificationMetadata: catalogMatch.entry?.verification || null
-    } : null
+    oneFollowupQuestion: entry?.reviewRequired && entry?.variantWarning ? entry.variantWarning : '',
+    topMatchReason: entry?.matchNotes || '',
+    alternateNames: Array.from(new Set(titleFamily.alternateTitles || [])).filter(Boolean),
+    searchHints: [],
+    documentationSuggestions: entry?.documentationSuggestions || [],
+    supportResourcesSuggestion: entry?.supportResourcesSuggestion || [],
+    supportContactsSuggestion: entry?.supportContactsSuggestion || [],
+    assetResearchSummary: entry?.manualMatchSummary || entry,
+    manualMatchSummary: entry?.manualMatchSummary || entry,
+    matchType: entry?.matchType || '',
+    manualReady: entry?.manualReady === true,
+    manualUrl: entry?.manualUrl || '',
+    manualSourceUrl: entry?.manualSourceUrl || '',
+    supportUrl: entry?.supportUrl || '',
+    supportEmail: entry?.supportEmail || '',
+    supportPhone: entry?.supportPhone || '',
+    matchNotes: entry?.matchNotes || '',
+    variantWarning: entry?.variantWarning || '',
+    reviewRequired: entry?.reviewRequired !== false,
+    matchedManufacturer: normalizePhrase(entry?.manufacturer || ''),
+    catalogMatch: null,
   };
 }
 

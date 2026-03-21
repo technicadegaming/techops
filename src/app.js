@@ -43,6 +43,7 @@ import {
   approveAssetManual,
   enrichAssetDocumentation,
   previewAssetDocumentationLookup,
+  researchAssetTitles,
   regenerateTaskTroubleshooting,
   saveTaskFixToTroubleshootingLibrary
 } from './aiAdapter.js';
@@ -264,6 +265,7 @@ async function render() {
     approveAssetManual,
     enrichAssetDocumentation,
     previewAssetDocumentationLookup,
+    researchAssetTitles,
     canDelete,
     isAdmin,
     isManager
