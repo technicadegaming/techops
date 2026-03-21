@@ -5,6 +5,7 @@ import { buildLocationOptions } from './features/locationContext.js';
 import { renderWorkspaceReadinessCard } from './features/workspaceReadiness.js';
 import { formatRelativeTime } from './features/notifications.js';
 import { buildUsageSummary, getTrialDaysRemaining, isTrialExpired, normalizeBillingAddress } from './billing.js';
+import { parseAssetCsv } from './features/assetIntake.js';
 
 const WORKER_ROLE_OPTIONS = ['staff', 'lead', 'assistant_manager', 'manager', 'admin'];
 const ACCESS_ROLE_OPTIONS = ['owner', 'admin', 'manager', 'staff', 'viewer'];
@@ -150,8 +151,10 @@ function renderBillingStatusChip(company = {}) {
   return renderStatusChip('trialing', 'info');
 }
 
+
 function parseCsv(text = '') {
-  const lines = `${text}`.split(/\r?\n/).filter(Boolean);
+  const lines = `${text}`.split(/?
+/).filter(Boolean);
   if (!lines.length) return [];
   const headers = lines[0].split(',').map((value) => value.trim());
   return lines.slice(1).map((line, index) => {
@@ -556,7 +559,7 @@ export function renderAdmin(el, state, actions) {
   el.querySelector('#applyAssetCsv')?.addEventListener('click', async () => {
     const file = el.querySelector('#assetCsvInput')?.files?.[0];
     if (!file) return actions.setImportFeedback({ tone: 'error', summary: 'Select an assets CSV before importing.', preview: '' });
-    const rows = parseCsv(await file.text());
+    const rows = parseAssetCsv(await file.text()).rows;
     actions.setImportFeedback({ tone: rows.length ? 'info' : 'error', summary: rows.length ? `Previewing ${Math.min(rows.length, 10)} of ${rows.length} asset rows.` : 'Assets CSV did not contain any data rows.', preview: JSON.stringify(rows.slice(0, 10), null, 2) });
     await actions.importAssets(rows);
   });

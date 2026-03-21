@@ -1,4 +1,5 @@
 import { buildDocumentationApprovalPatch, buildDocumentationApprovalSelection } from './documentationReview.js';
+import { buildAssetCsv, buildAssetImportRow, enrichAssetIntakeRows, parseTitleBulkInput } from './assetIntake.js';
 import {
   approveSuggestedManualSources,
   buildFollowupEnrichmentRequest,
@@ -177,16 +178,30 @@ export function createAssetActions(deps) {
       };
       render();
 
-      try {
-        const preview = await previewAssetDocumentationLookup(payload);
+      const [enrichedRow] = await enrichAssetIntakeRows([{
+        name: assetName,
+        assetId: `${payload?.assetId || ''}`.trim(),
+        manufacturer: `${payload?.manufacturer || ''}`.trim(),
+        serialNumber: `${payload?.serialNumber || ''}`.trim(),
+        locationName: `${state.assetDraft?.locationName || ''}`.trim()
+      }], { lookup: previewAssetDocumentationLookup });
+
+      if (enrichedRow?.preview) {
         state.assetDraft = {
           ...state.assetDraft,
-          preview,
-          previewStatus: preview?.status || 'found_suggestions',
+          preview: enrichedRow.preview,
+          previewStatus: enrichedRow.preview?.status || 'found_suggestions',
           previewMeta: { inFlightQuery: '', lastCompletedQuery: normalizedQuery },
-          draftNameNormalized: normalizedName
+          draftNameNormalized: normalizedName,
+          normalizedName: enrichedRow.normalizedName || '',
+          manualSourceUrl: enrichedRow.manualSourceUrl || '',
+          supportEmail: enrichedRow.supportEmail || '',
+          supportPhone: enrichedRow.supportPhone || '',
+          supportUrl: enrichedRow.supportUrl || '',
+          matchConfidence: enrichedRow.matchConfidence || '',
+          matchNotes: enrichedRow.matchNotes || ''
         };
-      } catch {
+      } else {
         state.assetDraft = {
           ...state.assetDraft,
           previewStatus: 'no_strong_match',
@@ -215,6 +230,84 @@ export function createAssetActions(deps) {
           });
         }
       }
+    },
+    startBulkAssetIntake: async (text, options = {}) => {
+      const parsed = parseTitleBulkInput(text, { defaultLocationName: options.defaultLocationName || '' });
+      state.assetUi = {
+        ...(state.assetUi || {}),
+        bulkIntakeText: text,
+        bulkIntakeErrors: parsed.errors || [],
+        bulkIntakeRows: parsed.rows || [],
+        bulkIntakeStatus: parsed.rows.length ? 'parsed' : 'idle'
+      };
+      render();
+    },
+    enrichBulkIntakeRows: async (options = {}) => {
+      const existingRows = Array.isArray(state.assetUi?.bulkIntakeRows) ? state.assetUi.bulkIntakeRows : [];
+      if (!existingRows.length) return;
+      state.assetUi = { ...(state.assetUi || {}), bulkIntakeStatus: 'enriching', bulkIntakeErrors: [] };
+      render();
+      const enrichedRows = await enrichAssetIntakeRows(existingRows.map((row) => ({ ...row, locationName: row.locationName || options.defaultLocationName || '' })), { lookup: previewAssetDocumentationLookup });
+      state.assetUi = { ...(state.assetUi || {}), bulkIntakeRows: enrichedRows, bulkIntakeStatus: 'review' };
+      render();
+    },
+    updateBulkIntakeRow: (index, payload = {}) => {
+      const rows = Array.isArray(state.assetUi?.bulkIntakeRows) ? [...state.assetUi.bulkIntakeRows] : [];
+      const current = rows[index];
+      if (!current) return;
+      const next = { ...current, ...payload };
+      if ('alternateNames' in payload && typeof payload.alternateNames === 'string') next.alternateNames = payload.alternateNames.split(/[|,;]+/).map((value) => value.trim()).filter(Boolean);
+      next.reviewNeeded = ['needs_review', 'unresolved'].includes(next.rowStatus);
+      rows[index] = next;
+      state.assetUi = { ...(state.assetUi || {}), bulkIntakeRows: rows };
+    },
+    setBulkRowStatus: (index, rowStatus) => {
+      const rows = Array.isArray(state.assetUi?.bulkIntakeRows) ? [...state.assetUi.bulkIntakeRows] : [];
+      const current = rows[index];
+      if (!current) return;
+      rows[index] = { ...current, rowStatus, reviewNeeded: rowStatus !== 'good_match' };
+      state.assetUi = { ...(state.assetUi || {}), bulkIntakeRows: rows };
+      render();
+    },
+    exportBulkIntakeCsv: () => buildAssetCsv((state.assetUi?.bulkIntakeRows || []).filter((row) => row.rowStatus !== 'skipped').map((row) => buildAssetImportRow(row))),
+    importBulkIntakeRows: async () => {
+      const rows = (state.assetUi?.bulkIntakeRows || []).filter((row) => !['skipped', 'unresolved'].includes(row.rowStatus));
+      if (!rows.length) return;
+      for (const row of rows) {
+        const desiredId = `${row.assetId || ''}`.trim() || normalizeAssetId(row.name || 'asset');
+        const finalId = pickUniqueAssetId(desiredId, state.assets);
+        const supportContacts = [];
+        if (row.supportEmail) supportContacts.push({ contactType: 'email', label: 'Support email', value: row.supportEmail });
+        if (row.supportPhone) supportContacts.push({ contactType: 'phone', label: 'Support phone', value: row.supportPhone });
+        await upsertEntity('assets', finalId, withRequiredCompanyId({
+          id: finalId,
+          name: row.name,
+          manufacturer: row.manufacturer || row.manufacturerSuggestion || '',
+          model: row.model || '',
+          serialNumber: row.serialNumber || '',
+          locationName: row.locationName || '',
+          zone: row.zone || '',
+          notes: row.notes || row.matchNotes || '',
+          category: row.category || row.categorySuggestion || '',
+          status: row.status || 'active',
+          alternateNames: Array.isArray(row.alternateNames) ? row.alternateNames : [],
+          normalizedName: row.normalizedName || row.name,
+          manualLinks: row.manualUrl ? [row.manualUrl] : [],
+          manualSourceUrl: row.manualSourceUrl || '',
+          supportResourcesSuggestion: normalizeSupportEntries(row.supportUrl ? [{ url: row.supportUrl, label: 'Support resource' }] : []),
+          supportContactsSuggestion: supportContacts,
+          enrichmentConfidence: Number(row.matchConfidence || row.confidence || 0) || null,
+          manufacturerSuggestion: row.manufacturerSuggestion || '',
+          categorySuggestion: row.categorySuggestion || '',
+          importSource: 'bulk_title_intake',
+          reviewState: row.rowStatus === 'good_match' ? 'ready' : 'pending_review',
+          reviewReason: row.rowStatus === 'good_match' ? '' : 'bulk_title_review',
+          matchNotes: row.matchNotes || ''
+        }, 'bulk import assets'), state.user);
+      }
+      await refreshData();
+      state.assetUi = { ...(state.assetUi || {}), bulkIntakeRows: [], bulkIntakeStatus: 'imported', bulkIntakeText: '' };
+      render();
     },
     applyOnboardingReviewEdit: async (index, payload) => {
       const queue = Array.isArray(state.assetUi?.onboardingReviewQueue) ? state.assetUi.onboardingReviewQueue : [];

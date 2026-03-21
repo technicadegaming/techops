@@ -1,6 +1,7 @@
 import { buildDocumentationApprovalPatch, buildDocumentationApprovalSelection, getReviewableDocumentationSuggestions } from './documentationReview.js';
 import { buildUsageSummary, normalizeBillingAddress } from '../billing.js';
 import { approveSuggestedManualSources, buildManualEnrichmentRequest } from './assetEnrichmentPipeline.js';
+import { ASSET_CSV_TEMPLATE, buildAssetImportRow } from './assetIntake.js';
 
 export function createAdminActions(deps) {
   const {
@@ -447,7 +448,7 @@ export function createAdminActions(deps) {
         render();
       }, { fallbackMessage: 'Unable to update location settings.' });
     },
-    downloadAssetTemplate: () => downloadFile('asset-template.csv', 'asset name,assetId,manufacturer,model,serial,location,zone,notes,category,status\n', 'text/csv'),
+    downloadAssetTemplate: () => downloadFile('asset-template.csv', ASSET_CSV_TEMPLATE, 'text/csv'),
     downloadEmployeeTemplate: () => downloadFile('employee-template.csv', 'name,email,role,enabled,available,shift start,skills,location,phone\n', 'text/csv'),
     importAssets: async (rows) => {
       if (!rows.length) {
@@ -457,22 +458,54 @@ export function createAdminActions(deps) {
       let imported = 0;
       let skipped = 0;
       for (const row of rows) {
-        const id = `${row.assetId || row.id || normalizeAssetId(row['asset name'] || row.name || '')}`;
+        const mapped = buildAssetImportRow({
+          name: row['asset name'] || row.name || '',
+          assetId: row.assetId || row.id || '',
+          manufacturer: row.manufacturer || '',
+          model: row.model || '',
+          serialNumber: row.serial || row.serialNumber || '',
+          locationName: row.location || row.locationName || '',
+          zone: row.zone || row.area || '',
+          notes: row.notes || '',
+          category: row.category || row.type || '',
+          status: row.status || 'active',
+          alternateNames: `${row.alternateNames || ''}`.split(/[|,;]+/).map((value) => value.trim()).filter(Boolean),
+          normalizedName: row.normalizedName || '',
+          manualUrl: row.manualUrl || '',
+          manualSourceUrl: row.manualSourceUrl || '',
+          supportEmail: row.supportEmail || '',
+          supportPhone: row.supportPhone || '',
+          supportUrl: row.supportUrl || '',
+          matchConfidence: row.matchConfidence || '',
+          matchNotes: row.matchNotes || ''
+        });
+        const id = `${mapped.assetId || normalizeAssetId(mapped['asset name'] || '')}`.trim();
         if (!id) {
           skipped += 1;
           continue;
         }
+        const supportContacts = [];
+        if (mapped.supportEmail) supportContacts.push({ contactType: 'email', label: 'Support email', value: mapped.supportEmail });
+        if (mapped.supportPhone) supportContacts.push({ contactType: 'phone', label: 'Support phone', value: mapped.supportPhone });
         await upsertEntity('assets', id, withRequiredCompanyId({
           id,
-          name: row['asset name'] || row.name || id,
-          manufacturer: row.manufacturer || '',
-          model: row.model || '',
-          serialNumber: row.serial || row.serialNumber || '',
-          locationName: row.location || '',
-          zone: row.zone || row.area || '',
-          notes: row.notes || '',
-          category: row.category || row.type || '',
-          status: row.status || 'active'
+          name: mapped['asset name'] || id,
+          manufacturer: mapped.manufacturer || '',
+          model: mapped.model || '',
+          serialNumber: mapped.serial || '',
+          locationName: mapped.location || '',
+          zone: mapped.zone || '',
+          notes: mapped.notes || mapped.matchNotes || '',
+          category: mapped.category || '',
+          status: mapped.status || 'active',
+          alternateNames: `${mapped.alternateNames || ''}`.split(/[|,;]+/).map((value) => value.trim()).filter(Boolean),
+          normalizedName: mapped.normalizedName || '',
+          manualLinks: mapped.manualUrl ? [mapped.manualUrl] : [],
+          manualSourceUrl: mapped.manualSourceUrl || '',
+          supportResourcesSuggestion: mapped.supportUrl ? [{ url: mapped.supportUrl, label: 'Support resource' }] : [],
+          supportContactsSuggestion: supportContacts,
+          enrichmentConfidence: Number(mapped.matchConfidence || 0) || null,
+          matchNotes: mapped.matchNotes || ''
         }, 'import assets'), state.user);
         imported += 1;
       }
