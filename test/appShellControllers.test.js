@@ -103,8 +103,11 @@ test('asset intake row mapping reuses manual engine summary shape for bulk and s
     likelyCategory: 'Redemption',
     manualMatchSummary: {
       inputTitle: 'Quick Drop',
+      assetNameOriginal: 'Quick Drop',
+      assetNameNormalized: 'Quik Drop',
       canonicalTitle: 'Quik Drop',
       manufacturer: 'Bay Tek',
+      manufacturerInferred: true,
       matchType: 'exact_manual',
       manualReady: true,
       confidence: 0.91,
@@ -121,8 +124,11 @@ test('asset intake row mapping reuses manual engine summary shape for bulk and s
   };
 
   const row = mapPreviewToAssetIntakeRow({ name: 'Quick Drop', manufacturer: '' }, preview);
+  assert.equal(row.originalTitle, 'Quick Drop');
+  assert.equal(row.normalizedTitle, 'Quik Drop');
   assert.equal(row.normalizedName, 'Quik Drop');
   assert.equal(row.manufacturer, 'Bay Tek');
+  assert.equal(row.manufacturerInferred, true);
   assert.equal(row.manualUrl, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
   assert.equal(row.manualSourceUrl, 'https://www.baytekent.com/games/quik-drop/');
   assert.equal(row.supportUrl, 'https://www.baytekent.com/games/quik-drop/');
@@ -140,6 +146,8 @@ test('asset intake row mapping keeps source-only matches review-required in bulk
     likelyManufacturer: 'Raw Thrills',
     manualMatchSummary: {
       inputTitle: 'Jurassic Park',
+      assetNameOriginal: 'Jurassic Park',
+      assetNameNormalized: 'Jurassic Park Arcade',
       canonicalTitle: 'Jurassic Park Arcade',
       manufacturer: 'Raw Thrills',
       matchType: 'support_only',
@@ -480,10 +488,13 @@ Quick Drop,Bay Tek Games,Main Floor`);
   assert.equal(legacy.rows[0].name, 'Quick Drop');
   assert.equal(legacy.rows[0].locationName, 'Main Floor');
 
-  const enriched = parseAssetCsv(`asset name,assetId,manufacturer,manualUrl,manualSourceUrl,supportEmail,supportPhone,supportUrl,matchConfidence,matchNotes
-Jurassic Park,jp-01,Raw Thrills,https://manual.example/jp.pdf,https://source.example/jp,support@example.com,555-1111,https://support.example/jp,0.91,Official page`);
+  const enriched = parseAssetCsv(`asset name,assetId,manufacturer,originalTitle,normalizedTitle,manufacturerInferred,manualUrl,manualSourceUrl,supportEmail,supportPhone,supportUrl,matchConfidence,matchNotes
+Jurassic Park,jp-01,Raw Thrills,Jurassic Park,Jurassic Park Arcade,false,https://manual.example/jp.pdf,https://source.example/jp,support@example.com,555-1111,https://support.example/jp,0.91,Official page`);
   assert.equal(enriched.errors.length, 0);
   assert.equal(enriched.rows[0].assetId, 'jp-01');
+  assert.equal(enriched.rows[0].originalTitle, 'Jurassic Park');
+  assert.equal(enriched.rows[0].normalizedTitle, 'Jurassic Park Arcade');
+  assert.equal(enriched.rows[0].manufacturerInferred, 'false');
   assert.equal(enriched.rows[0].manualUrl, 'https://manual.example/jp.pdf');
   assert.equal(enriched.rows[0].supportEmail, 'support@example.com');
   assert.equal(enriched.rows[0].matchConfidence, '0.91');
@@ -500,6 +511,21 @@ test('shared intake enrichment helper powers single and bulk row enrichment mapp
         normalizedName: payload.assetName,
         likelyManufacturer: payload.assetName === 'Quick Drop' ? 'Bay Tek Games' : 'Namco',
         confidence: 0.88,
+        assetResearchSummary: {
+          assetNameOriginal: payload.assetName,
+          assetNameNormalized: payload.assetName,
+          manufacturer: payload.assetName === 'Quick Drop' ? 'Bay Tek Games' : 'Namco',
+          manufacturerInferred: true,
+          matchType: 'exact_manual',
+          manualReady: true,
+          manualUrl: `https://manuals.example/${payload.assetName.toLowerCase().replace(/\s+/g, '-')}.pdf`,
+          manualSourceUrl: 'https://source.example/manual',
+          supportEmail: 'support@example.com',
+          supportUrl: 'https://support.example/resource',
+          reviewRequired: false,
+          confidence: 0.88,
+          status: 'docs_found'
+        },
         documentationSuggestions: [{ url: `https://manuals.example/${payload.assetName.toLowerCase().replace(/\s+/g, '-')}.pdf`, sourceUrl: 'https://source.example/manual', sourceType: 'official' }],
         supportResourcesSuggestion: [{ url: 'https://support.example/resource', sourceType: 'support' }],
         supportContactsSuggestion: [{ contactType: 'email', value: 'support@example.com' }]
@@ -510,5 +536,5 @@ test('shared intake enrichment helper powers single and bulk row enrichment mapp
   assert.equal(rows[0].manufacturer, 'Bay Tek Games');
   assert.equal(rows[0].manualUrl, 'https://manuals.example/quick-drop.pdf');
   assert.equal(rows[0].supportEmail, 'support@example.com');
-  assert.match(buildAssetCsv(rows), /manualUrl,manualSourceUrl,supportEmail/);
+  assert.match(buildAssetCsv(rows), /originalTitle,normalizedTitle,manufacturerInferred,manualUrl,manualSourceUrl,supportUrl,supportEmail/);
 });
