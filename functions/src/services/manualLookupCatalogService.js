@@ -1,5 +1,10 @@
 const catalogEntries = require('../data/manualLookupCatalog.json');
-const { normalizePhrase, expandArcadeTitleAliases } = require('./arcadeTitleAliasService');
+const {
+  normalizePhrase,
+  expandArcadeTitleAliases,
+  resolveArcadeTitleFamily,
+  normalizeManufacturerName
+} = require('./arcadeTitleAliasService');
 
 function normalizeCatalogPhrase(value) {
   return normalizePhrase(value)
@@ -146,9 +151,17 @@ function buildCatalogSuggestion(entry, match) {
 }
 
 function findCatalogManualMatch({ assetName = '', normalizedName = '', manufacturer = '', manufacturerProfile = null, alternateNames = [] }) {
-  const assetCandidates = buildNameCandidates([assetName, normalizedName, alternateNames]);
+  const titleFamily = resolveArcadeTitleFamily({ title: normalizedName || assetName, manufacturer });
+  const assetCandidates = buildNameCandidates([
+    assetName,
+    normalizedName,
+    titleFamily.canonicalTitle,
+    titleFamily.familyDisplayTitle,
+    titleFamily.alternateTitles,
+    alternateNames
+  ]);
   const manufacturerCandidates = buildNameCandidates([
-    manufacturer,
+    normalizeManufacturerName(titleFamily.manufacturer || manufacturer),
     manufacturerProfile?.key,
     manufacturerProfile?.aliases || []
   ]);

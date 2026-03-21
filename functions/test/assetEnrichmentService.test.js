@@ -19,8 +19,10 @@ const {
   resolveTerminalEnrichmentStatus,
   repairLegacyAssetEnrichmentRecord,
   isSeededCatalogManualCandidate,
-  rehydrateSeededManualDocumentationSuggestions
+  rehydrateSeededManualDocumentationSuggestions,
+  classifyManualMatchSummary
 } = require('../src/services/assetEnrichmentService');
+const { resolveArcadeTitleFamily } = require('../src/services/arcadeTitleAliasService');
 const { findCatalogManualMatch } = require('../src/services/manualLookupCatalogService');
 
 test('normalizeDocumentationSuggestions filters weak and malformed links and ranks strong matches first', () => {
@@ -243,6 +245,60 @@ test('getManufacturerProfile resolves aliases for known FEC manufacturers', () =
   const profile = getManufacturerProfile('Baytek', 'Monopoly Roll-N-Go');
   assert.equal(profile?.key, 'bay tek');
   assert.ok(profile?.sourceTokens.includes('baytekent.com'));
+});
+
+test('classifyManualMatchSummary distinguishes exact manual, title-specific source, and family review buckets', () => {
+  const exact = classifyManualMatchSummary({
+    inputTitle: 'Quick Drop',
+    titleFamily: resolveArcadeTitleFamily({ title: 'Quick Drop' }),
+    documentationSuggestions: [{
+      title: 'Quik Drop Service Manual',
+      url: 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
+      verified: true,
+      exactTitleMatch: true,
+      exactManualMatch: true,
+      sourceType: 'distributor',
+      matchScore: 96
+    }],
+    confidence: 0.96
+  });
+  assert.equal(exact.matchType, 'exact_manual');
+  assert.equal(exact.manualUrl, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
+  assert.equal(exact.reviewRequired, false);
+
+  const sourceOnly = classifyManualMatchSummary({
+    inputTitle: 'Fast and Furious',
+    titleFamily: resolveArcadeTitleFamily({ title: 'Fast and Furious' }),
+    supportResourcesSuggestion: [{
+      title: 'Fast & Furious Arcade product page',
+      url: 'https://rawthrills.com/games/fast-furious-arcade/',
+      sourceType: 'support',
+      matchScore: 84
+    }],
+    confidence: 0.73
+  });
+  assert.equal(sourceOnly.matchType, 'title_specific_source');
+  assert.equal(sourceOnly.manualUrl, '');
+  assert.equal(sourceOnly.supportUrl, 'https://rawthrills.com/games/fast-furious-arcade/');
+
+  const familyReview = classifyManualMatchSummary({
+    inputTitle: 'Sink-It',
+    titleFamily: resolveArcadeTitleFamily({ title: 'Sink-It' }),
+    documentationSuggestions: [{
+      title: 'Sink It Shootout Operator Manual',
+      url: 'https://www.betson.com/wp-content/uploads/2019/09/Sink-It-Shootout-Operator-Manual.pdf',
+      verified: true,
+      exactTitleMatch: true,
+      exactManualMatch: true,
+      sourceType: 'distributor',
+      matchScore: 88
+    }],
+    confidence: 0.88,
+    catalogMatch: { matchStatus: 'catalog_family' }
+  });
+  assert.equal(familyReview.matchType, 'family_match_needs_review');
+  assert.equal(familyReview.reviewRequired, true);
+  assert.match(familyReview.variantWarning, /cabinet|model|variant/i);
 });
 
 test('buildFollowupQuestion asks one actionable arcade-specific question', () => {

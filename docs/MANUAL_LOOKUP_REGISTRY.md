@@ -28,6 +28,22 @@ The normalized catalog supports:
 - `familyHints`
 - `trustTier`
 
+The live lookup path now layers a deterministic title-family registry over the workbook catalog so shorthand/operator titles normalize before search and ranking. The preview/import engine returns the same match summary shape for both single-asset preview and bulk intake review rows:
+- `inputTitle`
+- `canonicalTitle`
+- `manufacturer`
+- `matchType` (`exact_manual`, `title_specific_source`, `support_only`, `family_match_needs_review`, `unresolved`)
+- `confidence`
+- `matchNotes`
+- `manualUrl`
+- `manualSourceUrl`
+- `supportEmail`
+- `supportPhone`
+- `supportUrl`
+- `alternateTitles`
+- `variantWarning`
+- `reviewRequired`
+
 ## Verification and trust tiers
 
 Verification now stores URL-level metadata in suggestion objects, including:

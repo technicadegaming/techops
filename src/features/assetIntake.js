@@ -276,16 +276,17 @@ function extractContactValue(contacts = [], keys = []) {
 }
 
 export function mapPreviewToAssetIntakeRow(row = {}, preview = {}) {
+  const engine = preview.manualMatchSummary || {};
   const documentationSuggestions = Array.isArray(preview.documentationSuggestions) ? preview.documentationSuggestions : [];
   const supportResources = Array.isArray(preview.supportResourcesSuggestion) ? preview.supportResourcesSuggestion : [];
   const supportContacts = Array.isArray(preview.supportContactsSuggestion) ? preview.supportContactsSuggestion : [];
   const bestManual = documentationSuggestions.find((entry) => normalizeUrl(entry?.url));
   const bestSupport = supportResources.find((entry) => normalizeUrl(entry?.url));
-  const confidence = Number(preview.confidence || 0);
-  const supportEmail = row.supportEmail || extractContactValue(supportContacts, ['email']);
-  const supportPhone = row.supportPhone || extractContactValue(supportContacts, ['phone', 'telephone']);
-  const supportUrl = row.supportUrl || normalizeUrl(bestSupport?.url || '');
-  const matchNotes = [
+  const confidence = Number(engine.confidence || preview.confidence || 0);
+  const supportEmail = row.supportEmail || engine.supportEmail || extractContactValue(supportContacts, ['email']);
+  const supportPhone = row.supportPhone || engine.supportPhone || extractContactValue(supportContacts, ['phone', 'telephone']);
+  const supportUrl = row.supportUrl || normalizeUrl(engine.supportUrl || bestSupport?.url || '');
+  const matchNotes = row.matchNotes || engine.matchNotes || [
     preview.status ? `status: ${preview.status}` : '',
     preview.likelyManufacturer ? `manufacturer: ${preview.likelyManufacturer}` : '',
     bestManual?.sourceType ? `manual source: ${bestManual.sourceType}` : '',
@@ -293,28 +294,33 @@ export function mapPreviewToAssetIntakeRow(row = {}, preview = {}) {
   ].filter(Boolean).join(' | ');
   return {
     ...row,
-    normalizedName: preview.normalizedName || row.normalizedName || row.name,
-    manufacturer: row.manufacturer || preview.likelyManufacturer || row.manufacturerSuggestion || '',
-    manufacturerSuggestion: preview.likelyManufacturer || row.manufacturerSuggestion || '',
+    normalizedName: engine.canonicalTitle || preview.normalizedName || row.normalizedName || row.name,
+    manufacturer: row.manufacturer || engine.manufacturer || preview.likelyManufacturer || row.manufacturerSuggestion || '',
+    manufacturerSuggestion: engine.manufacturer || preview.likelyManufacturer || row.manufacturerSuggestion || '',
     category: row.category || preview.likelyCategory || row.categorySuggestion || '',
     categorySuggestion: preview.likelyCategory || row.categorySuggestion || '',
-    manualUrl: row.manualUrl || normalizeUrl(bestManual?.url || ''),
-    manualSourceUrl: row.manualSourceUrl || normalizeUrl(bestManual?.sourceUrl || bestSupport?.url || ''),
+    manualUrl: row.manualUrl || normalizeUrl(engine.manualUrl || bestManual?.url || ''),
+    manualSourceUrl: row.manualSourceUrl || normalizeUrl(engine.manualSourceUrl || bestManual?.sourceUrl || bestSupport?.url || ''),
     supportEmail,
     supportPhone,
     supportUrl,
     matchConfidence: confidence ? confidence.toFixed(2) : row.matchConfidence || '',
-    matchNotes: row.matchNotes || matchNotes,
+    matchNotes,
     notes: row.notes || matchNotes,
     preview,
     confidence,
+    matchType: engine.matchType || preview.matchType || '',
+    variantWarning: engine.variantWarning || preview.variantWarning || '',
+    reviewRequired: typeof engine.reviewRequired === 'boolean' ? engine.reviewRequired : undefined,
     rowStatus: classifyRowStatus({
       confidence,
-      manualUrl: row.manualUrl || normalizeUrl(bestManual?.url || ''),
+      manualUrl: row.manualUrl || normalizeUrl(engine.manualUrl || bestManual?.url || ''),
       supportUrl,
-      manufacturer: row.manufacturer || preview.likelyManufacturer || ''
+      manufacturer: row.manufacturer || engine.manufacturer || preview.likelyManufacturer || ''
     }),
-    reviewNeeded: classifyRowStatus({ confidence, manualUrl: row.manualUrl || normalizeUrl(bestManual?.url || ''), supportUrl, manufacturer: row.manufacturer || preview.likelyManufacturer || '' }) !== 'good_match'
+    reviewNeeded: typeof engine.reviewRequired === 'boolean'
+      ? engine.reviewRequired
+      : classifyRowStatus({ confidence, manualUrl: row.manualUrl || normalizeUrl(engine.manualUrl || bestManual?.url || ''), supportUrl, manufacturer: row.manufacturer || engine.manufacturer || preview.likelyManufacturer || '' }) !== 'good_match'
   };
 }
 

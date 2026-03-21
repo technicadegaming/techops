@@ -21,7 +21,7 @@ test('buildManualSearchQueries prioritizes official domains for known manufactur
   });
 
   assert.match(queries.officialQueries[0], /site:parts\.baytekent\.com/i);
-  assert.match(queries.exactTitleQueries[0], /"Bay Tek Games" "Quik Drop" "service manual" pdf/);
+  assert.match(queries.exactTitleQueries[0], /"Bay Tek(?: Games)?" "Quik Drop" "service manual" pdf/);
   assert.match(queries.fallbackQueries[0], /site:betson\.com/i);
 });
 
@@ -514,12 +514,14 @@ test('buildManufacturerDiscoverySeedPages exposes deterministic Bay Tek official
   const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
   const pages = buildManufacturerDiscoverySeedPages({ title: 'Quik Drop', manufacturerProfile: profile });
 
-  assert.deepEqual(pages.map((row) => row.url), [
+  const urls = pages.map((row) => row.url);
+  assert.deepEqual(urls.slice(0, 4), [
     'https://parts.baytekent.com/?s=Quik%20Drop',
     'https://baytekent.com/?s=Quik%20Drop',
     'https://www.betson.com/?s=Quik%20Drop%20Bay%20Tek',
     'https://www.betson.com/amusement-products/?s=Quik%20Drop'
   ]);
+  assert.equal(urls.includes('https://parts.baytekent.com/?s=Quick%20Drop'), true);
 });
 
 test('Virtual Rabbids aliases expand official search and seed coverage to canonical Big Ride naming', () => {
