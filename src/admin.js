@@ -154,7 +154,6 @@ function renderBillingStatusChip(company = {}) {
 
 function parseCsv(text = '') {
   const lines = `${text}`.split(/\r?\n/).filter(Boolean);
-/).filter(Boolean);
   if (!lines.length) return [];
   const headers = lines[0].split(',').map((value) => value.trim());
   return lines.slice(1).map((line, index) => {
