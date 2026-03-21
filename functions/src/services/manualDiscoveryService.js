@@ -11,6 +11,23 @@ const SEARCH_FOLLOWUP_PRIORITY = 0;
 const ADAPTER_FOLLOWUP_PRIORITY = 1;
 const MANUAL_KEYWORDS = ['manual', 'operator', 'service', 'parts', 'install', 'installation', 'schematic', 'instruction', 'owners'];
 const DOWNLOAD_KEYWORDS = ['download', 'pdf', 'document', 'operators-manual', 'service-manual'];
+const JUNK_PATH_PATTERNS = [
+  /\/consultative-services(\/|$)/,
+  /\/installations?(\/|$)/,
+  /\/office-coffee(\/|$)/,
+  /\/careers?(\/|$)/,
+  /\/contact(?:-us)?(\/|$)/,
+  /\/cart(\/|$)/,
+  /\/checkout(\/|$)/,
+  /\/login(\/|$)/,
+  /\/account(\/|$)/,
+  /\/my-account(\/|$)/,
+  /\/search(\/|$)/,
+  /[?&](?:s|search|query)=/,
+  /\/category(\/|$)/,
+  /\/product-category(\/|$)/,
+  /\/collections?(\/|$)/,
+];
 const GENERIC_ANCHOR_TITLES = new Set([
   'toggle menu',
   'skip to main content',
@@ -341,11 +358,14 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
   const path = parsed.pathname.toLowerCase();
   const combined = `${title || ''} ${host} ${path}`;
   const titleAndPath = normalizePhrase(`${title || ''} ${path}`);
+  const titleAndPathAndQuery = normalizePhrase(`${title || ''} ${path} ${parsed.search || ''}`);
   const titleMatch = hasExactOrStrongTitle(combined, titleVariants);
   const manufacturerMatch = hasManufacturerEvidence(`${manufacturer || ''} ${host} ${title || ''}`, manufacturer, manufacturerProfile);
   const directPdf = /\.pdf($|[?#])/.test(path) || /\bpdf\b/.test(titleAndPath);
   const manualIntent = MANUAL_KEYWORDS.some((token) => titleAndPath.includes(token));
   const downloadIntent = DOWNLOAD_KEYWORDS.some((token) => titleAndPath.includes(token));
+  const junkPath = JUNK_PATH_PATTERNS.some((pattern) => pattern.test(`${path}${parsed.search || ''}`.toLowerCase()));
+  const likelyChromeLink = /(?:nav|menu|footer|header|breadcrumb|search|category)/.test(titleAndPathAndQuery);
   const sourceType = detectSourceType(url, manufacturerProfile);
   const resourceType = detectResourceType(url, manufacturerProfile);
   const bayTekDomain = isBayTekDomain(host);
@@ -376,17 +396,21 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
   const genericSupport = isGenericSupportPath(path, titleVariants) || bayTekUtility || betsonUtility;
   const includeManual = titleMatch
     && manufacturerMatch
+    && !junkPath
+    && !likelyChromeLink
     && !genericSupport
     && !bayTekUtility
     && !betsonUtility
     && (directPdf || manualIntent || downloadIntent || hostManualIntent || (betsonDomain && /\/wp-content\/uploads\//.test(path)));
-  const includeSupport = !bayTekUtility && !betsonUtility && titleSpecificSupport;
+  const includeSupport = !junkPath && !likelyChromeLink && !bayTekUtility && !betsonUtility && titleSpecificSupport;
   const rejectionReasons = [];
 
   if (!titleMatch) rejectionReasons.push('missing_title_match');
   if (!manufacturerMatch) rejectionReasons.push('missing_manufacturer_match');
   if (!directPdf && !manualIntent && !downloadIntent && !hostManualIntent) rejectionReasons.push('missing_manual_signal');
   if (genericSupport) rejectionReasons.push('generic_support_page');
+  if (junkPath) rejectionReasons.push('junk_path');
+  if (likelyChromeLink) rejectionReasons.push('chrome_or_nav_link');
   if (bayTekUtility) rejectionReasons.push('bay_tek_utility_link');
   if (betsonUtility) rejectionReasons.push('betson_utility_link');
   if (!includeSupport && !includeManual) rejectionReasons.push('not_support_or_manual');
@@ -419,6 +443,8 @@ function isJunkAnchorCandidate({ href, title, url, attributes, pageUrl, mode = '
   const attributeText = normalizePhrase(Object.values(attributes || {}).join(' '));
   const rel = `${attributes?.rel || ''}`.toLowerCase();
   const target = `${attributes?.target || ''}`.toLowerCase();
+  const lowerPath = parsedUrl.pathname.toLowerCase();
+  const combinedPath = `${lowerPath}${parsedUrl.search || ''}`;
 
   if (!href || href === '#' || /^#/.test(href.trim())) return true;
   if (parsedUrl.pathname === parsedBase.pathname && parsedUrl.search === parsedBase.search && parsedUrl.hash) return true;
@@ -426,22 +452,22 @@ function isJunkAnchorCandidate({ href, title, url, attributes, pageUrl, mode = '
   if (isGenericAnchorTitle(title)) return true;
   if (/^(javascript:|mailto:|tel:)/i.test(href)) return true;
   if (rel.includes('nofollow') && target !== '_blank' && !/pdf/i.test(url)) return true;
+  if (JUNK_PATH_PATTERNS.some((pattern) => pattern.test(combinedPath))) return true;
+  if (/(^|\s)(nav|menu|header|footer|breadcrumb|search|category|service-menu)(\s|$)/.test(attributeText)) return true;
 
   if (mode === 'seed') {
     if (/(^|\s)(nav|menu|header|footer|skip|breadcrumb|logo|mobile-menu)(\s|$)/.test(attributeText)) return true;
-    if (/\/(contact|contact-us|about|about-us|privacy-policy|privacy|terms-and-conditions|terms|faq|blog|news)(\/|$)/.test(parsedUrl.pathname.toLowerCase())) return true;
-    if (/\/(cart|checkout|my-account|account|login|register|wishlist)(\/|$)/.test(parsedUrl.pathname.toLowerCase())) return true;
+    if (/\/(contact|contact-us|about|about-us|privacy-policy|privacy|terms-and-conditions|terms|faq|blog|news)(\/|$)/.test(lowerPath)) return true;
+    if (/\/(cart|checkout|my-account|account|login|register|wishlist)(\/|$)/.test(lowerPath)) return true;
     if (normalizedTitle.length <= 3 && !/pdf|manual|guide|download/.test(normalizedTitle)) return true;
   }
 
   if (isBayTekDomain(parsedUrl.hostname)) {
-    const lowerPath = parsedUrl.pathname.toLowerCase();
     if (isBayTekUtilityPath(lowerPath)) return true;
     if (mode !== 'default' && !/\.(pdf|docx?)$/i.test(lowerPath) && /\/(contact|about|privacy|terms|faq)(\/|$)/.test(lowerPath)) return true;
   }
 
   if (isBetsonDomain(parsedUrl.hostname)) {
-    const lowerPath = parsedUrl.pathname.toLowerCase();
     if (isBetsonUtilityPath(lowerPath)) return true;
     if (mode !== 'default' && !hasBetsonTitleSpecificPath(lowerPath, [normalizedTitle].filter(Boolean))
       && /\/(contact|about|privacy|terms|faq|blog|news)(\/|$)/.test(lowerPath)) return true;

@@ -33,6 +33,14 @@ const CACHE_COLLECTION = 'assetTitleResearchCache';
 const MAX_TITLE_BATCH = 50;
 const CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 
+function logManualResearchEvent(event, payload = {}) {
+  try {
+    console.log(`manualResearch:${event}`, payload);
+  } catch {
+    // swallow logging failures so research stays safe
+  }
+}
+
 function normalizeString(value = '', max = 240) {
   return `${value || ''}`.trim().slice(0, max);
 }
@@ -96,14 +104,17 @@ function mapResearchResultToSuggestions(result = {}, manufacturerProfile = {}) {
   const citations = sanitizeCitations(result.citations);
   const trustedSource = buildDomainAllowlist({ manufacturerProfile, titleFamily: {} })
     .some((domain) => normalizeUrl(result.manualUrl || result.manualSourceUrl || result.supportUrl || '').includes(domain));
+  const manualUrl = normalizeUrl(result.manualUrl || '');
+  const manualLikeUrl = isLikelyManualResearchUrl(manualUrl);
+  const manualLikeMatchType = ['exact_manual', 'manual_page_with_download'].includes(`${result.matchType || ''}`.trim());
 
-  if (result.manualUrl) {
+  if (manualUrl && (result.manualReady === true || manualLikeMatchType || manualLikeUrl)) {
     documentationSuggestions.push({
       title: normalizeString(result.manualTitle || result.originalTitle || result.normalizedTitle || '', 160),
-      url: result.manualUrl,
+      url: manualUrl,
       sourceType: trustedSource ? 'manufacturer' : 'other',
       exactTitleMatch: true,
-      exactManualMatch: result.manualReady === true,
+      exactManualMatch: result.manualReady === true || manualLikeMatchType || manualLikeUrl,
       trustedSource,
       matchType: result.matchType,
       sourcePageUrl: result.manualSourceUrl || '',
@@ -130,6 +141,16 @@ function mapResearchResultToSuggestions(result = {}, manufacturerProfile = {}) {
     });
   }
   return { documentationSuggestions, supportResourcesSuggestion };
+}
+
+function isLikelyManualResearchUrl(url = '') {
+  const normalized = normalizeUrl(url).toLowerCase();
+  if (!normalized) return false;
+  if (/\.pdf($|[?#])/.test(normalized)) return true;
+  if (/(manual|operator|service|install|installation|parts|download|downloads)/.test(normalized)) return true;
+  if (/\/wp-content\/uploads\//.test(normalized)) return true;
+  if (/\/support\//.test(normalized) && !/(manual|operator|service|install|installation|parts|download|downloads)/.test(normalized)) return false;
+  return false;
 }
 
 async function loadCachedResearchResult({ db, companyId, normalizedTitle, manufacturer }) {
@@ -269,6 +290,9 @@ async function runStageTwoResearch({
   maxWebSources,
   researchFallback = requestManualResearchFallback,
 }) {
+  const model = settings.manualResearchModel || settings.aiModel || 'gpt-5';
+  const webSearchEnabled = settings.manualResearchWebSearchEnabled !== false;
+  const fileSearchEnabled = settings.manualResearchFileSearchEnabled !== false;
   const vectorStoreIds = includeInternalDocs !== false
     ? (Array.isArray(settings.manualResearchVectorStoreIds) ? settings.manualResearchVectorStoreIds : [])
     : [];
@@ -278,20 +302,53 @@ async function runStageTwoResearch({
     normalizedTitle: stageOne.normalizedTitle,
     manufacturer: stageOne.manufacturer,
   });
-  if (cached) return { ...cached, sourceType: 'cache' };
+  if (cached) {
+    logManualResearchEvent('stage2_skipped', {
+      title: input.originalTitle,
+      normalizedTitle: stageOne.normalizedTitle,
+      manufacturer: stageOne.manufacturer,
+      stage1MatchType: stageOne.summary.matchType,
+      ranStage2: false,
+      reason: 'cache_hit',
+      model,
+      webSearchEnabled,
+      fileSearchEnabled: fileSearchEnabled && vectorStoreIds.length > 0,
+    });
+    return { ...cached, sourceType: 'cache' };
+  }
 
   const allowedDomains = buildDomainAllowlist({
     manufacturerProfile: stageOne.manufacturerProfile,
     titleFamily: stageOne.titleFamily,
   });
+  logManualResearchEvent('stage2_start', {
+    title: input.originalTitle,
+    normalizedTitle: stageOne.normalizedTitle,
+    manufacturer: stageOne.manufacturer,
+    stage1MatchType: stageOne.summary.matchType,
+    ranStage2: true,
+    model,
+    webSearchEnabled,
+    fileSearchEnabled: fileSearchEnabled && vectorStoreIds.length > 0,
+  });
+  logManualResearchEvent('stage2_prompt_built', {
+    title: input.originalTitle,
+    normalizedTitle: stageOne.normalizedTitle,
+    manufacturer: stageOne.manufacturer,
+    stage1MatchType: stageOne.summary.matchType,
+    allowedDomainCount: allowedDomains.length,
+    allowedDomains: allowedDomains.slice(0, 10),
+    includeInternalDocs: includeInternalDocs !== false,
+    vectorStoreCount: vectorStoreIds.length,
+  });
 
   const result = await researchFallback({
-    model: settings.manualResearchModel || settings.aiModel || 'gpt-5',
+    model,
     reasoningEffort: settings.manualResearchReasoningEffort || 'low',
     traceId,
     maxWebSources,
-    webSearchEnabled: settings.manualResearchWebSearchEnabled !== false,
-    fileSearchEnabled: settings.manualResearchFileSearchEnabled !== false,
+    webSearchEnabled,
+    fileSearchEnabled,
     vectorStoreIds,
     context: {
       companyId,
@@ -302,6 +359,19 @@ async function runStageTwoResearch({
       allowedDomains,
       includeInternalDocs: includeInternalDocs !== false,
     },
+  });
+  logManualResearchEvent('stage2_response_received', {
+    title: input.originalTitle,
+    normalizedTitle: stageOne.normalizedTitle,
+    manufacturer: result.manufacturer || stageOne.manufacturer,
+    stage1MatchType: stageOne.summary.matchType,
+    ranStage2: true,
+    model: result.responseMeta?.model || model,
+    webSearchEnabled,
+    fileSearchEnabled: fileSearchEnabled && vectorStoreIds.length > 0,
+    citationCount: sanitizeCitations(result.citations).length,
+    rawMatchType: result.matchType,
+    rawManualReady: result.manualReady === true,
   });
   const merged = {
     ...result,
@@ -384,12 +454,42 @@ async function researchAssetTitles({
         traceId: `${traceId || 'manual-research'}:${originalTitle}`,
         maxWebSources,
         researchFallback,
-      }).catch(() => null);
+      }).catch((error) => {
+        logManualResearchEvent('stage2_validation_failed', {
+          title: originalTitle,
+          normalizedTitle: stageOne.normalizedTitle,
+          manufacturer: stageOne.manufacturer,
+          stage1MatchType: stageOne.summary.matchType,
+          ranStage2: true,
+          reason: normalizeString(error?.message || String(error), 220),
+        });
+        return null;
+      });
       if (stageTwo) {
         const mapped = mapResearchResultToSuggestions(stageTwo, stageOne.manufacturerProfile);
+        const normalizedStageTwoDocs = normalizeDocumentationSuggestions({
+          links: mapped.documentationSuggestions,
+          confidence: Number(stageTwo.confidence || stageOne.summary.confidence || 0),
+          asset: { name: originalTitle, manufacturer: stageTwo.manufacturer || stageOne.manufacturer },
+          normalizedName: stageTwo.normalizedTitle || stageOne.normalizedTitle,
+          manufacturerSuggestion: stageTwo.manufacturer || stageOne.manufacturer,
+        });
+        const verifiedStageTwoDocs = normalizedStageTwoDocs.length
+          ? await verifyDocumentationSuggestions(normalizedStageTwoDocs, fetchImpl)
+          : [];
+        logManualResearchEvent('stage2_candidates_extracted', {
+          title: originalTitle,
+          normalizedTitle: stageOne.normalizedTitle,
+          manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
+          stage1MatchType: stageOne.summary.matchType,
+          ranStage2: true,
+          candidateCount: normalizedStageTwoDocs.length,
+          acceptedManualCandidateCount: verifiedStageTwoDocs.filter((entry) => entry.verified && entry.exactManualMatch).length,
+          supportCandidateCount: mapped.supportResourcesSuggestion.length,
+        });
         documentationSuggestions = mergeDocumentationSuggestions({
           existingSuggestions: documentationSuggestions,
-          nextSuggestions: mapped.documentationSuggestions,
+          nextSuggestions: verifiedStageTwoDocs,
           preserveExistingCandidates: true,
         });
         supportResourcesSuggestion = normalizeDocumentationSuggestions({
@@ -404,27 +504,66 @@ async function researchAssetTitles({
           ...(stageTwo.supportEmail ? [{ label: 'Support email', value: stageTwo.supportEmail, contactType: 'email' }] : []),
           ...(stageTwo.supportPhone ? [{ label: 'Support phone', value: stageTwo.supportPhone, contactType: 'phone' }] : []),
         ];
+        const reclassified = classifyManualMatchSummary({
+          inputTitle: originalTitle,
+          titleFamily: stageOne.titleFamily,
+          documentationSuggestions,
+          supportResourcesSuggestion,
+          supportContactsSuggestion,
+          confidence: Number(stageTwo.confidence || stageOne.summary.confidence || 0),
+          catalogMatch: stageOne.catalogMatch,
+        });
+        if (stageTwo.manualUrl && !reclassified.manualReady) {
+          logManualResearchEvent('stage2_validation_failed', {
+            title: originalTitle,
+            normalizedTitle: stageOne.normalizedTitle,
+            manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
+            stage1MatchType: stageOne.summary.matchType,
+            ranStage2: true,
+            reason: 'manual_candidate_rejected_by_backend_validation',
+            candidateManualUrl: stageTwo.manualUrl,
+          });
+        }
         summary = {
           ...summary,
-          ...stageTwo,
+          ...reclassified,
           originalTitle,
-          manualUrl: stageTwo.manualUrl || summary.manualUrl || '',
-          manualSourceUrl: stageTwo.manualSourceUrl || summary.manualSourceUrl || '',
-          supportUrl: stageTwo.supportUrl || summary.supportUrl || '',
+          manufacturer: stageTwo.manufacturer || reclassified.manufacturer || summary.manufacturer || '',
+          manufacturerInferred: typeof stageTwo.manufacturerInferred === 'boolean'
+            ? stageTwo.manufacturerInferred
+            : reclassified.manufacturerInferred,
           supportEmail: stageTwo.supportEmail || '',
           supportPhone: stageTwo.supportPhone || '',
-          matchType: stageTwo.matchType || summary.matchType,
-          manualReady: stageTwo.manualReady === true,
-          reviewRequired: typeof stageTwo.reviewRequired === 'boolean' ? stageTwo.reviewRequired : !stageTwo.manualReady,
-          variantWarning: stageTwo.variantWarning || summary.variantWarning || '',
-          confidence: Number(stageTwo.confidence || summary.confidence || 0),
-          matchNotes: stageTwo.matchNotes || summary.matchNotes || '',
+          matchNotes: [reclassified.matchNotes, stageTwo.matchNotes].filter(Boolean).join(' | '),
           citations: sanitizeCitations(stageTwo.citations),
           rawResearchSummary: stageTwo.rawResearchSummary || '',
           researchTimestamp: new Date().toISOString(),
           researchSourceType: stageTwo.sourceType || 'responses_api',
         };
+        logManualResearchEvent('stage2_result', {
+          title: originalTitle,
+          normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+          manufacturer: summary.manufacturer || stageOne.manufacturer,
+          stage1MatchType: stageOne.summary.matchType,
+          ranStage2: true,
+          finalMatchType: summary.matchType,
+          manualReady: summary.manualReady === true,
+          acceptedManualCandidateCount: cleanCount(documentationSuggestions),
+          supportCandidateCount: supportResourcesSuggestion.length,
+          researchSourceType: summary.researchSourceType,
+        });
       }
+    } else {
+      logManualResearchEvent('stage2_skipped', {
+        title: originalTitle,
+        normalizedTitle: stageOne.normalizedTitle,
+        manufacturer: stageOne.manufacturer,
+        stage1MatchType: stageOne.summary.matchType,
+        ranStage2: false,
+        reason: 'stage1_manual_ready',
+        finalMatchType: stageOne.summary.matchType,
+        manualReady: stageOne.summary.manualReady === true,
+      });
     }
 
     results.push({
@@ -451,6 +590,12 @@ async function researchAssetTitles({
     locationId: normalizeString(locationId, 120),
     results,
   };
+}
+
+function cleanCount(documentationSuggestions = []) {
+  return (Array.isArray(documentationSuggestions) ? documentationSuggestions : [])
+    .filter((entry) => entry?.verified && entry?.exactManualMatch)
+    .length;
 }
 
 module.exports = {
