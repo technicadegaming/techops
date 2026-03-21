@@ -43,7 +43,7 @@ export function createContextSwitcherController({
     activeCompanySwitcher.classList.remove('hide');
     activeCompanySwitcher.innerHTML = memberships.map((membership) => {
       const companyName = state.membershipCompanies?.[membership.id]?.name || membership.companyId || 'Unknown company';
-      const role = membership.role || 'pending';
+      const role = membership.role || state.onboarding?.normalizedRole || 'pending';
       return `<option value="${membership.id}" ${membership.id === state.activeMembership?.id ? 'selected' : ''}>${companyName} (${role})</option>`;
     }).join('');
     activeCompanySwitcher.onchange = async (event) => {
@@ -58,7 +58,7 @@ export function createContextSwitcherController({
   }
 
   function renderHeaderContext() {
-    const roleLabel = state.permissions.companyRole || state.profile?.role || 'pending';
+    const roleLabel = state.permissions.companyRole || state.onboarding?.normalizedRole || state.profile?.role || 'pending';
     renderActiveCompanySwitcher();
     renderActiveLocationSwitcher();
     const userBadge = documentRef.getElementById('userBadge');

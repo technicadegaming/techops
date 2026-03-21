@@ -51,6 +51,6 @@ export function createInitialState() {
     restorePayload: null, route: parseRouteState(), assetDraft: createEmptyAssetDraft(), assetUi: { lastActionByAsset: {}, onboardingReviewQueue: [], onboardingValidationErrors: [], bulkIntakeText: '', bulkIntakeRows: [], bulkIntakeErrors: [], bulkIntakeStatus: 'idle', searchQuery: '', statusFilter: 'all', reviewFilter: 'all', enrichmentFilter: 'all' },
     adminUi: { tone: 'info', message: '', importPreview: '', importSummary: '', importTone: 'info', assetReviewFilter: 'pending_review', assetReviewSearch: '', selectedAssetReviewIds: [], selectedSuggestionsByAsset: {} },
     operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0, statusFilter: 'open', ownershipFilter: 'all', exceptionFilter: 'all', taskSearch: '', assigneeFilter: 'all', lastSaveFeedback: '', lastSaveTone: 'info', aiTaskStates: {}, evidenceUploadsByTask: {}, lastSavedTaskId: null },
-    adminSection: 'company', onboardingUi: { tone: 'info', message: '', pendingAction: '', handoffStatus: 'idle' }, setupWizard: { active: false, step: 1, message: '', tone: 'info' }
+    adminSection: 'company', onboarding: null, onboardingUi: { tone: 'info', message: '', pendingAction: '', handoffStatus: 'idle' }, setupWizard: { active: false, step: 1, message: '', tone: 'info' }
   };
 }
