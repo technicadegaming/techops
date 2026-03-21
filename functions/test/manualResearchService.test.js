@@ -8,7 +8,7 @@ function createDoc(data = {}, id = 'doc-1') {
   return { id, data: () => data };
 }
 
-function createDb({ cache = {}, manuals = [], assets = [] } = {}) {
+function createDb({ cache = {}, manuals = [], assets = [], manualLibrary = {} } = {}) {
   return {
     collection(name) {
       if (name === 'assetTitleResearchCache') {
@@ -36,6 +36,19 @@ function createDb({ cache = {}, manuals = [], assets = [] } = {}) {
           async get() { return { docs: manuals.map((entry, index) => createDoc(entry, `manual-${index + 1}`)) }; },
         };
       }
+      if (name === 'manualLibrary') {
+        return {
+          where(field, op, value) { this._filters = [...(this._filters || []), [field, value]]; return this; },
+          limit() { return this; },
+          async get() {
+            const docs = Object.entries(manualLibrary)
+              .filter(([, row]) => (this._filters || []).every(([field, value]) => row[field] === value))
+              .map(([id, row]) => createDoc(row, id));
+            return { empty: docs.length === 0, docs };
+          },
+          doc(id) { return { async set(value) { manualLibrary[id] = { ...(manualLibrary[id] || {}), ...value }; } }; },
+        };
+      }
       if (name === 'assets') {
         return {
           where() { return this; },
@@ -48,6 +61,8 @@ function createDb({ cache = {}, manuals = [], assets = [] } = {}) {
   };
 }
 
+function createStorageMock() { return { bucket() { return { file() { return { save: async () => {} }; } }; } }; }
+
 function createFetchMock() {
   return async (url, options = {}) => {
     const lowerUrl = `${url}`.toLowerCase();
@@ -58,6 +73,7 @@ function createFetchMock() {
         url,
         headers: { get: () => 'application/pdf' },
         text: async () => '',
+        arrayBuffer: async () => Buffer.from('%PDF-1.4\nmanual'),
       };
     }
     return {
@@ -81,6 +97,7 @@ test('researchAssetTitles keeps stage 1 exact manuals without invoking stage 2 f
     titles: [{ originalTitle: 'Quick Drop', manufacturerHint: 'Bay Tek Games' }],
     traceId: 'test-quick-drop',
     fetchImpl: createFetchMock(),
+    storage: createStorageMock(),
     researchFallback: async () => {
       stageTwoCalls += 1;
       throw new Error('stage two should not run for exact catalog manuals');
@@ -90,7 +107,8 @@ test('researchAssetTitles keeps stage 1 exact manuals without invoking stage 2 f
   assert.equal(stageTwoCalls, 0);
   assert.equal(result.results[0].matchType, 'exact_manual');
   assert.equal(result.results[0].manualReady, true);
-  assert.match(result.results[0].manualUrl, /quik-drop-service-manual\.pdf/i);
+  assert.match(result.results[0].manualUrl, /^manual-library\/bay-tek\/quik-drop\/.+\.pdf$/i);
+  assert.ok(result.results[0].manualLibraryRef);
 });
 
 test('researchAssetTitles invokes stage 2 fallback only for unresolved review-required titles', async () => {
@@ -102,6 +120,7 @@ test('researchAssetTitles invokes stage 2 fallback only for unresolved review-re
     titles: [{ originalTitle: 'King Kong VR', manufacturerHint: 'Raw Thrills' }],
     traceId: 'test-king-kong',
     fetchImpl: createFetchMock(),
+    storage: createStorageMock(),
     researchFallback: async () => {
       stageTwoCalls += 1;
       return {
@@ -125,9 +144,9 @@ test('researchAssetTitles invokes stage 2 fallback only for unresolved review-re
   });
 
   assert.equal(stageTwoCalls, 1);
-  assert.equal(result.results[0].matchType, 'title_specific_source');
-  assert.equal(result.results[0].manualReady, false);
-  assert.equal(result.results[0].reviewRequired, true);
+  assert.equal(result.results[0].matchType, 'exact_manual');
+  assert.equal(result.results[0].manualReady, true);
+  assert.match(result.results[0].manualUrl, /^manual-library\/raw-thrills\/king-kong-of-skull-island-vr\/.+\.pdf$/i);
   assert.equal(result.results[0].supportUrl, 'https://rawthrills.com/games/king-kong-of-skull-island/');
   assert.equal(result.results[0].manualMatchSummary.matchType, result.results[0].matchType);
   assert.equal(result.results[0].manualMatchSummary.supportUrl, result.results[0].supportUrl);
@@ -162,6 +181,7 @@ for (const matchType of ['title_specific_source', 'support_only', 'family_match_
       companyId: 'company-1',
       titles: [{ originalTitle: 'Virtual Rabbids', manufacturerHint: 'LAI Games' }],
       traceId: `test-${matchType}`,
+      storage: createStorageMock(),
       fetchImpl: async () => ({
         ok: true,
         status: 200,
@@ -206,11 +226,13 @@ test('researchAssetTitles emits explicit logs and backend validation can promote
       companyId: 'company-1',
       titles: [{ originalTitle: 'King Kong VR', manufacturerHint: 'Raw Thrills' }],
       traceId: 'test-stage2-logs',
+      storage: createStorageMock(),
       fetchImpl: async (url) => ({
         ok: true,
         status: 200,
         headers: { get: () => (String(url).endsWith('.pdf') ? 'application/pdf' : 'text/html') },
         text: async () => '',
+        arrayBuffer: async () => Buffer.from('%PDF-1.4\nmanual'),
       }),
       researchFallback: async () => ({
         normalizedTitle: 'King Kong of Skull Island VR',
@@ -233,7 +255,7 @@ test('researchAssetTitles emits explicit logs and backend validation can promote
     });
 
     assert.equal(result.results[0].manualReady, true);
-    assert.match(result.results[0].manualUrl, /king-kong-of-skull-island-vr-operator-manual\.pdf/i);
+    assert.match(result.results[0].manualUrl, /^manual-library\/raw-thrills\/king-kong-of-skull-island-vr\/.+\.pdf$/i);
     const markers = logs.map((entry) => entry[0]);
     assert.ok(markers.includes('manualResearch:stage2_start'));
     assert.ok(markers.includes('manualResearch:stage2_prompt_built'));
@@ -256,6 +278,7 @@ test('researchAssetTitles logs candidate_rejected when stage 2 returns support-o
       companyId: 'company-1',
       titles: [{ originalTitle: 'Sink-It', manufacturerHint: 'Bay Tek Games' }],
       traceId: 'test-sink-it-candidate-rejected',
+      storage: createStorageMock(),
       fetchImpl: async (url) => ({
         ok: true,
         status: 200,
@@ -327,6 +350,7 @@ test('stage 2 support-only context never produces docs_found semantics', async (
     companyId: 'company-1',
     titles: [{ originalTitle: 'HYPERshoot', manufacturerHint: 'LAI Games' }],
     traceId: 'test-hypershoot-support',
+    storage: createStorageMock(),
     fetchImpl: createFetchMock(),
     researchFallback: async () => ({
       normalizedTitle: 'HYPERshoot',
@@ -375,6 +399,7 @@ test('researchAssetTitles reuses previously approved company manuals before web 
     titles: [{ originalTitle: 'Quick Drop' }],
     traceId: 'test-reuse',
     fetchImpl: createFetchMock(),
+    storage: createStorageMock(),
     researchFallback: async () => {
       stageTwoCalls += 1;
       throw new Error('stage two should not run when approved manual reuse resolves the title');
@@ -383,5 +408,6 @@ test('researchAssetTitles reuses previously approved company manuals before web 
 
   assert.equal(stageTwoCalls, 0);
   assert.equal(result.results[0].manualReady, true);
-  assert.match(result.results[0].manualUrl, /quik-drop-service-manual\.pdf/i);
+  assert.match(result.results[0].manualUrl, /^manual-library\/bay-tek\/quik-drop\/.+\.pdf$/i);
+  assert.ok(result.results[0].manualLibraryRef);
 });

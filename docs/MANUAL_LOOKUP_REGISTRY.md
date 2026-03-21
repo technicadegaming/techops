@@ -111,8 +111,9 @@ Trust expectations:
 - `manualPdfUrl`: direct manual file when known-good.
 - `alternateManualUrl`: additional valid manual variant.
 - `sourcePageUrl`: live product/support/source page for follow-up extraction and operator review.
-- `manualUrl`: the downstream-safe manual target exposed by the enrichment summary. This only counts as manual-ready when it is either a direct document URL or a verified title-specific HTML page with a real downloadable manual link.
-- `manualSourceUrl`: the title-specific product/support page that produced the manual URL.
+- `manualUrl`: the downstream-safe manual target exposed by the enrichment summary. It now prefers the shared Firebase Storage manual-library path after successful acquisition/materialization; source/support pages alone do not qualify.
+- `manualSourceUrl`: the title-specific product/support page that produced the manual URL before it was materialized into the shared library.
+- Shared caching now writes canonical files to `manualLibrary` Firestore documents plus `manual-library/<normalizedManufacturer>/<normalizedTitle>/<sha256>.<ext>` in Firebase Storage, and result rows may include `manualLibraryRef`, `manualStoragePath`, and `manualVariant` metadata.
 - `supportUrl`: generic or title-specific support context that helps operators research, but does not satisfy docs-found on its own.
 - Raw crawler/search anchors are never promoted directly. Deterministic validation must reject generic header/footer/navigation, services/installations, account/cart/login, search/category, newsletter/blog, and similar junk links before anything can become `manualUrl`.
 

@@ -391,10 +391,35 @@ function collectReusableVerifiedManuals({ asset = {}, matchedManufacturer = '', 
   return dedupeDocumentationSuggestions([...manualSuggestions, ...siblingSuggestions]).slice(0, 5);
 }
 
+const { findApprovedManualLibraryRecord } = require('./manualLibraryService');
+
 async function findReusableVerifiedManuals({ db, asset = {}, assetId = '', companyId = '', matchedManufacturer = '' }) {
   const normalizedManufacturer = normalizePhrase(matchedManufacturer);
   const assetMatchKey = normalizeAssetMatchKey(asset.name, asset.normalizedName);
   if (!db || !companyId || !normalizedManufacturer || !assetMatchKey) return [];
+
+  const libraryHit = await findApprovedManualLibraryRecord({
+    db,
+    canonicalTitle: asset.normalizedName || asset.name || '',
+    manufacturer: matchedManufacturer,
+    familyTitle: asset.family || asset.normalizedName || asset.name || '',
+  }).catch(() => null);
+  const librarySuggestions = libraryHit ? [{
+    title: libraryHit.filename || libraryHit.canonicalTitle || asset.name || libraryHit.storagePath,
+    url: libraryHit.storagePath || '',
+    sourcePageUrl: libraryHit.sourcePageUrl || '',
+    sourceType: 'manual_library',
+    matchScore: 100,
+    exactTitleMatch: true,
+    exactManualMatch: true,
+    verified: true,
+    trustedSource: true,
+    matchedManufacturer,
+    manualLibraryRef: libraryHit.id,
+    manualStoragePath: libraryHit.storagePath || '',
+    reusedVerifiedManual: true,
+    reason: 'reused_shared_manual_library'
+  }] : [];
 
   const [manualSnap, assetSnap] = await Promise.all([
     db.collection('manuals')
@@ -415,12 +440,15 @@ async function findReusableVerifiedManuals({ db, asset = {}, assetId = '', compa
     .filter((doc) => doc.id !== assetId)
     .map((doc) => doc.data?.() || {});
 
-  return collectReusableVerifiedManuals({
-    asset,
-    matchedManufacturer: normalizedManufacturer,
-    manualRecords,
-    siblingAssets
-  });
+  return [
+    ...librarySuggestions,
+    ...collectReusableVerifiedManuals({
+      asset,
+      matchedManufacturer: normalizedManufacturer,
+      manualRecords,
+      siblingAssets
+    })
+  ].slice(0, 5);
 }
 
 function getManufacturerProfile(...values) {

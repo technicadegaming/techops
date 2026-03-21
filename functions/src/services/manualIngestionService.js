@@ -1,8 +1,8 @@
 const admin = require('firebase-admin');
 const { gunzipSync, inflateSync, inflateRawSync } = require('node:zlib');
-const { randomUUID, createHash } = require('node:crypto');
 const { isoNow } = require('../lib/timestamps');
 const { cleanDocumentationSuggestions } = require('./assetEnrichmentService');
+const { acquireManualToLibrary } = require('./manualAcquisitionService');
 
 function normalizeString(value, max = 240) {
   return `${value || ''}`.trim().slice(0, max);
@@ -154,27 +154,6 @@ function buildManualStoragePath(companyId, assetId, manualId, contentType = '', 
   return ['companies', companyId, 'manuals', assetId, manualId, `source.${extension}`].join('/');
 }
 
-async function fetchManualSource(sourceUrl) {
-  const response = await fetch(sourceUrl, {
-    headers: { 'user-agent': 'techops-manual-ingestion/1.0' }
-  });
-  if (!response.ok) throw new Error(`Manual fetch failed with status ${response.status}`);
-  const arrayBuffer = await response.arrayBuffer();
-  return {
-    buffer: Buffer.from(arrayBuffer),
-    contentType: `${response.headers.get('content-type') || ''}`.toLowerCase() || 'application/octet-stream'
-  };
-}
-
-async function persistManualChunks({ db, manualId, chunkDocs }) {
-  const batch = db.batch();
-  chunkDocs.forEach((chunk) => {
-    const ref = db.collection('manuals').doc(manualId).collection('chunks').doc(`${chunk.chunkIndex}`);
-    batch.set(ref, chunk);
-  });
-  await batch.commit();
-}
-
 async function approveAssetManual({
   db,
   storage,
@@ -182,8 +161,8 @@ async function approveAssetManual({
   userId,
   sourceUrl,
   sourceTitle = '',
-  sourceType = 'approved_doc',
-  approvedSuggestionIndex = null
+  approvedSuggestionIndex = null,
+  fetchImpl = fetch
 }) {
   const companyId = normalizeString(asset?.companyId, 120);
   const assetId = normalizeString(asset?.id, 120);
@@ -192,14 +171,6 @@ async function approveAssetManual({
   if (!assetId) throw new Error('Asset id is required');
   if (!cleanedSourceUrl) throw new Error('sourceUrl is required');
 
-  const existingSnap = await db.collection('manuals')
-    .where('companyId', '==', companyId)
-    .where('assetId', '==', assetId)
-    .where('sourceUrl', '==', cleanedSourceUrl)
-    .limit(1)
-    .get();
-
-  const manualId = existingSnap.empty ? `manual_${randomUUID()}` : existingSnap.docs[0].id;
   const suggestions = Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : [];
   const reviewableSuggestions = cleanDocumentationSuggestions(suggestions);
   const matchedSuggestion = reviewableSuggestions.find((entry) => `${entry?.url || ''}`.trim() === cleanedSourceUrl)
@@ -213,152 +184,85 @@ async function approveAssetManual({
   }
 
   const now = isoNow();
-  const baseRecord = {
-    id: manualId,
-    manualId,
-    companyId,
-    assetId,
-    sourceUrl: cleanedSourceUrl,
-    sourceTitle: normalizeString(sourceTitle || matchedSuggestion.title || asset.name || cleanedSourceUrl, 240),
-    manufacturer: normalizeString(asset.manufacturer || matchedSuggestion.manufacturer || '', 120),
-    assetTitle: normalizeString(asset.name || asset.title || '', 160),
-    sourceType: normalizeString(sourceType || matchedSuggestion.sourceType || 'approved_doc', 40),
-    matchedManufacturer: normalizeString(asset.matchedManufacturer || matchedSuggestion.matchedManufacturer || '', 120),
-    manualType: normalizeString(matchedSuggestion.manualType || matchedSuggestion.linkType || '', 80),
-    cabinetVariant: normalizeString(matchedSuggestion.cabinetVariant || matchedSuggestion.variant || '', 160),
-    family: normalizeString(matchedSuggestion.family || asset.family || '', 160),
-    manualConfidence: Number(matchedSuggestion.confidence || asset.enrichmentConfidence || 0) || 0,
-    assetLocationId: normalizeString(asset.locationId || asset.assetLocationId || '', 120),
-    assetLocationName: normalizeString(asset.locationName || asset.locationLabel || '', 160),
-    approvedBy: userId,
-    approvedAt: now,
-    extractionStatus: 'pending',
-    extractionRequestedAt: now,
-    extractionStartedAt: now,
-    extractionCompletedAt: null,
-    extractionFailedAt: null,
-    extractionError: '',
-    chunkCount: 0,
-    byteSize: 0,
-    sha256: '',
-    storagePath: '',
-    contentType: '',
-    fileName: ''
+  const acquired = await acquireManualToLibrary({
+    db,
+    storage,
+    fetchImpl,
+    candidate: {
+      ...matchedSuggestion,
+      url: cleanedSourceUrl,
+      sourcePageUrl: matchedSuggestion.sourcePageUrl || asset.manualSourceUrl || '',
+      title: sourceTitle || matchedSuggestion.title || asset.name || cleanedSourceUrl,
+    },
+    context: {
+      originalTitle: asset.name || asset.title || '',
+      canonicalTitle: asset.normalizedName || asset.name || asset.title || '',
+      normalizedTitle: asset.normalizedName || asset.name || asset.title || '',
+      familyTitle: matchedSuggestion.family || asset.family || asset.normalizedName || asset.name || '',
+      manufacturer: asset.manufacturer || matchedSuggestion.manufacturer || '',
+      manualSourceUrl: matchedSuggestion.sourcePageUrl || asset.manualSourceUrl || '',
+      manualUrl: cleanedSourceUrl,
+      matchType: matchedSuggestion.matchType || 'exact_manual',
+      confidence: Number(matchedSuggestion.confidence || asset.enrichmentConfidence || 0) || 0,
+      variant: matchedSuggestion.cabinetVariant || matchedSuggestion.variant || '',
+      catalogEntryId: matchedSuggestion.catalogEntryId || asset.manualLookupCatalogMatch?.catalogEntryId || '',
+      seededFromWorkbook: matchedSuggestion?.verificationMetadata?.seededFromWorkbook === true,
+      notes: matchedSuggestion.reason || '',
+    },
+  });
+  if (!acquired?.manualReady || !acquired.manualLibrary) {
+    throw new Error('Unable to acquire a stored shared manual for approval');
+  }
+
+  const library = acquired.manualLibrary;
+  const assetPatch = {
+    manualLinks: Array.from(new Set([...(Array.isArray(asset.manualLinks) ? asset.manualLinks : []), library.storagePath].filter(Boolean))),
+    manualLibraryRef: library.id,
+    manualStoragePath: library.storagePath || '',
+    manualVariant: library.variant || '',
+    manualSourceUrl: library.sourcePageUrl || matchedSuggestion.sourcePageUrl || '',
+    docsLastReviewedAt: now,
+    enrichmentStatus: 'docs_found',
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: userId
   };
 
-  await db.collection('manuals').doc(manualId).set({
-    ...baseRecord,
-    updatedAt: now,
-    updatedBy: userId,
-    createdAt: existingSnap.empty ? now : existingSnap.docs[0].data()?.createdAt || now,
-    createdBy: existingSnap.empty ? userId : existingSnap.docs[0].data()?.createdBy || userId
-  }, { merge: true });
-
-  try {
-    const { buffer, contentType } = await fetchManualSource(cleanedSourceUrl);
-    const sha256 = createHash('sha256').update(buffer).digest('hex');
-    const storagePath = buildManualStoragePath(companyId, assetId, manualId, contentType, cleanedSourceUrl);
-    const fileName = storagePath.split('/').pop() || 'source.bin';
-
-    await storage.bucket().file(storagePath).save(buffer, {
-      resumable: false,
-      contentType,
-      metadata: {
-        metadata: {
-          companyId,
-          assetId,
-          manualId,
-          sourceUrl: cleanedSourceUrl
-        }
-      }
-    });
-
-    const extractedText = extractTextFromBuffer(buffer, contentType, cleanedSourceUrl);
-    const chunks = chunkManualText(extractedText).map((chunk) => ({
-      id: `${manualId}_${chunk.chunkIndex}`,
-      manualId,
-      companyId,
-      assetId,
-      chunkIndex: chunk.chunkIndex,
-      text: chunk.text,
-      tokenCountApprox: chunk.tokenCountApprox,
-      charCount: chunk.charCount,
-      pageNumber: null,
-      sourceTitle: baseRecord.sourceTitle,
-      sourceUrl: cleanedSourceUrl,
-      manualType: baseRecord.manualType,
-      cabinetVariant: baseRecord.cabinetVariant,
-      family: baseRecord.family,
-      manufacturer: baseRecord.manufacturer,
-      manualConfidence: baseRecord.manualConfidence,
-      createdAt: now,
-      updatedAt: now
-    }));
-
-    await db.recursiveDelete(db.collection('manuals').doc(manualId).collection('chunks')).catch(() => {});
-    if (chunks.length) await persistManualChunks({ db, manualId, chunkDocs: chunks });
-
-    const assetPatch = {
-      manualLinks: Array.from(new Set([...(Array.isArray(asset.manualLinks) ? asset.manualLinks : []), cleanedSourceUrl])),
-      approvedManualIds: Array.from(new Set([...(Array.isArray(asset.approvedManualIds) ? asset.approvedManualIds : []), manualId])),
-      docsLastReviewedAt: now,
-      enrichmentStatus: asset.enrichmentStatus === 'followup_needed' ? 'verified_manual_found' : (asset.enrichmentStatus || 'verified_manual_found'),
+  await Promise.all([
+    db.collection('assets').doc(assetId).set(assetPatch, { merge: true }),
+    db.collection('manualLibrary').doc(library.id).set({
+      approvalState: 'approved',
+      approved: true,
+      approvedBy: userId,
+      approvedAt: now,
+      reviewRequired: false,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedBy: userId
-    };
+    }, { merge: true }),
+    db.collection('auditLogs').add({
+      action: 'manual_approved',
+      entityType: 'manualLibrary',
+      entityId: library.id,
+      companyId,
+      summary: `Approved shared manual for ${asset.name || assetId}`,
+      userUid: userId,
+      metadata: {
+        assetId,
+        sourceUrl: cleanedSourceUrl,
+        manualLibraryRef: library.id,
+        storagePath: library.storagePath || '',
+      },
+      timestamp: admin.firestore.FieldValue.serverTimestamp()
+    })
+  ]);
 
-    await Promise.all([
-      db.collection('assets').doc(assetId).set(assetPatch, { merge: true }),
-      db.collection('manuals').doc(manualId).set({
-        storagePath,
-        contentType,
-        fileName,
-        byteSize: buffer.length,
-        sha256,
-        extractionStatus: chunks.length ? 'completed' : 'no_text_extracted',
-        extractionCompletedAt: isoNow(),
-        extractionFailedAt: null,
-        extractionError: chunks.length ? '' : 'No extractable text detected from source file.',
-        chunkCount: chunks.length,
-        updatedAt: isoNow(),
-        updatedBy: userId
-      }, { merge: true }),
-      db.collection('auditLogs').add({
-        action: 'manual_approved',
-        entityType: 'manuals',
-        entityId: manualId,
-        companyId,
-        summary: `Approved manual for ${asset.name || assetId}`,
-        userUid: userId,
-        metadata: {
-          assetId,
-          sourceUrl: cleanedSourceUrl,
-          storagePath,
-          extractionStatus: chunks.length ? 'completed' : 'no_text_extracted',
-          chunkCount: chunks.length
-        },
-        timestamp: admin.firestore.FieldValue.serverTimestamp()
-      })
-    ]);
-
-    return {
-      ok: true,
-      manualId,
-      storagePath,
-      extractionStatus: chunks.length ? 'completed' : 'no_text_extracted',
-      chunkCount: chunks.length,
-      contentType
-    };
-  } catch (error) {
-    await db.collection('manuals').doc(manualId).set({
-      extractionStatus: 'failed',
-      extractionFailedAt: isoNow(),
-      extractionError: normalizeString(error?.message || String(error), 500),
-      updatedAt: isoNow(),
-      updatedBy: userId
-    }, { merge: true });
-    throw error;
-  }
+  return {
+    ok: true,
+    manualId: library.id,
+    manualLibraryRef: library.id,
+    storagePath: library.storagePath || '',
+    extractionStatus: 'completed',
+    chunkCount: 0,
+    contentType: library.contentType || ''
+  };
 }
 
 module.exports = {
