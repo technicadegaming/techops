@@ -1,10 +1,11 @@
 import { sortDocumentationSuggestions } from './documentationSuggestions.js';
 
-export function isReviewableDocumentationSuggestion(entry = {}) {
+export function isManualReadyMatch(entry = {}) {
   const url = `${entry?.url || ''}`.trim();
   if (!url || entry?.deadPage || entry?.unreachable) return false;
   if (!entry?.exactTitleMatch) return false;
   const verificationKind = `${entry?.verificationKind || ''}`.trim().toLowerCase();
+  const matchType = `${entry?.matchType || ''}`.trim().toLowerCase();
   const sourceType = `${entry?.sourceType || entry?.resourceType || ''}`.trim().toLowerCase();
   const verified = entry?.verified === true || `${entry?.verificationStatus || ''}`.trim().toLowerCase() === 'seed_verified';
   const exactManualMatch = !!entry?.exactManualMatch;
@@ -12,10 +13,15 @@ export function isReviewableDocumentationSuggestion(entry = {}) {
   const directManualUrl = /\.pdf($|\?|#)|manual|operator|service|install|parts/.test(url.toLowerCase());
   const manualBearingHtml = verificationKind === 'manual_html' && trustedSource;
   if (!verified) return false;
+  if (matchType && !['exact_manual', 'manual_page_with_download'].includes(matchType)) return false;
   if (manualBearingHtml) return true;
   if (exactManualMatch) return true;
   if (trustedSource && directManualUrl && !['support', 'official_site', 'contact', 'parts'].includes(sourceType)) return true;
   return false;
+}
+
+export function isReviewableDocumentationSuggestion(entry = {}) {
+  return isManualReadyMatch(entry);
 }
 
 export function getReviewableDocumentationSuggestions(asset = {}) {
@@ -37,7 +43,7 @@ export function buildDocumentationApprovalSelection(asset = {}, { mode = 'best',
 }
 
 export function buildDocumentationApprovalPatch(asset = {}, approvedEntries = [], { reviewAction = 'approve' } = {}) {
-  const approvedUrls = approvedEntries.map((entry) => `${entry?.url || ''}`.trim()).filter(Boolean);
+  const approvedUrls = (approvedEntries || []).filter((entry) => isReviewableDocumentationSuggestion(entry)).map((entry) => `${entry?.url || ''}`.trim()).filter(Boolean);
   if (!approvedUrls.length) return null;
   const dedupe = (values = []) => Array.from(new Set(values.map((value) => `${value || ''}`.trim()).filter(Boolean)));
   return {

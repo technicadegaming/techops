@@ -106,6 +106,7 @@ test('asset intake row mapping reuses manual engine summary shape for bulk and s
       canonicalTitle: 'Quik Drop',
       manufacturer: 'Bay Tek',
       matchType: 'exact_manual',
+      manualReady: true,
       confidence: 0.91,
       matchNotes: 'matchType: exact_manual | normalized from: Quick Drop | manufacturer: Bay Tek',
       manualUrl: 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
@@ -126,7 +127,40 @@ test('asset intake row mapping reuses manual engine summary shape for bulk and s
   assert.equal(row.manualSourceUrl, 'https://www.baytekent.com/games/quik-drop/');
   assert.equal(row.supportUrl, 'https://www.baytekent.com/games/quik-drop/');
   assert.equal(row.matchType, 'exact_manual');
+  assert.equal(row.manualReady, true);
   assert.equal(row.reviewNeeded, false);
+});
+
+
+
+test('asset intake row mapping keeps source-only matches review-required in bulk the same way as single-entry previews', async () => {
+  const { mapPreviewToAssetIntakeRow } = await loadAssetIntakeHelpers();
+  const preview = {
+    confidence: 0.74,
+    likelyManufacturer: 'Raw Thrills',
+    manualMatchSummary: {
+      inputTitle: 'Jurassic Park',
+      canonicalTitle: 'Jurassic Park Arcade',
+      manufacturer: 'Raw Thrills',
+      matchType: 'support_only',
+      manualReady: false,
+      confidence: 0.74,
+      matchNotes: 'matchType: support_only | manufacturer: Raw Thrills',
+      manualUrl: '',
+      manualSourceUrl: '',
+      supportUrl: 'https://rawthrills.com/service/',
+      variantWarning: '',
+      reviewRequired: true
+    }
+  };
+
+  const row = mapPreviewToAssetIntakeRow({ name: 'Jurassic Park', manufacturer: '' }, preview);
+  assert.equal(row.matchType, 'support_only');
+  assert.equal(row.manualReady, false);
+  assert.equal(row.reviewRequired, true);
+  assert.equal(row.rowStatus, 'needs_review');
+  assert.equal(row.supportUrl, 'https://rawthrills.com/service/');
+  assert.equal(row.manualUrl, '');
 });
 
 test('context switcher renders derived location options and syncs route changes', async () => {
@@ -361,7 +395,8 @@ test('documentation review helpers keep support-only links out of approval while
         exactTitleMatch: false,
         exactManualMatch: false,
         trustedSource: true,
-        verificationKind: 'support_html'
+        verificationKind: 'support_html',
+        matchType: 'support_only'
       },
       {
         title: 'Quik Drop Service Manual PDF',
@@ -371,7 +406,8 @@ test('documentation review helpers keep support-only links out of approval while
         exactTitleMatch: true,
         exactManualMatch: true,
         trustedSource: true,
-        matchScore: 96
+        matchScore: 96,
+        matchType: 'exact_manual'
       },
       {
         title: 'Virtual Rabbids: The Big Ride Install Guide PDF',
@@ -381,7 +417,8 @@ test('documentation review helpers keep support-only links out of approval while
         exactTitleMatch: true,
         exactManualMatch: true,
         trustedSource: true,
-        matchScore: 92
+        matchScore: 92,
+        matchType: 'exact_manual'
       }
     ]
   };
@@ -403,6 +440,28 @@ test('documentation review helpers keep support-only links out of approval while
   assert.equal(bulkPatch.reviewState, 'approved');
 });
 
+
+
+
+test('documentation review helpers reject support-only approvals', async () => {
+  const { buildDocumentationApprovalPatch } = await loadDocumentationReviewHelpers();
+  const asset = {
+    manualLinks: [],
+    documentationSuggestions: [{
+      title: 'Raw Thrills Service Support',
+      url: 'https://rawthrills.com/service-support/',
+      sourceType: 'support',
+      verified: true,
+      exactTitleMatch: true,
+      exactManualMatch: false,
+      trustedSource: true,
+      verificationKind: 'support_html',
+      matchType: 'support_only'
+    }]
+  };
+
+  assert.equal(buildDocumentationApprovalPatch(asset, asset.documentationSuggestions, { reviewAction: 'approve_single' }), null);
+});
 
 test('title bulk parser accepts comma-separated and newline input while deduplicating obvious duplicates', async () => {
   const { parseTitleBulkInput } = await loadAssetIntakeHelpers();

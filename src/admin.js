@@ -424,7 +424,7 @@ export function renderAdmin(el, state, actions) {
             </div>
             <div class="grid grid-2 mt" style="gap:10px;">
               <div>
-                <div class="tiny"><b>Suggested documentation/resources</b></div>
+                <div class="tiny"><b>Suggested manuals to review</b></div>
                 ${suggestions.length ? suggestions.map((entry) => {
       const url = `${entry.url || ''}`.trim();
       return `<div class="tiny" style="display:flex; gap:8px; align-items:flex-start; justify-content:space-between; margin:4px 0;">
@@ -437,7 +437,9 @@ export function renderAdmin(el, state, actions) {
     }).join('') : '<div class="inline-state info">No suggestions yet. Run enrichment.</div>'}
               </div>
               <div>
-                <div class="tiny"><b>Already attached docs/resources</b></div>
+                <div class="tiny"><b>Source/support links</b></div>
+                ${((asset.supportResourcesSuggestion || []).length ? (asset.supportResourcesSuggestion || []).map((entry) => `<div class="tiny" style="margin:4px 0;"><a href="${entry.url || ''}" target="_blank" rel="noopener">${entry.title || entry.label || entry.url || ''}</a></div>`).join('') : '<div class="inline-state info">No source/support links.</div>')}
+                <div class="tiny mt"><b>Already attached docs/resources</b></div>
                 ${attached.length ? attached.map((url) => `<div class="tiny" style="display:flex; justify-content:space-between; gap:8px; margin:4px 0;"><a href="${url}" target="_blank" rel="noopener">${url}</a><button type="button" data-remove-attached-manual="${asset.id}" data-url="${encodeURIComponent(url)}">Remove</button></div>`).join('') : '<div class="inline-state warn">No attached docs.</div>'}
               </div>
             </div>

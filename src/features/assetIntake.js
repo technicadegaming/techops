@@ -1,5 +1,5 @@
 const BASE_TEMPLATE_COLUMNS = ['asset name', 'assetId', 'manufacturer', 'model', 'serial', 'location', 'zone', 'notes', 'category', 'status'];
-const OPTIONAL_TEMPLATE_COLUMNS = ['alternateNames', 'normalizedName', 'manualUrl', 'manualSourceUrl', 'supportEmail', 'supportPhone', 'supportUrl', 'matchConfidence', 'matchNotes'];
+const OPTIONAL_TEMPLATE_COLUMNS = ['alternateNames', 'normalizedName', 'matchType', 'manualReady', 'reviewRequired', 'manualUrl', 'manualSourceUrl', 'supportEmail', 'supportPhone', 'supportUrl', 'matchConfidence', 'matchNotes'];
 
 export const ASSET_IMPORT_COLUMNS = [...BASE_TEMPLATE_COLUMNS, ...OPTIONAL_TEMPLATE_COLUMNS];
 export const LEGACY_ASSET_IMPORT_COLUMNS = ['name', 'manufacturer', 'locationName', 'serialNumber', 'model', 'category'];
@@ -26,6 +26,9 @@ const CSV_ALIASES = {
   supportEmail: ['supportemail', 'support email'],
   supportPhone: ['supportphone', 'support phone'],
   supportUrl: ['supporturl', 'support url'],
+  matchType: ['matchtype', 'match type'],
+  manualReady: ['manualready', 'manual ready'],
+  reviewRequired: ['reviewrequired', 'review required'],
   matchConfidence: ['matchconfidence', 'match confidence'],
   matchNotes: ['matchnotes', 'match notes']
 };
@@ -145,6 +148,9 @@ export function normalizeAssetCandidate(raw = {}, { defaultLocationName = '' } =
     supportEmail,
     supportPhone,
     supportUrl,
+    matchType: normalizeField(raw.matchType || ''),
+    manualReady: normalizeField(raw.manualReady || ''),
+    reviewRequired: normalizeField(raw.reviewRequired || ''),
     matchConfidence: normalizeField(raw.matchConfidence || ''),
     matchNotes: normalizeField(raw.matchNotes || '')
   };
@@ -161,7 +167,7 @@ export function normalizeAssetCandidate(raw = {}, { defaultLocationName = '' } =
     categorySuggestion,
     normalizationConfidence: base.manufacturer ? 'high' : manufacturerInference.confidence,
     reviewNeeded: !base.manufacturer || !!manufacturerSuggestion || !!categorySuggestion || !base.manualUrl,
-    rowStatus: base.manualUrl || supportUrl ? 'good_match' : (base.manufacturer || manufacturerSuggestion ? 'needs_review' : 'unresolved')
+    rowStatus: base.manualUrl ? 'good_match' : ((base.manufacturer || manufacturerSuggestion || supportUrl) ? 'needs_review' : 'unresolved')
   };
 }
 
@@ -253,6 +259,9 @@ export function parseAssetCsv(text = '', options = {}) {
       supportEmail: getHeaderValue(raw, 'supportEmail'),
       supportPhone: getHeaderValue(raw, 'supportPhone'),
       supportUrl: getHeaderValue(raw, 'supportUrl'),
+      matchType: getHeaderValue(raw, 'matchType'),
+      manualReady: getHeaderValue(raw, 'manualReady'),
+      reviewRequired: getHeaderValue(raw, 'reviewRequired'),
       matchConfidence: getHeaderValue(raw, 'matchConfidence'),
       matchNotes: getHeaderValue(raw, 'matchNotes')
     }, options);
@@ -265,8 +274,8 @@ export function parseAssetCsv(text = '', options = {}) {
   return { rows, errors };
 }
 
-function classifyRowStatus({ confidence = 0, manualUrl = '', supportUrl = '', manufacturer = '' } = {}) {
-  if (manualUrl && confidence >= 0.8) return 'good_match';
+function classifyRowStatus({ confidence = 0, manualUrl = '', supportUrl = '', manufacturer = '', manualReady = false } = {}) {
+  if (manualReady || (manualUrl && confidence >= 0.8)) return 'good_match';
   if (manufacturer || supportUrl || confidence >= 0.45) return 'needs_review';
   return 'unresolved';
 }
@@ -286,6 +295,7 @@ export function mapPreviewToAssetIntakeRow(row = {}, preview = {}) {
   const supportEmail = row.supportEmail || engine.supportEmail || extractContactValue(supportContacts, ['email']);
   const supportPhone = row.supportPhone || engine.supportPhone || extractContactValue(supportContacts, ['phone', 'telephone']);
   const supportUrl = row.supportUrl || normalizeUrl(engine.supportUrl || bestSupport?.url || '');
+  const manualReady = typeof engine.manualReady === 'boolean' ? engine.manualReady : !!normalizeUrl(engine.manualUrl || bestManual?.url || '');
   const matchNotes = row.matchNotes || engine.matchNotes || [
     preview.status ? `status: ${preview.status}` : '',
     preview.likelyManufacturer ? `manufacturer: ${preview.likelyManufacturer}` : '',
@@ -310,17 +320,19 @@ export function mapPreviewToAssetIntakeRow(row = {}, preview = {}) {
     preview,
     confidence,
     matchType: engine.matchType || preview.matchType || '',
+    manualReady,
     variantWarning: engine.variantWarning || preview.variantWarning || '',
-    reviewRequired: typeof engine.reviewRequired === 'boolean' ? engine.reviewRequired : undefined,
+    reviewRequired: typeof engine.reviewRequired === 'boolean' ? engine.reviewRequired : !manualReady,
     rowStatus: classifyRowStatus({
       confidence,
       manualUrl: row.manualUrl || normalizeUrl(engine.manualUrl || bestManual?.url || ''),
       supportUrl,
-      manufacturer: row.manufacturer || engine.manufacturer || preview.likelyManufacturer || ''
+      manufacturer: row.manufacturer || engine.manufacturer || preview.likelyManufacturer || '',
+      manualReady
     }),
     reviewNeeded: typeof engine.reviewRequired === 'boolean'
       ? engine.reviewRequired
-      : classifyRowStatus({ confidence, manualUrl: row.manualUrl || normalizeUrl(engine.manualUrl || bestManual?.url || ''), supportUrl, manufacturer: row.manufacturer || engine.manufacturer || preview.likelyManufacturer || '' }) !== 'good_match'
+      : classifyRowStatus({ confidence, manualUrl: row.manualUrl || normalizeUrl(engine.manualUrl || bestManual?.url || ''), supportUrl, manufacturer: row.manufacturer || engine.manufacturer || preview.likelyManufacturer || '', manualReady }) !== 'good_match'
   };
 }
 
@@ -372,6 +384,9 @@ export function buildAssetImportRow(row = {}) {
     status: row.status || 'active',
     alternateNames: dedupeValues(row.alternateNames || []).join('|'),
     normalizedName: row.normalizedName || '',
+    matchType: row.matchType || '',
+    manualReady: row.manualReady === true ? 'true' : (row.manualReady === false ? 'false' : (row.manualReady || '')),
+    reviewRequired: row.reviewRequired === true ? 'true' : (row.reviewRequired === false ? 'false' : (row.reviewRequired || '')),
     manualUrl: row.manualUrl || '',
     manualSourceUrl: row.manualSourceUrl || '',
     supportEmail: row.supportEmail || '',
