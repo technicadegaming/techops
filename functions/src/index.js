@@ -23,6 +23,7 @@ const {
   repairLegacyAssetEnrichmentRecord,
 } = require('./services/assetEnrichmentService');
 const { approveAssetManual } = require('./services/manualIngestionService');
+const { researchAssetTitles } = require('./services/manualResearchService');
 
 const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
 
@@ -369,12 +370,43 @@ exports.previewAssetDocumentationLookup = onCall({ secrets: [OPENAI_API_KEY] }, 
     settings,
     traceId: request.rawRequest.headers['x-cloud-trace-context'] || `asset-preview-${Date.now()}`,
     draftAsset: {
+      companyId: authz.companyId || '',
       name: `${request.data?.assetName || ''}`.trim(),
       manufacturer: `${request.data?.manufacturer || ''}`.trim(),
       serialNumber: `${request.data?.serialNumber || ''}`.trim(),
       assetId: `${request.data?.assetId || ''}`.trim(),
       followupAnswer: `${request.data?.followupAnswer || ''}`.trim(),
     },
+  });
+});
+
+exports.researchAssetTitles = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+  assertString(request.data?.companyId, 'companyId');
+
+  const authz = await authorizeCompanyMember({
+    uid: request.auth.uid,
+    companyId: request.data.companyId,
+    checkAccess: canRunAssetEnrichment,
+  });
+  if (!authz.allowed) {
+    throw new HttpsError('permission-denied', 'Insufficient role for asset enrichment');
+  }
+
+  const settings = await getAiSettings(authz.companyId);
+  if (!settings.aiEnabled) {
+    return { ok: false, results: [], message: 'AI is disabled by admin settings' };
+  }
+
+  return researchAssetTitles({
+    db,
+    settings,
+    companyId: authz.companyId,
+    locationId: `${request.data?.locationId || ''}`.trim(),
+    titles: Array.isArray(request.data?.titles) ? request.data.titles : [],
+    includeInternalDocs: request.data?.includeInternalDocs !== false,
+    maxWebSources: Number(request.data?.maxWebSources || settings.manualResearchMaxWebSources || 5),
+    traceId: request.rawRequest.headers['x-cloud-trace-context'] || `asset-research-${Date.now()}`,
   });
 });
 

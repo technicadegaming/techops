@@ -1,6 +1,10 @@
 const OpenAI = require('openai');
 const { defineSecret } = require('firebase-functions/params');
-const { validateAiResultShape, validateAssetLookupResultShape } = require('../lib/validators');
+const {
+  validateAiResultShape,
+  validateAssetLookupResultShape,
+  validateManualResearchResultShape,
+} = require('../lib/validators');
 
 const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
 
@@ -176,9 +180,123 @@ async function requestAssetDocumentationLookup({ model, traceId, context }) {
   };
 }
 
+function buildManualResearchInstructions(context = {}) {
+  return [
+    'You are a manual research assistant for arcade/FEC asset intake.',
+    'Find the best actual manual candidate for the requested title.',
+    'Prefer official manufacturer sources, direct PDFs, and title-specific manual/download pages.',
+    'Keep three concepts separate: manualUrl (actual manual candidate), manualSourceUrl (title-specific source page), and supportUrl (support context only).',
+    'Generic support hubs are useful context but never count as manuals.',
+    'Only exact_manual or manual_page_with_download may set manualReady=true.',
+    'If title family or variant ambiguity remains, use family_match_needs_review or title_specific_source and set reviewRequired=true.',
+    'If no actual manual is found, preserve the best title-specific source or support page plus contact info when available.',
+    'Be conservative. Do not invent manuals, URLs, titles, contact info, or confidence.',
+    'Return JSON only. Put concise reasoning in matchNotes and optional rawResearchSummary, not chain-of-thought.',
+    `Allowed manufacturer/trusted domains: ${(context.allowedDomains || []).join(', ') || 'none provided'}.`,
+  ].join('\n');
+}
+
+function buildManualResearchSchemaPrompt() {
+  return JSON.stringify({
+    normalizedTitle: 'string',
+    manufacturer: 'string',
+    manufacturerInferred: false,
+    matchType: 'exact_manual|manual_page_with_download|title_specific_source|support_only|family_match_needs_review|unresolved',
+    manualReady: false,
+    reviewRequired: true,
+    variantWarning: 'string',
+    manualUrl: 'https://...',
+    manualSourceUrl: 'https://...',
+    supportUrl: 'https://...',
+    supportEmail: 'string',
+    supportPhone: 'string',
+    confidence: 0.0,
+    matchNotes: 'string',
+    citations: [{ url: 'https://...', title: 'string' }],
+    rawResearchSummary: 'string'
+  });
+}
+
+function extractToolCitations(response = {}) {
+  const citations = [];
+  for (const item of response.output || []) {
+    if (item?.type === 'message') {
+      for (const content of item.content || []) {
+        for (const annotation of content.annotations || []) {
+          if (annotation?.type === 'url_citation' && annotation.url) {
+            citations.push({
+              url: annotation.url,
+              title: annotation.title || '',
+            });
+          }
+        }
+      }
+    }
+    if (item?.type === 'web_search_call' && Array.isArray(item?.action?.sources)) {
+      item.action.sources.forEach((source) => {
+        if (source?.url) citations.push({ url: source.url, title: source.title || '' });
+      });
+    }
+  }
+  return citations;
+}
+
+async function requestManualResearchFallback({
+  model,
+  traceId,
+  context,
+  reasoningEffort = 'low',
+  webSearchEnabled = true,
+  fileSearchEnabled = true,
+  vectorStoreIds = [],
+  maxWebSources = 5,
+}) {
+  const client = getClient();
+  const tools = [];
+  if (webSearchEnabled) {
+    const webTool = {
+      type: 'web_search',
+      filters: Array.isArray(context?.allowedDomains) && context.allowedDomains.length
+        ? { allowed_domains: context.allowedDomains.slice(0, 100) }
+        : undefined,
+    };
+    tools.push(webTool);
+  }
+  if (fileSearchEnabled && Array.isArray(vectorStoreIds) && vectorStoreIds.length) {
+    tools.push({
+      type: 'file_search',
+      vector_store_ids: vectorStoreIds.slice(0, 5),
+      max_num_results: Math.max(1, Math.min(10, Number(maxWebSources || 5))),
+    });
+  }
+
+  const response = await client.responses.create({
+    model,
+    reasoning: { effort: reasoningEffort },
+    metadata: { traceId, flow: 'manual-research-fallback' },
+    tools,
+    tool_choice: 'auto',
+    include: ['web_search_call.action.sources'],
+    input: [
+      { role: 'system', content: buildManualResearchInstructions(context) },
+      { role: 'developer', content: `Output strict JSON schema: ${buildManualResearchSchemaPrompt()}` },
+      { role: 'user', content: `Research this arcade/FEC title with the provided context and return JSON only: ${JSON.stringify(context)}` },
+    ],
+  });
+
+  const parsed = validateManualResearchResultShape(JSON.parse(response.output_text || '{}'));
+  const mergedCitations = [...(parsed.citations || []), ...extractToolCitations(response)];
+  return {
+    ...parsed,
+    citations: mergedCitations.slice(0, 12),
+    responseMeta: { responseId: response.id, model: response.model },
+  };
+}
+
 module.exports = {
   OPENAI_API_KEY,
   requestFollowupQuestions,
   requestTroubleshootingPlan,
-  requestAssetDocumentationLookup
+  requestAssetDocumentationLookup,
+  requestManualResearchFallback
 };

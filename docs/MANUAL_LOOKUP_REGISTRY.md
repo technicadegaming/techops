@@ -4,6 +4,17 @@
 
 Scoot Business manual lookup now treats the workbook-backed `manual_lookup_master` data as the curated seed truth for deterministic manual matching. The import workflow preserves **manual PDF**, **alternate manual**, and **source/support page** as separate concepts so dead direct links do not block fallback recovery.
 
+Lookup now runs as a two-stage pipeline shared by single-entry preview, Assets bulk research, onboarding intake review, and post-save asset enrichment:
+
+1. **Stage 1: deterministic/manual-first**
+   - Normalize title family and manufacturer aliases.
+   - Reuse the workbook-backed catalog and existing approved company manuals.
+   - Run the current deterministic discovery flow to recover exact manuals or title-specific support/source pages.
+2. **Stage 2: manual research fallback**
+   - Runs only when Stage 1 ends as `title_specific_source`, `support_only`, `family_match_needs_review`, or `unresolved`.
+   - Uses the OpenAI Responses API with `web_search` enabled, optional `file_search` vector stores, and manufacturer/trusted-domain allowlists.
+   - Returns structured JSON that keeps manual, source, and support links separate.
+
 ## Catalog import workflow
 
 1. Update `functions/src/data/manualLookupWorkbookSeed.json` from the latest approved workbook rows.
@@ -48,6 +59,35 @@ The live lookup path now layers a deterministic title-family registry over the w
 - `reviewRequired`
 - `searchEvidence`
 - `status` (`docs_found`, `followup_needed`, `no_match_yet`)
+- `citations`
+- `rawResearchSummary`
+- `researchTimestamp`
+- `researchSourceType`
+
+The backend callable `researchAssetTitles` returns one row per requested title with the same research summary shape used by preview/bulk intake:
+
+```json
+{
+  "originalTitle": "Quick Drop",
+  "normalizedTitle": "Quik Drop",
+  "canonicalTitleFamily": "Quik Drop",
+  "manufacturer": "Bay Tek Games",
+  "manufacturerInferred": true,
+  "matchType": "exact_manual",
+  "manualReady": true,
+  "reviewRequired": false,
+  "variantWarning": "",
+  "manualUrl": "https://...",
+  "manualSourceUrl": "https://...",
+  "supportUrl": "https://...",
+  "supportEmail": "support@example.com",
+  "supportPhone": "(555) 555-5555",
+  "confidence": 0.93,
+  "matchNotes": "Exact manual found on trusted source.",
+  "citations": [{ "url": "https://...", "title": "..." }],
+  "rawResearchSummary": "Short machine-readable research summary."
+}
+```
 
 ## Verification and trust tiers
 
@@ -75,6 +115,39 @@ Trust expectations:
 - `supportUrl`: generic or title-specific support context that helps operators research, but does not satisfy docs-found on its own.
 
 This separation prevents dead catalog PDF seeds from short-circuiting deterministic discovery and keeps source/support context from being promoted to a found manual.
+
+## Approvable match types
+
+Only the following may become `docs_found` automatically or be approved as manuals:
+
+- `exact_manual`
+- `manual_page_with_download`
+
+The following always remain review-required context and must **not** be promoted to approved manuals on their own:
+
+- `title_specific_source`
+- `support_only`
+- `family_match_needs_review`
+- `unresolved`
+
+## Internal manual reuse
+
+- Approved manuals already stored for the same company/manufacturer/title family are reused before Stage 2 web research runs.
+- Optional Responses API `file_search` vector stores can be configured for company-approved/internal documentation so repeated multi-location title imports reuse approved/internal evidence first.
+- Stage 2 fallback results are cached additively in Firestore to reduce repeated lookup cost for the same company/title combination.
+
+## Environment/config surface
+
+The additive AI/manual-research settings surface is:
+
+- `OPENAI_API_KEY` Firebase secret.
+- `manualResearchModel` (falls back to `aiModel`).
+- `manualResearchReasoningEffort` (`low` or `medium` recommended).
+- `manualResearchWebSearchEnabled` (`true` by default).
+- `manualResearchFileSearchEnabled` (`true` by default when vector stores are configured).
+- `manualResearchVectorStoreIds` (optional array of Responses API vector store ids).
+- `manualResearchMaxWebSources` (default `5`).
+- Manufacturer/trusted-domain allowlists derived from the deterministic manufacturer registry and extendable in code.
 
 ## Regression-test strategy
 

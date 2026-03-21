@@ -99,9 +99,57 @@ function validateAssetLookupResultShape(result) {
   };
 }
 
+function validateManualResearchResultShape(result) {
+  if (!result || typeof result !== 'object') throw new Error('Manual research response is not an object');
+  const validMatchTypes = new Set([
+    'exact_manual',
+    'manual_page_with_download',
+    'title_specific_source',
+    'support_only',
+    'family_match_needs_review',
+    'unresolved',
+  ]);
+  const normalizedTitle = typeof result.normalizedTitle === 'string' ? result.normalizedTitle.trim().slice(0, 160) : '';
+  const manufacturer = typeof result.manufacturer === 'string' ? result.manufacturer.trim().slice(0, 120) : '';
+  const matchType = typeof result.matchType === 'string' ? result.matchType.trim() : '';
+  if (!normalizedTitle) throw new Error('Missing normalizedTitle');
+  if (!manufacturer) throw new Error('Missing manufacturer');
+  if (!validMatchTypes.has(matchType)) throw new Error('Invalid matchType');
+  if (typeof result.manualReady !== 'boolean') throw new Error('Missing manualReady');
+  if (typeof result.reviewRequired !== 'boolean') throw new Error('Missing reviewRequired');
+  if (typeof result.confidence !== 'number') throw new Error('Missing confidence');
+  return {
+    normalizedTitle,
+    manufacturer,
+    manufacturerInferred: typeof result.manufacturerInferred === 'boolean' ? result.manufacturerInferred : false,
+    matchType,
+    manualReady: result.manualReady,
+    reviewRequired: result.reviewRequired,
+    variantWarning: typeof result.variantWarning === 'string' ? result.variantWarning.trim().slice(0, 220) : '',
+    manualUrl: isHttpUrl(result.manualUrl) ? result.manualUrl.trim() : '',
+    manualSourceUrl: isHttpUrl(result.manualSourceUrl) ? result.manualSourceUrl.trim() : '',
+    supportUrl: isHttpUrl(result.supportUrl) ? result.supportUrl.trim() : '',
+    supportEmail: typeof result.supportEmail === 'string' ? result.supportEmail.trim().slice(0, 180) : '',
+    supportPhone: typeof result.supportPhone === 'string' ? result.supportPhone.trim().slice(0, 80) : '',
+    confidence: Math.max(0, Math.min(1, result.confidence)),
+    matchNotes: typeof result.matchNotes === 'string' ? result.matchNotes.trim().slice(0, 400) : '',
+    citations: Array.isArray(result.citations)
+      ? result.citations
+        .filter((entry) => entry && typeof entry.url === 'string' && isHttpUrl(entry.url))
+        .map((entry) => ({
+          url: entry.url.trim(),
+          title: typeof entry.title === 'string' ? entry.title.trim().slice(0, 200) : '',
+        }))
+        .slice(0, 12)
+      : [],
+    rawResearchSummary: typeof result.rawResearchSummary === 'string' ? result.rawResearchSummary.trim().slice(0, 2000) : '',
+  };
+}
+
 module.exports = {
   assertString,
   sanitizeFollowupAnswers,
   validateAiResultShape,
-  validateAssetLookupResultShape
+  validateAssetLookupResultShape,
+  validateManualResearchResultShape
 };

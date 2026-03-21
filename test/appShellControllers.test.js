@@ -488,8 +488,8 @@ Quick Drop,Bay Tek Games,Main Floor`);
   assert.equal(legacy.rows[0].name, 'Quick Drop');
   assert.equal(legacy.rows[0].locationName, 'Main Floor');
 
-  const enriched = parseAssetCsv(`asset name,assetId,manufacturer,originalTitle,normalizedTitle,manufacturerInferred,manualUrl,manualSourceUrl,supportEmail,supportPhone,supportUrl,matchConfidence,matchNotes
-Jurassic Park,jp-01,Raw Thrills,Jurassic Park,Jurassic Park Arcade,false,https://manual.example/jp.pdf,https://source.example/jp,support@example.com,555-1111,https://support.example/jp,0.91,Official page`);
+  const enriched = parseAssetCsv(`asset name,assetId,manufacturer,originalTitle,normalizedTitle,manufacturerInferred,manualUrl,manualSourceUrl,supportEmail,supportPhone,supportUrl,matchType,manualReady,reviewRequired,matchConfidence,matchNotes
+Jurassic Park,jp-01,Raw Thrills,Jurassic Park,Jurassic Park Arcade,false,https://manual.example/jp.pdf,https://source.example/jp,support@example.com,555-1111,https://support.example/jp,exact_manual,true,false,0.91,Official page`);
   assert.equal(enriched.errors.length, 0);
   assert.equal(enriched.rows[0].assetId, 'jp-01');
   assert.equal(enriched.rows[0].originalTitle, 'Jurassic Park');
@@ -497,6 +497,9 @@ Jurassic Park,jp-01,Raw Thrills,Jurassic Park,Jurassic Park Arcade,false,https:/
   assert.equal(enriched.rows[0].manufacturerInferred, 'false');
   assert.equal(enriched.rows[0].manualUrl, 'https://manual.example/jp.pdf');
   assert.equal(enriched.rows[0].supportEmail, 'support@example.com');
+  assert.equal(enriched.rows[0].matchType, 'exact_manual');
+  assert.equal(enriched.rows[0].manualReady, 'true');
+  assert.equal(enriched.rows[0].reviewRequired, 'false');
   assert.equal(enriched.rows[0].matchConfidence, '0.91');
 });
 
