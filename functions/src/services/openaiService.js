@@ -183,13 +183,18 @@ async function requestAssetDocumentationLookup({ model, traceId, context }) {
 function buildManualResearchInstructions(context = {}) {
   return [
     'You are a manual research assistant for arcade/FEC asset intake.',
+    'Research the arcade manual for the specific title, family, and manufacturer like an expert operator would.',
     'Find the best actual manual candidate for the requested title.',
-    'Prefer official manufacturer sources, direct PDFs, and title-specific manual/download pages.',
+    'Search for operator manuals, service manuals, install/installation guides, parts manuals, and real downloadable manual pages.',
+    'Prefer official manufacturer sources, direct PDFs, trusted distributor/manual hosts, and approved internal docs when provided.',
     'Keep three concepts separate: manualUrl (actual manual candidate), manualSourceUrl (title-specific source page), and supportUrl (support context only).',
     'Generic support hubs are useful context but never count as manuals.',
+    'Only set manualUrl when you have direct manual/download proof. Never put generic support/product/category/search pages in manualUrl.',
     'Only exact_manual or manual_page_with_download may set manualReady=true.',
     'If title family or variant ambiguity remains, use family_match_needs_review or title_specific_source and set reviewRequired=true.',
     'If no actual manual is found, preserve the best title-specific source or support page plus contact info when available.',
+    'Be title-family aware about close variants, for example: Quick Drop/Quik Drop, Virtual Rabbids/Virtual Rabbids The Big Ride, King Kong VR/King Kong of Skull Island VR, Fast and Furious/Fast & Furious Arcade, Sink-It/Sink It/Sink It Shootout, and HYPERshoot.',
+    'Never treat header/footer/nav links, service directories, consultative-services pages, installations pages, office-coffee pages, career pages, account/cart/login pages, or generic site-search/category pages as manuals.',
     'Be conservative. Do not invent manuals, URLs, titles, contact info, or confidence.',
     'Return JSON only. Put concise reasoning in matchNotes and optional rawResearchSummary, not chain-of-thought.',
     `Allowed manufacturer/trusted domains: ${(context.allowedDomains || []).join(', ') || 'none provided'}.`,
@@ -211,7 +216,9 @@ function buildManualResearchSchemaPrompt() {
     supportEmail: 'string',
     supportPhone: 'string',
     confidence: 0.0,
+    matchConfidence: 0.0,
     matchNotes: 'string',
+    evidence: [{ url: 'https://...', title: 'string', reason: 'string' }],
     citations: [{ url: 'https://...', title: 'string' }],
     rawResearchSummary: 'string'
   });

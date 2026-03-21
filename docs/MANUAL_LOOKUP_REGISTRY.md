@@ -11,9 +11,10 @@ Lookup now runs as a two-stage pipeline shared by single-entry preview, Assets b
    - Reuse the workbook-backed catalog and existing approved company manuals.
    - Run the current deterministic discovery flow to recover exact manuals or title-specific support/source pages.
 2. **Stage 2: manual research fallback**
-   - Runs only when Stage 1 ends as `title_specific_source`, `support_only`, `family_match_needs_review`, or `unresolved`.
+   - Runs automatically whenever Stage 1 ends as `title_specific_source`, `support_only`, `family_match_needs_review`, or `unresolved`.
    - Uses the OpenAI Responses API with `web_search` enabled, optional `file_search` vector stores, and manufacturer/trusted-domain allowlists.
-   - Returns structured JSON that keeps manual, source, and support links separate.
+   - Logs `manualResearch:stage2_*` markers so operators can confirm when fallback started, skipped, returned, or failed validation.
+   - Returns structured JSON that keeps manual, source, and support links separate, but backend verification/classification still makes the final manual-ready decision.
 
 ## Catalog import workflow
 
@@ -115,6 +116,13 @@ Trust expectations:
 - `supportUrl`: generic or title-specific support context that helps operators research, but does not satisfy docs-found on its own.
 
 This separation prevents dead catalog PDF seeds from short-circuiting deterministic discovery and keeps source/support context from being promoted to a found manual.
+
+For crawled HTML pages and Stage 2 fallbacks, the backend now rejects chrome/junk candidates before classification, including:
+- header/footer/nav/search links
+- generic support or category pages without title-specific manual proof
+- consultative-services / installations / office-coffee / careers / contact-only paths
+- cart / login / account flows
+- support/product pages that mention the title but do not provide real manual/download evidence
 
 ## Approvable match types
 
