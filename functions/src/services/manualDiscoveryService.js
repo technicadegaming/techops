@@ -9,24 +9,30 @@ const MAX_SEARCH_QUERIES = 6;
 const FETCH_TIMEOUT_MS = 3500;
 const SEARCH_FOLLOWUP_PRIORITY = 0;
 const ADAPTER_FOLLOWUP_PRIORITY = 1;
-const MANUAL_KEYWORDS = ['manual', 'operator', 'service', 'parts', 'install', 'installation', 'schematic', 'instruction', 'owners'];
-const DOWNLOAD_KEYWORDS = ['download', 'pdf', 'document', 'operators-manual', 'service-manual'];
 const JUNK_PATH_PATTERNS = [
   /\/consultative-services(\/|$)/,
+  /\/financial-services(\/|$)/,
   /\/installations?(\/|$)/,
   /\/office-coffee(\/|$)/,
+  /\/newsletter(\/|$)/,
   /\/careers?(\/|$)/,
   /\/contact(?:-us)?(\/|$)/,
+  /\/about(?:-us)?(\/|$)/,
+  /\/company(\/|$)/,
   /\/cart(\/|$)/,
   /\/checkout(\/|$)/,
   /\/login(\/|$)/,
   /\/account(\/|$)/,
   /\/my-account(\/|$)/,
+  /\/portal(\/|$)/,
   /\/search(\/|$)/,
   /[?&](?:s|search|query)=/,
   /\/category(\/|$)/,
   /\/product-category(\/|$)/,
   /\/collections?(\/|$)/,
+  /\/blog(\/|$)/,
+  /\/news(\/|$)/,
+  /\/feed(\/|$)/,
 ];
 const GENERIC_ANCHOR_TITLES = new Set([
   'toggle menu',
@@ -332,6 +338,22 @@ function hasBetsonTitleSpecificPath(pathname, titleVariants) {
   return false;
 }
 
+function hasStrongManualIntentSignal(text = '') {
+  const normalized = normalizePhrase(text);
+  if (!normalized) return false;
+  return [
+    /\bmanual\b/,
+    /\boperator\b/,
+    /\bservice manual\b/,
+    /\binstall(?:ation)?(?: guide| manual)?\b/,
+    /\bparts\b/,
+    /\bdownload\b/,
+    /\bpdf\b/,
+    /\.pdf\b/,
+    /\.docx?\b/,
+  ].some((pattern) => pattern.test(normalized));
+}
+
 function classifyManualCandidate({ title, url, manufacturer, titleVariants, manufacturerProfile }) {
   let parsed;
   try {
@@ -359,11 +381,12 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
   const combined = `${title || ''} ${host} ${path}`;
   const titleAndPath = normalizePhrase(`${title || ''} ${path}`);
   const titleAndPathAndQuery = normalizePhrase(`${title || ''} ${path} ${parsed.search || ''}`);
+  const titlePathQuery = normalizePhrase(`${title || ''} ${path} ${parsed.search || ''}`);
   const titleMatch = hasExactOrStrongTitle(combined, titleVariants);
   const manufacturerMatch = hasManufacturerEvidence(`${manufacturer || ''} ${host} ${title || ''}`, manufacturer, manufacturerProfile);
-  const directPdf = /\.pdf($|[?#])/.test(path) || /\bpdf\b/.test(titleAndPath);
-  const manualIntent = MANUAL_KEYWORDS.some((token) => titleAndPath.includes(token));
-  const downloadIntent = DOWNLOAD_KEYWORDS.some((token) => titleAndPath.includes(token));
+  const directFile = /\.(pdf|docx?)($|[?#])/.test(path);
+  const directPdf = directFile || /\bpdf\b/.test(titleAndPath);
+  const strongManualIntent = directFile || hasStrongManualIntentSignal(titlePathQuery);
   const junkPath = JUNK_PATH_PATTERNS.some((pattern) => pattern.test(`${path}${parsed.search || ''}`.toLowerCase()));
   const likelyChromeLink = /(?:nav|menu|footer|header|breadcrumb|search|category)/.test(titleAndPathAndQuery);
   const sourceType = detectSourceType(url, manufacturerProfile);
@@ -375,7 +398,7 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
   const betsonUtility = betsonDomain && isBetsonUtilityPath(path);
   const betsonTitleSpecificPath = betsonDomain && hasBetsonTitleSpecificPath(path, titleVariants);
   const hostManualIntent = sourceType === 'manual_library' && /manual/.test(normalizePhrase(host));
-  const exactMachineManual = titleMatch && manufacturerMatch && (directPdf || manualIntent || downloadIntent || hostManualIntent);
+  const exactMachineManual = titleMatch && manufacturerMatch && (directFile || strongManualIntent || hostManualIntent);
   const titleSpecificOfficialPage = titleMatch
     && manufacturerMatch
     && !bayTekUtility
@@ -383,6 +406,9 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
     && !isGenericSupportPath(path, titleVariants)
     && /manufacturer|support|parts|distributor/.test(sourceType)
     && path.split('/').filter(Boolean).length >= 1;
+  const explicitManualBearingHtml = !directFile
+    && titleSpecificOfficialPage
+    && strongManualIntent;
   const titleSpecificSupport = titleMatch
     && manufacturerMatch
     && !bayTekUtility
@@ -401,13 +427,13 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
     && !genericSupport
     && !bayTekUtility
     && !betsonUtility
-    && (directPdf || manualIntent || downloadIntent || hostManualIntent || (betsonDomain && /\/wp-content\/uploads\//.test(path)));
+    && (directFile || strongManualIntent || explicitManualBearingHtml || hostManualIntent || (betsonDomain && /\/wp-content\/uploads\//.test(path)));
   const includeSupport = !junkPath && !likelyChromeLink && !bayTekUtility && !betsonUtility && titleSpecificSupport;
   const rejectionReasons = [];
 
   if (!titleMatch) rejectionReasons.push('missing_title_match');
   if (!manufacturerMatch) rejectionReasons.push('missing_manufacturer_match');
-  if (!directPdf && !manualIntent && !downloadIntent && !hostManualIntent) rejectionReasons.push('missing_manual_signal');
+  if (!directFile && !strongManualIntent && !hostManualIntent) rejectionReasons.push('missing_manual_signal');
   if (genericSupport) rejectionReasons.push('generic_support_page');
   if (junkPath) rejectionReasons.push('junk_path');
   if (likelyChromeLink) rejectionReasons.push('chrome_or_nav_link');
@@ -425,6 +451,7 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
     titleMatch,
     manufacturerMatch,
     directPdf,
+    strongManualIntent,
     genericSupport,
     rejectionReasons
   };

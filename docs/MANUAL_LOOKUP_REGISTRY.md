@@ -65,7 +65,7 @@ The live lookup path now layers a deterministic title-family registry over the w
 - `researchTimestamp`
 - `researchSourceType`
 
-The backend callable `researchAssetTitles` returns one row per requested title with the same research summary shape used by preview/bulk intake:
+The backend callable `researchAssetTitles` is now the authoritative bulk/manual research contract. It returns one validated final row per requested title with the same research summary shape used by preview/bulk intake, and the UI should treat that validated row as source of truth rather than raw Stage 1 crawler output:
 
 ```json
 {
@@ -114,6 +114,7 @@ Trust expectations:
 - `manualUrl`: the downstream-safe manual target exposed by the enrichment summary. This only counts as manual-ready when it is either a direct document URL or a verified title-specific HTML page with a real downloadable manual link.
 - `manualSourceUrl`: the title-specific product/support page that produced the manual URL.
 - `supportUrl`: generic or title-specific support context that helps operators research, but does not satisfy docs-found on its own.
+- Raw crawler/search anchors are never promoted directly. Deterministic validation must reject generic header/footer/navigation, services/installations, account/cart/login, search/category, newsletter/blog, and similar junk links before anything can become `manualUrl`.
 
 This separation prevents dead catalog PDF seeds from short-circuiting deterministic discovery and keeps source/support context from being promoted to a found manual.
 
