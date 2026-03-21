@@ -90,6 +90,42 @@ test('classifyManualCandidate rejects generic support hubs with rejection reason
   assert.deepEqual(exactManual.rejectionReasons, []);
 });
 
+test('classifyManualCandidate hard-rejects junk installations, services, search, and blog links even when manual-ish words appear', () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Sink It Shootout');
+  const junkCandidates = [
+    {
+      title: 'Sink It Shootout Installations',
+      url: 'https://baytekent.com/installations/sink-it-shootout/'
+    },
+    {
+      title: 'Sink It Shootout Financial Services',
+      url: 'https://baytekent.com/financial-services/sink-it/'
+    },
+    {
+      title: 'Sink It Shootout Search',
+      url: 'https://www.betson.com/?s=Sink+It+Shootout'
+    },
+    {
+      title: 'Sink It Shootout Blog',
+      url: 'https://baytekent.com/blog/sink-it-shootout-service'
+    }
+  ];
+
+  junkCandidates.forEach((candidate) => {
+    const result = classifyManualCandidate({
+      title: candidate.title,
+      url: candidate.url,
+      manufacturer: 'Bay Tek Games',
+      titleVariants: ['sink it', 'sink it shootout'],
+      manufacturerProfile: profile
+    });
+
+    assert.equal(result.includeManual, false);
+    assert.equal(result.includeSupport, false);
+    assert.ok(result.rejectionReasons.includes('junk_path') || result.rejectionReasons.includes('generic_support_page'));
+  });
+});
+
 test('extractManualLinksFromHtmlPage pulls direct manual links from title-specific support pages', async () => {
   const events = [];
   const fetchMock = async () => ({

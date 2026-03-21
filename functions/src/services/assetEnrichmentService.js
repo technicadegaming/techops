@@ -296,9 +296,30 @@ function isTitleSpecificManualBearingHtmlSuggestion(entry = {}) {
   const normalizedTitle = normalizePhrase(`${entry?.title || entry?.label || ''}`);
   const hasTitlePathEvidence = pathHasTitleEvidence(lowerPath, titleVariants);
   const hasTitleTextEvidence = titleVariants.some((variant) => normalizedTitle.includes(variant));
+  const manualEvidenceText = normalizePhrase([
+    entry?.title || '',
+    entry?.label || '',
+    entry?.notes || '',
+    entry?.url || '',
+    entry?.resolvedUrl || '',
+  ].join(' '));
   const hasManualPathSignal = /games?|support|product|parts|downloads?|manual|service|install/.test(lowerPath);
+  const hasExplicitManualProof = [
+    /\bmanuals?\b/,
+    /\boperator\b/,
+    /\bservice manuals?\b/,
+    /\bparts manuals?\b/,
+    /\binstall(?:ation)?(?: guide| manual)?\b/,
+    /\bdownloads?\b/,
+    /\bpdf\b/,
+    /\.pdf\b/,
+    /\.docx?\b/,
+  ].some((pattern) => pattern.test(manualEvidenceText));
   const genericSupportHost = /(^|\.)rawthrills\.com$/.test(lowerHost) && /^\/service\/?$/.test(lowerPath);
-  return !genericSupportHost && hasManualPathSignal && (hasTitlePathEvidence || hasTitleTextEvidence);
+  return !genericSupportHost
+    && hasManualPathSignal
+    && hasExplicitManualProof
+    && (hasTitlePathEvidence || hasTitleTextEvidence);
 }
 
 function sanitizeManualCandidate(entry = {}) {
@@ -972,7 +993,7 @@ function detectVerificationKind(url = '', contentType = '', snippet = '') {
   const lowerSnippet = `${snippet || ''}`.toLowerCase();
   const isPdf = /application\/pdf/.test(lowerType) || /\.pdf($|\?|#)/.test(lowerUrl);
   const isHtml = /text\/html|application\/xhtml\+xml/.test(lowerType) || (!lowerType && /^https?:/.test(lowerUrl));
-  const manualSignal = /manual|operator|service|parts|install|instruction/.test(`${lowerUrl} ${lowerSnippet}`);
+  const manualSignal = /\bmanuals?\b|\boperator\b|\bservice manuals?\b|\bparts manuals?\b|\binstall(?:ation)?(?: guide| manual)?\b|\bdownloads?\b|\bpdf\b/.test(`${lowerUrl} ${lowerSnippet}`);
   if (isPdf) return 'direct_pdf';
   if (isHtml && manualSignal) return 'manual_html';
   if (isHtml) return 'support_html';

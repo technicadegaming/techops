@@ -107,8 +107,9 @@ function mapResearchResultToSuggestions(result = {}, manufacturerProfile = {}) {
   const manualUrl = normalizeUrl(result.manualUrl || '');
   const manualLikeUrl = isLikelyManualResearchUrl(manualUrl);
   const manualLikeMatchType = ['exact_manual', 'manual_page_with_download'].includes(`${result.matchType || ''}`.trim());
+  const explicitManualContract = result.manualReady === true || manualLikeMatchType || /\.pdf($|[?#])/.test(manualUrl.toLowerCase());
 
-  if (manualUrl && (result.manualReady === true || manualLikeMatchType || manualLikeUrl)) {
+  if (manualUrl && explicitManualContract && manualLikeUrl) {
     documentationSuggestions.push({
       title: normalizeString(result.manualTitle || result.originalTitle || result.normalizedTitle || '', 160),
       url: manualUrl,
@@ -443,6 +444,17 @@ async function researchAssetTitles({
     let supportResourcesSuggestion = stageOne.supportResourcesSuggestion;
     let supportContactsSuggestion = stageOne.supportContactsSuggestion;
 
+    logManualResearchEvent('stage1_result', {
+      title: originalTitle,
+      normalizedTitle: stageOne.normalizedTitle,
+      manufacturer: stageOne.manufacturer,
+      stage1MatchType: stageOne.summary.matchType,
+      ranStage2: false,
+      candidateManualCount: cleanCount(stageOne.documentationSuggestions),
+      supportCandidateCount: stageOne.supportResourcesSuggestion.length,
+      finalManualReady: stageOne.summary.manualReady === true,
+    });
+
     if (FALLBACK_MATCH_TYPES.has(stageOne.summary.matchType)) {
       const stageTwo = await runStageTwoResearch({
         db,
@@ -477,6 +489,17 @@ async function researchAssetTitles({
         const verifiedStageTwoDocs = normalizedStageTwoDocs.length
           ? await verifyDocumentationSuggestions(normalizedStageTwoDocs, fetchImpl)
           : [];
+        if (stageTwo.manualUrl && !normalizedStageTwoDocs.length) {
+          logManualResearchEvent('candidate_rejected', {
+            title: originalTitle,
+            normalizedTitle: stageOne.normalizedTitle,
+            manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
+            stage1MatchType: stageOne.summary.matchType,
+            ranStage2: true,
+            candidateUrl: stageTwo.manualUrl,
+            reason: 'manual_contract_not_authoritative',
+          });
+        }
         logManualResearchEvent('stage2_candidates_extracted', {
           title: originalTitle,
           normalizedTitle: stageOne.normalizedTitle,
@@ -484,9 +507,25 @@ async function researchAssetTitles({
           stage1MatchType: stageOne.summary.matchType,
           ranStage2: true,
           candidateCount: normalizedStageTwoDocs.length,
+          rejectedCandidateCount: Math.max(0, normalizedStageTwoDocs.length - verifiedStageTwoDocs.filter((entry) => entry.verified && entry.exactManualMatch).length),
           acceptedManualCandidateCount: verifiedStageTwoDocs.filter((entry) => entry.verified && entry.exactManualMatch).length,
           supportCandidateCount: mapped.supportResourcesSuggestion.length,
         });
+        verifiedStageTwoDocs
+          .filter((entry) => !(entry.verified && entry.exactManualMatch))
+          .forEach((entry) => {
+            logManualResearchEvent('candidate_rejected', {
+              title: originalTitle,
+              normalizedTitle: stageOne.normalizedTitle,
+              manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
+              stage1MatchType: stageOne.summary.matchType,
+              ranStage2: true,
+              candidateUrl: entry.url || '',
+              verificationKind: entry.verificationKind || '',
+              verificationStatus: entry.verificationStatus || '',
+              exactManualMatch: entry.exactManualMatch === true,
+            });
+          });
         documentationSuggestions = mergeDocumentationSuggestions({
           existingSuggestions: documentationSuggestions,
           nextSuggestions: verifiedStageTwoDocs,
@@ -540,18 +579,6 @@ async function researchAssetTitles({
           researchTimestamp: new Date().toISOString(),
           researchSourceType: stageTwo.sourceType || 'responses_api',
         };
-        logManualResearchEvent('stage2_result', {
-          title: originalTitle,
-          normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
-          manufacturer: summary.manufacturer || stageOne.manufacturer,
-          stage1MatchType: stageOne.summary.matchType,
-          ranStage2: true,
-          finalMatchType: summary.matchType,
-          manualReady: summary.manualReady === true,
-          acceptedManualCandidateCount: cleanCount(documentationSuggestions),
-          supportCandidateCount: supportResourcesSuggestion.length,
-          researchSourceType: summary.researchSourceType,
-        });
       }
     } else {
       logManualResearchEvent('stage2_skipped', {
@@ -565,6 +592,21 @@ async function researchAssetTitles({
         manualReady: stageOne.summary.manualReady === true,
       });
     }
+
+    logManualResearchEvent('final_result', {
+      title: originalTitle,
+      normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+      manufacturer: summary.manufacturer || stageOne.manufacturer,
+      stage1MatchType: stageOne.summary.matchType,
+      ranStage2: FALLBACK_MATCH_TYPES.has(stageOne.summary.matchType),
+      candidateManualCount: Array.isArray(documentationSuggestions) ? documentationSuggestions.length : 0,
+      rejectedCandidateCount: Math.max(0, (Array.isArray(documentationSuggestions) ? documentationSuggestions.length : 0) - cleanCount(documentationSuggestions)),
+      acceptedManualCount: cleanCount(documentationSuggestions),
+      finalMatchType: summary.matchType,
+      finalManualReady: summary.manualReady === true,
+      supportCandidateCount: supportResourcesSuggestion.length,
+      researchSourceType: summary.researchSourceType,
+    });
 
     results.push({
       ...summary,

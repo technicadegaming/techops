@@ -129,6 +129,8 @@ test('researchAssetTitles invokes stage 2 fallback only for unresolved review-re
   assert.equal(result.results[0].manualReady, false);
   assert.equal(result.results[0].reviewRequired, true);
   assert.equal(result.results[0].supportUrl, 'https://rawthrills.com/games/king-kong-of-skull-island/');
+  assert.equal(result.results[0].manualMatchSummary.matchType, result.results[0].matchType);
+  assert.equal(result.results[0].manualMatchSummary.supportUrl, result.results[0].supportUrl);
 });
 
 for (const matchType of ['title_specific_source', 'support_only', 'family_match_needs_review', 'unresolved']) {
@@ -193,7 +195,7 @@ for (const matchType of ['title_specific_source', 'support_only', 'family_match_
   });
 }
 
-test('researchAssetTitles emits explicit stage 2 logs and backend validation can promote a real manual', async () => {
+test('researchAssetTitles emits explicit logs and backend validation can promote a real manual', async () => {
   const logs = [];
   const originalLog = console.log;
   console.log = (...args) => { logs.push(args); };
@@ -237,7 +239,49 @@ test('researchAssetTitles emits explicit stage 2 logs and backend validation can
     assert.ok(markers.includes('manualResearch:stage2_prompt_built'));
     assert.ok(markers.includes('manualResearch:stage2_response_received'));
     assert.ok(markers.includes('manualResearch:stage2_candidates_extracted'));
-    assert.ok(markers.includes('manualResearch:stage2_result'));
+    assert.ok(markers.includes('manualResearch:final_result'));
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test('researchAssetTitles logs candidate_rejected when stage 2 returns support-only junk manual urls', async () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => { logs.push(args); };
+  try {
+    const result = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true },
+      companyId: 'company-1',
+      titles: [{ originalTitle: 'Sink-It', manufacturerHint: 'Bay Tek Games' }],
+      traceId: 'test-sink-it-candidate-rejected',
+      fetchImpl: async (url) => ({
+        ok: true,
+        status: 200,
+        url,
+        headers: { get: () => 'text/html' },
+        text: async () => 'Bay Tek Sink It support resources and installations services',
+      }),
+      researchFallback: async () => ({
+        normalizedTitle: 'Sink It Shootout',
+        manufacturer: 'Bay Tek Games',
+        matchType: 'title_specific_source',
+        manualReady: false,
+        reviewRequired: true,
+        manualUrl: 'https://baytekent.com/installations/sink-it-shootout/',
+        manualSourceUrl: 'https://baytekent.com/games/sink-it-shootout/',
+        supportUrl: 'https://baytekent.com/support/sink-it-shootout/',
+        confidence: 0.41,
+        matchNotes: 'Found only source/support context.',
+        citations: [],
+        rawResearchSummary: 'No actual manual.',
+      }),
+    });
+
+    assert.equal(result.results[0].manualReady, false);
+    assert.equal(result.results[0].manualUrl, '');
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:candidate_rejected'), true);
   } finally {
     console.log = originalLog;
   }
