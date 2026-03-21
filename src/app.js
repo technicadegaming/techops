@@ -162,7 +162,7 @@ const onboardingController = createOnboardingController({
   upsertEntity,
   saveAppSettings,
   withRequiredCompanyId: (payload = {}, actionLabel = 'continue') => withRequiredCompanyId(state, payload, actionLabel),
-  enrichAssetDocumentation
+  previewAssetDocumentationLookup
 });
 
 const reportsController = createReportsController({

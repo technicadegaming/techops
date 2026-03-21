@@ -9,6 +9,7 @@ export function createEmptyAssetDraft() {
   return {
     name: '', serialNumber: '', manufacturer: '', id: '', status: '', ownerWorkers: '', manualLinksText: '', historyNote: '', imageRefsText: '', videoRefsText: '', evidenceRefsText: '', notes: '',
     manualLinks: [], supportResources: [], supportContacts: [], preview: null, previewStatus: 'idle', previewMeta: { inFlightQuery: '', lastCompletedQuery: '' }, draftNameNormalized: '',
+    normalizedName: '', manualSourceUrl: '', supportEmail: '', supportPhone: '', supportUrl: '', matchConfidence: '', matchNotes: '', alternateNamesText: '',
     saveFeedback: '', saveSecondaryFeedback: '', saveDebugContext: '', saveFeedbackTone: 'success', saving: false
   };
 }
@@ -47,7 +48,7 @@ export function createInitialState() {
     user: null, profile: null, company: null, memberships: [], membershipCompanies: {}, activeMembership: null,
     permissions: buildPermissionContext(), onboardingRequired: false, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], companyMembers: [], workers: [], invites: [],
     companyLocations: [], importHistory: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], notifications: [], notificationPrefs: { enabledTypes: [] }, settings: {},
-    restorePayload: null, route: parseRouteState(), assetDraft: createEmptyAssetDraft(), assetUi: { lastActionByAsset: {}, onboardingReviewQueue: [], onboardingValidationErrors: [], searchQuery: '', statusFilter: 'all', reviewFilter: 'all', enrichmentFilter: 'all' },
+    restorePayload: null, route: parseRouteState(), assetDraft: createEmptyAssetDraft(), assetUi: { lastActionByAsset: {}, onboardingReviewQueue: [], onboardingValidationErrors: [], bulkIntakeText: '', bulkIntakeRows: [], bulkIntakeErrors: [], bulkIntakeStatus: 'idle', searchQuery: '', statusFilter: 'all', reviewFilter: 'all', enrichmentFilter: 'all' },
     adminUi: { tone: 'info', message: '', importPreview: '', importSummary: '', importTone: 'info', assetReviewFilter: 'pending_review', assetReviewSearch: '', selectedAssetReviewIds: [], selectedSuggestionsByAsset: {} },
     operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0, statusFilter: 'open', ownershipFilter: 'all', exceptionFilter: 'all', taskSearch: '', assigneeFilter: 'all', lastSaveFeedback: '', lastSaveTone: 'info', aiTaskStates: {}, evidenceUploadsByTask: {}, lastSavedTaskId: null },
     adminSection: 'company', onboardingUi: { tone: 'info', message: '', pendingAction: '', handoffStatus: 'idle' }, setupWizard: { active: false, step: 1, message: '', tone: 'info' }

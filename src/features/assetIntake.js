@@ -1,8 +1,34 @@
-export const ASSET_IMPORT_COLUMNS = ['name', 'manufacturer', 'locationName', 'serialNumber', 'model', 'category'];
+const BASE_TEMPLATE_COLUMNS = ['asset name', 'assetId', 'manufacturer', 'model', 'serial', 'location', 'zone', 'notes', 'category', 'status'];
+const OPTIONAL_TEMPLATE_COLUMNS = ['alternateNames', 'normalizedName', 'manualUrl', 'manualSourceUrl', 'supportEmail', 'supportPhone', 'supportUrl', 'matchConfidence', 'matchNotes'];
 
-export const ASSET_CSV_TEMPLATE = `name,manufacturer,locationName,serialNumber,model,category\nTicket Kiosk 01,Betson,Main Floor,SN-101,TK-Prime,Kiosk\nRedemption Game 02,Raw Thrills,Arcade Zone,SN-202,Jurassic Park Arcade,Arcade`;
+export const ASSET_IMPORT_COLUMNS = [...BASE_TEMPLATE_COLUMNS, ...OPTIONAL_TEMPLATE_COLUMNS];
+export const LEGACY_ASSET_IMPORT_COLUMNS = ['name', 'manufacturer', 'locationName', 'serialNumber', 'model', 'category'];
+export const ASSET_TEMPLATE_HEADER = ASSET_IMPORT_COLUMNS.join(',');
+export const ASSET_CSV_TEMPLATE = `${ASSET_TEMPLATE_HEADER}\nJurassic Park,jurassic-park-01,Raw Thrills,Jurassic Park Arcade,SN-202,Main Floor,Arcade Row,Imported from reviewed bulk intake,Arcade,active,Jurassic Park Arcade,Jurassic Park Arcade,https://rawthrills.com/wp-content/uploads/2019/07/JurassicPark-Operators-Manual.pdf,https://rawthrills.com/games/jurassic-park-arcade/,support@rawthrills.com,(847) 459-5000,https://rawthrills.com/service/,0.96,Strong title and manufacturer match from official support page\nQuick Drop,,Bay Tek Games,,QD-102,Prize Midway,Redemption Lane,Legacy template-compatible sample,Redemption,active,Quik Drop,Quik Drop,https://baytekent.com/wp-content/uploads/2020/08/QuikDropManual.pdf,https://baytekent.com/games/quik-drop/,support@baytekent.com,,https://baytekent.com/contact-us/,0.93,Generated assetId when blank during import`;
 
-const KNOWN_MANUFACTURERS = ['betson', 'raw thrills', 'sega', 'adrenaline amusements', 'ice', 'namco', 'wells gardner', 'elaut', 'stern', 'atari'];
+const KNOWN_MANUFACTURERS = ['betson', 'raw thrills', 'sega', 'adrenaline amusements', 'ice', 'namco', 'wells gardner', 'elaut', 'stern', 'atari', 'bay tek games', 'baytek', 'andel', 'universal space', 'adrenaline', 'ubisoft'];
+
+const CSV_ALIASES = {
+  name: ['asset name', 'name', 'assetname'],
+  assetId: ['assetid', 'id'],
+  manufacturer: ['manufacturer'],
+  model: ['model'],
+  serialNumber: ['serial', 'serialnumber', 'serial number'],
+  locationName: ['location', 'locationname', 'location name'],
+  zone: ['zone', 'area'],
+  notes: ['notes'],
+  category: ['category', 'type'],
+  status: ['status'],
+  alternateNames: ['alternatenames', 'alternate names'],
+  normalizedName: ['normalizedname', 'normalized name'],
+  manualUrl: ['manualurl', 'manual url'],
+  manualSourceUrl: ['manualsourceurl', 'manual source url'],
+  supportEmail: ['supportemail', 'support email'],
+  supportPhone: ['supportphone', 'support phone'],
+  supportUrl: ['supporturl', 'support url'],
+  matchConfidence: ['matchconfidence', 'match confidence'],
+  matchNotes: ['matchnotes', 'match notes']
+};
 
 function tokenizeCsvLine(line = '') {
   const result = [];
@@ -38,6 +64,15 @@ function toTitle(value = '') {
     .replace(/\b([a-z])/g, (match) => match.toUpperCase());
 }
 
+function normalizeField(value = '') {
+  return `${value || ''}`.replace(/\s+/g, ' ').trim();
+}
+
+function normalizeUrl(value = '') {
+  const trimmed = `${value || ''}`.trim();
+  return /^https?:\/\//i.test(trimmed) ? trimmed : '';
+}
+
 function inferManufacturer(candidate = {}) {
   if (candidate.manufacturer) return { manufacturer: candidate.manufacturer, confidence: 'high' };
   const name = `${candidate.name || ''}`.toLowerCase();
@@ -51,41 +86,104 @@ function inferCategory(candidate = {}) {
   const source = `${candidate.name || ''} ${candidate.model || ''}`.toLowerCase();
   if (/kiosk|pos|terminal/.test(source)) return 'Kiosk';
   if (/pinball/.test(source)) return 'Pinball';
-  if (/air hockey/.test(source)) return 'Sports';
-  if (/vr|virtual reality/.test(source)) return 'VR';
-  if (/crane|claw/.test(source)) return 'Redemption';
-  if (/arcade|game/.test(source)) return 'Arcade';
+  if (/air hockey|air fx/.test(source)) return 'Sports';
+  if (/vr|virtual reality|virtual rabbids/.test(source)) return 'VR';
+  if (/crane|claw|drop|redemption/.test(source)) return 'Redemption';
+  if (/arcade|game|jurassic park/.test(source)) return 'Arcade';
   return '';
 }
 
-function normalizeField(value = '') {
-  return `${value || ''}`.replace(/\s+/g, ' ').trim();
+function normalizeTitle(value = '') {
+  return `${value || ''}`
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b(deluxe|arcade|machine|game|the)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function dedupeValues(values = []) {
+  return [...new Set((values || []).map((value) => normalizeField(value)).filter(Boolean))];
+}
+
+function parseDelimitedTitles(line = '') {
+  if (!line.includes(',')) return [line];
+  return line.split(',');
+}
+
+function getHeaderValue(raw = {}, key) {
+  const aliases = CSV_ALIASES[key] || [key];
+  for (const alias of aliases) {
+    const match = Object.keys(raw).find((header) => `${header || ''}`.trim().toLowerCase() === alias);
+    if (match) return raw[match];
+  }
+  return '';
 }
 
 export function normalizeAssetCandidate(raw = {}, { defaultLocationName = '' } = {}) {
+  const alternateNames = dedupeValues(`${raw.alternateNames || ''}`.split(/[|;]+|,/));
+  const supportEmail = normalizeField(raw.supportEmail || '');
+  const supportPhone = normalizeField(raw.supportPhone || '');
+  const supportUrl = normalizeUrl(raw.supportUrl || '');
+  const manualUrl = normalizeUrl(raw.manualUrl || '');
+  const manualSourceUrl = normalizeUrl(raw.manualSourceUrl || '');
   const base = {
     name: normalizeField(raw.name || raw.assetName || ''),
+    assetId: normalizeField(raw.assetId || raw.id || ''),
     manufacturer: normalizeField(raw.manufacturer || ''),
     locationName: normalizeField(raw.locationName || raw.location || defaultLocationName || ''),
     serialNumber: normalizeField(raw.serialNumber || raw.serial || ''),
     model: normalizeField(raw.model || ''),
-    category: normalizeField(raw.category || '')
+    category: normalizeField(raw.category || ''),
+    zone: normalizeField(raw.zone || raw.area || ''),
+    notes: normalizeField(raw.notes || ''),
+    status: normalizeField(raw.status || '') || 'active',
+    alternateNames,
+    normalizedName: normalizeField(raw.normalizedName || ''),
+    manualUrl,
+    manualSourceUrl,
+    supportEmail,
+    supportPhone,
+    supportUrl,
+    matchConfidence: normalizeField(raw.matchConfidence || ''),
+    matchNotes: normalizeField(raw.matchNotes || '')
   };
   base.name = base.name.replace(/\s{2,}/g, ' ');
   const manufacturerInference = inferManufacturer(base);
   const categoryInference = inferCategory(base);
   const manufacturerSuggestion = !base.manufacturer && manufacturerInference.manufacturer ? manufacturerInference.manufacturer : '';
   const categorySuggestion = !base.category && categoryInference ? categoryInference : '';
+  const normalizedTitle = base.normalizedName || toTitle(normalizeTitle(base.name || alternateNames[0] || ''));
   return {
     ...base,
+    normalizedName: normalizedTitle,
     manufacturerSuggestion,
     categorySuggestion,
     normalizationConfidence: base.manufacturer ? 'high' : manufacturerInference.confidence,
-    reviewNeeded: !base.manufacturer || !!manufacturerSuggestion || !!categorySuggestion
+    reviewNeeded: !base.manufacturer || !!manufacturerSuggestion || !!categorySuggestion || !base.manualUrl,
+    rowStatus: base.manualUrl || supportUrl ? 'good_match' : (base.manufacturer || manufacturerSuggestion ? 'needs_review' : 'unresolved')
   };
 }
 
+export function parseTitleBulkInput(text = '', options = {}) {
+  const normalizedLines = `${text || ''}`.split(/\r?\n/).flatMap((line) => parseDelimitedTitles(line));
+  const seen = new Set();
+  const rows = [];
+  normalizedLines.forEach((entry, index) => {
+    const name = normalizeField(entry);
+    if (!name) return;
+    const dedupeKey = normalizeTitle(name);
+    if (!dedupeKey || seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+    const row = normalizeAssetCandidate({ name }, options);
+    rows.push({ ...row, source: 'bulk_titles', sourceRow: index + 1 });
+  });
+  return { rows, errors: [] };
+}
+
 export function parseBulkAssetList(text = '', options = {}) {
+  const parsedTitles = parseTitleBulkInput(text, options);
+  if (parsedTitles.rows.length) return parsedTitles;
   const lines = `${text || ''}`.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const rows = [];
   const errors = [];
@@ -98,11 +196,9 @@ export function parseBulkAssetList(text = '', options = {}) {
     else if (line.includes(',')) parts = line.split(',').map((part) => part.trim());
 
     let parsed;
-    if (!parts.length) {
-      parsed = { name: line };
-    } else if (parts.length === 2) {
-      parsed = { manufacturer: parts[0], name: parts[1] };
-    } else {
+    if (!parts.length) parsed = { name: line };
+    else if (parts.length === 2) parsed = { manufacturer: parts[0], name: parts[1] };
+    else {
       parsed = {
         manufacturer: parts[0],
         name: parts[1],
@@ -128,10 +224,8 @@ export function parseAssetCsv(text = '', options = {}) {
   if (!lines.length) return { rows: [], errors: [] };
   const headers = tokenizeCsvLine(lines[0]).map((header) => header.trim());
   const lowerHeaders = headers.map((header) => header.toLowerCase());
-  const hasName = lowerHeaders.includes('name') || lowerHeaders.includes('assetname');
-  if (!hasName) {
-    return { rows: [], errors: ['CSV is missing required column: name.'] };
-  }
+  const hasName = lowerHeaders.includes('name') || lowerHeaders.includes('asset name') || lowerHeaders.includes('assetname');
+  if (!hasName) return { rows: [], errors: ['CSV is missing required column: asset name.'] };
 
   const rows = [];
   const errors = [];
@@ -140,16 +234,27 @@ export function parseAssetCsv(text = '', options = {}) {
     const values = tokenizeCsvLine(line);
     if (!values.some(Boolean)) return;
     const raw = {};
-    headers.forEach((header, valueIndex) => {
-      raw[header] = values[valueIndex] || '';
-    });
+    headers.forEach((header, valueIndex) => { raw[header] = values[valueIndex] || ''; });
     const normalized = normalizeAssetCandidate({
-      name: raw.name || raw.assetName || raw.AssetName,
-      manufacturer: raw.manufacturer || raw.Manufacturer,
-      locationName: raw.locationName || raw.location || raw.Location,
-      serialNumber: raw.serialNumber || raw.serial || raw.SerialNumber,
-      model: raw.model || raw.Model,
-      category: raw.category || raw.Category
+      name: getHeaderValue(raw, 'name'),
+      assetId: getHeaderValue(raw, 'assetId'),
+      manufacturer: getHeaderValue(raw, 'manufacturer'),
+      model: getHeaderValue(raw, 'model'),
+      serialNumber: getHeaderValue(raw, 'serialNumber'),
+      locationName: getHeaderValue(raw, 'locationName'),
+      zone: getHeaderValue(raw, 'zone'),
+      notes: getHeaderValue(raw, 'notes'),
+      category: getHeaderValue(raw, 'category'),
+      status: getHeaderValue(raw, 'status'),
+      alternateNames: getHeaderValue(raw, 'alternateNames'),
+      normalizedName: getHeaderValue(raw, 'normalizedName'),
+      manualUrl: getHeaderValue(raw, 'manualUrl'),
+      manualSourceUrl: getHeaderValue(raw, 'manualSourceUrl'),
+      supportEmail: getHeaderValue(raw, 'supportEmail'),
+      supportPhone: getHeaderValue(raw, 'supportPhone'),
+      supportUrl: getHeaderValue(raw, 'supportUrl'),
+      matchConfidence: getHeaderValue(raw, 'matchConfidence'),
+      matchNotes: getHeaderValue(raw, 'matchNotes')
     }, options);
     if (!normalized.name) {
       errors.push(`Row ${rowNumber}: missing asset name.`);
@@ -158,4 +263,125 @@ export function parseAssetCsv(text = '', options = {}) {
     rows.push({ ...normalized, source: 'csv', sourceRow: rowNumber });
   });
   return { rows, errors };
+}
+
+function classifyRowStatus({ confidence = 0, manualUrl = '', supportUrl = '', manufacturer = '' } = {}) {
+  if (manualUrl && confidence >= 0.8) return 'good_match';
+  if (manufacturer || supportUrl || confidence >= 0.45) return 'needs_review';
+  return 'unresolved';
+}
+
+function extractContactValue(contacts = [], keys = []) {
+  return (contacts || []).find((entry) => keys.includes(`${entry?.contactType || ''}`.toLowerCase()))?.value || '';
+}
+
+export function mapPreviewToAssetIntakeRow(row = {}, preview = {}) {
+  const documentationSuggestions = Array.isArray(preview.documentationSuggestions) ? preview.documentationSuggestions : [];
+  const supportResources = Array.isArray(preview.supportResourcesSuggestion) ? preview.supportResourcesSuggestion : [];
+  const supportContacts = Array.isArray(preview.supportContactsSuggestion) ? preview.supportContactsSuggestion : [];
+  const bestManual = documentationSuggestions.find((entry) => normalizeUrl(entry?.url));
+  const bestSupport = supportResources.find((entry) => normalizeUrl(entry?.url));
+  const confidence = Number(preview.confidence || 0);
+  const supportEmail = row.supportEmail || extractContactValue(supportContacts, ['email']);
+  const supportPhone = row.supportPhone || extractContactValue(supportContacts, ['phone', 'telephone']);
+  const supportUrl = row.supportUrl || normalizeUrl(bestSupport?.url || '');
+  const matchNotes = [
+    preview.status ? `status: ${preview.status}` : '',
+    preview.likelyManufacturer ? `manufacturer: ${preview.likelyManufacturer}` : '',
+    bestManual?.sourceType ? `manual source: ${bestManual.sourceType}` : '',
+    bestSupport?.sourceType ? `support source: ${bestSupport.sourceType}` : ''
+  ].filter(Boolean).join(' | ');
+  return {
+    ...row,
+    normalizedName: preview.normalizedName || row.normalizedName || row.name,
+    manufacturer: row.manufacturer || preview.likelyManufacturer || row.manufacturerSuggestion || '',
+    manufacturerSuggestion: preview.likelyManufacturer || row.manufacturerSuggestion || '',
+    category: row.category || preview.likelyCategory || row.categorySuggestion || '',
+    categorySuggestion: preview.likelyCategory || row.categorySuggestion || '',
+    manualUrl: row.manualUrl || normalizeUrl(bestManual?.url || ''),
+    manualSourceUrl: row.manualSourceUrl || normalizeUrl(bestManual?.sourceUrl || bestSupport?.url || ''),
+    supportEmail,
+    supportPhone,
+    supportUrl,
+    matchConfidence: confidence ? confidence.toFixed(2) : row.matchConfidence || '',
+    matchNotes: row.matchNotes || matchNotes,
+    notes: row.notes || matchNotes,
+    preview,
+    confidence,
+    rowStatus: classifyRowStatus({
+      confidence,
+      manualUrl: row.manualUrl || normalizeUrl(bestManual?.url || ''),
+      supportUrl,
+      manufacturer: row.manufacturer || preview.likelyManufacturer || ''
+    }),
+    reviewNeeded: classifyRowStatus({ confidence, manualUrl: row.manualUrl || normalizeUrl(bestManual?.url || ''), supportUrl, manufacturer: row.manufacturer || preview.likelyManufacturer || '' }) !== 'good_match'
+  };
+}
+
+export async function enrichAssetIntakeRows(rows = [], { lookup, chunkDelayMs = 0 } = {}) {
+  const results = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const payload = {
+      assetName: row.name,
+      manufacturer: row.manufacturer,
+      serialNumber: row.serialNumber,
+      assetId: row.assetId
+    };
+    try {
+      const preview = await lookup(payload);
+      results.push(mapPreviewToAssetIntakeRow(row, preview));
+    } catch (error) {
+      results.push({
+        ...row,
+        preview: null,
+        confidence: 0,
+        rowStatus: 'unresolved',
+        reviewNeeded: true,
+        matchNotes: row.matchNotes || `Lookup failed: ${`${error?.message || error || 'unknown error'}`.trim()}`
+      });
+    }
+    if (chunkDelayMs && index < rows.length - 1) await new Promise((resolve) => setTimeout(resolve, chunkDelayMs));
+  }
+  return results;
+}
+
+function escapeCsvValue(value = '') {
+  const stringValue = Array.isArray(value) ? value.join('|') : `${value ?? ''}`;
+  if (/[",\n]/.test(stringValue)) return `"${stringValue.replace(/"/g, '""')}"`;
+  return stringValue;
+}
+
+export function buildAssetImportRow(row = {}) {
+  return {
+    'asset name': row.name || '',
+    assetId: row.assetId || '',
+    manufacturer: row.manufacturer || '',
+    model: row.model || '',
+    serial: row.serialNumber || '',
+    location: row.locationName || '',
+    zone: row.zone || '',
+    notes: row.notes || '',
+    category: row.category || '',
+    status: row.status || 'active',
+    alternateNames: dedupeValues(row.alternateNames || []).join('|'),
+    normalizedName: row.normalizedName || '',
+    manualUrl: row.manualUrl || '',
+    manualSourceUrl: row.manualSourceUrl || '',
+    supportEmail: row.supportEmail || '',
+    supportPhone: row.supportPhone || '',
+    supportUrl: row.supportUrl || '',
+    matchConfidence: row.matchConfidence || (Number.isFinite(Number(row.confidence)) && Number(row.confidence) > 0 ? Number(row.confidence).toFixed(2) : ''),
+    matchNotes: row.matchNotes || ''
+  };
+}
+
+export function buildAssetCsv(rows = []) {
+  const header = ASSET_IMPORT_COLUMNS;
+  const lines = [header.join(',')];
+  (rows || []).forEach((row) => {
+    const exportRow = buildAssetImportRow(row);
+    lines.push(header.map((column) => escapeCsvValue(exportRow[column] || '')).join(','));
+  });
+  return lines.join('\n');
 }

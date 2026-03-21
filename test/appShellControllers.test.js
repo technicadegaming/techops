@@ -26,6 +26,11 @@ async function loadAssetEnrichmentPipeline() {
   return import('../src/features/assetEnrichmentPipeline.js');
 }
 
+
+async function loadAssetIntakeHelpers() {
+  return import('../src/features/assetIntake.js');
+}
+
 function createSelectElement() {
   return {
     innerHTML: '',
@@ -362,4 +367,55 @@ test('documentation review helpers keep support-only links out of approval while
   assert.deepEqual(bulkPatch.manualLinks, reviewable.map((entry) => entry.url));
   assert.equal(singlePatch.reviewState, 'approved');
   assert.equal(bulkPatch.reviewState, 'approved');
+});
+
+
+test('title bulk parser accepts comma-separated and newline input while deduplicating obvious duplicates', async () => {
+  const { parseTitleBulkInput } = await loadAssetIntakeHelpers();
+  const { rows, errors } = parseTitleBulkInput(`Quick Drop, Jurassic Park
+Quick Drop
+Air FX`);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(rows.map((row) => row.name), ['Quick Drop', 'Jurassic Park', 'Air FX']);
+});
+
+test('asset csv parser remains backward compatible and accepts optional enrichment columns', async () => {
+  const { parseAssetCsv } = await loadAssetIntakeHelpers();
+  const legacy = parseAssetCsv(`asset name,manufacturer,location
+Quick Drop,Bay Tek Games,Main Floor`);
+  assert.equal(legacy.errors.length, 0);
+  assert.equal(legacy.rows[0].name, 'Quick Drop');
+  assert.equal(legacy.rows[0].locationName, 'Main Floor');
+
+  const enriched = parseAssetCsv(`asset name,assetId,manufacturer,manualUrl,manualSourceUrl,supportEmail,supportPhone,supportUrl,matchConfidence,matchNotes
+Jurassic Park,jp-01,Raw Thrills,https://manual.example/jp.pdf,https://source.example/jp,support@example.com,555-1111,https://support.example/jp,0.91,Official page`);
+  assert.equal(enriched.errors.length, 0);
+  assert.equal(enriched.rows[0].assetId, 'jp-01');
+  assert.equal(enriched.rows[0].manualUrl, 'https://manual.example/jp.pdf');
+  assert.equal(enriched.rows[0].supportEmail, 'support@example.com');
+  assert.equal(enriched.rows[0].matchConfidence, '0.91');
+});
+
+test('shared intake enrichment helper powers single and bulk row enrichment mapping', async () => {
+  const { enrichAssetIntakeRows, buildAssetCsv } = await loadAssetIntakeHelpers();
+  const calls = [];
+  const rows = await enrichAssetIntakeRows([{ name: 'Quick Drop' }, { name: 'Air FX' }], {
+    lookup: async (payload) => {
+      calls.push(payload.assetName);
+      return {
+        status: 'strong_match',
+        normalizedName: payload.assetName,
+        likelyManufacturer: payload.assetName === 'Quick Drop' ? 'Bay Tek Games' : 'Namco',
+        confidence: 0.88,
+        documentationSuggestions: [{ url: `https://manuals.example/${payload.assetName.toLowerCase().replace(/\s+/g, '-')}.pdf`, sourceUrl: 'https://source.example/manual', sourceType: 'official' }],
+        supportResourcesSuggestion: [{ url: 'https://support.example/resource', sourceType: 'support' }],
+        supportContactsSuggestion: [{ contactType: 'email', value: 'support@example.com' }]
+      };
+    }
+  });
+  assert.deepEqual(calls, ['Quick Drop', 'Air FX']);
+  assert.equal(rows[0].manufacturer, 'Bay Tek Games');
+  assert.equal(rows[0].manualUrl, 'https://manuals.example/quick-drop.pdf');
+  assert.equal(rows[0].supportEmail, 'support@example.com');
+  assert.match(buildAssetCsv(rows), /manualUrl,manualSourceUrl,supportEmail/);
 });

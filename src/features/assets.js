@@ -415,8 +415,27 @@ export function renderAssets(el, state, actions) {
       <datalist id="assetLocationNames">${locationOptions.filter((option) => option.name && option.id).map((option) => `<option value="${option.name}"></option>`).join('')}</datalist>
     </form>
 
+
+    <div class="item" style="margin-bottom:12px;">
+      <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:flex-start;">
+        <div>
+          <b>Bulk add assets</b>
+          <div class="tiny">Paste comma-separated titles or one title per line, then review enriched rows before import.</div>
+        </div>
+        <div class="tiny">Status: ${state.assetUi?.bulkIntakeStatus || 'idle'}</div>
+      </div>
+      <textarea data-bulk-intake-text rows="4" placeholder="Quick Drop, Jurassic Park, Virtual Rabbids, Air FX">${state.assetUi?.bulkIntakeText || ''}</textarea>
+      <div class="row mt" style="flex-wrap:wrap;">
+        <button type="button" data-bulk-parse>Prepare rows</button>
+        <button type="button" data-bulk-enrich ${state.assetUi?.bulkIntakeRows?.length ? '' : 'disabled'}>${state.assetUi?.bulkIntakeStatus === 'enriching' ? 'Enriching...' : 'Enrich titles'}</button>
+        <button type="button" data-bulk-export ${state.assetUi?.bulkIntakeRows?.length ? '' : 'disabled'}>Download reviewed CSV</button>
+        <button type="button" class="primary" data-bulk-import ${state.assetUi?.bulkIntakeRows?.length ? '' : 'disabled'}>Create accepted assets</button>
+      </div>
+      ${(state.assetUi?.bulkIntakeErrors || []).length ? `<div class="inline-state error mt"><ul>${(state.assetUi.bulkIntakeErrors || []).map((error) => `<li>${error}</li>`).join('')}</ul></div>` : ''}
+    </div>
+
     ${(state.assetUi?.onboardingValidationErrors || []).length ? `<div class="item" style="border:1px solid #fca5a5; background:#fef2f2;"><b>Import validation issues</b><ul>${(state.assetUi?.onboardingValidationErrors || []).slice(0, 8).map((error) => `<li class="tiny">${error}</li>`).join('')}</ul></div>` : ''}
-    ${(state.assetUi?.onboardingReviewQueue || []).length ? `<div class="item" style="margin-bottom:10px;"><b>Imported asset review queue</b><div class="tiny">Confirm/edit core fields after onboarding import.</div>${(state.assetUi.onboardingReviewQueue || []).slice(0, 15).map((row, index) => `<details><summary>${row.name} ${row.reviewNeeded ? '(needs review)' : ''}</summary><form data-onboarding-review-row="${index}" class="grid grid-2" style="margin-top:8px;"><input name="name" value="${row.name || ''}" /><input name="manufacturer" value="${row.manufacturer || row.manufacturerSuggestion || ''}" /><input name="locationName" value="${row.locationName || ''}" /><input name="category" value="${row.category || row.categorySuggestion || ''}" /><input name="model" value="${row.model || ''}" /><input name="serialNumber" value="${row.serialNumber || ''}" /><button type="submit">Apply review edits</button></form></details>`).join('')}</div>` : ''}
+    ${(state.assetUi?.bulkIntakeRows || []).length ? `<div class="item" style="margin-bottom:10px; overflow:auto;"><b>Bulk intake review grid</b><div class="tiny">Review enrichment output before import. Rows marked unresolved stay editable and will not import unless you change their status.</div><table class="tiny" style="width:100%; border-collapse:collapse; margin-top:8px;"><thead><tr><th>Asset</th><th>Normalized</th><th>Manufacturer</th><th>Manual URL</th><th>Manual source</th><th>Support</th><th>Location</th><th>Zone</th><th>Category</th><th>Status</th><th>Confidence</th><th>Notes</th><th>Row</th><th>Actions</th></tr></thead><tbody>${(state.assetUi.bulkIntakeRows || []).map((row, index) => `<tr data-bulk-row="${index}"><td><input name="name" value="${row.name || ''}" /></td><td><input name="normalizedName" value="${row.normalizedName || ''}" /></td><td><input name="manufacturer" value="${row.manufacturer || row.manufacturerSuggestion || ''}" /></td><td><input name="manualUrl" value="${row.manualUrl || ''}" placeholder="https://..." /></td><td><input name="manualSourceUrl" value="${row.manualSourceUrl || ''}" placeholder="https://..." /></td><td><input name="supportEmail" value="${row.supportEmail || ''}" placeholder="email" /><input name="supportPhone" value="${row.supportPhone || ''}" placeholder="phone" /><input name="supportUrl" value="${row.supportUrl || ''}" placeholder="https://support" /></td><td><input name="locationName" value="${row.locationName || ''}" /></td><td><input name="zone" value="${row.zone || ''}" /></td><td><input name="category" value="${row.category || row.categorySuggestion || ''}" /></td><td><input name="status" value="${row.status || 'active'}" /></td><td><input name="matchConfidence" value="${row.matchConfidence || ''}" style="width:70px;" /></td><td><textarea name="matchNotes" rows="2">${row.matchNotes || ''}</textarea></td><td><select name="rowStatus"><option value="good_match" ${row.rowStatus === 'good_match' ? 'selected' : ''}>good match</option><option value="needs_review" ${row.rowStatus === 'needs_review' ? 'selected' : ''}>needs review</option><option value="unresolved" ${row.rowStatus === 'unresolved' ? 'selected' : ''}>unresolved</option><option value="skipped" ${row.rowStatus === 'skipped' ? 'selected' : ''}>skip</option></select></td><td><div style="display:flex; gap:4px; flex-wrap:wrap;"><button type="button" data-bulk-accept="${index}">Accept</button><button type="button" data-bulk-skip="${index}">Skip</button></div></td></tr>`).join('')}</tbody></table></div>` : ''}
 
     <div class="list">${scopedAssets.map((asset) => {
       try {
@@ -505,7 +524,8 @@ export function renderAssets(el, state, actions) {
       historyNote: `${state.assetDraft?.historyNote || ''}`,
       imageRefsText: `${state.assetDraft?.imageRefsText || ''}`,
       videoRefsText: `${state.assetDraft?.videoRefsText || ''}`,
-      evidenceRefsText: `${state.assetDraft?.evidenceRefsText || ''}`
+      evidenceRefsText: `${state.assetDraft?.evidenceRefsText || ''}`,
+      notes: `${state.assetDraft?.notes || ''}`
     };
     actions.saveAsset(payload.id, payload);
   });
@@ -553,6 +573,22 @@ export function renderAssets(el, state, actions) {
   }));
 
   form?.querySelector('[data-clear-preview]')?.addEventListener('click', () => actions.clearPreview());
+
+  const bulkTextArea = el.querySelector('[data-bulk-intake-text]');
+  bulkTextArea?.addEventListener('input', () => { state.assetUi.bulkIntakeText = bulkTextArea.value; });
+  el.querySelector('[data-bulk-parse]')?.addEventListener('click', () => actions.startBulkAssetIntake(`${bulkTextArea?.value || ''}`, { defaultLocationName: `${state.assetDraft?.locationName || ''}`.trim() }));
+  el.querySelector('[data-bulk-enrich]')?.addEventListener('click', () => actions.enrichBulkIntakeRows({ defaultLocationName: `${state.assetDraft?.locationName || ''}`.trim() }));
+  el.querySelector('[data-bulk-export]')?.addEventListener('click', () => { const csv = actions.exportBulkIntakeCsv(); const link = document.createElement('a'); link.href = `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`; link.download = 'asset-bulk-review.csv'; link.click(); });
+  el.querySelector('[data-bulk-import]')?.addEventListener('click', () => actions.importBulkIntakeRows());
+  el.querySelectorAll('[data-bulk-row]').forEach((rowEl) => {
+    const index = Number(rowEl.dataset.bulkRow);
+    rowEl.querySelectorAll('input, textarea, select').forEach((input) => input.addEventListener(input.tagName === 'SELECT' ? 'change' : 'input', () => {
+      actions.updateBulkIntakeRow(index, { [input.name]: input.value });
+      if (input.name === 'rowStatus') renderAssets(el, state, actions);
+    }));
+  });
+  el.querySelectorAll('[data-bulk-accept]').forEach((button) => button.addEventListener('click', () => actions.setBulkRowStatus(Number(button.dataset.bulkAccept), 'good_match')));
+  el.querySelectorAll('[data-bulk-skip]').forEach((button) => button.addEventListener('click', () => actions.setBulkRowStatus(Number(button.dataset.bulkSkip), 'skipped')));
   el.querySelectorAll('[data-onboarding-review-row]').forEach((reviewForm) => reviewForm.addEventListener('submit', (event) => {
     event.preventDefault();
     const fd = new FormData(reviewForm);
