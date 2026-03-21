@@ -162,6 +162,33 @@ test('shouldDiscoverAfterCatalogMatch keeps discovering when catalog only yields
   assert.equal(shouldDiscover, true);
 });
 
+test('verifyDocumentationSuggestions downgrades live generic Raw Thrills service pages so they cannot survive as manual_html exact matches', async () => {
+  const verified = await verifyDocumentationSuggestions([{
+    title: 'Jurassic Park support',
+    url: 'https://rawthrills.com/service/',
+    sourceType: 'support',
+    assetName: 'Jurassic Park',
+    normalizedName: 'Jurassic Park Arcade',
+    exactTitleMatch: true,
+    exactManualMatch: true,
+    trustedSource: true,
+    matchScore: 91
+  }], async (url, options = {}) => ({
+    ok: true,
+    status: 200,
+    url,
+    headers: { get: () => 'text/html' },
+    text: async () => options.method === 'HEAD' ? '' : 'Jurassic Park service manual and support resources'
+  }));
+
+  assert.equal(verified[0].verificationKind, 'support_html');
+  assert.equal(verified[0].verified, false);
+  assert.equal(verified[0].exactManualMatch, false);
+  const cleaned = cleanFinalEnrichmentResult({ documentationSuggestions: verified, supportResourcesSuggestion: [] });
+  assert.deepEqual(cleaned.documentationSuggestions, []);
+});
+
+
 test('shouldDiscoverAfterCatalogMatch continues to fallback when catalog manual verifies dead', async () => {
   const catalogMatch = {
     confidence: 0.99,
@@ -857,7 +884,7 @@ test('Jurassic Park generic Raw Thrills service hub does not verify as a reviewa
     enrichmentFollowupQuestion: ''
   });
 
-  assert.equal(verified[0].verificationKind, 'manual_html');
+  assert.equal(verified[0].verificationKind, 'support_html');
   assert.equal(verified[0].verified, false);
   assert.equal(cleaned.documentationSuggestions.length, 0);
   assert.equal(cleaned.enrichmentStatus, 'no_match_yet');
@@ -1635,6 +1662,67 @@ test('enrichAssetDocumentation writes defensive failure after terminal candidate
   assert.equal(assetWrites[0].payload.enrichmentStatus, 'in_progress');
   assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'lookup_failed');
   assert.match(assetWrites.at(-1).payload.enrichmentErrorMessage, /verification exploded/);
+});
+
+
+test('enrichAssetDocumentation rehydrates exact catalog manuals when live preview only persists catalog metadata for Quik Drop', async () => {
+  const { db, assetWrites, assetState } = createEnrichmentDb({ name: 'Quik Drop', manufacturer: 'Bay Tek Games', companyId: 'company-1' });
+
+  const result = await enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'manual',
+    followupAnswer: '',
+    traceId: 'trace-quik-drop-live-regression',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.92,
+        normalizedName: 'Quik Drop',
+        likelyManufacturer: 'Bay Tek Games',
+        documentationSuggestions: [],
+        supportResourcesSuggestion: [{
+          title: 'Quik Drop source page',
+          url: 'https://www.baytekent.com/games/quik-drop/',
+          sourceType: 'support',
+          exactTitleMatch: true,
+          exactManualMatch: false,
+          trustedSource: true,
+          matchScore: 84
+        }],
+        supportContactsSuggestion: [],
+        alternateNames: ['Quick Drop'],
+        searchHints: [],
+        likelyCategory: 'redemption',
+        catalogMatch: {
+          catalogEntryId: 'bay-tek-quik-drop',
+          matchStatus: 'catalog_exact',
+          confidence: 0.99,
+          lookupMethod: 'workbook_seed_exact_pdf',
+          notes: 'Workbook exact match'
+        }
+      }),
+      findReusableVerifiedManuals: async () => [],
+      verifyDocumentationSuggestions: async (rows) => rows.map((row) => ({
+        ...row,
+        verified: row.url === 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
+        verificationKind: row.url.endsWith('.pdf') ? 'direct_pdf' : 'support_html',
+        verificationStatus: row.url.endsWith('.pdf') ? 'seed_verified' : 'verified',
+        deadPage: false,
+        unreachable: false,
+        trustedSource: true,
+        exactTitleMatch: row.url.endsWith('.pdf') ? true : row.exactTitleMatch,
+        exactManualMatch: row.url.endsWith('.pdf') ? true : row.exactManualMatch
+      }))
+    }
+  });
+
+  assert.equal(result.status, 'docs_found');
+  assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'docs_found');
+  assert.equal(assetWrites.at(-1).payload.reviewState, 'pending_review');
+  assert.equal(assetState.documentationSuggestions[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
+  assert.equal(assetState.manualLookupCatalogMatch.matchStatus, 'catalog_exact');
 });
 
 test('enrichAssetDocumentation preserves Quik Drop exact manual success path', async () => {

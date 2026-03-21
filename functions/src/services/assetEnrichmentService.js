@@ -231,8 +231,11 @@ function isTitleSpecificManualBearingHtmlSuggestion(entry = {}) {
   if (!entry?.exactTitleMatch || !(entry?.trustedSource || entry?.isOfficial)) return false;
 
   let lowerPath = '';
+  let lowerHost = '';
   try {
-    lowerPath = new URL(`${entry?.resolvedUrl || entry?.url || ''}`).pathname.toLowerCase();
+    const parsed = new URL(`${entry?.resolvedUrl || entry?.url || ''}`);
+    lowerPath = parsed.pathname.toLowerCase();
+    lowerHost = parsed.hostname.toLowerCase();
   } catch {
     return false;
   }
@@ -240,9 +243,27 @@ function isTitleSpecificManualBearingHtmlSuggestion(entry = {}) {
   const titleVariants = buildExactTitleVariants(entry?.assetName || entry?.normalizedName, entry?.normalizedName || entry?.assetName);
   if (!titleVariants.length) return false;
   if (isStrictlyGenericDocumentationPage(lowerPath, titleVariants) || isGenericSupportJunkPage(lowerPath, titleVariants)) return false;
-  const hasPathEvidence = pathHasTitleEvidence(lowerPath, titleVariants);
+  const normalizedTitle = normalizePhrase(`${entry?.title || entry?.label || ''}`);
+  const hasTitlePathEvidence = pathHasTitleEvidence(lowerPath, titleVariants);
+  const hasTitleTextEvidence = titleVariants.some((variant) => normalizedTitle.includes(variant));
   const hasManualPathSignal = /games?|support|product|parts|downloads?|manual|service|install/.test(lowerPath);
-  return hasPathEvidence && hasManualPathSignal;
+  const genericSupportHost = /(^|\.)rawthrills\.com$/.test(lowerHost) && /^\/service\/?$/.test(lowerPath);
+  return !genericSupportHost && hasManualPathSignal && (hasTitlePathEvidence || hasTitleTextEvidence);
+}
+
+function sanitizeManualCandidate(entry = {}) {
+  const sanitized = { ...entry };
+  if (!sanitized.url) return sanitized;
+  const isDirectFile = isDirectDocumentationFileSuggestion(sanitized);
+  const manualBearingHtml = isTitleSpecificManualBearingHtmlSuggestion(sanitized);
+  const sourceType = `${sanitized.sourceType || sanitized.resourceType || ''}`.trim().toLowerCase();
+  if (!isDirectFile && sanitized.verificationKind === 'manual_html' && !manualBearingHtml) {
+    sanitized.verificationKind = 'support_html';
+    sanitized.verified = false;
+    sanitized.exactManualMatch = false;
+    if (SUPPORT_ONLY_SOURCE_TYPES.has(sourceType)) sanitized.reviewable = false;
+  }
+  return sanitized;
 }
 
 function isReusableVerifiedManual(entry = {}, matchedManufacturer = '') {
@@ -938,14 +959,14 @@ async function verifyDocumentationSuggestions(suggestions, fetchImpl = fetch) {
         && Number(row.matchScore || 0) >= 68
         && isTitleSpecificManualBearingHtmlSuggestion(manualHtmlCandidate);
       const aliveAndStrong = seededCatalogManual || (verification.verified && (strongMatch || strongManualBearingPage));
-      return {
+      return sanitizeManualCandidate({
         ...row,
         ...verification,
         verified: aliveAndStrong,
         verificationStatus: aliveAndStrong
           ? (seededCatalogManual && !verification.verified ? 'seed_verified' : 'verified')
           : verification.verificationStatus
-      };
+      });
     })
   );
 
@@ -955,7 +976,9 @@ async function verifyDocumentationSuggestions(suggestions, fetchImpl = fetch) {
 }
 
 function cleanDocumentationSuggestions(rows = []) {
-  return dedupeDocumentationSuggestions(rows).filter((entry) => isManualUsableSuggestion(entry));
+  return dedupeDocumentationSuggestions(rows)
+    .map((entry) => sanitizeManualCandidate(entry))
+    .filter((entry) => isManualUsableSuggestion(entry));
 }
 
 function cleanSupportResourcesSuggestion(rows = [], documentationSuggestions = []) {
@@ -1267,6 +1290,25 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       supportResourcesSuggestion: Array.isArray(preview?.supportResourcesSuggestion) ? preview.supportResourcesSuggestion.length : 0
     });
 
+    const catalogMatch = preview?.catalogMatch
+      ? findCatalogManualMatch({
+        assetName: asset?.name || '',
+        normalizedName,
+        manufacturer: manufacturerSuggestion || asset?.manufacturer || '',
+        manufacturerProfile,
+        alternateNames: Array.isArray(preview?.alternateNames) ? preview.alternateNames : []
+      })
+      : null;
+    const catalogSuggestions = catalogMatch
+      ? normalizeDocumentationSuggestions({
+        links: catalogMatch.documentationSuggestions,
+        confidence: Math.max(confidence, Number(catalogMatch.confidence || 0.95)),
+        asset: asset || {},
+        normalizedName,
+        manufacturerSuggestion,
+        followupAnswer
+      })
+      : [];
     const reusedSuggestions = await findReusableManuals({
       db,
       asset: { ...asset, normalizedName },
@@ -1277,7 +1319,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     const suggestions = mergeDocumentationSuggestions({
       existingSuggestions: asset.documentationSuggestions || [],
       nextSuggestions: [
-        ...(await verifySuggestions(preview.documentationSuggestions || [])),
+        ...(await verifySuggestions([...(preview.documentationSuggestions || []), ...catalogSuggestions])),
         ...reusedSuggestions
       ]
     });
