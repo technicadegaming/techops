@@ -691,6 +691,14 @@ async function researchAssetTitles({
       manualMatchSummary: {
         ...summary,
       },
+      pipelineMeta: {
+        stage1MatchType: stageOne.summary.matchType || '',
+        stage2Ran: FALLBACK_MATCH_TYPES.has(stageOne.summary.matchType),
+        sourcePageExtracted: Array.isArray(documentationSuggestions) && documentationSuggestions.some((entry) => !!`${entry?.sourcePageUrl || ''}`.trim()),
+        acquisitionSucceeded: summary.manualReady === true && !!`${summary.manualLibraryRef || ''}`.trim(),
+        manualLibraryRef: summary.manualLibraryRef || '',
+        manualStoragePath: summary.manualStoragePath || '',
+      },
       locationId: normalizeString(locationId, 120),
       manualLibraryRef: summary.manualLibraryRef || '',
       manualVariant: summary.manualVariant || '',
