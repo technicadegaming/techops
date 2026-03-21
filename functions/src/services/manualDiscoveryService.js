@@ -1,5 +1,5 @@
 const SEARCH_USER_AGENT = 'techops-manual-discovery/1.0';
-const { normalizePhrase, expandArcadeTitleAliases } = require('./arcadeTitleAliasService');
+const { normalizePhrase, expandArcadeTitleAliases, resolveArcadeTitleFamily } = require('./arcadeTitleAliasService');
 const MAX_SEARCH_RESULTS_PER_QUERY = 8;
 const MAX_DISCOVERY_RESULTS = 10;
 const MAX_FOLLOWUP_FETCHES = 4;
@@ -165,13 +165,14 @@ function buildManufacturerQueryTerms(manufacturer, manufacturerProfile) {
 }
 
 function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) {
-  const cleanTitle = `${title || ''}`.trim();
+  const titleFamily = resolveArcadeTitleFamily({ title, manufacturer });
+  const cleanTitle = `${titleFamily.canonicalTitle || title || ''}`.trim();
   if (!cleanTitle) return { officialQueries: [], exactTitleQueries: [], fallbackQueries: [] };
-  const titleQueryVariants = expandArcadeTitleAliases(cleanTitle).slice(0, 3);
+  const titleQueryVariants = expandArcadeTitleAliases([cleanTitle, ...(titleFamily.alternateTitles || [])]).slice(0, 4);
   const preferredDomains = manufacturerProfile?.preferredSourceTokens?.length
     ? manufacturerProfile.preferredSourceTokens
     : (manufacturerProfile?.sourceTokens || []).slice(0, 2);
-  const manufacturerTerms = buildManufacturerQueryTerms(manufacturer, manufacturerProfile).slice(0, 7);
+  const manufacturerTerms = buildManufacturerQueryTerms(titleFamily.manufacturer || manufacturer, manufacturerProfile).slice(0, 7);
   const manufacturerOrClause = manufacturerTerms.length
     ? `(${manufacturerTerms.map((term) => `"${term}"`).join(' OR ')})`
     : '';

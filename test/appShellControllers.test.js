@@ -95,6 +95,40 @@ test('applyActionCenterFocus translates dashboard focus into operations filters 
   assert.equal(state.route.assetFilter, 'missing_docs');
 });
 
+test('asset intake row mapping reuses manual engine summary shape for bulk and single-entry previews', async () => {
+  const { mapPreviewToAssetIntakeRow } = await loadAssetIntakeHelpers();
+  const preview = {
+    confidence: 0.91,
+    likelyManufacturer: 'Bay Tek',
+    likelyCategory: 'Redemption',
+    manualMatchSummary: {
+      inputTitle: 'Quick Drop',
+      canonicalTitle: 'Quik Drop',
+      manufacturer: 'Bay Tek',
+      matchType: 'exact_manual',
+      confidence: 0.91,
+      matchNotes: 'matchType: exact_manual | normalized from: Quick Drop | manufacturer: Bay Tek',
+      manualUrl: 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
+      manualSourceUrl: 'https://www.baytekent.com/games/quik-drop/',
+      supportEmail: 'support@baytekent.com',
+      supportPhone: '5555555555',
+      supportUrl: 'https://www.baytekent.com/games/quik-drop/',
+      alternateTitles: ['Quik Drop', 'Quick Drop'],
+      variantWarning: '',
+      reviewRequired: false
+    }
+  };
+
+  const row = mapPreviewToAssetIntakeRow({ name: 'Quick Drop', manufacturer: '' }, preview);
+  assert.equal(row.normalizedName, 'Quik Drop');
+  assert.equal(row.manufacturer, 'Bay Tek');
+  assert.equal(row.manualUrl, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
+  assert.equal(row.manualSourceUrl, 'https://www.baytekent.com/games/quik-drop/');
+  assert.equal(row.supportUrl, 'https://www.baytekent.com/games/quik-drop/');
+  assert.equal(row.matchType, 'exact_manual');
+  assert.equal(row.reviewNeeded, false);
+});
+
 test('context switcher renders derived location options and syncs route changes', async () => {
   const { createContextSwitcherController } = await loadContextSwitcher();
   const activeLocationSwitcher = createSelectElement();
