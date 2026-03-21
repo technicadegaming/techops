@@ -18,7 +18,8 @@ const {
   cleanFinalEnrichmentResult,
   resolveTerminalEnrichmentStatus,
   repairLegacyAssetEnrichmentRecord,
-  isSeededCatalogManualCandidate
+  isSeededCatalogManualCandidate,
+  rehydrateSeededManualDocumentationSuggestions
 } = require('../src/services/assetEnrichmentService');
 const { findCatalogManualMatch } = require('../src/services/manualLookupCatalogService');
 
@@ -1439,6 +1440,144 @@ test('repairLegacyAssetEnrichmentRecord reclassifies stale lookup_failed asset w
   assert.deepEqual(repaired.supportResourcesSuggestion.map((entry) => entry.url), ['https://manufacturer.example.com/king-kong']);
   assert.equal(repaired.enrichmentErrorCode, '');
   assert.equal(repaired.enrichmentErrorMessage, '');
+});
+
+test('rehydrateSeededManualDocumentationSuggestions reconstructs Jurassic Park direct manual from seeded support metadata', () => {
+  const rehydrated = rehydrateSeededManualDocumentationSuggestions({
+    asset: {
+      name: 'Jurassic Park',
+      normalizedName: 'Jurassic Park Arcade',
+      manufacturer: 'Raw Thrills',
+      enrichmentStatus: 'followup_needed',
+      manualLookupCatalogMatch: {
+        catalogEntryId: 'raw-thrills-jurassic-park-arcade',
+        matchStatus: 'catalog_exact',
+        lookupMethod: 'workbook_seed_exact_pdf'
+      }
+    },
+    documentationSuggestions: [],
+    supportResourcesSuggestion: [{
+      title: 'Jurassic Park source page',
+      url: 'https://rawthrills.com/games/jurassic-park-arcade/',
+      sourceType: 'support',
+      exactTitleMatch: true,
+      exactManualMatch: false,
+      trustedSource: true,
+      matchScore: 84,
+      lookupMethod: 'workbook_seed_exact_pdf',
+      catalogEntryId: 'raw-thrills-jurassic-park-arcade',
+      verificationMetadata: {
+        seededFromWorkbook: true,
+        hasDirectManual: true
+      }
+    }],
+    normalizedName: 'Jurassic Park Arcade',
+    manufacturerSuggestion: 'Raw Thrills'
+  });
+
+  assert.equal(rehydrated.length, 1);
+  assert.equal(rehydrated[0].url, 'https://rawthrills.com/wp-content/uploads/2015/12/Jurassic-Park-Arcade-Manual.pdf');
+  assert.equal(rehydrated[0].catalogEntryId, 'raw-thrills-jurassic-park-arcade');
+});
+
+test('repairLegacyAssetEnrichmentRecord rehydrates Jurassic Park live persisted seeded manual evidence into docs_found', async () => {
+  const repaired = await repairLegacyAssetEnrichmentRecord({
+    asset: {
+      name: 'Jurassic Park',
+      normalizedName: 'Jurassic Park Arcade',
+      manufacturer: 'Raw Thrills',
+      enrichmentStatus: 'followup_needed',
+      reviewState: 'followup_needed',
+      documentationSuggestions: [],
+      supportResourcesSuggestion: [{
+        title: 'Jurassic Park source page',
+        url: 'https://rawthrills.com/games/jurassic-park-arcade/',
+        sourceType: 'support',
+        exactTitleMatch: true,
+        exactManualMatch: false,
+        trustedSource: true,
+        matchScore: 84,
+        lookupMethod: 'workbook_seed_exact_pdf',
+        catalogEntryId: 'raw-thrills-jurassic-park-arcade',
+        verificationMetadata: {
+          seededFromWorkbook: true,
+          hasDirectManual: true
+        }
+      }],
+      manualLookupCatalogMatch: {
+        catalogEntryId: 'raw-thrills-jurassic-park-arcade',
+        matchStatus: 'catalog_exact',
+        lookupMethod: 'workbook_seed_exact_pdf'
+      },
+      enrichmentFollowupQuestion: 'What exact subtitle appears under the logo?'
+    },
+    verifySuggestions: async (rows) => rows.map((row) => ({
+      ...row,
+      verified: true,
+      deadPage: false,
+      unreachable: false,
+      verificationStatus: 'seed_verified',
+      verificationKind: row.url.endsWith('.pdf') ? 'direct_pdf' : 'support_html',
+      contentType: row.url.endsWith('.pdf') ? 'application/pdf' : 'text/html'
+    }))
+  });
+
+  assert.equal(repaired.enrichmentStatus, 'docs_found');
+  assert.equal(repaired.reviewState, 'pending_review');
+  assert.equal(repaired.enrichmentFollowupQuestion, '');
+  assert.equal(repaired.documentationSuggestions.length, 1);
+  assert.equal(repaired.documentationSuggestions[0].url, 'https://rawthrills.com/wp-content/uploads/2015/12/Jurassic-Park-Arcade-Manual.pdf');
+  assert.equal(repaired.supportResourcesSuggestion[0].url, 'https://rawthrills.com/games/jurassic-park-arcade/');
+});
+
+test('repairLegacyAssetEnrichmentRecord rehydrates Quik Drop live persisted seeded manual evidence into docs_found', async () => {
+  const repaired = await repairLegacyAssetEnrichmentRecord({
+    asset: {
+      name: 'Quik Drop',
+      normalizedName: 'Quik Drop',
+      manufacturer: 'Bay Tek Games',
+      enrichmentStatus: 'followup_needed',
+      reviewState: 'followup_needed',
+      documentationSuggestions: [],
+      supportResourcesSuggestion: [{
+        title: 'Quik Drop source page',
+        url: 'https://www.baytekent.com/games/quik-drop/',
+        sourceType: 'support',
+        exactTitleMatch: true,
+        exactManualMatch: false,
+        trustedSource: true,
+        matchScore: 84,
+        lookupMethod: 'workbook_seed_exact_pdf',
+        catalogEntryId: 'bay-tek-quik-drop',
+        verificationMetadata: {
+          seededFromWorkbook: true,
+          hasDirectManual: true
+        }
+      }],
+      manualLookupCatalogMatch: {
+        catalogEntryId: 'bay-tek-quik-drop',
+        matchStatus: 'catalog_exact',
+        lookupMethod: 'workbook_seed_exact_pdf'
+      },
+      enrichmentFollowupQuestion: 'What exact subtitle appears under the logo?'
+    },
+    verifySuggestions: async (rows) => rows.map((row) => ({
+      ...row,
+      verified: true,
+      deadPage: false,
+      unreachable: false,
+      verificationStatus: 'seed_verified',
+      verificationKind: row.url.endsWith('.pdf') ? 'direct_pdf' : 'support_html',
+      contentType: row.url.endsWith('.pdf') ? 'application/pdf' : 'text/html'
+    }))
+  });
+
+  assert.equal(repaired.enrichmentStatus, 'docs_found');
+  assert.equal(repaired.reviewState, 'pending_review');
+  assert.equal(repaired.enrichmentFollowupQuestion, '');
+  assert.equal(repaired.documentationSuggestions.length, 1);
+  assert.equal(repaired.documentationSuggestions[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
+  assert.equal(repaired.supportResourcesSuggestion[0].url, 'https://www.baytekent.com/games/quik-drop/');
 });
 
 

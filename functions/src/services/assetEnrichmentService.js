@@ -2,7 +2,7 @@ const admin = require('firebase-admin');
 const { HttpsError } = require('firebase-functions/v2/https');
 const { requestAssetDocumentationLookup } = require('./openaiService');
 const { discoverManualDocumentation, extractManualLinksFromHtmlPage } = require('./manualDiscoveryService');
-const { findCatalogManualMatch } = require('./manualLookupCatalogService');
+const { findCatalogManualMatch, findCatalogManualMatchByEntryId } = require('./manualLookupCatalogService');
 const { normalizePhrase, expandArcadeTitleAliases } = require('./arcadeTitleAliasService');
 
 const TRUSTED_MANUAL_HOST_TOKENS = [
@@ -223,6 +223,53 @@ function isSeededCatalogManualCandidate(entry = {}) {
     && !!entry?.trustedSource
     && !entry?.deadPage
     && (seededFromWorkbook || matchStatus === 'catalog_exact' || lookupMethod === 'workbook_seed_exact_pdf');
+}
+
+function hasSeededDirectManualProof(entry = {}) {
+  return `${entry?.lookupMethod || ''}`.trim().toLowerCase() === 'workbook_seed_exact_pdf'
+    && !!`${entry?.catalogEntryId || ''}`.trim()
+    && entry?.verificationMetadata?.hasDirectManual === true;
+}
+
+function rehydrateSeededManualDocumentationSuggestions({
+  asset = {},
+  documentationSuggestions = [],
+  supportResourcesSuggestion = [],
+  normalizedName = '',
+  manufacturerSuggestion = '',
+  followupAnswer = ''
+} = {}) {
+  if (cleanDocumentationSuggestions(documentationSuggestions).length > 0) return [];
+
+  const evidenceRows = [
+    ...(Array.isArray(documentationSuggestions) ? documentationSuggestions : []),
+    ...(Array.isArray(supportResourcesSuggestion) ? supportResourcesSuggestion : []),
+    asset?.manualLookupCatalogMatch || null
+  ].filter(Boolean);
+
+  const catalogEntryIds = Array.from(new Set(evidenceRows
+    .filter(hasSeededDirectManualProof)
+    .map((row) => `${row?.catalogEntryId || ''}`.trim())
+    .filter(Boolean)));
+
+  if (!catalogEntryIds.length) return [];
+
+  const rehydratedLinks = catalogEntryIds.flatMap((catalogEntryId) => {
+    const catalogMatch = findCatalogManualMatchByEntryId(catalogEntryId);
+    if (!catalogMatch?.entry?.verification?.hasDirectManual) return [];
+    return Array.isArray(catalogMatch.documentationSuggestions)
+      ? catalogMatch.documentationSuggestions.filter((entry) => hasSeededDirectManualProof(entry))
+      : [];
+  });
+
+  return normalizeDocumentationSuggestions({
+    links: rehydratedLinks,
+    confidence: Math.max(Number(asset?.enrichmentConfidence || 0), 0.95),
+    asset,
+    normalizedName: normalizedName || asset?.normalizedName || asset?.name || '',
+    manufacturerSuggestion: manufacturerSuggestion || asset?.manufacturerSuggestion || asset?.manufacturer || '',
+    followupAnswer: followupAnswer || asset?.enrichmentFollowupAnswer || ''
+  });
 }
 
 function isTitleSpecificManualBearingHtmlSuggestion(entry = {}) {
@@ -1013,7 +1060,18 @@ function deriveDocumentationReviewState(asset = {}) {
 }
 
 function cleanFinalEnrichmentResult(asset = {}) {
-  const documentationSuggestions = cleanDocumentationSuggestions(asset.documentationSuggestions || []);
+  const initialDocumentationSuggestions = cleanDocumentationSuggestions(asset.documentationSuggestions || []);
+  const rehydratedDocumentationSuggestions = rehydrateSeededManualDocumentationSuggestions({
+    asset,
+    documentationSuggestions: asset.documentationSuggestions || [],
+    supportResourcesSuggestion: asset.supportResourcesSuggestion || [],
+    normalizedName: asset.normalizedName || asset.name || '',
+    manufacturerSuggestion: asset.manufacturerSuggestion || asset.manufacturer || '',
+    followupAnswer: asset.enrichmentFollowupAnswer || ''
+  });
+  const documentationSuggestions = initialDocumentationSuggestions.length
+    ? initialDocumentationSuggestions
+    : cleanDocumentationSuggestions(rehydratedDocumentationSuggestions);
   const supportResourcesSuggestion = cleanSupportResourcesSuggestion(asset.supportResourcesSuggestion || [], documentationSuggestions);
   const enrichmentFollowupQuestion = `${asset.enrichmentFollowupQuestion || ''}`.trim();
   const enrichmentStatus = resolveTerminalEnrichmentStatus({
@@ -1039,8 +1097,19 @@ function cleanFinalEnrichmentResult(asset = {}) {
 }
 
 async function repairLegacyAssetEnrichmentRecord({ asset = {}, verifySuggestions = verifyDocumentationSuggestions }) {
-  const verifiedDocs = Array.isArray(asset.documentationSuggestions) && asset.documentationSuggestions.length
-    ? await verifySuggestions(asset.documentationSuggestions)
+  const rehydratedSeededDocs = rehydrateSeededManualDocumentationSuggestions({
+    asset,
+    documentationSuggestions: asset.documentationSuggestions || [],
+    supportResourcesSuggestion: asset.supportResourcesSuggestion || [],
+    normalizedName: asset.normalizedName || asset.name || '',
+    manufacturerSuggestion: asset.manufacturerSuggestion || asset.manufacturer || '',
+    followupAnswer: asset.enrichmentFollowupAnswer || ''
+  });
+  const docsToVerify = Array.isArray(asset.documentationSuggestions) && asset.documentationSuggestions.length
+    ? asset.documentationSuggestions
+    : rehydratedSeededDocs;
+  const verifiedDocs = Array.isArray(docsToVerify) && docsToVerify.length
+    ? await verifySuggestions(docsToVerify)
     : [];
   const cleaned = cleanFinalEnrichmentResult({
     ...asset,
@@ -1233,7 +1302,8 @@ async function runLookupPreview({ settings, traceId, draftAsset, fetchImpl = fet
       matchStatus: catalogMatch.matchStatus,
       confidence: catalogMatch.confidence,
       lookupMethod: catalogMatch.lookupMethod,
-      notes: catalogMatch.notes
+      notes: catalogMatch.notes,
+      verificationMetadata: catalogMatch.entry?.verification || null
     } : null
   };
 }
@@ -1405,7 +1475,10 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     if (Array.isArray(preview.searchHints) && preview.searchHints.length) updatePayload.searchHints = preview.searchHints;
     if (preview.topMatchReason) updatePayload.topMatchReason = preview.topMatchReason;
     if (matchedManufacturer) updatePayload.matchedManufacturer = matchedManufacturer;
-    if (preview.catalogMatch) updatePayload.manualLookupCatalogMatch = preview.catalogMatch;
+    if (preview.catalogMatch) updatePayload.manualLookupCatalogMatch = {
+      ...preview.catalogMatch,
+      verificationMetadata: preview.catalogMatch.verificationMetadata || catalogMatch?.entry?.verification || null
+    };
     if (shouldSetManufacturer) updatePayload.manufacturer = manufacturerSuggestion;
 
     await assetRef.set(updatePayload, { merge: true });
@@ -1501,7 +1574,9 @@ module.exports = {
   repairLegacyAssetEnrichmentRecord,
   runLookupPreview,
   recoverCatalogSourcePageManuals,
-  isSeededCatalogManualCandidate
+  isSeededCatalogManualCandidate,
+  hasSeededDirectManualProof,
+  rehydrateSeededManualDocumentationSuggestions
 };
 
 

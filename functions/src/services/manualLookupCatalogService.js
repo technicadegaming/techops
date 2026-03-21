@@ -30,6 +30,12 @@ function getCatalogEntries() {
   return Array.isArray(catalogEntries) ? catalogEntries : [];
 }
 
+function getCatalogEntryById(catalogEntryId = '') {
+  const wanted = `${catalogEntryId || ''}`.trim();
+  if (!wanted) return null;
+  return getCatalogEntries().find((entry) => `${entry?.id || ''}`.trim() === wanted) || null;
+}
+
 function scoreCatalogEntry(entry, { assetCandidates, manufacturerCandidates }) {
   const entryManufacturerCandidates = buildNameCandidates([entry.manufacturerCanonical || entry.manufacturer, entry.manufacturerAliases]);
   const entryExactCandidates = buildNameCandidates([entry.canonicalTitle || entry.assetName, entry.titleAliases || entry.assetAliases]);
@@ -158,8 +164,19 @@ function findCatalogManualMatch({ assetName = '', normalizedName = '', manufactu
   return buildCatalogSuggestion(ranked[0].entry, ranked[0]);
 }
 
+function findCatalogManualMatchByEntryId(catalogEntryId = '') {
+  const entry = getCatalogEntryById(catalogEntryId);
+  if (!entry) return null;
+  return buildCatalogSuggestion(entry, {
+    score: 100,
+    matchStatus: 'catalog_exact'
+  });
+}
+
 module.exports = {
   getCatalogEntries,
+  getCatalogEntryById,
   buildNameCandidates,
-  findCatalogManualMatch
+  findCatalogManualMatch,
+  findCatalogManualMatchByEntryId
 };

@@ -3,8 +3,10 @@ const assert = require('node:assert/strict');
 
 const {
   getCatalogEntries,
+  getCatalogEntryById,
   buildNameCandidates,
-  findCatalogManualMatch
+  findCatalogManualMatch,
+  findCatalogManualMatchByEntryId
 } = require('../src/services/manualLookupCatalogService');
 const { discoverManualDocumentation } = require('../src/services/manualDiscoveryService');
 const { getManufacturerProfile } = require('../src/services/assetEnrichmentService');
@@ -179,4 +181,16 @@ test('Fast and Furious workbook row preserves official source page without forci
   assert.ok(match);
   assert.equal(match.documentationSuggestions.length, 0);
   assert.equal(match.supportResources[0].url, 'https://rawthrills.com/games/fast-furious-arcade/');
+});
+
+test('catalog entry id lookup rehydrates workbook-seeded direct manuals deterministically', () => {
+  const entry = getCatalogEntryById('raw-thrills-jurassic-park-arcade');
+  const match = findCatalogManualMatchByEntryId('raw-thrills-jurassic-park-arcade');
+
+  assert.ok(entry);
+  assert.ok(match);
+  assert.equal(entry.verification.hasDirectManual, true);
+  assert.equal(match.documentationSuggestions[0].url, 'https://rawthrills.com/wp-content/uploads/2015/12/Jurassic-Park-Arcade-Manual.pdf');
+  assert.equal(match.documentationSuggestions[0].lookupMethod, 'workbook_seed_exact_pdf');
+  assert.equal(match.documentationSuggestions[0].catalogEntryId, 'raw-thrills-jurassic-park-arcade');
 });
