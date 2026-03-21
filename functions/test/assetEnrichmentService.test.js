@@ -99,6 +99,34 @@ test('verifyDocumentationSuggestions keeps verification metadata and dead-page s
 });
 
 
+
+
+test('verifyDocumentationSuggestions preserves cached manual-library suggestions without refetching storage paths', async () => {
+  let fetchCalls = 0;
+  const verified = await verifyDocumentationSuggestions([
+    {
+      title: 'Fast & Furious Arcade Manual',
+      url: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
+      sourceType: 'manual_library',
+      manualLibraryRef: 'manual-fast-furious',
+      manualStoragePath: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
+      cachedManual: true,
+      matchScore: 98,
+      exactTitleMatch: true,
+      exactManualMatch: true,
+    }
+  ], async () => {
+    fetchCalls += 1;
+    throw new Error('cached manuals should not be fetched again');
+  });
+
+  assert.equal(fetchCalls, 0);
+  assert.equal(verified[0].verified, true);
+  assert.equal(verified[0].verificationStatus, 'cached_manual');
+  assert.equal(verified[0].manualLibraryRef, 'manual-fast-furious');
+  assert.equal(verified[0].manualStoragePath, 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf');
+});
+
 test('shouldDiscoverAfterCatalogMatch skips discovery for healthy catalog direct manuals', async () => {
   const catalogMatch = {
     confidence: 0.99,
@@ -1740,6 +1768,145 @@ test('repairLegacyAssetEnrichmentRecord rehydrates Quik Drop live persisted seed
   assert.equal(repaired.supportResourcesSuggestion[0].url, 'https://www.baytekent.com/games/quik-drop/');
 });
 
+
+
+
+test('enrichAssetDocumentation attaches acquired manual-library metadata for single-asset title-page acquisitions', async () => {
+  const { db, assetWrites, assetState } = createEnrichmentDb({ name: 'Fast & Furious', manufacturer: 'Raw Thrills', companyId: 'company-1' });
+
+  const result = await enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'manual',
+    followupAnswer: '',
+    traceId: 'trace-single-fast-furious',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.9,
+        normalizedName: 'Fast & Furious Arcade',
+        likelyManufacturer: 'Raw Thrills',
+        documentationSuggestions: [{
+          title: 'Fast & Furious Arcade Manual',
+          url: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
+          sourcePageUrl: 'https://rawthrills.com/games/fast-furious-arcade/',
+          sourceType: 'manual_library',
+          manualLibraryRef: 'manual-fast-furious',
+          manualStoragePath: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
+          cachedManual: true,
+          matchScore: 99,
+          exactTitleMatch: true,
+          exactManualMatch: true,
+          trustedSource: true,
+          verified: true,
+        }],
+        supportResourcesSuggestion: [{
+          title: 'Fast & Furious Arcade title page',
+          url: 'https://rawthrills.com/games/fast-furious-arcade/',
+          sourceType: 'support',
+          matchScore: 62,
+        }],
+        supportContactsSuggestion: [],
+        alternateNames: ['Fast and Furious'],
+        searchHints: [],
+        likelyCategory: 'video',
+        matchType: 'exact_manual',
+        manualReady: true,
+        manualUrl: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
+        manualSourceUrl: 'https://rawthrills.com/games/fast-furious-arcade/',
+        supportUrl: 'https://rawthrills.com/games/fast-furious-arcade/',
+        manualMatchSummary: {
+          matchType: 'exact_manual',
+          manualReady: true,
+          manualUrl: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
+          manualSourceUrl: 'https://rawthrills.com/games/fast-furious-arcade/',
+          supportUrl: 'https://rawthrills.com/games/fast-furious-arcade/',
+          manualLibraryRef: 'manual-fast-furious',
+          manualStoragePath: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
+        },
+        pipelineMeta: {
+          stage1MatchType: 'title_specific_source',
+          stage2Ran: true,
+          sourcePageExtracted: true,
+          acquisitionSucceeded: true,
+          manualLibraryRef: 'manual-fast-furious',
+          manualStoragePath: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
+        },
+      }),
+      findReusableVerifiedManuals: async () => [],
+      verifyDocumentationSuggestions: async (rows) => rows,
+    }
+  });
+
+  assert.equal(result.status, 'docs_found');
+  assert.equal(assetWrites.at(-1).payload.manualLibraryRef, 'manual-fast-furious');
+  assert.equal(assetWrites.at(-1).payload.manualStoragePath, 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf');
+  assert.deepEqual(assetWrites.at(-1).payload.manualLinks, ['manual-library/raw-thrills/fast-furious-arcade/abc123.pdf']);
+  assert.equal(assetWrites.at(-1).payload.manualSourceUrl, 'https://rawthrills.com/games/fast-furious-arcade/');
+  assert.equal(assetWrites.at(-1).payload.supportUrl, 'https://rawthrills.com/games/fast-furious-arcade/');
+  assert.equal(assetState.manualLibraryRef, 'manual-fast-furious');
+});
+
+test('enrichAssetDocumentation keeps source-only single-asset results out of docs_found without acquired manual storage', async () => {
+  const { db, assetWrites } = createEnrichmentDb({ name: 'King Kong', manufacturer: 'Raw Thrills', companyId: 'company-1' });
+
+  const result = await enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'manual',
+    followupAnswer: '',
+    traceId: 'trace-single-king-kong-source',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.71,
+        normalizedName: 'King Kong of Skull Island VR',
+        likelyManufacturer: 'Raw Thrills',
+        documentationSuggestions: [],
+        supportResourcesSuggestion: [{
+          title: 'King Kong of Skull Island VR title page',
+          url: 'https://rawthrills.com/games/king-kong-of-skull-island-vr/',
+          sourceType: 'support',
+          matchScore: 67,
+        }],
+        supportContactsSuggestion: [],
+        alternateNames: ['King Kong VR'],
+        searchHints: [],
+        likelyCategory: 'vr',
+        matchType: 'title_specific_source',
+        manualReady: false,
+        manualUrl: '',
+        manualSourceUrl: 'https://rawthrills.com/games/king-kong-of-skull-island-vr/',
+        supportUrl: 'https://rawthrills.com/games/king-kong-of-skull-island-vr/',
+        oneFollowupQuestion: '',
+        manualMatchSummary: {
+          matchType: 'title_specific_source',
+          manualReady: false,
+          manualUrl: '',
+          manualSourceUrl: 'https://rawthrills.com/games/king-kong-of-skull-island-vr/',
+          supportUrl: 'https://rawthrills.com/games/king-kong-of-skull-island-vr/',
+        },
+        pipelineMeta: {
+          stage1MatchType: 'title_specific_source',
+          stage2Ran: true,
+          sourcePageExtracted: true,
+          acquisitionSucceeded: false,
+        },
+      }),
+      findReusableVerifiedManuals: async () => [],
+      verifyDocumentationSuggestions: async () => [],
+    }
+  });
+
+  assert.equal(result.status, 'followup_needed');
+  assert.deepEqual(assetWrites.at(-1).payload.manualLinks, []);
+  assert.equal(assetWrites.at(-1).payload.manualLibraryRef, '');
+  assert.equal(assetWrites.at(-1).payload.manualStoragePath, '');
+  assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'followup_needed');
+  assert.equal(assetWrites.at(-1).payload.supportUrl, 'https://rawthrills.com/games/king-kong-of-skull-island-vr/');
+});
 
 function createEnrichmentDb(asset = {}) {
   const assetState = { id: 'asset-1', ...asset };
