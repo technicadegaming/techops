@@ -546,6 +546,10 @@ async function loadOnboardingStatusHelpers() {
   return import('../src/features/onboardingStatus.js');
 }
 
+function loadAppShellSource() {
+  return require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'app.js'), 'utf8');
+}
+
 test('authoritative onboarding state resolves stale bootstrap records as complete and repair is idempotent', async () => {
   const { buildOnboardingRepairPlan, getAuthoritativeOnboardingState } = await loadOnboardingStatusHelpers();
   const state = {
@@ -593,4 +597,17 @@ test('authoritative onboarding state upgrades a pending membership role for the 
   assert.equal(plan.needsRepair, true);
   assert.deepEqual(plan.userPatch, { onboardingState: 'complete', role: 'owner' });
   assert.deepEqual(plan.membershipPatch, { role: 'owner' });
+});
+
+test('app shell routes stale bootstrap repairs through the callable flow instead of direct browser writes', () => {
+  const source = loadAppShellSource();
+  const repairStart = source.indexOf('async function repairOperationalOnboardingState()');
+  const refreshStart = source.indexOf('async function refreshData()');
+  const repairBody = source.slice(repairStart, refreshStart);
+
+  assert.match(repairBody, /shouldFinalizeOnboardingBootstrap\(state\)/);
+  assert.match(repairBody, /await finalizeOnboardingBootstrap\(state\)/);
+  assert.doesNotMatch(repairBody, /saveUserProfile\(/);
+  assert.doesNotMatch(repairBody, /upsertEntity\('companyMemberships'/);
+  assert.doesNotMatch(repairBody, /upsertEntity\('companies'/);
 });

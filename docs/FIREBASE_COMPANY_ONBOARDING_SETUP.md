@@ -34,3 +34,8 @@
 ## Functions/env vars
 - None strictly required for this pass.
 - Optional future hard-delete function for company deletion should run with Admin SDK and audit logging.
+
+## Bootstrap repair and finalization
+- Browser onboarding may derive completion from live facts (company, active membership, and required locations), but stale bootstrap metadata must be finalized server-side.
+- Use the callable `finalizeOnboardingBootstrap` for idempotent repair of `users.onboardingState`, `users.role`, `companies.onboardingCompleted`, `companies.onboardingState`, and stale membership roles when live workspace facts already satisfy onboarding.
+- Do not weaken Firestore rules to allow newly-created users to patch these bootstrap fields directly from the browser during auth/bootstrap refresh.

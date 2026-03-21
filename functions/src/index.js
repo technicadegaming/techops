@@ -24,6 +24,9 @@ const {
 } = require('./services/assetEnrichmentService');
 const { approveAssetManual } = require('./services/manualIngestionService');
 const { researchAssetTitles } = require('./services/manualResearchService');
+const {
+  finalizeOnboardingBootstrap,
+} = require('./services/onboardingBootstrapService');
 
 const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
 
@@ -136,6 +139,16 @@ async function enforceRateLimit(taskId, userId) {
     throw new HttpsError('resource-exhausted', 'Please wait before running AI troubleshooting again.');
   }
 }
+
+exports.finalizeOnboardingBootstrap = onCall({}, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+  return finalizeOnboardingBootstrap({
+    db,
+    auth: request.auth,
+    companyId: request.data?.companyId,
+    requireLocation: true,
+  });
+});
 
 exports.analyzeTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
   console.log('analyzeTaskTroubleshooting:start', {
