@@ -48,7 +48,7 @@ test('extractPdfText extracts simple flate-compressed text operators', () => {
 
 test('approved manual metadata preserves type, variant, family, manufacturer, and confidence fields', async () => {
   const { approveAssetManual } = require('../src/services/manualIngestionService');
-  const writes = { manuals: {}, assets: {}, auditLogs: [], chunks: [] };
+  const writes = { manuals: {}, assets: {}, auditLogs: [], chunks: [], manualLibrary: {} };
   global.fetch = async () => ({
     ok: true,
     status: 200,
@@ -65,6 +65,7 @@ test('approved manual metadata preserves type, variant, family, manufacturer, an
           return {
             id,
             set: async (payload, options = {}) => {
+              if (!writes[name]) writes[name] = {};
               writes[name][id] = options.merge ? { ...(writes[name][id] || {}), ...payload } : payload;
             },
             collection() {
@@ -108,13 +109,13 @@ test('approved manual metadata preserves type, variant, family, manufacturer, an
     userId: 'user1',
     sourceUrl: 'https://rawthrills.com/manuals/fast-furious.pdf'
   });
-  const manual = Object.values(writes.manuals)[0];
-  assert.equal(manual.manualType, 'operator_manual');
-  assert.equal(manual.cabinetVariant, '2 player');
-  assert.equal(manual.family, 'Fast and Furious Arcade');
+  const manual = Object.values(writes.manualLibrary)[0];
+  assert.equal(manual.variant, '2 player');
+  assert.equal(manual.familyTitle, 'Fast and Furious Arcade');
   assert.equal(manual.manufacturer, 'Raw Thrills');
-  assert.equal(manual.manualConfidence, 0.88);
-  assert.equal(manual.assetLocationName, 'Front Room');
+  assert.equal(manual.matchConfidence, 0.88);
+  assert.match(manual.storagePath, /^manual-library\/raw-thrills\//);
+  assert.equal(writes.assets.asset1.manualLibraryRef?.length > 0, true);
 });
 
 

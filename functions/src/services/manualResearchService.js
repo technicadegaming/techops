@@ -21,6 +21,7 @@ const {
   findReusableVerifiedManuals,
   classifyManualMatchSummary,
 } = require('./assetEnrichmentService');
+const { acquireManualToLibrary } = require('./manualAcquisitionService');
 
 const FALLBACK_MATCH_TYPES = new Set([
   'title_specific_source',
@@ -407,6 +408,7 @@ async function researchAssetTitles({
   traceId = '',
   fetchImpl = fetch,
   researchFallback,
+  storage = admin.storage(),
 }) {
   if (!companyId) throw new HttpsError('invalid-argument', 'companyId is required');
   if (!Array.isArray(titles) || !titles.length) throw new HttpsError('invalid-argument', 'titles is required');
@@ -593,6 +595,71 @@ async function researchAssetTitles({
       });
     }
 
+    let manualLibraryAcquisition = null;
+    if (documentationSuggestions.length) {
+      manualLibraryAcquisition = await acquireManualToLibrary({
+        db,
+        storage,
+        fetchImpl,
+        candidate: documentationSuggestions[0],
+        context: {
+          originalTitle,
+          canonicalTitle: summary.canonicalTitle || stageOne.canonicalTitleFamily,
+          normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+          familyTitle: stageOne.canonicalTitleFamily,
+          manufacturer: summary.manufacturer || stageOne.manufacturer,
+          manufacturerProfile: stageOne.manufacturerProfile,
+          manualSourceUrl: summary.manualSourceUrl,
+          manualUrl: summary.manualUrl,
+          matchType: summary.matchType,
+          matchConfidence: summary.matchConfidence || summary.confidence,
+          notes: summary.matchNotes || '',
+          catalogEntryId: stageOne.catalogMatch?.catalogEntryId || '',
+          seededFromWorkbook: stageOne.catalogMatch?.seededFromWorkbook === true,
+        },
+      }).catch((error) => {
+        logManualResearchEvent('manual_acquisition_failed', {
+          title: originalTitle,
+          normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+          manufacturer: summary.manufacturer || stageOne.manufacturer,
+          reason: normalizeString(error?.message || String(error), 220),
+        });
+        return null;
+      });
+    }
+    if (manualLibraryAcquisition?.manualReady && manualLibraryAcquisition.manualLibrary) {
+      const library = manualLibraryAcquisition.manualLibrary;
+      const storageUrl = library.storagePath || manualLibraryAcquisition.manualUrl || '';
+      summary = {
+        ...summary,
+        matchType: 'exact_manual',
+        manualReady: true,
+        reviewRequired: library.approved !== true,
+        status: 'docs_found',
+        manualUrl: storageUrl,
+        manualSourceUrl: library.sourcePageUrl || summary.manualSourceUrl || '',
+        manualLibraryRef: library.id,
+        manualStoragePath: library.storagePath || '',
+        manualVariant: library.variant || '',
+      };
+      documentationSuggestions = documentationSuggestions.map((entry, index) => index === 0 ? {
+        ...entry,
+        url: storageUrl,
+        sourcePageUrl: library.sourcePageUrl || entry.sourcePageUrl || '',
+        manualLibraryRef: library.id,
+        manualStoragePath: library.storagePath || '',
+        cachedManual: true,
+      } : entry);
+    } else {
+      summary = {
+        ...summary,
+        manualReady: false,
+        status: summary.supportUrl ? 'followup_needed' : 'no_match_yet',
+        reviewRequired: true,
+        manualUrl: '',
+      };
+    }
+
     logManualResearchEvent('final_result', {
       title: originalTitle,
       normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
@@ -606,6 +673,8 @@ async function researchAssetTitles({
       finalManualReady: summary.manualReady === true,
       supportCandidateCount: supportResourcesSuggestion.length,
       researchSourceType: summary.researchSourceType,
+      manualLibraryRef: summary.manualLibraryRef || '',
+      manualStoragePath: summary.manualStoragePath || '',
     });
 
     results.push({
@@ -623,6 +692,10 @@ async function researchAssetTitles({
         ...summary,
       },
       locationId: normalizeString(locationId, 120),
+      manualLibraryRef: summary.manualLibraryRef || '',
+      manualVariant: summary.manualVariant || '',
+      manualStoragePath: summary.manualStoragePath || '',
+      manualLinks: summary.manualUrl ? [summary.manualUrl] : [],
     });
   }
 
