@@ -339,6 +339,56 @@ test('classifyManualMatchSummary marks title-specific verified manual HTML pages
   assert.equal(summary.reviewRequired, false);
 });
 
+test('classifyManualMatchSummary keeps generic Raw Thrills service pages as support_only and never manual-ready', () => {
+  const summary = classifyManualMatchSummary({
+    inputTitle: 'King Kong VR',
+    titleFamily: resolveArcadeTitleFamily({ title: 'King Kong VR' }),
+    supportResourcesSuggestion: [{
+      title: 'Raw Thrills service support',
+      url: 'https://rawthrills.com/service/',
+      sourceType: 'support',
+      matchScore: 60
+    }],
+    confidence: 0.62
+  });
+
+  assert.equal(summary.matchType, 'support_only');
+  assert.equal(summary.manualReady, false);
+  assert.equal(summary.manualUrl, '');
+  assert.equal(summary.status, 'followup_needed');
+});
+
+test('classifyManualMatchSummary treats Virtual Rabbids install-guide evidence as family review instead of manual-ready', () => {
+  const summary = classifyManualMatchSummary({
+    inputTitle: 'Virtual Rabbids',
+    titleFamily: resolveArcadeTitleFamily({ title: 'Virtual Rabbids' }),
+    documentationSuggestions: [{
+      title: 'Virtual Rabbids install guide',
+      url: 'https://laigames.com/downloads/virtual-rabbids-the-big-ride-install-guide.pdf',
+      sourcePageUrl: 'https://laigames.com/virtual-rabbids-upgrade-kit',
+      sourceType: 'manufacturer',
+      manualType: 'install_guide',
+      verified: true,
+      exactTitleMatch: true,
+      exactManualMatch: false,
+      trustedSource: true,
+      matchScore: 88
+    }],
+    supportResourcesSuggestion: [{
+      title: 'Virtual Rabbids upgrade kit',
+      url: 'https://laigames.com/virtual-rabbids-upgrade-kit',
+      sourceType: 'support',
+      matchScore: 76
+    }],
+    confidence: 0.88
+  });
+
+  assert.equal(summary.matchType, 'title_specific_source');
+  assert.equal(summary.manualReady, false);
+  assert.equal(summary.manualUrl, '');
+  assert.equal(summary.supportUrl, 'https://laigames.com/virtual-rabbids-upgrade-kit');
+});
+
 test('buildFollowupQuestion asks one actionable arcade-specific question', () => {
   const noUrlPrompt = buildFollowupQuestion({
     parsedQuestion: 'Please share exact manual URL',
@@ -1469,10 +1519,9 @@ test('Virtual Rabbids workbook seed materializes a trustworthy official document
   });
 
   assert.ok(catalogMatch);
-  assert.equal(cleaned.documentationSuggestions.length, 1);
-  assert.equal(cleaned.documentationSuggestions[0].url, 'https://laigames.com/downloads/virtual-rabbids-the-big-ride-install-guide.pdf');
-  assert.equal(cleaned.documentationSuggestions[0].verified, true);
-  assert.equal(cleaned.enrichmentStatus, 'docs_found');
+  assert.equal(cleaned.documentationSuggestions.length, 0);
+  assert.equal(cleaned.supportResourcesSuggestion[0].url, 'https://laigames.com/virtual-rabbids-upgrade-kit');
+  assert.equal(cleaned.enrichmentStatus, 'followup_needed');
 });
 
 

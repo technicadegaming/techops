@@ -86,7 +86,7 @@ function buildCatalogSuggestion(entry, match) {
     confidence: Number(entry.confidence || 0.95),
     matchScore: match.score,
     exactTitleMatch: true,
-    exactManualMatch: true,
+    exactManualMatch: !/install_guide/i.test(entry.manualType || ''),
     trustedSource: true,
     isOfficial: /official/.test(entry.linkType || ''),
     verified: true,

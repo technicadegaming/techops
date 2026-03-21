@@ -309,6 +309,10 @@ function sanitizeManualCandidate(entry = {}) {
   const isDirectFile = isDirectDocumentationFileSuggestion(sanitized);
   const manualBearingHtml = isTitleSpecificManualBearingHtmlSuggestion(sanitized);
   const sourceType = `${sanitized.sourceType || sanitized.resourceType || ''}`.trim().toLowerCase();
+  if (isAmbiguousManualCandidate(sanitized)) {
+    sanitized.exactManualMatch = false;
+    sanitized.matchType = 'family_match_needs_review';
+  }
   if (!isDirectFile && sanitized.verificationKind === 'manual_html' && !manualBearingHtml) {
     sanitized.verificationKind = 'support_html';
     sanitized.verified = false;
@@ -444,6 +448,12 @@ function selectBestSupportResource(supportResources = [], titleVariants = []) {
   return exactTitleSupport || (supportResources || [])[0] || null;
 }
 
+function isAmbiguousManualCandidate(entry = {}) {
+  const manualType = `${entry?.manualType || entry?.linkType || ''}`.trim().toLowerCase();
+  const joined = `${entry?.title || ''} ${entry?.notes || ''} ${entry?.sourcePageUrl || ''} ${entry?.url || ''}`.toLowerCase();
+  return /install_guide|upgrade[_ -]?kit/.test(manualType) || /install guide|upgrade kit/.test(joined);
+}
+
 function classifyManualMatchSummary({
   inputTitle = '',
   titleFamily = {},
@@ -462,7 +472,9 @@ function classifyManualMatchSummary({
   const supportEmail = (supportContactsSuggestion || []).find((entry) => `${entry?.contactType || ''}`.toLowerCase() === 'email')?.value || '';
   const supportPhone = (supportContactsSuggestion || []).find((entry) => ['phone', 'telephone'].includes(`${entry?.contactType || ''}`.toLowerCase()))?.value || '';
   const catalogMatchStatus = `${catalogMatch?.matchStatus || ''}`.toLowerCase();
+  const ambiguousManual = bestManual && isAmbiguousManualCandidate(bestManual);
   const variantWarning = titleFamily.variantWarning
+    || (ambiguousManual ? 'Candidate documentation appears to be install-guide or upgrade-kit evidence, so the exact base cabinet manual still needs review.' : '')
     || ((catalogMatchStatus === 'catalog_family' || catalogMatchStatus === 'catalog_variant')
       ? 'Likely title family match, but the exact cabinet/model variant still needs review.'
       : '');
@@ -474,8 +486,9 @@ function classifyManualMatchSummary({
     && !/\.pdf($|\?|#)/i.test(bestManualUrl);
   const exactManual = !!bestManual && !variantWarning && !isManualPageWithDownload;
   const manualPageWithDownload = !!bestManual && !variantWarning && isManualPageWithDownload;
-  const titleSpecificSource = !bestManual && !!bestSupportUrl;
-  const supportOnly = !bestManual && !bestSupportUrl && supportCandidates.length > 0;
+  const titleSpecificSupport = !!bestSupportUrl && titleVariants.some((variant) => normalizePhrase(`${bestSupport?.title || ''} ${bestSupportUrl}`).includes(variant));
+  const titleSpecificSource = !bestManual && titleSpecificSupport;
+  const supportOnly = !bestManual && !titleSpecificSupport && supportCandidates.length > 0;
   const familyReview = !!variantWarning && (!!bestManual || !!bestSupport || !!catalogMatch);
   const matchType = exactManual
     ? 'exact_manual'
@@ -486,7 +499,7 @@ function classifyManualMatchSummary({
         : (titleSpecificSource
           ? 'title_specific_source'
           : (supportOnly ? 'support_only' : 'unresolved'))));
-  const manualSourceUrl = bestManualSourceUrl || (manualPageWithDownload ? bestManualUrl : '') || bestSupportUrl || '';
+  const manualSourceUrl = bestManualSourceUrl || (manualPageWithDownload ? bestManualUrl : '');
   const supportUrl = bestSupportUrl || supportCandidates[0]?.url || '';
   const manualReady = ['exact_manual', 'manual_page_with_download'].includes(matchType);
   const notes = [
@@ -499,22 +512,31 @@ function classifyManualMatchSummary({
     topMatchReason || ''
   ].filter(Boolean).join(' | ');
 
+  const status = manualReady ? 'docs_found' : ((supportUrl || variantWarning) ? 'followup_needed' : 'no_match_yet');
   return {
     inputTitle,
     canonicalTitle: titleFamily.canonicalTitle || inputTitle,
+    assetNameOriginal: inputTitle,
+    assetNameNormalized: titleFamily.canonicalTitle || inputTitle,
     manufacturer: titleFamily.manufacturer || '',
+    manufacturerInferred: !!(titleFamily.manufacturer),
+    model: '',
+    category: '',
     matchType,
     manualReady,
     confidence: Number(confidence || 0),
+    matchConfidence: Number(confidence || 0),
     matchNotes: notes,
-    manualUrl: bestManual?.url || '',
+    manualUrl: manualReady ? (bestManual?.url || '') : '',
     manualSourceUrl,
     supportEmail,
     supportPhone,
     supportUrl,
     alternateTitles: Array.from(new Set(titleFamily.alternateTitles || [])).filter(Boolean),
     variantWarning,
-    reviewRequired: !manualReady
+    reviewRequired: !manualReady,
+    searchEvidence: [bestManual?.url, bestManual?.sourcePageUrl, bestSupportUrl].filter(Boolean),
+    status
   };
 }
 
@@ -884,6 +906,7 @@ function isLiveManualCandidate(entry = {}) {
 
 function isManualUsableSuggestion(entry = {}) {
   if (!isLiveManualCandidate(entry)) return false;
+  if (isAmbiguousManualCandidate(entry)) return false;
   const url = `${entry?.url || ''}`.toLowerCase();
   const sourceType = `${entry?.sourceType || entry?.resourceType || ''}`.toLowerCase();
   const manualBearingHtml = isTitleSpecificManualBearingHtmlSuggestion(entry);
@@ -1419,6 +1442,7 @@ async function runLookupPreview({ settings, traceId, draftAsset, fetchImpl = fet
     documentationSuggestions,
     supportResourcesSuggestion,
     supportContactsSuggestion,
+    assetResearchSummary: manualMatchSummary,
     manualMatchSummary,
     matchType: manualMatchSummary.matchType,
     manualReady: manualMatchSummary.manualReady,
