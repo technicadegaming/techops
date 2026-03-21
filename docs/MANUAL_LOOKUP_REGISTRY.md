@@ -32,7 +32,8 @@ The live lookup path now layers a deterministic title-family registry over the w
 - `inputTitle`
 - `canonicalTitle`
 - `manufacturer`
-- `matchType` (`exact_manual`, `title_specific_source`, `support_only`, `family_match_needs_review`, `unresolved`)
+- `matchType` (`exact_manual`, `manual_page_with_download`, `title_specific_source`, `support_only`, `family_match_needs_review`, `unresolved`)
+- `manualReady`
 - `confidence`
 - `matchNotes`
 - `manualUrl`
@@ -65,8 +66,11 @@ Trust expectations:
 - `manualPdfUrl`: direct manual file when known-good.
 - `alternateManualUrl`: additional valid manual variant.
 - `sourcePageUrl`: live product/support/source page for follow-up extraction and operator review.
+- `manualUrl`: the downstream-safe manual target exposed by the enrichment summary. This only counts as manual-ready when it is either a direct document URL or a verified title-specific HTML page with a real downloadable manual link.
+- `manualSourceUrl`: the title-specific product/support page that produced the manual URL.
+- `supportUrl`: generic or title-specific support context that helps operators research, but does not satisfy docs-found on its own.
 
-This separation prevents dead catalog PDF seeds from short-circuiting deterministic discovery.
+This separation prevents dead catalog PDF seeds from short-circuiting deterministic discovery and keeps source/support context from being promoted to a found manual.
 
 ## Regression-test strategy
 

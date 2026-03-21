@@ -263,6 +263,7 @@ test('classifyManualMatchSummary distinguishes exact manual, title-specific sour
     confidence: 0.96
   });
   assert.equal(exact.matchType, 'exact_manual');
+  assert.equal(exact.manualReady, true);
   assert.equal(exact.manualUrl, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
   assert.equal(exact.reviewRequired, false);
 
@@ -278,6 +279,7 @@ test('classifyManualMatchSummary distinguishes exact manual, title-specific sour
     confidence: 0.73
   });
   assert.equal(sourceOnly.matchType, 'title_specific_source');
+  assert.equal(sourceOnly.manualReady, false);
   assert.equal(sourceOnly.manualUrl, '');
   assert.equal(sourceOnly.supportUrl, 'https://rawthrills.com/games/fast-furious-arcade/');
 
@@ -297,8 +299,44 @@ test('classifyManualMatchSummary distinguishes exact manual, title-specific sour
     catalogMatch: { matchStatus: 'catalog_family' }
   });
   assert.equal(familyReview.matchType, 'family_match_needs_review');
+  assert.equal(familyReview.manualReady, false);
   assert.equal(familyReview.reviewRequired, true);
   assert.match(familyReview.variantWarning, /cabinet|model|variant/i);
+});
+
+
+
+test('classifyManualMatchSummary marks title-specific verified manual HTML pages as manual_page_with_download', () => {
+  const summary = classifyManualMatchSummary({
+    inputTitle: 'Fast and Furious Arcade',
+    titleFamily: resolveArcadeTitleFamily({ title: 'Fast and Furious Arcade' }),
+    documentationSuggestions: [{
+      title: 'Fast & Furious Arcade Downloads',
+      url: 'https://rawthrills.com/games/fast-furious-arcade/manuals/',
+      sourceType: 'support',
+      assetName: 'Fast and Furious Arcade',
+      normalizedName: 'Fast and Furious Arcade',
+      verified: true,
+      exactTitleMatch: true,
+      exactManualMatch: true,
+      trustedSource: true,
+      verificationKind: 'manual_html',
+      sourcePageUrl: 'https://rawthrills.com/games/fast-furious-arcade/'
+    }],
+    supportResourcesSuggestion: [{
+      title: 'Fast & Furious Arcade product page',
+      url: 'https://rawthrills.com/games/fast-furious-arcade/',
+      sourceType: 'support'
+    }],
+    confidence: 0.9
+  });
+
+  assert.equal(summary.matchType, 'manual_page_with_download');
+  assert.equal(summary.manualReady, true);
+  assert.equal(summary.manualUrl, 'https://rawthrills.com/games/fast-furious-arcade/manuals/');
+  assert.equal(summary.manualSourceUrl, 'https://rawthrills.com/games/fast-furious-arcade/');
+  assert.equal(summary.supportUrl, 'https://rawthrills.com/games/fast-furious-arcade/');
+  assert.equal(summary.reviewRequired, false);
 });
 
 test('buildFollowupQuestion asks one actionable arcade-specific question', () => {
@@ -1290,6 +1328,21 @@ test('terminal status resolver maps support-only and follow-up states without tr
   }), 'no_match_yet');
 });
 
+
+
+test('support-only context cannot reach docs_found terminal status even when review metadata exists', () => {
+  const supportOnlySummary = {
+    matchType: 'support_only',
+    manualReady: false
+  };
+  assert.equal(resolveTerminalEnrichmentStatus({
+    documentationSuggestions: [],
+    supportResourcesSuggestion: [{ title: 'Raw Thrills service', url: 'https://rawthrills.com/service/', sourceType: 'support', matchScore: 60 }],
+    followupQuestion: '',
+    manualMatchSummary: supportOnlySummary
+  }), 'followup_needed');
+});
+
 test('Quik Drop exact manual-bearing official page resolves terminal docs_found without followup', () => {
   const cleaned = cleanFinalEnrichmentResult({
     documentationSuggestions: [{
@@ -1320,6 +1373,8 @@ test('Quik Drop exact manual-bearing official page resolves terminal docs_found 
   assert.equal(cleaned.enrichmentStatus, 'docs_found');
   assert.equal(cleaned.enrichmentFollowupQuestion, '');
   assert.equal(cleaned.documentationSuggestions[0].verificationKind, 'manual_html');
+  assert.equal(cleaned.manualMatchSummary.matchType, 'manual_page_with_download');
+  assert.equal(cleaned.manualMatchSummary.manualReady, true);
 });
 
 test('Quik Drop exact catalog manual persists as documentationSuggestions and avoids followup terminal state', async () => {

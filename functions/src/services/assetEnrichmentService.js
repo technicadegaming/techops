@@ -466,19 +466,29 @@ function classifyManualMatchSummary({
     || ((catalogMatchStatus === 'catalog_family' || catalogMatchStatus === 'catalog_variant')
       ? 'Likely title family match, but the exact cabinet/model variant still needs review.'
       : '');
-  const exactManual = !!bestManual && !variantWarning;
-  const titleSpecificSource = !bestManual && !!bestSupport;
-  const supportOnly = !bestManual && !bestSupport && supportCandidates.length > 0;
+  const bestManualUrl = `${bestManual?.url || ''}`.trim();
+  const bestManualSourceUrl = `${bestManual?.sourcePageUrl || ''}`.trim();
+  const bestSupportUrl = `${bestSupport?.url || ''}`.trim();
+  const isManualPageWithDownload = !!bestManual
+    && `${bestManual?.verificationKind || ''}`.trim().toLowerCase() === 'manual_html'
+    && !/\.pdf($|\?|#)/i.test(bestManualUrl);
+  const exactManual = !!bestManual && !variantWarning && !isManualPageWithDownload;
+  const manualPageWithDownload = !!bestManual && !variantWarning && isManualPageWithDownload;
+  const titleSpecificSource = !bestManual && !!bestSupportUrl;
+  const supportOnly = !bestManual && !bestSupportUrl && supportCandidates.length > 0;
   const familyReview = !!variantWarning && (!!bestManual || !!bestSupport || !!catalogMatch);
   const matchType = exactManual
     ? 'exact_manual'
-    : (familyReview
-      ? 'family_match_needs_review'
-      : (titleSpecificSource
-        ? 'title_specific_source'
-        : (supportOnly ? 'support_only' : 'unresolved')));
-  const manualSourceUrl = bestManual?.sourcePageUrl || bestSupport?.url || '';
-  const supportUrl = bestSupport?.url || supportCandidates[0]?.url || '';
+    : (manualPageWithDownload
+      ? 'manual_page_with_download'
+      : (familyReview
+        ? 'family_match_needs_review'
+        : (titleSpecificSource
+          ? 'title_specific_source'
+          : (supportOnly ? 'support_only' : 'unresolved'))));
+  const manualSourceUrl = bestManualSourceUrl || (manualPageWithDownload ? bestManualUrl : '') || bestSupportUrl || '';
+  const supportUrl = bestSupportUrl || supportCandidates[0]?.url || '';
+  const manualReady = ['exact_manual', 'manual_page_with_download'].includes(matchType);
   const notes = [
     matchType ? `matchType: ${matchType}` : '',
     titleFamily.matchedAlias && titleFamily.matchedAlias !== titleFamily.canonicalTitle ? `normalized from: ${titleFamily.matchedAlias}` : '',
@@ -494,6 +504,7 @@ function classifyManualMatchSummary({
     canonicalTitle: titleFamily.canonicalTitle || inputTitle,
     manufacturer: titleFamily.manufacturer || '',
     matchType,
+    manualReady,
     confidence: Number(confidence || 0),
     matchNotes: notes,
     manualUrl: bestManual?.url || '',
@@ -503,7 +514,7 @@ function classifyManualMatchSummary({
     supportUrl,
     alternateTitles: Array.from(new Set(titleFamily.alternateTitles || [])).filter(Boolean),
     variantWarning,
-    reviewRequired: matchType !== 'exact_manual'
+    reviewRequired: !manualReady
   };
 }
 
@@ -1121,9 +1132,12 @@ function hasMeaningfulSupportContext(rows = []) {
   return cleanSupportResourcesSuggestion(rows).length > 0;
 }
 
-function resolveTerminalEnrichmentStatus({ documentationSuggestions = [], supportResourcesSuggestion = [], followupQuestion = '', hadFailure = false }) {
+function resolveTerminalEnrichmentStatus({ documentationSuggestions = [], supportResourcesSuggestion = [], followupQuestion = '', hadFailure = false, manualMatchSummary = null }) {
   if (hadFailure) return 'lookup_failed';
-  if (cleanDocumentationSuggestions(documentationSuggestions).length > 0) return 'docs_found';
+  const manualReady = typeof manualMatchSummary?.manualReady === 'boolean'
+    ? manualMatchSummary.manualReady
+    : cleanDocumentationSuggestions(documentationSuggestions).length > 0;
+  if (manualReady) return 'docs_found';
   if (`${followupQuestion || ''}`.trim() || hasMeaningfulSupportContext(supportResourcesSuggestion)) return 'followup_needed';
   return 'no_match_yet';
 }
@@ -1154,11 +1168,22 @@ function cleanFinalEnrichmentResult(asset = {}) {
     : cleanDocumentationSuggestions(rehydratedDocumentationSuggestions);
   const supportResourcesSuggestion = cleanSupportResourcesSuggestion(asset.supportResourcesSuggestion || [], documentationSuggestions);
   const enrichmentFollowupQuestion = `${asset.enrichmentFollowupQuestion || ''}`.trim();
+  const manualMatchSummary = classifyManualMatchSummary({
+    inputTitle: asset.name || asset.normalizedName || '',
+    titleFamily: resolveArcadeTitleFamily({ title: asset.normalizedName || asset.name || '', manufacturer: asset.manufacturerSuggestion || asset.manufacturer || '' }),
+    documentationSuggestions,
+    supportResourcesSuggestion,
+    supportContactsSuggestion: asset.supportContactsSuggestion || [],
+    confidence: Number(asset.enrichmentConfidence || 0),
+    topMatchReason: asset.topMatchReason || '',
+    catalogMatch: asset.manualLookupCatalogMatch || null
+  });
   const enrichmentStatus = resolveTerminalEnrichmentStatus({
     documentationSuggestions,
     supportResourcesSuggestion,
     followupQuestion: enrichmentFollowupQuestion,
-    hadFailure: false
+    hadFailure: false,
+    manualMatchSummary
   });
   const reviewState = deriveDocumentationReviewState({
     ...asset,
@@ -1170,6 +1195,7 @@ function cleanFinalEnrichmentResult(asset = {}) {
   return {
     documentationSuggestions,
     supportResourcesSuggestion,
+    manualMatchSummary,
     enrichmentFollowupQuestion: enrichmentStatus === 'docs_found' ? '' : enrichmentFollowupQuestion,
     enrichmentStatus,
     reviewState
@@ -1395,6 +1421,7 @@ async function runLookupPreview({ settings, traceId, draftAsset, fetchImpl = fet
     supportContactsSuggestion,
     manualMatchSummary,
     matchType: manualMatchSummary.matchType,
+    manualReady: manualMatchSummary.manualReady,
     manualUrl: manualMatchSummary.manualUrl,
     manualSourceUrl: manualMatchSummary.manualSourceUrl,
     supportUrl: manualMatchSummary.supportUrl,
@@ -1533,6 +1560,15 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     const shouldSetManufacturer = !asset.manufacturer && confidence >= Math.max(0.75, confidenceThreshold) && manufacturerSuggestion;
 
     const cleanedResult = cleanFinalEnrichmentResult({
+      ...asset,
+      name: asset.name || normalizedName,
+      normalizedName,
+      manufacturer: asset.manufacturer || manufacturerSuggestion || '',
+      manufacturerSuggestion,
+      enrichmentConfidence: confidence,
+      topMatchReason: preview.topMatchReason || '',
+      manualLookupCatalogMatch: preview.catalogMatch || null,
+      supportContactsSuggestion: preview.supportContactsSuggestion || [],
       documentationSuggestions: suggestions,
       supportResourcesSuggestion: preview.supportResourcesSuggestion || [],
       enrichmentFollowupQuestion: followupQuestion
@@ -1540,7 +1576,8 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     const status = resolveTerminalEnrichmentStatus({
       documentationSuggestions: cleanedResult.documentationSuggestions,
       supportResourcesSuggestion: cleanedResult.supportResourcesSuggestion,
-      followupQuestion: cleanedResult.enrichmentFollowupQuestion
+      followupQuestion: cleanedResult.enrichmentFollowupQuestion,
+      manualMatchSummary: cleanedResult.manualMatchSummary
     });
     terminalStatus = status;
 
@@ -1559,6 +1596,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       enrichmentErrorCode: '',
       enrichmentErrorMessage: '',
       reviewState: cleanedResult.reviewState,
+      manualMatchSummary: cleanedResult.manualMatchSummary,
       enrichmentCandidates: [
         manufacturerSuggestion,
         preview?.likelyCategory,
