@@ -6,6 +6,7 @@ import { renderWorkspaceReadinessCard } from './features/workspaceReadiness.js';
 import { formatRelativeTime } from './features/notifications.js';
 import { buildUsageSummary, getTrialDaysRemaining, isTrialExpired, normalizeBillingAddress } from './billing.js';
 import { parseAssetCsv } from './features/assetIntake.js';
+import { getAuthoritativeOnboardingState } from './features/onboardingStatus.js';
 
 const WORKER_ROLE_OPTIONS = ['staff', 'lead', 'assistant_manager', 'manager', 'admin'];
 const ACCESS_ROLE_OPTIONS = ['owner', 'admin', 'manager', 'staff', 'viewer'];
@@ -221,6 +222,7 @@ export function renderAdmin(el, state, actions) {
   ].filter(Boolean);
   const selectedAssetReviewIds = new Set(adminUi.selectedAssetReviewIds || []);
   const selectedSuggestionsByAsset = adminUi.selectedSuggestionsByAsset || {};
+  const onboarding = state.onboarding || getAuthoritativeOnboardingState(state);
 
   const locationManagerChoices = members.map((member) => `<option value="${getReadablePersonName(member.person || member)}">${getReadablePersonName(member.person || member)}</option>`).join('');
 
@@ -234,7 +236,7 @@ export function renderAdmin(el, state, actions) {
     <section class="item ${activeSection === 'company' ? '' : 'hide'}" data-admin-section="company">
       <h3>Company settings</h3>
       <p class="tiny">Workspace identity, contact details, and business profile.</p>
-      <div class="kpi-line"><span>Onboarding: ${state.company?.onboardingCompleted ? 'Complete' : 'Pending'}</span><span>Locations: ${locations.length || 1}</span><span>Members: ${members.length}</span></div>
+      <div class="kpi-line"><span>Onboarding: ${onboarding.badgeLabel}</span><span>Locations: ${locations.length || 1}</span><span>Members: ${members.length}</span></div>
       <form id="companySettingsForm" class="grid settings-stack mt">
         <fieldset class="onboarding-location-fieldset"><legend><b>Identity</b></legend>
           <div class="grid grid-2">

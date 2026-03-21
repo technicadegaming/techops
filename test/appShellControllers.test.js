@@ -541,3 +541,56 @@ test('shared intake enrichment helper powers single and bulk row enrichment mapp
   assert.equal(rows[0].supportEmail, 'support@example.com');
   assert.match(buildAssetCsv(rows), /originalTitle,normalizedTitle,manufacturerInferred,manualUrl,manualSourceUrl,supportUrl,supportEmail/);
 });
+
+async function loadOnboardingStatusHelpers() {
+  return import('../src/features/onboardingStatus.js');
+}
+
+test('authoritative onboarding state resolves stale bootstrap records as complete and repair is idempotent', async () => {
+  const { buildOnboardingRepairPlan, getAuthoritativeOnboardingState } = await loadOnboardingStatusHelpers();
+  const state = {
+    user: { uid: 'user-1', email: 'owner@example.com' },
+    profile: { role: 'pending', onboardingState: 'needs_company_setup' },
+    company: { id: 'co-1', name: 'Scoot Business', createdBy: 'user-1', onboardingCompleted: false },
+    activeMembership: { id: 'co-1_user-1', companyId: 'co-1', userId: 'user-1', role: 'owner', status: 'active' },
+    companyMembers: [{ id: 'co-1_user-1', companyId: 'co-1', userId: 'user-1', role: 'owner', status: 'active' }],
+    companyLocations: [{ id: 'loc-1', companyId: 'co-1', name: 'Main Floor' }]
+  };
+
+  const resolved = getAuthoritativeOnboardingState(state);
+  assert.equal(resolved.complete, true);
+  assert.equal(resolved.badgeLabel, 'Complete');
+  assert.equal(resolved.normalizedRole, 'owner');
+
+  const firstPlan = buildOnboardingRepairPlan(state);
+  assert.equal(firstPlan.needsRepair, true);
+  assert.deepEqual(firstPlan.userPatch, { onboardingState: 'complete', role: 'owner' });
+  assert.deepEqual(firstPlan.companyPatch && Object.keys(firstPlan.companyPatch).sort(), ['onboardingCompleted', 'onboardingCompletedAt', 'onboardingState']);
+  assert.equal(firstPlan.membershipPatch, null);
+
+  const repairedState = {
+    ...state,
+    profile: { ...state.profile, ...firstPlan.userPatch },
+    company: { ...state.company, ...firstPlan.companyPatch }
+  };
+  const secondPlan = buildOnboardingRepairPlan(repairedState);
+  assert.equal(secondPlan.needsRepair, false);
+  assert.equal(getAuthoritativeOnboardingState(repairedState).complete, true);
+});
+
+test('authoritative onboarding state upgrades a pending membership role for the company creator when setup is complete', async () => {
+  const { buildOnboardingRepairPlan } = await loadOnboardingStatusHelpers();
+  const state = {
+    user: { uid: 'user-1', email: 'owner@example.com' },
+    profile: { role: 'pending', onboardingState: 'needs_company_setup' },
+    company: { id: 'co-1', name: 'Scoot Business', createdBy: 'user-1', onboardingCompleted: false },
+    activeMembership: { id: 'co-1_user-1', companyId: 'co-1', userId: 'user-1', role: 'pending', status: 'active' },
+    companyMembers: [{ id: 'co-1_user-1', companyId: 'co-1', userId: 'user-1', role: 'pending', status: 'active' }],
+    companyLocations: [{ id: 'loc-1', companyId: 'co-1', name: 'Main Floor' }]
+  };
+
+  const plan = buildOnboardingRepairPlan(state);
+  assert.equal(plan.needsRepair, true);
+  assert.deepEqual(plan.userPatch, { onboardingState: 'complete', role: 'owner' });
+  assert.deepEqual(plan.membershipPatch, { role: 'owner' });
+});

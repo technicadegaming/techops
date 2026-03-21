@@ -2,6 +2,7 @@ import { countEntities, getAppSettings, listAudit, listEntities, setActiveCompan
 import { ensureBootstrapCompanyForLegacyUser, getCompany, listCompanyMembers, listMembershipsByUser } from '../company.js';
 import { buildPermissionContext, isGlobalAdmin } from '../roles.js';
 import { ACTIVE_MEMBERSHIP_STORAGE_KEY, syncSetupWizardState } from './state.js';
+import { getAuthoritativeOnboardingState } from '../features/onboardingStatus.js';
 
 export function getStoredActiveMembershipId(userId) {
   if (!userId) return '';
@@ -83,10 +84,12 @@ export async function refreshData(state, options = {}) {
   state.troubleshootingLibrary = await listEntities('troubleshootingLibrary').catch(() => []);
   state.notifications = await listEntities('notifications').catch(() => []);
   state.notificationPrefs = state.settings.notificationPrefs || { enabledTypes: [] };
+  state.onboarding = getAuthoritativeOnboardingState(state);
   if (typeof options.syncNotifications === 'function') {
     await options.syncNotifications();
     state.notifications = await listEntities('notifications').catch(() => []);
   }
+  state.onboarding = getAuthoritativeOnboardingState(state);
   syncSetupWizardState(state);
 }
 
@@ -100,6 +103,7 @@ export async function setActiveMembership(state, nextMembership, options = {}) {
     state.company = null;
     state.permissions = buildPermissionContext({ profile: state.profile, membership: null });
     state.onboardingRequired = true;
+    state.onboarding = getAuthoritativeOnboardingState(state);
     syncSetupWizardState(state);
     storeActiveMembershipId(state.user?.uid, '');
     setActiveCompanyContext(null);
@@ -112,7 +116,9 @@ export async function setActiveMembership(state, nextMembership, options = {}) {
   const company = await ensureActiveCompanyHydrated(state, membership);
   state.membershipCompanies = { ...state.membershipCompanies, [membership.id]: company };
   state.company = company || state.company || null;
-  state.onboardingRequired = false;
+  const onboardingState = getAuthoritativeOnboardingState(state);
+  state.onboardingRequired = !onboardingState.complete && !state.memberships.length;
+  state.onboarding = onboardingState;
   syncSetupWizardState(state);
   storeActiveMembershipId(state.user?.uid, membership.id);
   setActiveCompanyContext(company?.id || membership.companyId, { allowLegacy: isGlobalAdmin(state.permissions) });

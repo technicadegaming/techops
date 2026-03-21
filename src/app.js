@@ -16,6 +16,7 @@ import {
   getEntity,
   listEntities,
   saveAppSettings,
+  saveUserProfile,
   setActiveCompanyContext,
   upsertEntity
 } from './data.js';
@@ -77,6 +78,7 @@ import {
   uploadBytes
 } from 'https://www.gstatic.com/firebasejs/10.12.3/firebase-storage.js';
 import { createEmptyAssetDraft, createInitialState, sections, setOnboardingFeedback } from './app/state.js';
+import { buildOnboardingRepairPlan } from './features/onboardingStatus.js';
 
 const {
   authView,
@@ -107,8 +109,44 @@ const runAction = runActionFactory({ reportActionError });
 const withActiveCompanyId = (payload = {}, actionLabel = 'continue') => withRequiredCompanyId(state, payload, actionLabel);
 
 
+let onboardingRepairInFlight = null;
+
+async function repairOperationalOnboardingState() {
+  const plan = buildOnboardingRepairPlan(state);
+  if (!plan.needsRepair || onboardingRepairInFlight) return;
+
+  onboardingRepairInFlight = (async () => {
+    try {
+      if (plan.userPatch && state.user?.uid) {
+        await saveUserProfile(state.user.uid, { ...(state.profile || {}), ...plan.userPatch }, { uid: state.user.uid, email: state.user.email || '' });
+        state.profile = { ...(state.profile || {}), ...plan.userPatch };
+      }
+      if (plan.membershipPatch && plan.resolved.currentUserMembership?.id) {
+        await upsertEntity('companyMemberships', plan.resolved.currentUserMembership.id, {
+          ...(plan.resolved.currentUserMembership || {}),
+          ...plan.membershipPatch
+        }, state.user);
+        state.activeMembership = { ...(state.activeMembership || {}), ...plan.membershipPatch };
+      }
+      if (plan.companyPatch && state.company?.id) {
+        await upsertEntity('companies', state.company.id, {
+          ...(state.company || {}),
+          ...plan.companyPatch
+        }, state.user);
+        state.company = { ...(state.company || {}), ...plan.companyPatch };
+      }
+      await refreshAppData(state, { syncNotifications: notificationController.syncNotifications });
+    } finally {
+      onboardingRepairInFlight = null;
+    }
+  })();
+
+  await onboardingRepairInFlight;
+}
+
 async function refreshData() {
   await refreshAppData(state, { syncNotifications: notificationController.syncNotifications });
+  await repairOperationalOnboardingState();
 }
 
 async function setActiveMembership(nextMembership, options = {}) {

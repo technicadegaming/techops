@@ -6,6 +6,10 @@ function isGlobalAdminRole(role) {
   return normalizeRole(role) === 'admin';
 }
 
+function getMembershipLookupIndexFields() {
+  return ['companyId', 'userId', 'status'];
+}
+
 function hasCompanyEnrichmentRole(role) {
   return ENRICHMENT_COMPANY_ROLES.has(`${role || ''}`.trim().toLowerCase());
 }
@@ -74,5 +78,6 @@ module.exports = {
   isGlobalAdminRole,
   hasCompanyEnrichmentRole,
   getActiveMembershipForCompany,
-  authorizeAssetEnrichment
+  authorizeAssetEnrichment,
+  getMembershipLookupIndexFields
 };
