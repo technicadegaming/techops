@@ -1413,6 +1413,7 @@ function buildSingleAssetDocumentationFields({ preview = {}, cleanedResult = {},
 }
 
 async function enrichAssetDocumentation({ db, assetId, userId, settings, triggerSource, followupAnswer, traceId, dependencies = {} }) {
+  const startedAt = Date.now();
   const assetRef = db.collection('assets').doc(assetId);
   const assetSnap = await assetRef.get();
   if (!assetSnap.exists) throw new HttpsError('not-found', 'Asset not found');
@@ -1467,9 +1468,11 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       callablePath,
       stage2Ran: pipelineMeta.stage2Ran === true,
       acquisitionSucceeded: pipelineMeta.acquisitionSucceeded === true,
+      acquisitionState: pipelineMeta.acquisitionState || '',
       manualLibraryRef: pipelineMeta.manualLibraryRef || preview?.manualLibraryRef || '',
       matchType: preview?.matchType || '',
       manualReady: preview?.manualReady === true,
+      elapsedMs: Date.now() - startedAt,
     });
 
     if (pipelineMeta.stage2Ran === true) {
@@ -1479,6 +1482,37 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
         manufacturer: asset.manufacturer || manufacturerSuggestion || '',
         callablePath,
         stage1MatchType: pipelineMeta.stage1MatchType || '',
+        elapsedMs: Date.now() - startedAt,
+      });
+    }
+    if (['started', 'timed_out', 'failed', 'succeeded', 'no_manual'].includes(`${pipelineMeta.acquisitionState || ''}`)) {
+      buildSingleAssetDocLog('acquisition_start', {
+        assetId,
+        title: asset.name || normalizedName || '',
+        manufacturer: asset.manufacturer || manufacturerSuggestion || '',
+        callablePath,
+        acquisitionState: pipelineMeta.acquisitionState || '',
+        elapsedMs: Date.now() - startedAt,
+      });
+    }
+    if (pipelineMeta.acquisitionState === 'timed_out') {
+      buildSingleAssetDocLog('acquisition_timeout', {
+        assetId,
+        title: asset.name || normalizedName || '',
+        manufacturer: asset.manufacturer || manufacturerSuggestion || '',
+        callablePath,
+        reason: pipelineMeta.acquisitionError || 'Manual acquisition timed out.',
+        elapsedMs: Date.now() - startedAt,
+      });
+    }
+    if (pipelineMeta.acquisitionState === 'failed') {
+      buildSingleAssetDocLog('acquisition_failed', {
+        assetId,
+        title: asset.name || normalizedName || '',
+        manufacturer: asset.manufacturer || manufacturerSuggestion || '',
+        callablePath,
+        reason: pipelineMeta.acquisitionError || 'Manual acquisition failed.',
+        elapsedMs: Date.now() - startedAt,
       });
     }
     if (pipelineMeta.sourcePageExtracted === true) {
@@ -1488,6 +1522,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
         manufacturer: asset.manufacturer || manufacturerSuggestion || '',
         callablePath,
         sourcePageUrl: preview?.manualSourceUrl || '',
+        elapsedMs: Date.now() - startedAt,
       });
     }
     if (pipelineMeta.acquisitionSucceeded === true) {
@@ -1498,6 +1533,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
         callablePath,
         manualLibraryRef: pipelineMeta.manualLibraryRef || preview?.manualLibraryRef || '',
         manualStoragePath: pipelineMeta.manualStoragePath || preview?.manualStoragePath || '',
+        elapsedMs: Date.now() - startedAt,
       });
     }
 
@@ -1668,6 +1704,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
         callablePath,
         manualLibraryRef: manualFields.manualLibraryRef,
         manualStoragePath: manualFields.manualStoragePath,
+        elapsedMs: Date.now() - startedAt,
       });
     }
 
@@ -1693,6 +1730,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       matchType: manualFields.matchType || cleanedResult.manualMatchSummary?.matchType || '',
       manualReady: manualFields.manualReady || cleanedResult.manualMatchSummary?.manualReady === true,
       finalStatus: status,
+      elapsedMs: Date.now() - startedAt,
     });
 
     return {
