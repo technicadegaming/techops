@@ -1,4 +1,5 @@
 const admin = require('firebase-admin');
+const { randomUUID } = require('node:crypto');
 const { HttpsError } = require('firebase-functions/v2/https');
 const { extractManualLinksFromHtmlPage } = require('./manualDiscoveryService');
 const { findCatalogManualMatch, findCatalogManualMatchByEntryId } = require('./manualLookupCatalogService');
@@ -79,7 +80,7 @@ const VERIFY_MAX_SUGGESTIONS = 5;
 const COMMON_SHORT_TITLE_WORDS = new Set(['the', 'pro', 'plus', 'super', 'game', 'deluxe', 'sport']);
 const MANUAL_INTENT_TOKENS = ['manual', 'operator', 'service', 'parts', 'install', 'installation', 'schematic', 'instruction'];
 
-const TERMINAL_ENRICHMENT_STATUSES = new Set(['docs_found', 'no_match_yet', 'followup_needed', 'lookup_failed']);
+const TERMINAL_ENRICHMENT_STATUSES = new Set(['docs_found', 'no_match_yet', 'followup_needed', 'timed_out', 'lookup_failed']);
 const NON_DURABLE_ENRICHMENT_STATUSES = new Set(['searching_docs', 'in_progress', 'queued']);
 
 function buildAssetEnrichmentLogger({ traceId = '', assetId = '', triggerSource = '' } = {}) {
@@ -88,11 +89,111 @@ function buildAssetEnrichmentLogger({ traceId = '', assetId = '', triggerSource 
   };
 }
 
+const STALE_ENRICHMENT_REPAIR_MS = 5 * 60 * 1000;
+
+function createEnrichmentRunId() {
+  return `enrich-${Date.now()}-${randomUUID().slice(0, 8)}`;
+}
+
+function buildRunMetadata({ runId = '', triggerSource = '', userId = '', callablePath = '', phase = 'started' } = {}) {
+  return {
+    enrichmentRunId: runId,
+    enrichmentTriggerSource: `${triggerSource || ''}`.trim() || 'manual',
+    enrichmentStartedAt: admin.firestore.FieldValue.serverTimestamp(),
+    enrichmentStartedBy: `${userId || ''}`.trim() || '',
+    enrichmentCallablePath: `${callablePath || ''}`.trim() || 'enrichAssetDocumentation',
+    enrichmentPhase: `${phase || ''}`.trim() || 'started',
+    enrichmentHeartbeatAt: admin.firestore.FieldValue.serverTimestamp(),
+    enrichmentLastRunAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
+function buildHeartbeatFields(phase = 'processing') {
+  return {
+    enrichmentPhase: `${phase || ''}`.trim() || 'processing',
+    enrichmentHeartbeatAt: admin.firestore.FieldValue.serverTimestamp(),
+    enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
+function hasSupportOrSourceContext(asset = {}) {
+  return hasMeaningfulSupportContext(asset.supportResourcesSuggestion || [])
+    || !!`${asset.supportUrl || ''}`.trim()
+    || !!`${asset.manualSourceUrl || ''}`.trim()
+    || !!`${asset.enrichmentFollowupQuestion || ''}`.trim();
+}
+
+function hasTimedOutAcquisition(asset = {}, pipelineMeta = null) {
+  return `${pipelineMeta?.acquisitionState || asset?.manualMatchSummary?.pipelineMeta?.acquisitionState || asset?.enrichmentAcquisitionState || ''}`.trim() === 'timed_out'
+    || `${asset?.enrichmentRecoveredReason || ''}`.trim() === 'acquisition_timed_out';
+}
+
+function resolveForcedTerminalStatus({ asset = {}, pipelineMeta = null } = {}) {
+  if (hasAuthoritativeManualAttachment(asset, asset)) return 'docs_found';
+  if (hasTimedOutAcquisition(asset, pipelineMeta)) return hasSupportOrSourceContext(asset) ? 'followup_needed' : 'timed_out';
+  if (hasSupportOrSourceContext(asset)) return 'followup_needed';
+  return 'no_match_yet';
+}
+
+async function forceTerminalWriteIfStillActive({ assetRef, userId, runId, log, pipelineMeta = null, reason = 'finally_guard', existingAsset = null } = {}) {
+  if (!assetRef || !runId) return null;
+  const latestSnap = existingAsset ? { exists: true, data: () => existingAsset } : await assetRef.get();
+  if (!latestSnap.exists) return null;
+  const latestAsset = latestSnap.data() || {};
+  if (`${latestAsset.enrichmentRunId || ''}`.trim() !== `${runId}`.trim()) return null;
+  if (!NON_DURABLE_ENRICHMENT_STATUSES.has(`${latestAsset.enrichmentStatus || ''}`.trim())) return null;
+  const forcedStatus = resolveForcedTerminalStatus({ asset: latestAsset, pipelineMeta });
+  const payload = {
+    enrichmentStatus: forcedStatus,
+    enrichmentPhase: 'terminalized',
+    enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    enrichmentHeartbeatAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: userId,
+  };
+  if (forcedStatus !== 'lookup_failed') {
+    payload.enrichmentFailedAt = null;
+    payload.enrichmentErrorCode = '';
+    payload.enrichmentErrorMessage = '';
+  }
+  await assetRef.set(payload, { merge: true });
+  log('terminal_status_write', { runId, enrichmentStatus: forcedStatus, reason, forced: true });
+  return forcedStatus;
+}
+
+function getTimestampMillis(value) {
+  if (!value) return 0;
+  if (typeof value?.toMillis === 'function') return value.toMillis();
+  if (typeof value?.toDate === 'function') return value.toDate().getTime();
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isStaleInProgressAsset(asset = {}, thresholdMs = STALE_ENRICHMENT_REPAIR_MS) {
+  if (`${asset.enrichmentStatus || ''}`.trim() !== 'in_progress') return false;
+  const lastRunAt = getTimestampMillis(asset.enrichmentLastRunAt) || getTimestampMillis(asset.enrichmentUpdatedAt);
+  if (!lastRunAt) return false;
+  return (Date.now() - lastRunAt) >= thresholdMs;
+}
+
+function buildStaleRepairPayload(asset = {}, reason = 'stale_in_progress_repair') {
+  if (!isStaleInProgressAsset(asset)) return null;
+  return {
+    enrichmentStatus: resolveForcedTerminalStatus({ asset }),
+    enrichmentRecoveredAt: admin.firestore.FieldValue.serverTimestamp(),
+    enrichmentRecoveredReason: reason,
+    enrichmentRecoveredFromRunId: `${asset.enrichmentRunId || ''}`.trim(),
+    enrichmentPhase: 'recovered',
+    enrichmentHeartbeatAt: admin.firestore.FieldValue.serverTimestamp(),
+    enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
 function isTerminalEnrichmentStatus(status) {
   return TERMINAL_ENRICHMENT_STATUSES.has(`${status || ''}`.trim());
 }
 
-async function writeTerminalFailureState({ assetRef, userId, code, message, log, phase = 'defensive_failure_write' }) {
+async function writeTerminalFailureState({ assetRef, userId, code, message, log, phase = 'defensive_failure_write', runId = '' }) {
   const payload = {
     enrichmentStatus: 'lookup_failed',
     enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -104,6 +205,7 @@ async function writeTerminalFailureState({ assetRef, userId, code, message, log,
   };
   await assetRef.set(payload, { merge: true });
   log(phase, {
+    runId,
     enrichmentStatus: payload.enrichmentStatus,
     enrichmentErrorCode: payload.enrichmentErrorCode,
     enrichmentErrorMessage: payload.enrichmentErrorMessage
@@ -1253,6 +1355,10 @@ function cleanFinalEnrichmentResult(asset = {}) {
 }
 
 async function repairLegacyAssetEnrichmentRecord({ asset = {}, verifySuggestions = verifyDocumentationSuggestions }) {
+  const staleRepairPayload = buildStaleRepairPayload(asset, 'stale_in_progress_repair');
+  const repairSeed = staleRepairPayload
+    ? { ...asset, ...staleRepairPayload }
+    : asset;
   const rehydratedSeededDocs = rehydrateSeededManualDocumentationSuggestions({
     asset,
     documentationSuggestions: asset.documentationSuggestions || [],
@@ -1261,14 +1367,14 @@ async function repairLegacyAssetEnrichmentRecord({ asset = {}, verifySuggestions
     manufacturerSuggestion: asset.manufacturerSuggestion || asset.manufacturer || '',
     followupAnswer: asset.enrichmentFollowupAnswer || ''
   });
-  const docsToVerify = Array.isArray(asset.documentationSuggestions) && asset.documentationSuggestions.length
-    ? asset.documentationSuggestions
+  const docsToVerify = Array.isArray(repairSeed.documentationSuggestions) && repairSeed.documentationSuggestions.length
+    ? repairSeed.documentationSuggestions
     : rehydratedSeededDocs;
   const verifiedDocs = Array.isArray(docsToVerify) && docsToVerify.length
     ? await verifySuggestions(docsToVerify)
     : [];
   const cleaned = cleanFinalEnrichmentResult({
-    ...asset,
+    ...repairSeed,
     documentationSuggestions: verifiedDocs.length ? verifiedDocs : (asset.documentationSuggestions || []),
     supportResourcesSuggestion: asset.supportResourcesSuggestion || []
   });
@@ -1279,6 +1385,17 @@ async function repairLegacyAssetEnrichmentRecord({ asset = {}, verifySuggestions
     enrichmentFailedAt: shouldRetainFailureMetadata ? asset.enrichmentFailedAt : null,
     enrichmentErrorCode: shouldRetainFailureMetadata ? asset.enrichmentErrorCode : '',
     enrichmentErrorMessage: shouldRetainFailureMetadata ? asset.enrichmentErrorMessage : ''
+  };
+}
+
+
+async function repairStaleInProgressAsset({ asset = {}, verifySuggestions = verifyDocumentationSuggestions }) {
+  if (!isStaleInProgressAsset(asset)) return null;
+  const repaired = await repairLegacyAssetEnrichmentRecord({ asset, verifySuggestions });
+  return {
+    ...repaired,
+    enrichmentRecoveredReason: 'stale_in_progress_repair',
+    enrichmentRecoveredFromRunId: `${asset.enrichmentRunId || ''}`.trim(),
   };
 }
 
@@ -1392,6 +1509,7 @@ async function runAuthoritativeAssetResearch({ db, settings, traceId, draftAsset
       originalTitle: `${draftAsset?.name || ''}`.trim(),
       manufacturerHint: `${draftAsset?.manufacturer || ''}`.trim(),
       assetId: `${draftAsset?.assetId || ''}`.trim(),
+      runId: `${draftAsset?.runId || ''}`.trim(),
     }],
     includeInternalDocs: true,
     maxWebSources: Number(settings?.manualResearchMaxWebSources || 5),
@@ -1522,18 +1640,24 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
   const assetSnap = await assetRef.get();
   if (!assetSnap.exists) throw new HttpsError('not-found', 'Asset not found');
   const asset = assetSnap.data() || {};
+  const runId = createEnrichmentRunId();
   const runLookup = dependencies.runLookupPreview || ((args = {}) => runAuthoritativeAssetResearch({ ...args, ...(dependencies.storage ? { storage: dependencies.storage } : {}) }));
   const verifySuggestions = dependencies.verifyDocumentationSuggestions || verifyDocumentationSuggestions;
   const findReusableManuals = dependencies.findReusableVerifiedManuals || findReusableVerifiedManuals;
   const log = buildAssetEnrichmentLogger({ traceId, assetId, triggerSource });
   const callablePath = 'enrichAssetDocumentation';
+  let terminalStatus = '';
+  let lastPipelineMeta = null;
 
   log('start', {
+    runId,
     existingStatus: asset.enrichmentStatus || 'idle',
     followupProvided: Boolean(`${followupAnswer || ''}`.trim())
   });
   buildSingleAssetDocLog('start', {
+    runId,
     assetId,
+    companyId: `${asset.companyId || ''}`.trim(),
     title: asset.name || '',
     manufacturer: asset.manufacturer || '',
     callablePath,
@@ -1542,7 +1666,9 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
 
   await assetRef.set({
     enrichmentStatus: triggerSource === 'post_save' ? 'searching_docs' : 'in_progress',
+    ...buildRunMetadata({ runId, triggerSource, userId, callablePath, phase: 'starting' }),
     enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    enrichmentRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
     enrichmentFailedAt: null,
     enrichmentErrorCode: '',
     enrichmentErrorMessage: '',
@@ -1550,24 +1676,27 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     updatedBy: userId
   }, { merge: true });
 
-  let terminalStatus = '';
   try {
     const preview = await runLookup({
       db,
       settings,
       traceId,
-      draftAsset: { ...asset, assetId, followupAnswer }
+      draftAsset: { ...asset, assetId, followupAnswer, runId, triggerSource, callablePath, startedBy: userId }
     }) || {};
+    lastPipelineMeta = preview?.pipelineMeta || preview?.assetResearchSummary?.pipelineMeta || null;
+    await assetRef.set(buildHeartbeatFields('research_complete'), { merge: true });
 
     const confidence = Number(preview?.confidence || 0);
-    const pipelineMeta = preview?.pipelineMeta || preview?.assetResearchSummary?.pipelineMeta || {};
+    const pipelineMeta = lastPipelineMeta || {};
     const normalizedName = preview?.normalizedName || asset.name || '';
     const manufacturerSuggestion = preview?.likelyManufacturer || '';
     const manufacturerProfile = getManufacturerProfile(asset?.manufacturer, manufacturerSuggestion, normalizedName, preview?.likelyCategory);
     const matchedManufacturer = manufacturerProfile?.key || normalizePhrase(manufacturerSuggestion);
 
-    buildSingleAssetDocLog('research_result', {
+    buildSingleAssetDocLog('stage1_result', {
+      runId,
       assetId,
+      companyId: `${asset.companyId || ''}`.trim(),
       title: asset.name || normalizedName || '',
       manufacturer: asset.manufacturer || manufacturerSuggestion || '',
       callablePath,
@@ -1582,7 +1711,9 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
 
     if (pipelineMeta.stage2Ran === true) {
       buildSingleAssetDocLog('stage2_invoked', {
+        runId,
         assetId,
+        companyId: `${asset.companyId || ''}`.trim(),
         title: asset.name || normalizedName || '',
         manufacturer: asset.manufacturer || manufacturerSuggestion || '',
         callablePath,
@@ -1592,7 +1723,9 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     }
     if (pipelineMeta.acquisitionState) {
       buildSingleAssetDocLog('acquisition_start', {
+        runId,
         assetId,
+        companyId: `${asset.companyId || ''}`.trim(),
         title: asset.name || normalizedName || '',
         manufacturer: asset.manufacturer || manufacturerSuggestion || '',
         callablePath,
@@ -1600,42 +1733,16 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
         elapsedMs: Date.now() - startedAt,
       });
     }
-    if (pipelineMeta.acquisitionState === 'timed_out') {
-      buildSingleAssetDocLog('acquisition_timeout', {
-        assetId,
-        title: asset.name || normalizedName || '',
-        manufacturer: asset.manufacturer || manufacturerSuggestion || '',
-        callablePath,
-        reason: pipelineMeta.acquisitionError || 'Manual acquisition timed out.',
-        elapsedMs: Date.now() - startedAt,
-      });
-    }
-    if (pipelineMeta.acquisitionState === 'failed') {
-      buildSingleAssetDocLog('acquisition_failed', {
-        assetId,
-        title: asset.name || normalizedName || '',
-        manufacturer: asset.manufacturer || manufacturerSuggestion || '',
-        callablePath,
-        reason: pipelineMeta.acquisitionError || 'Manual acquisition failed.',
-        elapsedMs: Date.now() - startedAt,
-      });
-    }
-    if (pipelineMeta.sourcePageExtracted === true) {
-      buildSingleAssetDocLog('source_page_extracted', {
-        assetId,
-        title: asset.name || normalizedName || '',
-        manufacturer: asset.manufacturer || manufacturerSuggestion || '',
-        callablePath,
-        sourcePageUrl: preview?.manualSourceUrl || '',
-        elapsedMs: Date.now() - startedAt,
-      });
-    }
     if (['started', 'timed_out', 'failed', 'succeeded', 'no_manual'].includes(`${pipelineMeta.acquisitionState || ''}`) || pipelineMeta.acquisitionSucceeded === true) {
       buildSingleAssetDocLog('acquisition_result', {
+        runId,
         assetId,
+        companyId: `${asset.companyId || ''}`.trim(),
         title: asset.name || normalizedName || '',
         manufacturer: asset.manufacturer || manufacturerSuggestion || '',
         callablePath,
+        acquisitionState: pipelineMeta.acquisitionState || '',
+        acquisitionError: pipelineMeta.acquisitionError || '',
         manualLibraryRef: pipelineMeta.manualLibraryRef || preview?.manualLibraryRef || '',
         manualStoragePath: pipelineMeta.manualStoragePath || preview?.manualStoragePath || '',
         elapsedMs: Date.now() - startedAt,
@@ -1643,14 +1750,17 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     }
 
     log('catalog_match_decision', {
+      runId,
       matchedManufacturer: matchedManufacturer || '',
       catalogMatch: Boolean(preview?.catalogMatch),
       previewDocumentationSuggestions: Array.isArray(preview?.documentationSuggestions) ? preview.documentationSuggestions.length : 0
     });
     log('discovery_start', {
+      runId,
       searchHints: Array.isArray(preview?.searchHints) ? preview.searchHints.length : 0
     });
     log('discovery_complete', {
+      runId,
       documentationSuggestions: Array.isArray(preview?.documentationSuggestions) ? preview.documentationSuggestions.length : 0,
       supportResourcesSuggestion: Array.isArray(preview?.supportResourcesSuggestion) ? preview.supportResourcesSuggestion.length : 0
     });
@@ -1708,16 +1818,16 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       ? ''
       : (!suggestions.length && !hasMeaningfulSupportOrFollowupContext
         ? ''
-      : (hasConfidentSingleMatch
-        ? ''
-        : (isAmbiguousTitle
-          ? 'What exact cabinet nameplate text or subtitle/version appears under the logo (for example DX/Deluxe/SDX)?'
-          : buildFollowupQuestion({
-            parsedQuestion: preview?.oneFollowupQuestion,
-            profile: manufacturerProfile,
-            likelyCategory: preview?.likelyCategory,
-            hasOnlyFailedVerification
-          }))));
+        : (hasConfidentSingleMatch
+          ? ''
+          : (isAmbiguousTitle
+            ? 'What exact cabinet nameplate text or subtitle/version appears under the logo (for example DX/Deluxe/SDX)?'
+            : buildFollowupQuestion({
+              parsedQuestion: preview?.oneFollowupQuestion,
+              profile: manufacturerProfile,
+              likelyCategory: preview?.likelyCategory,
+              hasOnlyFailedVerification
+            }))));
     const shouldSetManufacturer = !asset.manufacturer && confidence >= Math.max(0.75, confidenceThreshold) && manufacturerSuggestion;
 
     const cleanedResult = cleanFinalEnrichmentResult({
@@ -1743,6 +1853,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     terminalStatus = status;
 
     log('final_counts', {
+      runId,
       documentationSuggestions: cleanedResult.documentationSuggestions.length,
       supportResourcesSuggestion: cleanedResult.supportResourcesSuggestion.length
     });
@@ -1764,7 +1875,9 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       cleanedResult,
       preview,
       manualFields,
-      resolvedStatus: status,
+      resolvedStatus: pipelineMeta.acquisitionState === 'timed_out' && !hasAuthoritativeManualAttachment(manualFields, asset)
+        ? (hasSupportOrSourceContext({ ...asset, ...manualFields, supportResourcesSuggestion: cleanedResult.supportResourcesSuggestion, enrichmentFollowupQuestion: cleanedResult.enrichmentFollowupQuestion }) ? 'followup_needed' : 'timed_out')
+        : status,
     });
     terminalStatus = finalStatus;
 
@@ -1784,12 +1897,15 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       manualStoragePath: finalManualFields.manualStoragePath,
       manualSourceUrl: finalManualFields.manualSourceUrl,
       supportUrl: finalManualFields.supportUrl,
+      enrichmentAcquisitionState: pipelineMeta.acquisitionState || '',
       enrichmentCandidates: [
         manufacturerSuggestion,
         preview?.likelyCategory,
         preview?.normalizedName
       ].filter(Boolean).slice(0, 5),
       enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      enrichmentPhase: 'terminalized',
+      enrichmentHeartbeatAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedBy: userId
     };
@@ -1815,7 +1931,9 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
 
     await assetRef.set(updatePayload, { merge: true });
     buildSingleAssetDocLog('asset_write', {
+      runId,
       assetId,
+      companyId: `${asset.companyId || ''}`.trim(),
       title: asset.name || normalizedName || '',
       manufacturer: asset.manufacturer || manufacturerSuggestion || '',
       callablePath,
@@ -1824,10 +1942,12 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       manualStoragePath: finalManualFields.manualStoragePath,
       elapsedMs: Date.now() - startedAt,
     });
-    log('terminal_status_write', { enrichmentStatus: finalStatus, authoritativeManualAttached });
+    log('terminal_status_write', { runId, enrichmentStatus: finalStatus, authoritativeManualAttached });
     if (authoritativeManualAttached) {
       buildSingleAssetDocLog('library_attach', {
+        runId,
         assetId,
+        companyId: `${asset.companyId || ''}`.trim(),
         title: asset.name || normalizedName || '',
         manufacturer: asset.manufacturer || manufacturerSuggestion || '',
         callablePath,
@@ -1845,11 +1965,14 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       userUid: userId,
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
       confidence,
-      suggestions: cleanedResult.documentationSuggestions.length
+      suggestions: cleanedResult.documentationSuggestions.length,
+      runId,
     });
 
     buildSingleAssetDocLog('final_result', {
+      runId,
       assetId,
+      companyId: `${asset.companyId || ''}`.trim(),
       title: asset.name || normalizedName || '',
       manufacturer: asset.manufacturer || manufacturerSuggestion || '',
       callablePath,
@@ -1866,6 +1989,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     return {
       ok: true,
       assetId,
+      runId,
       confidence,
       status: finalStatus,
       followupQuestion: cleanedResult.enrichmentFollowupQuestion,
@@ -1875,26 +1999,38 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     const code = `${error?.code || ''}`.trim() || 'unknown';
     const message = `${error?.message || error || 'Asset docs lookup failed.'}`.trim();
     if (!isTerminalEnrichmentStatus(terminalStatus)) {
-      log('final_counts', { documentationSuggestions: 0, supportResourcesSuggestion: 0, failurePath: true });
+      log('final_counts', { runId, documentationSuggestions: 0, supportResourcesSuggestion: 0, failurePath: true });
       await writeTerminalFailureState({
         assetRef,
         userId,
         code,
         message,
         log,
-        phase: 'terminal_status_write'
+        phase: 'terminal_status_write',
+        runId,
       });
       terminalStatus = 'lookup_failed';
     }
     throw error;
   } finally {
+    const forcedStatus = await forceTerminalWriteIfStillActive({
+      assetRef,
+      userId,
+      runId,
+      log,
+      pipelineMeta: lastPipelineMeta,
+      reason: 'finally_guard',
+    });
+    if (forcedStatus && !terminalStatus) terminalStatus = forcedStatus;
     if (!terminalStatus) {
       buildSingleAssetDocLog('final_result', {
+        runId,
         assetId,
+        companyId: `${asset.companyId || ''}`.trim(),
         title: asset.name || '',
         manufacturer: asset.manufacturer || '',
         callablePath,
-        finalStatus: 'lookup_failed',
+        finalStatus: forcedStatus || 'lookup_failed',
         elapsedMs: Date.now() - startedAt,
       });
     }
@@ -1955,6 +2091,8 @@ module.exports = {
   resolveTerminalEnrichmentStatus,
   deriveDocumentationReviewState,
   repairLegacyAssetEnrichmentRecord,
+  repairStaleInProgressAsset,
+  isStaleInProgressAsset,
   runLookupPreview,
   runAuthoritativeAssetResearch,
   buildSingleAssetDocumentationFields,
