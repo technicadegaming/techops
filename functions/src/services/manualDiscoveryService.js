@@ -154,9 +154,11 @@ function extractHref(rawHref) {
   if (!href) return '';
   try {
     const parsed = new URL(href, 'https://duckduckgo.com');
-    if (parsed.hostname.includes('duckduckgo.com') && parsed.pathname.startsWith('/l/')) {
-      const uddg = parsed.searchParams.get('uddg');
-      if (uddg) return decodeURIComponent(uddg);
+    if (parsed.hostname.includes('duckduckgo.com')) {
+      const redirectedUrl = parsed.searchParams.get('uddg')
+        || parsed.searchParams.get('rut')
+        || parsed.searchParams.get('u');
+      if (redirectedUrl) return decodeURIComponent(redirectedUrl);
     }
     if (/^https?:/i.test(parsed.protocol)) return parsed.toString();
   } catch {
@@ -165,6 +167,36 @@ function extractHref(rawHref) {
   return '';
 }
 
+function extractDuckDuckGoAnchors(html) {
+  const anchorPattern = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+  const rows = [];
+  const seen = new Set();
+  for (const match of html.matchAll(anchorPattern)) {
+    const attributes = parseAnchorAttributes(match[1] || '');
+    const className = `${attributes.class || ''}`.toLowerCase();
+    const rel = `${attributes.rel || ''}`.toLowerCase();
+    const href = attributes.href || '';
+    const title = escapeHtml(match[2] || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const looksLikeResultAnchor = /result__a|result-link|result__url|result-title-a/.test(className)
+      || rel.includes('nofollow');
+    if (!looksLikeResultAnchor || !href || !title) continue;
+    const url = extractHref(href);
+    if (!url) continue;
+    const key = `${url}::${title}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({ title, url });
+    if (rows.length >= MAX_SEARCH_RESULTS_PER_QUERY) break;
+  }
+  return rows;
+}
+
+async function fetchDuckDuckGoSearchPage(query, searchBaseUrl, fetchImpl) {
+  const url = `${searchBaseUrl}${encodeURIComponent(query)}`;
+  const response = await fetchWithTimeout(url, { headers: { 'user-agent': SEARCH_USER_AGENT } }, fetchImpl);
+  if (!response.ok) throw new Error(`Search request failed with status ${response.status}`);
+  return response.text();
+}
 
 function isAbortLikeError(error) {
   const code = `${error?.code || ''}`.toLowerCase();
@@ -231,15 +263,12 @@ function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) 
 }
 
 async function searchDuckDuckGoHtml(query, fetchImpl = fetch) {
-  const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-  const response = await fetchWithTimeout(url, { headers: { 'user-agent': SEARCH_USER_AGENT } }, fetchImpl);
-  if (!response.ok) throw new Error(`Search request failed with status ${response.status}`);
-  const html = await response.text();
-  const matches = Array.from(html.matchAll(/<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi));
-  return matches.slice(0, MAX_SEARCH_RESULTS_PER_QUERY).map((match) => ({
-    title: escapeHtml(match[2]).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
-    url: extractHref(match[1])
-  })).filter((row) => row.url);
+  const html = await fetchDuckDuckGoSearchPage(query, 'https://duckduckgo.com/html/?q=', fetchImpl);
+  const parsedHtmlResults = extractDuckDuckGoAnchors(html);
+  if (parsedHtmlResults.length) return parsedHtmlResults;
+
+  const liteHtml = await fetchDuckDuckGoSearchPage(query, 'https://lite.duckduckgo.com/lite/?q=', fetchImpl);
+  return extractDuckDuckGoAnchors(liteHtml);
 }
 
 function detectSourceType(url, manufacturerProfile) {
