@@ -13,7 +13,7 @@ const JUNK_PATH_PATTERNS = [
   /\/consultative-services(\/|$)/,
   /\/financial-services(\/|$)/,
   /\/installations?(\/|$)/,
-  /\/office-coffee(\/|$)/,
+  /\/office-coffee(?:-machines)?(\/|$)/,
   /\/newsletter(\/|$)/,
   /\/careers?(\/|$)/,
   /\/contact(?:-us)?(\/|$)/,
@@ -33,6 +33,9 @@ const JUNK_PATH_PATTERNS = [
   /\/blog(\/|$)/,
   /\/news(\/|$)/,
   /\/feed(\/|$)/,
+  /\/(?:services?|service-support|parts-service)(\/|$)/,
+  /\/(?:press|media|stories|story)(\/|$)/,
+  /\/(?:investor|investor-relations)(\/|$)/,
 ];
 const GENERIC_ANCHOR_TITLES = new Set([
   'toggle menu',
@@ -336,6 +339,15 @@ function hasBetsonTitleSpecificPath(pathname, titleVariants) {
     return hasExactOrStrongTitle(lowerPath, titleVariants);
   }
   return false;
+}
+
+function hasJunkManualCandidateUrl(url = '') {
+  try {
+    const parsed = new URL(url);
+    return JUNK_PATH_PATTERNS.some((pattern) => pattern.test(`${parsed.pathname}${parsed.search || ''}`.toLowerCase()));
+  } catch {
+    return true;
+  }
 }
 
 function hasStrongManualIntentSignal(text = '') {
@@ -1048,6 +1060,7 @@ async function discoverManualDocumentation({ assetName, normalizedName, manufact
 }
 
 module.exports = {
+  hasJunkManualCandidateUrl,
   buildManufacturerQueryTerms,
   buildManualSearchQueries,
   buildManufacturerDiscoverySeedPages,
