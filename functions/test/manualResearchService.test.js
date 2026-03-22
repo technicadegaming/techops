@@ -215,6 +215,47 @@ for (const matchType of ['title_specific_source', 'support_only', 'family_match_
   });
 }
 
+
+test('researchAssetTitles rejects Sink-It junk manual urls from stage 2 fallback everywhere', async () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => { logs.push(args); };
+  try {
+    const result = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
+      companyId: 'company-1',
+      titles: [{ originalTitle: 'Willy Wonka Mystery', manufacturerHint: 'Unknown' }],
+      traceId: 'test-sink-it-junk',
+      fetchImpl: createFetchMock(),
+      storage: createStorageMock(),
+      researchFallback: async () => ({
+        normalizedTitle: 'Willy Wonka Mystery',
+        manufacturer: 'Bay Tek Games',
+        manufacturerInferred: false,
+        matchType: 'exact_manual',
+        manualReady: true,
+        reviewRequired: false,
+        manualUrl: 'https://baytekent.com/office-coffee-machines/willy-wonka-mystery/',
+        manualSourceUrl: 'https://baytekent.com/financial-services/willy-wonka-mystery/',
+        supportUrl: 'https://baytekent.com/installations/willy-wonka-mystery/',
+        confidence: 0.83,
+        matchNotes: 'junk links should be rejected',
+        citations: [],
+        rawResearchSummary: 'junk links only',
+      }),
+    });
+
+    assert.equal(result.results[0].manualReady, false);
+    assert.equal(result.results[0].manualUrl, '');
+    assert.equal(result.results[0].supportUrl, '');
+    assert.deepEqual(result.results[0].documentationSuggestions, []);
+    assert.deepEqual(result.results[0].supportResourcesSuggestion, []);
+    assert.ok(logs.some((entry) => entry[0] === 'manualResearch:candidate_rejected'));
+  } finally {
+    console.log = originalLog;
+  }
+});
 test('researchAssetTitles emits explicit logs and backend validation can promote a real manual', async () => {
   const logs = [];
   const originalLog = console.log;
@@ -368,7 +409,7 @@ test('researchAssetTitles logs candidate_rejected when stage 2 returns support-o
         text: async () => 'Bay Tek Sink It support resources and installations services',
       }),
       researchFallback: async () => ({
-        normalizedTitle: 'Sink It Shootout',
+        normalizedTitle: 'Willy Wonka Mystery',
         manufacturer: 'Bay Tek Games',
         matchType: 'title_specific_source',
         manualReady: false,

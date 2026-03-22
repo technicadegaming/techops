@@ -1479,13 +1479,36 @@ test('Quik Drop exact catalog manual persists as documentationSuggestions and av
         confidence: 0.99,
         normalizedName: 'Quik Drop',
         likelyManufacturer: 'Bay Tek Games',
-        documentationSuggestions: catalogMatch.documentationSuggestions,
+        documentationSuggestions: catalogMatch.documentationSuggestions.map((row) => ({
+          ...row,
+          url: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+          manualLibraryRef: 'manual-quik-drop',
+          manualStoragePath: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+          cachedManual: true,
+        })),
         supportResourcesSuggestion: catalogMatch.supportResources,
         supportContactsSuggestion: [],
         alternateNames: ['Quick Drop'],
         searchHints: [],
         likelyCategory: 'redemption',
         topMatchReason: 'catalog exact match',
+        manualMatchSummary: {
+          matchType: 'exact_manual',
+          manualReady: true,
+          manualUrl: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+          manualSourceUrl: 'https://www.baytekent.com/games/quik-drop/',
+          supportUrl: 'https://www.baytekent.com/games/quik-drop/',
+          manualLibraryRef: 'manual-quik-drop',
+          manualStoragePath: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+        },
+        pipelineMeta: {
+          stage1MatchType: 'exact_manual',
+          stage2Ran: false,
+          acquisitionSucceeded: true,
+          acquisitionState: 'succeeded',
+          manualLibraryRef: 'manual-quik-drop',
+          manualStoragePath: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+        },
         oneFollowupQuestion: '',
         catalogMatch: {
           catalogEntryId: catalogMatch.catalogEntryId,
@@ -1495,7 +1518,19 @@ test('Quik Drop exact catalog manual persists as documentationSuggestions and av
           notes: catalogMatch.notes
         }
       }),
-      findReusableVerifiedManuals: async () => [],
+      findReusableVerifiedManuals: async () => [{
+        title: 'Quik Drop Service Manual PDF',
+        url: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+        sourceType: 'manual_library',
+        manualLibraryRef: 'manual-quik-drop',
+        manualStoragePath: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+        cachedManual: true,
+        exactTitleMatch: true,
+        exactManualMatch: true,
+        trustedSource: true,
+        verified: true,
+        matchScore: 100,
+      }],
       verifyDocumentationSuggestions: async (rows) => rows.map((row) => ({
         ...row,
         verified: true,
@@ -1511,8 +1546,10 @@ test('Quik Drop exact catalog manual persists as documentationSuggestions and av
   assert.equal(result.status, 'docs_found');
   assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'docs_found');
   assert.equal(assetWrites.at(-1).payload.reviewState, 'pending_review');
-  assert.equal(assetState.documentationSuggestions.length, 1);
+  assert.equal(assetState.documentationSuggestions.length, 2);
   assert.equal(assetState.documentationSuggestions[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
+  assert.equal(assetState.manualLibraryRef, 'manual-quik-drop');
+  assert.equal(assetState.manualStoragePath, 'manual-library/bay-tek/quik-drop/quik-drop.pdf');
   assert.equal(assetState.manualLookupCatalogMatch.matchStatus, 'catalog_exact');
   assert.equal(assetState.enrichmentFollowupQuestion, '');
 });
@@ -1864,7 +1901,19 @@ test('enrichAssetDocumentation keeps source-only single-asset results out of doc
         confidence: 0.71,
         normalizedName: 'King Kong of Skull Island VR',
         likelyManufacturer: 'Raw Thrills',
-        documentationSuggestions: [],
+        documentationSuggestions: [{
+          title: 'Quik Drop Service Manual PDF',
+          url: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+          sourceType: 'manual_library',
+          manualLibraryRef: 'manual-quik-drop',
+          manualStoragePath: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+          cachedManual: true,
+          exactTitleMatch: true,
+          exactManualMatch: true,
+          trustedSource: true,
+          matchScore: 100,
+          verified: true,
+        }],
         supportResourcesSuggestion: [{
           title: 'King Kong of Skull Island VR title page',
           url: 'https://rawthrills.com/games/king-kong-of-skull-island-vr/',
@@ -1960,7 +2009,189 @@ test('enrichAssetDocumentation terminalizes timed out acquisition runs instead o
   assert.notEqual(assetState.enrichmentStatus, 'searching_docs');
 });
 
-function createEnrichmentDb(asset = {}) {
+
+test('enrichAssetDocumentation terminalizes post_save runs to docs_found when authoritative lookup returns shared-library evidence', async () => {
+  const { db, assetWrites } = createEnrichmentDb({ name: 'Quik Drop', manufacturer: 'Bay Tek Games', companyId: 'company-1' });
+
+  const result = await enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'post_save',
+    followupAnswer: '',
+    traceId: 'trace-post-save-authoritative',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.99,
+        normalizedName: 'Quik Drop',
+        likelyManufacturer: 'Bay Tek Games',
+        documentationSuggestions: [{
+          title: 'Quik Drop Service Manual',
+          url: 'manual-library/bay-tek/quik-drop/existing.pdf',
+          sourcePageUrl: 'https://www.baytekent.com/games/quik-drop/',
+          sourceType: 'manual_library',
+          manualLibraryRef: 'manual-quik-drop',
+          manualStoragePath: 'manual-library/bay-tek/quik-drop/existing.pdf',
+          cachedManual: true,
+          matchScore: 100,
+          exactTitleMatch: true,
+          exactManualMatch: true,
+          trustedSource: true,
+          verified: true,
+        }],
+        supportResourcesSuggestion: [{
+          title: 'Quik Drop product page',
+          url: 'https://www.baytekent.com/games/quik-drop/',
+          sourceType: 'support',
+          matchScore: 62,
+        }],
+        supportContactsSuggestion: [],
+        matchType: 'exact_manual',
+        manualReady: true,
+        manualUrl: 'manual-library/bay-tek/quik-drop/existing.pdf',
+        manualSourceUrl: 'https://www.baytekent.com/games/quik-drop/',
+        supportUrl: 'https://www.baytekent.com/games/quik-drop/',
+        manualMatchSummary: {
+          matchType: 'exact_manual',
+          manualReady: true,
+          manualUrl: 'manual-library/bay-tek/quik-drop/existing.pdf',
+          manualSourceUrl: 'https://www.baytekent.com/games/quik-drop/',
+          supportUrl: 'https://www.baytekent.com/games/quik-drop/',
+          manualLibraryRef: 'manual-quik-drop',
+          manualStoragePath: 'manual-library/bay-tek/quik-drop/existing.pdf',
+        },
+        pipelineMeta: {
+          stage1MatchType: 'exact_manual',
+          stage2Ran: false,
+          acquisitionSucceeded: true,
+          acquisitionState: 'succeeded',
+          manualLibraryRef: 'manual-quik-drop',
+          manualStoragePath: 'manual-library/bay-tek/quik-drop/existing.pdf',
+        },
+      }),
+      verifyDocumentationSuggestions: async (rows) => rows,
+      findReusableVerifiedManuals: async () => [],
+    }
+  });
+
+  assert.equal(result.status, 'docs_found');
+  assert.equal(assetWrites[0].payload.enrichmentStatus, 'searching_docs');
+  assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'docs_found');
+  assert.equal(assetWrites.at(-1).payload.manualStoragePath, 'manual-library/bay-tek/quik-drop/existing.pdf');
+  assert.equal(assetWrites.at(-1).payload.manualLibraryRef, 'manual-quik-drop');
+});
+
+test('enrichAssetDocumentation downgrades non-stored manual candidates so docs_found requires shared-library attachment', async () => {
+  const { db, assetWrites } = createEnrichmentDb({ name: 'Quik Drop', manufacturer: 'Bay Tek Games', companyId: 'company-1' });
+
+  const result = await enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'manual',
+    followupAnswer: '',
+    traceId: 'trace-no-storage-downgrade',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.92,
+        normalizedName: 'Quik Drop',
+        likelyManufacturer: 'Bay Tek Games',
+        documentationSuggestions: [{
+          title: 'Quik Drop Service Manual PDF',
+          url: 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
+          sourceType: 'distributor',
+          exactTitleMatch: true,
+          exactManualMatch: true,
+          matchScore: 96,
+          trustedSource: true,
+          verified: true
+        }],
+        supportResourcesSuggestion: [{
+          title: 'Quik Drop product page',
+          url: 'https://www.baytekent.com/games/quik-drop/',
+          sourceType: 'support',
+          matchScore: 62,
+        }],
+        supportContactsSuggestion: [],
+        manualMatchSummary: {
+          matchType: 'exact_manual',
+          manualReady: true,
+          manualUrl: 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
+          manualSourceUrl: 'https://www.baytekent.com/games/quik-drop/',
+          supportUrl: 'https://www.baytekent.com/games/quik-drop/',
+        },
+        pipelineMeta: {
+          stage1MatchType: 'exact_manual',
+          stage2Ran: false,
+          acquisitionSucceeded: false,
+          acquisitionState: 'no_manual',
+        },
+      }),
+      verifyDocumentationSuggestions: async (rows) => rows,
+      findReusableVerifiedManuals: async () => [],
+    }
+  });
+
+  assert.equal(result.status, 'followup_needed');
+  assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'followup_needed');
+  assert.equal(assetWrites.at(-1).payload.manualLibraryRef, '');
+  assert.equal(assetWrites.at(-1).payload.manualStoragePath, '');
+  assert.deepEqual(assetWrites.at(-1).payload.manualLinks, []);
+});
+
+test('enrichAssetDocumentation writes a terminal state before surfacing late audit-log failures', async () => {
+  const { db, assetWrites, assetState } = createEnrichmentDb({ name: 'Fast & Furious', manufacturer: 'Raw Thrills', companyId: 'company-1' }, { failAuditLog: true });
+
+  await assert.rejects(() => enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'post_save',
+    followupAnswer: '',
+    traceId: 'trace-late-audit-failure',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.68,
+        normalizedName: 'Fast & Furious Arcade',
+        likelyManufacturer: 'Raw Thrills',
+        documentationSuggestions: [],
+        supportResourcesSuggestion: [{
+          title: 'Fast & Furious Arcade title page',
+          url: 'https://rawthrills.com/games/fast-furious-arcade/',
+          sourceType: 'support',
+          matchScore: 62,
+        }],
+        supportContactsSuggestion: [],
+        oneFollowupQuestion: '',
+        manualMatchSummary: {
+          matchType: 'title_specific_source',
+          manualReady: false,
+          manualUrl: '',
+          manualSourceUrl: 'https://rawthrills.com/games/fast-furious-arcade/',
+          supportUrl: 'https://rawthrills.com/games/fast-furious-arcade/',
+        },
+        pipelineMeta: {
+          stage1MatchType: 'title_specific_source',
+          stage2Ran: true,
+          sourcePageExtracted: true,
+          acquisitionSucceeded: false,
+          acquisitionState: 'no_manual',
+        },
+      }),
+      findReusableVerifiedManuals: async () => [],
+      verifyDocumentationSuggestions: async () => [],
+    }
+  }), /audit write failed/);
+
+  assert.equal(assetWrites[0].payload.enrichmentStatus, 'searching_docs');
+  assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'followup_needed');
+  assert.equal(assetState.enrichmentStatus, 'followup_needed');
+});
+function createEnrichmentDb(asset = {}, options = {}) {
+  const manualLibraryState = { ...(options.manualLibrary || {}) };
   const assetState = { id: 'asset-1', ...asset };
   const assetWrites = [];
   const auditWrites = [];
@@ -1976,8 +2207,25 @@ function createEnrichmentDb(asset = {}) {
   return {
     db: {
       collection(name) {
-        if (name === 'assets') return { doc: () => assetRef };
-        if (name === 'auditLogs') return { add: async (payload) => auditWrites.push(payload) };
+        if (name === 'assets') return {
+          doc: () => assetRef,
+          where() { return this; },
+          limit() { return this; },
+          async get() { return { docs: [] }; },
+        };
+        if (name === 'manuals') return { where() { return this; }, limit() { return this; }, async get() { return { docs: [] }; } };
+        if (name === 'manualLibrary') return {
+          where(field, op, value) { this._filters = [...(this._filters || []), [field, value]]; return this; },
+          limit() { return this; },
+          async get() {
+            const docs = Object.entries(manualLibraryState)
+              .filter(([, row]) => (this._filters || []).every(([field, value]) => row[field] === value))
+              .map(([id, row]) => ({ id, data: () => row }));
+            return { empty: docs.length === 0, docs };
+          },
+          doc(id) { return { async set(value) { manualLibraryState[id] = { ...(manualLibraryState[id] || {}), ...value }; } }; }
+        };
+        if (name === 'auditLogs') return { add: async (payload) => { if (options.failAuditLog) throw new Error('audit write failed'); auditWrites.push(payload); } };
         throw new Error(`Unexpected collection ${name}`);
       }
     },
@@ -2199,7 +2447,19 @@ test('enrichAssetDocumentation rehydrates exact catalog manuals when live previe
         confidence: 0.92,
         normalizedName: 'Quik Drop',
         likelyManufacturer: 'Bay Tek Games',
-        documentationSuggestions: [],
+        documentationSuggestions: [{
+          title: 'Quik Drop Service Manual PDF',
+          url: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+          sourceType: 'manual_library',
+          manualLibraryRef: 'manual-quik-drop',
+          manualStoragePath: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+          cachedManual: true,
+          exactTitleMatch: true,
+          exactManualMatch: true,
+          trustedSource: true,
+          matchScore: 100,
+          verified: true,
+        }],
         supportResourcesSuggestion: [{
           title: 'Quik Drop source page',
           url: 'https://www.baytekent.com/games/quik-drop/',
@@ -2213,6 +2473,23 @@ test('enrichAssetDocumentation rehydrates exact catalog manuals when live previe
         alternateNames: ['Quick Drop'],
         searchHints: [],
         likelyCategory: 'redemption',
+        manualMatchSummary: {
+          matchType: 'exact_manual',
+          manualReady: true,
+          manualUrl: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+          manualSourceUrl: 'https://www.baytekent.com/games/quik-drop/',
+          supportUrl: 'https://www.baytekent.com/games/quik-drop/',
+          manualLibraryRef: 'manual-quik-drop',
+          manualStoragePath: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+        },
+        pipelineMeta: {
+          stage1MatchType: 'exact_manual',
+          stage2Ran: false,
+          acquisitionSucceeded: true,
+          acquisitionState: 'succeeded',
+          manualLibraryRef: 'manual-quik-drop',
+          manualStoragePath: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+        },
         catalogMatch: {
           catalogEntryId: 'bay-tek-quik-drop',
           matchStatus: 'catalog_exact',
@@ -2222,24 +2499,15 @@ test('enrichAssetDocumentation rehydrates exact catalog manuals when live previe
         }
       }),
       findReusableVerifiedManuals: async () => [],
-      verifyDocumentationSuggestions: async (rows) => rows.map((row) => ({
-        ...row,
-        verified: row.url === 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
-        verificationKind: row.url.endsWith('.pdf') ? 'direct_pdf' : 'support_html',
-        verificationStatus: row.url.endsWith('.pdf') ? 'seed_verified' : 'verified',
-        deadPage: false,
-        unreachable: false,
-        trustedSource: true,
-        exactTitleMatch: row.url.endsWith('.pdf') ? true : row.exactTitleMatch,
-        exactManualMatch: row.url.endsWith('.pdf') ? true : row.exactManualMatch
-      }))
+      verifyDocumentationSuggestions: async (rows) => rows,
     }
   });
 
   assert.equal(result.status, 'docs_found');
   assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'docs_found');
   assert.equal(assetWrites.at(-1).payload.reviewState, 'pending_review');
-  assert.equal(assetState.documentationSuggestions[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
+  assert.equal(assetState.documentationSuggestions[0].url, 'manual-library/bay-tek/quik-drop/quik-drop.pdf');
+  assert.equal(assetState.manualLibraryRef, 'manual-quik-drop');
   assert.equal(assetState.manualLookupCatalogMatch.matchStatus, 'catalog_exact');
 });
 
@@ -2261,8 +2529,11 @@ test('enrichAssetDocumentation preserves Quik Drop exact manual success path', a
         likelyManufacturer: 'Bay Tek Games',
         documentationSuggestions: [{
           title: 'Quik Drop Service Manual PDF',
-          url: 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf',
-          sourceType: 'distributor',
+          url: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+          sourceType: 'manual_library',
+          manualLibraryRef: 'manual-quik-drop',
+          manualStoragePath: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+          cachedManual: true,
           exactTitleMatch: true,
           exactManualMatch: true,
           matchScore: 96,
@@ -2273,7 +2544,22 @@ test('enrichAssetDocumentation preserves Quik Drop exact manual success path', a
         supportContactsSuggestion: [],
         alternateNames: [],
         searchHints: [],
-        likelyCategory: 'redemption'
+        likelyCategory: 'redemption',
+        manualMatchSummary: {
+          matchType: 'exact_manual',
+          manualReady: true,
+          manualUrl: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+          manualLibraryRef: 'manual-quik-drop',
+          manualStoragePath: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+        },
+        pipelineMeta: {
+          stage1MatchType: 'exact_manual',
+          stage2Ran: false,
+          acquisitionSucceeded: true,
+          acquisitionState: 'succeeded',
+          manualLibraryRef: 'manual-quik-drop',
+          manualStoragePath: 'manual-library/bay-tek/quik-drop/quik-drop.pdf',
+        }
       }),
       findReusableVerifiedManuals: async () => [],
       verifyDocumentationSuggestions: async (rows) => rows
@@ -2282,5 +2568,6 @@ test('enrichAssetDocumentation preserves Quik Drop exact manual success path', a
 
   assert.equal(result.status, 'docs_found');
   assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'docs_found');
-  assert.equal(assetState.documentationSuggestions[0].url, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
+  assert.equal(assetState.documentationSuggestions[0].url, 'manual-library/bay-tek/quik-drop/quik-drop.pdf');
+  assert.equal(assetState.manualLibraryRef, 'manual-quik-drop');
 });

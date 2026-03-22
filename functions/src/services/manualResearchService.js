@@ -5,6 +5,8 @@ const {
 } = require('./openaiService');
 const {
   discoverManualDocumentation,
+  classifyManualCandidate,
+  hasJunkManualCandidateUrl,
 } = require('./manualDiscoveryService');
 const {
   findCatalogManualMatch,
@@ -131,7 +133,17 @@ function mapResearchResultToSuggestions(result = {}, manufacturerProfile = {}) {
   const trustedSource = buildDomainAllowlist({ manufacturerProfile, titleFamily: {} })
     .some((domain) => normalizeUrl(result.manualUrl || result.manualSourceUrl || result.supportUrl || '').includes(domain));
   const manualUrl = normalizeUrl(result.manualUrl || '');
-  const manualLikeUrl = isLikelyManualResearchUrl(manualUrl);
+  const manualTitle = normalizeString(result.manualTitle || result.originalTitle || result.normalizedTitle || '', 160);
+  const manualTitleVariants = [result.normalizedTitle, result.originalTitle, manualTitle]
+    .flatMap((value) => `${value || ''}`.trim() ? [resolveArcadeTitleFamily({ title: value, manufacturer: result.manufacturer || '' }).canonicalTitle || value] : [])
+    .map((value) => `${value || ''}`.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim())
+    .filter(Boolean);
+  const manualLikeUrl = isLikelyManualResearchUrl(manualUrl, {
+    title: manualTitle,
+    manufacturer: result.manufacturer || '',
+    titleVariants: manualTitleVariants,
+    manufacturerProfile,
+  });
   const manualLikeMatchType = ['exact_manual', 'manual_page_with_download'].includes(`${result.matchType || ''}`.trim());
   const explicitManualContract = result.manualReady === true || manualLikeMatchType || /\.pdf($|[?#])/.test(manualUrl.toLowerCase());
 
@@ -149,7 +161,7 @@ function mapResearchResultToSuggestions(result = {}, manufacturerProfile = {}) {
       rawResearchSummary: result.rawResearchSummary || '',
     });
   }
-  if (result.manualSourceUrl) {
+  if (result.manualSourceUrl && !hasJunkManualCandidateUrl(result.manualSourceUrl)) {
     supportResourcesSuggestion.push({
       label: normalizeString(result.manualSourceTitle || result.normalizedTitle || result.originalTitle || '', 160),
       url: result.manualSourceUrl,
@@ -158,7 +170,7 @@ function mapResearchResultToSuggestions(result = {}, manufacturerProfile = {}) {
       citations,
     });
   }
-  if (result.supportUrl) {
+  if (result.supportUrl && !hasJunkManualCandidateUrl(result.supportUrl)) {
     supportResourcesSuggestion.push({
       label: normalizeString(result.supportTitle || `Support for ${result.normalizedTitle || result.originalTitle || 'title'}`, 160),
       url: result.supportUrl,
@@ -170,14 +182,18 @@ function mapResearchResultToSuggestions(result = {}, manufacturerProfile = {}) {
   return { documentationSuggestions, supportResourcesSuggestion };
 }
 
-function isLikelyManualResearchUrl(url = '') {
+function isLikelyManualResearchUrl(url = '', { title = '', manufacturer = '', titleVariants = [], manufacturerProfile = null } = {}) {
   const normalized = normalizeUrl(url).toLowerCase();
   if (!normalized) return false;
-  if (/\.pdf($|[?#])/.test(normalized)) return true;
-  if (/(manual|operator|service|install|installation|parts|download|downloads)/.test(normalized)) return true;
-  if (/\/wp-content\/uploads\//.test(normalized)) return true;
-  if (/\/support\//.test(normalized) && !/(manual|operator|service|install|installation|parts|download|downloads)/.test(normalized)) return false;
-  return false;
+  if (hasJunkManualCandidateUrl(normalized)) return false;
+  const classification = classifyManualCandidate({
+    title,
+    url: normalized,
+    manufacturer,
+    titleVariants,
+    manufacturerProfile,
+  });
+  return classification.includeManual;
 }
 
 async function loadCachedResearchResult({ db, companyId, normalizedTitle, manufacturer }) {
