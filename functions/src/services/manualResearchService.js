@@ -45,6 +45,15 @@ function logManualResearchEvent(event, payload = {}) {
   }
 }
 
+function buildResearchLogContext({ row = {}, companyId = '', traceId = '' } = {}) {
+  return {
+    assetId: normalizeString(row?.assetId || '', 120),
+    companyId: normalizeString(companyId, 120),
+    runId: normalizeString(row?.runId || row?.enrichmentRunId || '', 120),
+    traceId: normalizeString(traceId, 160),
+  };
+}
+
 function normalizeString(value = '', max = 240) {
   return `${value || ''}`.trim().slice(0, max);
 }
@@ -458,6 +467,7 @@ async function researchAssetTitles({
   const results = [];
   for (const row of titles) {
     const startedAt = Date.now();
+    const logContext = buildResearchLogContext({ row, companyId, traceId });
     const originalTitle = normalizeString(row?.originalTitle || '', 160);
     if (!originalTitle) continue;
     const stageOne = await runStageOneLookup({
@@ -489,6 +499,7 @@ async function researchAssetTitles({
     let supportContactsSuggestion = stageOne.supportContactsSuggestion;
 
     logManualResearchEvent('stage1_result', {
+      ...logContext,
       title: originalTitle,
       normalizedTitle: stageOne.normalizedTitle,
       manufacturer: stageOne.manufacturer,
@@ -500,6 +511,13 @@ async function researchAssetTitles({
     });
 
     if (FALLBACK_MATCH_TYPES.has(stageOne.summary.matchType)) {
+      logManualResearchEvent('stage2_invoked', {
+        ...logContext,
+        title: originalTitle,
+        normalizedTitle: stageOne.normalizedTitle,
+        manufacturer: stageOne.manufacturer,
+        stage1MatchType: stageOne.summary.matchType,
+      });
       const stageTwo = await runStageTwoResearch({
         db,
         settings,
@@ -512,6 +530,7 @@ async function researchAssetTitles({
         researchFallback,
       }).catch((error) => {
         logManualResearchEvent('stage2_validation_failed', {
+          ...logContext,
           title: originalTitle,
           normalizedTitle: stageOne.normalizedTitle,
           manufacturer: stageOne.manufacturer,
@@ -535,6 +554,7 @@ async function researchAssetTitles({
           : [];
         if (stageTwo.manualUrl && !normalizedStageTwoDocs.length) {
           logManualResearchEvent('candidate_rejected', {
+            ...logContext,
             title: originalTitle,
             normalizedTitle: stageOne.normalizedTitle,
             manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
@@ -545,6 +565,7 @@ async function researchAssetTitles({
           });
         }
         logManualResearchEvent('stage2_candidates_extracted', {
+          ...logContext,
           title: originalTitle,
           normalizedTitle: stageOne.normalizedTitle,
           manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
@@ -559,6 +580,7 @@ async function researchAssetTitles({
           .filter((entry) => !(entry.verified && entry.exactManualMatch))
           .forEach((entry) => {
             logManualResearchEvent('candidate_rejected', {
+              ...logContext,
               title: originalTitle,
               normalizedTitle: stageOne.normalizedTitle,
               manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
@@ -598,6 +620,7 @@ async function researchAssetTitles({
         });
         if (stageTwo.manualUrl && !reclassified.manualReady) {
           logManualResearchEvent('stage2_validation_failed', {
+            ...logContext,
             title: originalTitle,
             normalizedTitle: stageOne.normalizedTitle,
             manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
@@ -626,6 +649,7 @@ async function researchAssetTitles({
       }
     } else {
       logManualResearchEvent('stage2_skipped', {
+        ...logContext,
         title: originalTitle,
         normalizedTitle: stageOne.normalizedTitle,
         manufacturer: stageOne.manufacturer,
@@ -643,6 +667,7 @@ async function researchAssetTitles({
     if (documentationSuggestions.length) {
       acquisitionState = 'started';
       logManualResearchEvent('manual_acquisition_start', {
+        ...logContext,
         title: originalTitle,
         normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
         manufacturer: summary.manufacturer || stageOne.manufacturer,
@@ -678,6 +703,7 @@ async function researchAssetTitles({
         acquisitionError = normalizeErrorMessage(error);
         acquisitionState = `${error?.code || ''}` === 'deadline-exceeded' ? 'timed_out' : 'failed';
         logManualResearchEvent(acquisitionState === 'timed_out' ? 'manual_acquisition_timeout' : 'manual_acquisition_failed', {
+          ...logContext,
           title: originalTitle,
           normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
           manufacturer: summary.manufacturer || stageOne.manufacturer,
@@ -721,6 +747,7 @@ async function researchAssetTitles({
     }
 
     logManualResearchEvent('final_result', {
+      ...logContext,
       title: originalTitle,
       normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
       manufacturer: summary.manufacturer || stageOne.manufacturer,

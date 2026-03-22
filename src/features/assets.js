@@ -37,6 +37,7 @@ const ENRICHMENT_STATUS_LABELS = {
   no_match_yet: 'no match yet',
   permission_blocked: 'permission blocked',
   lookup_failed: 'lookup failed',
+  retry_needed: 'retry needed',
   unavailable_disabled: 'unavailable / disabled',
   idle: 'not started'
 };
@@ -53,11 +54,13 @@ const ENRICHMENT_STATUS_STYLES = {
   no_match_yet: { bg: '#fee2e2', border: '#fca5a5', text: '#991b1b' },
   permission_blocked: { bg: '#fef3c7', border: '#fbbf24', text: '#92400e' },
   lookup_failed: { bg: '#fee2e2', border: '#fca5a5', text: '#991b1b' },
+  retry_needed: { bg: '#fef3c7', border: '#f59e0b', text: '#92400e' },
   unavailable_disabled: { bg: '#f3f4f6', border: '#d1d5db', text: '#4b5563' },
   idle: { bg: '#f3f4f6', border: '#d1d5db', text: '#4b5563' }
 };
 
-const STALE_ENRICHMENT_MS = 10 * 60 * 1000;
+const STALE_ENRICHMENT_MS = 3 * 60 * 1000;
+const ACTIVE_ENRICHMENT_HEARTBEAT_MS = 2 * 60 * 1000;
 const LEGACY_STATUS_MAP = {
   needs_follow_up: 'followup_needed',
   docs_found: 'verified_manual_found',
@@ -88,6 +91,25 @@ function isEnrichmentStale(asset) {
   return (Date.now() - lastTouchedAt) >= STALE_ENRICHMENT_MS;
 }
 
+
+function hasRecentEnrichmentHeartbeat(asset) {
+  const heartbeatAt = getTimestampValue(asset.enrichmentHeartbeatAt);
+  if (!heartbeatAt) return false;
+  return (Date.now() - heartbeatAt) < ACTIVE_ENRICHMENT_HEARTBEAT_MS;
+}
+
+function getEffectiveEnrichmentStatus(asset = {}) {
+  const normalizedStatus = normalizeEnrichmentStatus(asset.enrichmentStatus || 'idle');
+  const manualState = getAuthoritativeManualState(asset);
+  if (manualState.hasAttachedManual) return 'verified_manual_found';
+  if (!['queued', 'searching_docs', 'in_progress'].includes(normalizedStatus)) return normalizedStatus;
+  if (hasRecentEnrichmentHeartbeat(asset)) return normalizedStatus;
+  if (!isEnrichmentStale(asset)) return normalizedStatus;
+  const supportLinks = Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : [];
+  if (supportLinks.length || `${asset.supportUrl || ''}`.trim() || `${asset.manualSourceUrl || ''}`.trim() || `${asset.enrichmentFollowupQuestion || ''}`.trim()) return 'retry_needed';
+  return 'retry_needed';
+}
+
 function renderStatusChip(status) {
   const key = normalizeEnrichmentStatus(status || 'idle');
   const style = ENRICHMENT_STATUS_STYLES[key] || ENRICHMENT_STATUS_STYLES.idle;
@@ -111,7 +133,8 @@ function renderAssetScanChips(asset, { docsStatus = 'missing', openTasks = [], o
   const chips = [];
   chips.push(docsStatus === 'linked' ? renderAuditChip('docs found', 'good') : renderAuditChip('docs missing', 'warn'));
   if (['needs_review', 'pending_review'].includes((asset.reviewState || ''))) chips.push(renderAuditChip('review needed', 'warn'));
-  if (['queued', 'searching_docs', 'in_progress'].includes(normalizeEnrichmentStatus(asset.enrichmentStatus))) chips.push(renderAuditChip('enrichment running', 'info'));
+  if (['queued', 'searching_docs', 'in_progress'].includes(getEffectiveEnrichmentStatus(asset))) chips.push(renderAuditChip('enrichment running', 'info'));
+  if (getEffectiveEnrichmentStatus(asset) === 'retry_needed') chips.push(renderAuditChip('retry needed', 'warn'));
   if (openTasks.length) chips.push(renderAuditChip('open issue', 'bad'));
   if (overduePm.length) chips.push(renderAuditChip('PM due', 'warn'));
   if (!openTasks.length && !overduePm.length) chips.push(renderAuditChip('healthy', 'good'));
@@ -225,7 +248,7 @@ function renderPreviewPanel(state) {
 }
 
 function renderEnrichmentDetails(asset, manager, state) {
-  const status = normalizeEnrichmentStatus(asset.enrichmentStatus || 'idle');
+  const status = getEffectiveEnrichmentStatus(asset);
   const stale = isEnrichmentStale(asset);
   const suggestions = getReviewableDocumentationSuggestions(asset);
   const supportLinks = (Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []).filter((entry) => !entry?.deadPage && !entry?.unreachable);
@@ -236,7 +259,9 @@ function renderEnrichmentDetails(asset, manager, state) {
   const linkedManuals = manualState.manualLinks;
   const linkedSupport = Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : [];
   const actionFeedback = state?.assetUi?.lastActionByAsset?.[asset.id] || null;
-  const statusHelp = status === 'permission_blocked'
+  const statusHelp = status === 'retry_needed'
+    ? 'The last enrichment run appears stale. Attached manuals remain authoritative; otherwise retry or clear the stuck state.'
+    : status === 'permission_blocked'
     ? 'Lookup could not verify docs because this role lacks access to the enrichment path.'
     : status === 'lookup_failed'
       ? (asset.enrichmentErrorMessage || 'Lookup failed before suggestions were returned.')
@@ -247,7 +272,7 @@ function renderEnrichmentDetails(asset, manager, state) {
   return `
     <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin:4px 0 8px;">
       ${renderStatusChip(status)}
-      <span class="tiny">${stale ? 'Search is taking longer than expected.' : (status === 'in_progress' || status === 'searching_docs' ? 'Searching official/manual sources...' : '')}</span>
+      <span class="tiny">${status === 'retry_needed' ? 'Previous lookup appears stalled. Retry the run or repair the asset state.' : (stale ? 'Search is taking longer than expected.' : (status === 'in_progress' || status === 'searching_docs' ? 'Searching official/manual sources...' : ''))}</span>
     </div>
     ${actionFeedback?.message ? renderInlineFeedback(actionFeedback.message, actionFeedback.tone) : ''}
     ${statusHelp ? renderInlineFeedback(statusHelp, status === 'lookup_failed' ? 'error' : 'info') : ''}
@@ -319,9 +344,9 @@ export function renderAssets(el, state, actions) {
     if (state.assetUi.reviewFilter === 'missing_docs') return !getAuthoritativeManualState(asset).hasAttachedManual;
     return reviewState === state.assetUi.reviewFilter;
   }).filter((asset) => {
-    const enrichmentStatus = normalizeEnrichmentStatus(asset.enrichmentStatus || 'idle');
+    const enrichmentStatus = getEffectiveEnrichmentStatus(asset);
     if (state.assetUi.enrichmentFilter === 'all') return true;
-    if (state.assetUi.enrichmentFilter === 'action_needed') return ['followup_needed', 'likely_manual_unreachable', 'no_match_yet', 'lookup_failed', 'permission_blocked'].includes(enrichmentStatus);
+    if (state.assetUi.enrichmentFilter === 'action_needed') return ['followup_needed', 'likely_manual_unreachable', 'no_match_yet', 'lookup_failed', 'permission_blocked', 'retry_needed'].includes(enrichmentStatus);
     if (state.assetUi.enrichmentFilter === 'in_progress') return ['queued', 'searching_docs', 'in_progress'].includes(enrichmentStatus);
     return enrichmentStatus === state.assetUi.enrichmentFilter;
   }).filter((asset) => {
@@ -661,4 +686,4 @@ export function renderAssets(el, state, actions) {
   }));
 }
 
-export { getAuthoritativeManualState };
+export { getAuthoritativeManualState, getEffectiveEnrichmentStatus, isEnrichmentStale };

@@ -74,7 +74,7 @@ function createSectionElement(id) {
 
 
 test('asset helpers prefer authoritative manual attachment fields over legacy searching state', async () => {
-  const { getAuthoritativeManualState } = await loadAssetsHelpers();
+  const { getAuthoritativeManualState, getEffectiveEnrichmentStatus } = await loadAssetsHelpers();
   const attached = getAuthoritativeManualState({
     enrichmentStatus: 'searching_docs',
     manualLibraryRef: 'manual-quik-drop',
@@ -84,6 +84,7 @@ test('asset helpers prefer authoritative manual attachment fields over legacy se
   });
   assert.equal(attached.hasAttachedManual, true);
   assert.deepEqual(attached.manualLinks, ['manual-library/bay-tek/quik-drop/existing.pdf']);
+  assert.equal(getEffectiveEnrichmentStatus(attached), 'verified_manual_found');
 
   const fallback = getAuthoritativeManualState({
     enrichmentStatus: 'searching_docs',
@@ -93,6 +94,20 @@ test('asset helpers prefer authoritative manual attachment fields over legacy se
   });
   assert.equal(fallback.hasAttachedManual, true);
   assert.deepEqual(fallback.manualLinks, ['https://example.com/manual.pdf']);
+});
+
+test('asset helpers downgrade stale in-progress runs without heartbeat to retry_needed', async () => {
+  const { getEffectiveEnrichmentStatus } = await loadAssetsHelpers();
+  const staleAsset = {
+    enrichmentStatus: 'in_progress',
+    enrichmentRequestedAt: new Date(Date.now() - (5 * 60 * 1000)).toISOString(),
+    enrichmentHeartbeatAt: new Date(Date.now() - (4 * 60 * 1000)).toISOString(),
+    supportResourcesSuggestion: [],
+    manualLibraryRef: '',
+    manualStoragePath: '',
+    manualLinks: [],
+  };
+  assert.equal(getEffectiveEnrichmentStatus(staleAsset), 'retry_needed');
 });
 
 test('applyActionCenterFocus translates dashboard focus into operations filters and route flags', async () => {

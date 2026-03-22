@@ -22,7 +22,8 @@ const {
   rehydrateSeededManualDocumentationSuggestions,
   classifyManualMatchSummary,
   finalizeSingleAssetEnrichment,
-  hasAuthoritativeManualAttachment
+  hasAuthoritativeManualAttachment,
+  repairStaleInProgressAsset
 } = require('../src/services/assetEnrichmentService');
 const { resolveArcadeTitleFamily } = require('../src/services/arcadeTitleAliasService');
 const { findCatalogManualMatch } = require('../src/services/manualLookupCatalogService');
@@ -1944,6 +1945,43 @@ test('enrichAssetDocumentation attaches acquired manual-library metadata for sin
   assert.equal(assetState.manualLibraryRef, 'manual-fast-furious');
 });
 
+test('enrichAssetDocumentation writes run metadata immediately for live manual runs', async () => {
+  const { db, assetWrites } = createEnrichmentDb({ name: 'Fast & Furious', manufacturer: 'Raw Thrills', companyId: 'company-1' });
+
+  const result = await enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'manual',
+    followupAnswer: '',
+    traceId: 'trace-run-metadata',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.1,
+        normalizedName: 'Fast & Furious Arcade',
+        likelyManufacturer: 'Raw Thrills',
+        documentationSuggestions: [],
+        supportResourcesSuggestion: [],
+        supportContactsSuggestion: [],
+        manualMatchSummary: { matchType: 'unresolved', manualReady: false },
+        pipelineMeta: { acquisitionState: 'no_manual' },
+      }),
+      findReusableVerifiedManuals: async () => [],
+      verifyDocumentationSuggestions: async () => [],
+    }
+  });
+
+  assert.match(result.runId, /^enrich-/);
+  assert.equal(assetWrites[0].payload.enrichmentRunId, result.runId);
+  assert.equal(assetWrites[0].payload.enrichmentTriggerSource, 'manual');
+  assert.equal(assetWrites[0].payload.enrichmentStartedBy, 'user-1');
+  assert.equal(assetWrites[0].payload.enrichmentCallablePath, 'enrichAssetDocumentation');
+  assert.equal(assetWrites[0].payload.enrichmentPhase, 'starting');
+  assert.ok(assetWrites[0].payload.enrichmentStartedAt);
+  assert.ok(assetWrites[0].payload.enrichmentHeartbeatAt);
+});
+
 test('enrichAssetDocumentation keeps source-only single-asset results out of docs_found without acquired manual storage', async () => {
   const { db, assetWrites } = createEnrichmentDb({ name: 'King Kong', manufacturer: 'Raw Thrills', companyId: 'company-1' });
 
@@ -2341,7 +2379,7 @@ test('enrichAssetDocumentation logs authoritative single-asset finalization mile
   const labels = entries.map(([label]) => label);
   for (const label of [
     'singleAssetDocs:start',
-    'singleAssetDocs:research_result',
+    'singleAssetDocs:stage1_result',
     'singleAssetDocs:acquisition_result',
     'singleAssetDocs:library_attach',
     'singleAssetDocs:asset_write',
@@ -2351,6 +2389,32 @@ test('enrichAssetDocumentation logs authoritative single-asset finalization mile
   ]) {
     assert.ok(labels.includes(label), `missing ${label}`);
   }
+  const stage1Entry = entries.find(([label]) => label === 'singleAssetDocs:stage1_result');
+  assert.equal(stage1Entry[1].assetId, 'asset-1');
+  assert.match(stage1Entry[1].runId, /^enrich-/);
+  const terminalEntry = entries.find(([label]) => label === 'assetEnrichment:terminal_status_write');
+  assert.equal(terminalEntry[1].assetId, 'asset-1');
+  assert.match(terminalEntry[1].runId, /^enrich-/);
+});
+
+test('repairStaleInProgressAsset terminalizes stale hanging assets and records recovery metadata', async () => {
+  const repaired = await repairStaleInProgressAsset({
+    asset: {
+      id: 'asset-1',
+      name: 'King Kong',
+      enrichmentStatus: 'in_progress',
+      enrichmentRunId: 'run-stale-1',
+      enrichmentLastRunAt: new Date(Date.now() - (6 * 60 * 1000)).toISOString(),
+      supportResourcesSuggestion: [{ title: 'King Kong support', url: 'https://rawthrills.com/games/king-kong-of-skull-island-vr/' }],
+      manualLibraryRef: '',
+      manualStoragePath: '',
+    },
+    verifySuggestions: async () => []
+  });
+
+  assert.equal(repaired.enrichmentStatus, 'followup_needed');
+  assert.equal(repaired.enrichmentRecoveredReason, 'stale_in_progress_repair');
+  assert.equal(repaired.enrichmentRecoveredFromRunId, 'run-stale-1');
 });
 
 function createEnrichmentDb(asset = {}, options = {}) {

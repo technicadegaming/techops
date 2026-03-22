@@ -21,6 +21,7 @@ const {
   enrichAssetDocumentation,
   previewAssetDocumentationLookup,
   repairLegacyAssetEnrichmentRecord,
+  repairStaleInProgressAsset,
 } = require('./services/assetEnrichmentService');
 const { approveAssetManual } = require('./services/manualIngestionService');
 const { researchAssetTitles } = require('./services/manualResearchService');
@@ -442,7 +443,9 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
   const assetRef = db.collection('assets').doc(request.data.assetId);
   const assetSnap = await assetRef.get();
   if (!assetSnap.exists) throw new HttpsError('not-found', 'Asset not found');
-  const repaired = await repairLegacyAssetEnrichmentRecord({ asset: assetSnap.data() || {} });
+  const asset = assetSnap.data() || {};
+  const repaired = await repairStaleInProgressAsset({ asset })
+    || await repairLegacyAssetEnrichmentRecord({ asset });
 
   await assetRef.set({
     documentationSuggestions: repaired.documentationSuggestions,
@@ -453,7 +456,11 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
     enrichmentFailedAt: repaired.enrichmentFailedAt,
     enrichmentErrorCode: repaired.enrichmentErrorCode,
     enrichmentErrorMessage: repaired.enrichmentErrorMessage,
+    enrichmentRecoveredAt: repaired.enrichmentRecoveredReason ? admin.firestore.FieldValue.serverTimestamp() : null,
+    enrichmentRecoveredReason: repaired.enrichmentRecoveredReason || '',
+    enrichmentRecoveredFromRunId: repaired.enrichmentRecoveredFromRunId || '',
     enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    enrichmentHeartbeatAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedBy: request.auth.uid
   }, { merge: true });
