@@ -1908,6 +1908,58 @@ test('enrichAssetDocumentation keeps source-only single-asset results out of doc
   assert.equal(assetWrites.at(-1).payload.supportUrl, 'https://rawthrills.com/games/king-kong-of-skull-island-vr/');
 });
 
+test('enrichAssetDocumentation terminalizes timed out acquisition runs instead of leaving searching_docs', async () => {
+  const { db, assetWrites, assetState } = createEnrichmentDb({ name: 'Fast & Furious', manufacturer: 'Raw Thrills', companyId: 'company-1' });
+
+  const result = await enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'post_save',
+    followupAnswer: '',
+    traceId: 'trace-timeout-terminal',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.68,
+        normalizedName: 'Fast & Furious Arcade',
+        likelyManufacturer: 'Raw Thrills',
+        documentationSuggestions: [],
+        supportResourcesSuggestion: [{
+          title: 'Fast & Furious Arcade title page',
+          url: 'https://rawthrills.com/games/fast-furious-arcade/',
+          sourceType: 'support',
+          matchScore: 62,
+        }],
+        supportContactsSuggestion: [],
+        oneFollowupQuestion: '',
+        manualMatchSummary: {
+          matchType: 'title_specific_source',
+          manualReady: false,
+          manualUrl: '',
+          manualSourceUrl: 'https://rawthrills.com/games/fast-furious-arcade/',
+          supportUrl: 'https://rawthrills.com/games/fast-furious-arcade/',
+        },
+        pipelineMeta: {
+          stage1MatchType: 'title_specific_source',
+          stage2Ran: true,
+          sourcePageExtracted: true,
+          acquisitionSucceeded: false,
+          acquisitionState: 'timed_out',
+          acquisitionError: 'Manual acquisition timed out after 15000ms',
+        },
+      }),
+      findReusableVerifiedManuals: async () => [],
+      verifyDocumentationSuggestions: async () => [],
+    }
+  });
+
+  assert.equal(assetWrites[0].payload.enrichmentStatus, 'searching_docs');
+  assert.equal(result.status, 'followup_needed');
+  assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'followup_needed');
+  assert.notEqual(assetState.enrichmentStatus, 'searching_docs');
+});
+
 function createEnrichmentDb(asset = {}) {
   const assetState = { id: 'asset-1', ...asset };
   const assetWrites = [];

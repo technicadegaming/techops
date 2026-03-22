@@ -33,6 +33,7 @@ const FALLBACK_MATCH_TYPES = new Set([
 const CACHE_COLLECTION = 'assetTitleResearchCache';
 const MAX_TITLE_BATCH = 50;
 const CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
+const MANUAL_ACQUISITION_TIMEOUT_MS = 15000;
 
 function logManualResearchEvent(event, payload = {}) {
   try {
@@ -55,6 +56,30 @@ function normalizeUrl(value = '') {
     return parsed.toString();
   } catch {
     return '';
+  }
+}
+
+function normalizeErrorMessage(error, max = 220) {
+  return normalizeString(error?.message || String(error || ''), max);
+}
+
+function createTimeoutError(message, code = 'deadline-exceeded') {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+async function withTimeout(operation, timeoutMs, timeoutMessage) {
+  let timer = null;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(createTimeoutError(timeoutMessage)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -416,6 +441,7 @@ async function researchAssetTitles({
 
   const results = [];
   for (const row of titles) {
+    const startedAt = Date.now();
     const originalTitle = normalizeString(row?.originalTitle || '', 160);
     if (!originalTitle) continue;
     const stageOne = await runStageOneLookup({
@@ -596,36 +622,54 @@ async function researchAssetTitles({
     }
 
     let manualLibraryAcquisition = null;
+    let acquisitionState = 'skipped';
+    let acquisitionError = '';
     if (documentationSuggestions.length) {
-      manualLibraryAcquisition = await acquireManualToLibrary({
-        db,
-        storage,
-        fetchImpl,
-        candidate: documentationSuggestions[0],
-        context: {
-          originalTitle,
-          canonicalTitle: summary.canonicalTitle || stageOne.canonicalTitleFamily,
-          normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
-          familyTitle: stageOne.canonicalTitleFamily,
-          manufacturer: summary.manufacturer || stageOne.manufacturer,
-          manufacturerProfile: stageOne.manufacturerProfile,
-          manualSourceUrl: summary.manualSourceUrl,
-          manualUrl: summary.manualUrl,
-          matchType: summary.matchType,
-          matchConfidence: summary.matchConfidence || summary.confidence,
-          notes: summary.matchNotes || '',
-          catalogEntryId: stageOne.catalogMatch?.catalogEntryId || '',
-          seededFromWorkbook: stageOne.catalogMatch?.seededFromWorkbook === true,
-        },
-      }).catch((error) => {
-        logManualResearchEvent('manual_acquisition_failed', {
+      acquisitionState = 'started';
+      logManualResearchEvent('manual_acquisition_start', {
+        title: originalTitle,
+        normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+        manufacturer: summary.manufacturer || stageOne.manufacturer,
+        candidateUrl: documentationSuggestions[0]?.url || '',
+        sourcePageUrl: documentationSuggestions[0]?.sourcePageUrl || summary.manualSourceUrl || '',
+      });
+      manualLibraryAcquisition = await withTimeout(
+        acquireManualToLibrary({
+          db,
+          storage,
+          fetchImpl,
+          candidate: documentationSuggestions[0],
+          context: {
+            originalTitle,
+            canonicalTitle: summary.canonicalTitle || stageOne.canonicalTitleFamily,
+            normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+            familyTitle: stageOne.canonicalTitleFamily,
+            manufacturer: summary.manufacturer || stageOne.manufacturer,
+            manufacturerProfile: stageOne.manufacturerProfile,
+            manualSourceUrl: summary.manualSourceUrl,
+            manualUrl: summary.manualUrl,
+            matchType: summary.matchType,
+            matchConfidence: summary.matchConfidence || summary.confidence,
+            notes: summary.matchNotes || '',
+            catalogEntryId: stageOne.catalogMatch?.catalogEntryId || '',
+            seededFromWorkbook: stageOne.catalogMatch?.seededFromWorkbook === true,
+            downloadTimeoutMs: MANUAL_ACQUISITION_TIMEOUT_MS,
+          },
+        }),
+        MANUAL_ACQUISITION_TIMEOUT_MS,
+        `Manual acquisition timed out after ${MANUAL_ACQUISITION_TIMEOUT_MS}ms`,
+      ).catch((error) => {
+        acquisitionError = normalizeErrorMessage(error);
+        acquisitionState = `${error?.code || ''}` === 'deadline-exceeded' ? 'timed_out' : 'failed';
+        logManualResearchEvent(acquisitionState === 'timed_out' ? 'manual_acquisition_timeout' : 'manual_acquisition_failed', {
           title: originalTitle,
           normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
           manufacturer: summary.manufacturer || stageOne.manufacturer,
-          reason: normalizeString(error?.message || String(error), 220),
+          reason: acquisitionError,
         });
         return null;
       });
+      if (manualLibraryAcquisition) acquisitionState = manualLibraryAcquisition.manualReady ? 'succeeded' : 'no_manual';
     }
     if (manualLibraryAcquisition?.manualReady && manualLibraryAcquisition.manualLibrary) {
       const library = manualLibraryAcquisition.manualLibrary;
@@ -654,7 +698,7 @@ async function researchAssetTitles({
       summary = {
         ...summary,
         manualReady: false,
-        status: summary.supportUrl ? 'followup_needed' : 'no_match_yet',
+        status: (summary.supportUrl || supportResourcesSuggestion.length || acquisitionError) ? 'followup_needed' : 'no_match_yet',
         reviewRequired: true,
         manualUrl: '',
       };
@@ -675,6 +719,8 @@ async function researchAssetTitles({
       researchSourceType: summary.researchSourceType,
       manualLibraryRef: summary.manualLibraryRef || '',
       manualStoragePath: summary.manualStoragePath || '',
+      acquisitionState,
+      elapsedMs: Date.now() - startedAt,
     });
 
     results.push({
@@ -696,6 +742,8 @@ async function researchAssetTitles({
         stage2Ran: FALLBACK_MATCH_TYPES.has(stageOne.summary.matchType),
         sourcePageExtracted: Array.isArray(documentationSuggestions) && documentationSuggestions.some((entry) => !!`${entry?.sourcePageUrl || ''}`.trim()),
         acquisitionSucceeded: summary.manualReady === true && !!`${summary.manualLibraryRef || ''}`.trim(),
+        acquisitionState,
+        acquisitionError,
         manualLibraryRef: summary.manualLibraryRef || '',
         manualStoragePath: summary.manualStoragePath || '',
       },

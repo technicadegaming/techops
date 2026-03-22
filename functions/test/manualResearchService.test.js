@@ -267,6 +267,87 @@ test('researchAssetTitles emits explicit logs and backend validation can promote
   }
 });
 
+test('researchAssetTitles degrades stalled Quick Drop acquisition to terminal followup_needed', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{ originalTitle: 'Quick Drop', manufacturerHint: 'Bay Tek Games' }],
+    traceId: 'test-quick-drop-timeout',
+    storage: createStorageMock(),
+    fetchImpl: async (url, options = {}) => {
+      if (String(url).endsWith('.pdf')) {
+        return new Promise((_, reject) => {
+          options.signal?.addEventListener('abort', () => {
+            const error = new Error('aborted');
+            error.name = 'AbortError';
+            reject(error);
+          });
+        });
+      }
+      return {
+        ok: true,
+        status: 200,
+        url,
+        headers: { get: () => 'text/html' },
+        text: async () => '',
+      };
+    },
+  });
+
+  assert.equal(result.results[0].manualReady, false);
+  assert.equal(result.results[0].status, 'followup_needed');
+  assert.equal(result.results[0].manualLibraryRef, '');
+  assert.equal(result.results[0].pipelineMeta.acquisitionState, 'timed_out');
+});
+
+test('researchAssetTitles degrades thrown Fast & Furious acquisition errors to a terminal followup result', async () => {
+  const failingStorage = {
+    bucket() {
+      return {
+        file() {
+          return {
+            async save() {
+              throw new Error('storage upload blew up');
+            }
+          };
+        }
+      };
+    }
+  };
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{ originalTitle: 'Fast & Furious', manufacturerHint: 'Raw Thrills' }],
+    traceId: 'test-fast-furious-acquire-fail',
+    storage: failingStorage,
+    fetchImpl: async (url) => {
+      if (String(url).endsWith('.pdf')) {
+        return {
+          ok: true,
+          status: 200,
+          url,
+          headers: { get: () => 'application/pdf' },
+          arrayBuffer: async () => Buffer.from('%PDF-1.4\nmanual'),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        url,
+        headers: { get: () => 'text/html' },
+        text: async () => '',
+      };
+    },
+  });
+
+  assert.equal(result.results[0].manualReady, false);
+  assert.equal(result.results[0].status, 'followup_needed');
+  assert.equal(result.results[0].pipelineMeta.acquisitionState, 'failed');
+  assert.match(result.results[0].pipelineMeta.acquisitionError, /storage upload blew up/);
+});
+
 test('researchAssetTitles logs candidate_rejected when stage 2 returns support-only junk manual urls', async () => {
   const logs = [];
   const originalLog = console.log;

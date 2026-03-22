@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { acquireManualToLibrary } = require('../src/services/manualAcquisitionService');
+const { acquireManualToLibrary, downloadManualCandidate } = require('../src/services/manualAcquisitionService');
 const { buildManualLibraryStoragePath } = require('../src/services/manualLibraryService');
 
 function createDb(seed = {}) {
@@ -148,4 +148,21 @@ test('source page with junk links does not create a manual record', async () => 
 
 test('buildManualLibraryStoragePath uses shared library path convention', () => {
   assert.equal(buildManualLibraryStoragePath({ normalizedManufacturer: 'Raw Thrills', canonicalTitle: 'Fast & Furious Arcade', sha256: 'abc123', extension: 'pdf' }), 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf');
+});
+
+test('downloadManualCandidate aborts stalled downloads with a hard timeout', async () => {
+  await assert.rejects(
+    () => downloadManualCandidate(
+      'https://example.com/stuck.pdf',
+      async (url, options = {}) => new Promise((_, reject) => {
+        options.signal?.addEventListener('abort', () => {
+          const error = new Error(`aborted ${url}`);
+          error.name = 'AbortError';
+          reject(error);
+        });
+      }),
+      25,
+    ),
+    /timed out/i,
+  );
 });

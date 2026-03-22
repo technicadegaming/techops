@@ -11,6 +11,13 @@ const {
 } = require('./manualLibraryService');
 
 const ALLOWED_EXTENSIONS = new Set(['pdf', 'doc', 'docx']);
+const DOWNLOAD_TIMEOUT_MS = 10000;
+
+function isAbortLikeError(error) {
+  const code = `${error?.code || ''}`.toLowerCase();
+  const name = `${error?.name || ''}`.toLowerCase();
+  return code === 'abort_err' || code === 'aborted' || name === 'aborterror';
+}
 
 function logEvent(event, payload = {}) {
   try { console.log(`manualAcquire:${event}`, payload); } catch (error) {
@@ -35,8 +42,21 @@ function isDocumentLike({ contentType = '', extension = '', buffer = Buffer.allo
   return lowerType.includes('pdf') || lowerType.includes('msword') || lowerType.includes('officedocument');
 }
 
-async function downloadManualCandidate(url, fetchImpl = fetch) {
-  const response = await fetchImpl(url, { headers: { 'user-agent': 'techops-manual-acquisition/1.0' } });
+async function downloadManualCandidate(url, fetchImpl = fetch, timeoutMs = DOWNLOAD_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetchImpl(url, {
+      headers: { 'user-agent': 'techops-manual-acquisition/1.0' },
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (isAbortLikeError(error)) throw new Error(`Manual download timed out after ${timeoutMs}ms`);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!response.ok) throw new Error(`Manual download failed with status ${response.status}`);
   const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
@@ -64,6 +84,7 @@ async function acquireManualToLibrary({
   const sourcePageUrl = normalizeUrl(candidate.sourcePageUrl || context.manualSourceUrl || '');
   const directManualUrl = normalizeUrl(candidate.url || context.manualUrl || '');
 
+  const startedAt = Date.now();
   logEvent('start', { inputTitle: context.originalTitle, canonicalTitle, manufacturer, sourcePageUrl, originalDownloadUrl: directManualUrl });
 
   const approvedHit = await findApprovedManualLibraryRecord({ db, canonicalTitle, manufacturer, familyTitle });
@@ -102,7 +123,7 @@ async function acquireManualToLibrary({
       return { manualReady: true, reusedExisting: true, manualLibrary: existingByUrl, manualUrl: existingByUrl.storagePath, manualSourceUrl: existingByUrl.sourcePageUrl || sourcePageUrl };
     }
     logEvent('download_candidate_found', { canonicalTitle, manufacturer, sourcePageUrl, originalDownloadUrl: normalizedCandidateUrl, candidateCount: candidates.length });
-    const download = await downloadManualCandidate(normalizedCandidateUrl, fetchImpl).catch((error) => {
+    const download = await downloadManualCandidate(normalizedCandidateUrl, fetchImpl, context.downloadTimeoutMs).catch((error) => {
       logEvent('download_candidate_rejected', { canonicalTitle, originalDownloadUrl: normalizedCandidateUrl, rejectionReasons: [error.message] });
       return null;
     });
@@ -156,11 +177,11 @@ async function acquireManualToLibrary({
       },
     });
     logEvent('library_record_written', { canonicalTitle, storagePath, sha256, manualLibraryId: record.id });
-    logEvent('final_result', { canonicalTitle, manufacturer, sourcePageUrl, resolvedDownloadUrl: download.resolvedDownloadUrl, acceptedCandidateCount: acceptedCount, sha256, storagePath, reusedExisting: false, finalManualReady: true });
+    logEvent('final_result', { canonicalTitle, manufacturer, sourcePageUrl, resolvedDownloadUrl: download.resolvedDownloadUrl, acceptedCandidateCount: acceptedCount, sha256, storagePath, reusedExisting: false, finalManualReady: true, elapsedMs: Date.now() - startedAt });
     return { manualReady: true, reusedExisting: false, manualLibrary: record, manualUrl: storagePath, manualSourceUrl: sourcePageUrl };
   }
 
-  logEvent('final_result', { canonicalTitle, manufacturer, sourcePageUrl, candidateCount: candidates.length, acceptedCandidateCount: acceptedCount, finalManualReady: false });
+  logEvent('final_result', { canonicalTitle, manufacturer, sourcePageUrl, candidateCount: candidates.length, acceptedCandidateCount: acceptedCount, finalManualReady: false, elapsedMs: Date.now() - startedAt });
   return { manualReady: false, manualLibrary: null, manualUrl: '', manualSourceUrl: sourcePageUrl };
 }
 
