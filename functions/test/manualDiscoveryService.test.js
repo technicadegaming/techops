@@ -8,7 +8,8 @@ const {
   classifyManualCandidate,
   extractAnchorCandidates,
   extractManualLinksFromHtmlPage,
-  discoverManualDocumentation
+  discoverManualDocumentation,
+  searchDuckDuckGoHtml
 } = require('../src/services/manualDiscoveryService');
 const { getManufacturerProfile } = require('../src/services/assetEnrichmentService');
 
@@ -739,4 +740,49 @@ test('extractManualLinksFromHtmlPage returns empty rows when source fetch aborts
   assert.deepEqual(rows, []);
   assert.equal(events.at(-1).event, 'html_followup_error');
   assert.equal(events.at(-1).payload.reason, 'timeout');
+});
+
+
+test('searchDuckDuckGoHtml parses classic DuckDuckGo html redirect results', async () => {
+  const fetchMock = async () => ({
+    ok: true,
+    text: async () => `
+      <html><body>
+        <a class="result__a" href="//duckduckgo.com/l/?uddg=${encodeURIComponent('https://laigames.com/game/virtual-rabbids-the-big-ride/')}">Virtual Rabbids: The Big Ride Support</a>
+      </body></html>
+    `
+  });
+
+  const rows = await searchDuckDuckGoHtml('virtual rabbids', fetchMock);
+
+  assert.deepEqual(rows, [{
+    title: 'Virtual Rabbids: The Big Ride Support',
+    url: 'https://laigames.com/game/virtual-rabbids-the-big-ride/'
+  }]);
+});
+
+test('searchDuckDuckGoHtml falls back to lite results when html endpoint markup yields no matches', async () => {
+  let calls = 0;
+  const fetchMock = async (url) => {
+    void url;
+    calls += 1;
+    return {
+      ok: true,
+      text: async () => calls === 1
+        ? '<html><body><div class="no-results">No parser match</div></body></html>'
+        : `
+          <html><body>
+            <a href="https://rawthrills.com/games/jurassic-park-arcade-support" class="result-link">Jurassic Park Arcade Support</a>
+          </body></html>
+        `
+    };
+  };
+
+  const rows = await searchDuckDuckGoHtml('jurassic park arcade', fetchMock);
+
+  assert.equal(calls, 2);
+  assert.deepEqual(rows, [{
+    title: 'Jurassic Park Arcade Support',
+    url: 'https://rawthrills.com/games/jurassic-park-arcade-support'
+  }]);
 });
