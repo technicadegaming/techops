@@ -31,6 +31,10 @@ async function loadAssetIntakeHelpers() {
   return import('../src/features/assetIntake.js');
 }
 
+async function loadAssetsHelpers() {
+  return import('../src/features/assets.js');
+}
+
 function createSelectElement() {
   return {
     innerHTML: '',
@@ -67,6 +71,29 @@ function createSectionElement(id) {
     }
   };
 }
+
+
+test('asset helpers prefer authoritative manual attachment fields over legacy searching state', async () => {
+  const { getAuthoritativeManualState } = await loadAssetsHelpers();
+  const attached = getAuthoritativeManualState({
+    enrichmentStatus: 'searching_docs',
+    manualLibraryRef: 'manual-quik-drop',
+    manualStoragePath: 'manual-library/bay-tek/quik-drop/existing.pdf',
+    manualLinks: [],
+    documentationSuggestions: [],
+  });
+  assert.equal(attached.hasAttachedManual, true);
+  assert.deepEqual(attached.manualLinks, ['manual-library/bay-tek/quik-drop/existing.pdf']);
+
+  const fallback = getAuthoritativeManualState({
+    enrichmentStatus: 'searching_docs',
+    manualLibraryRef: '',
+    manualStoragePath: '',
+    manualLinks: ['https://example.com/manual.pdf'],
+  });
+  assert.equal(fallback.hasAttachedManual, true);
+  assert.deepEqual(fallback.manualLinks, ['https://example.com/manual.pdf']);
+});
 
 test('applyActionCenterFocus translates dashboard focus into operations filters and route flags', async () => {
   const { applyActionCenterFocus, applyShellFocus } = await loadActionCenter();

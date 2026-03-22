@@ -135,6 +135,23 @@ function renderSuggestionSource(entry) {
   return provenance.join(' | ');
 }
 
+
+function getAuthoritativeManualState(asset = {}) {
+  const manualLibraryRef = `${asset?.manualLibraryRef || ''}`.trim();
+  const manualStoragePath = `${asset?.manualStoragePath || ''}`.trim();
+  const manualLinks = Array.isArray(asset?.manualLinks) ? asset.manualLinks : [];
+  const authoritativeLinks = Array.from(new Set([
+    manualStoragePath,
+    ...manualLinks.map((value) => `${value || ''}`.trim()),
+  ].filter(Boolean))).slice(0, 5);
+  return {
+    manualLibraryRef,
+    manualStoragePath,
+    manualLinks: authoritativeLinks,
+    hasAttachedManual: !!(manualLibraryRef || manualStoragePath || authoritativeLinks.length),
+  };
+}
+
 function renderInlineFeedback(message, tone = 'info') {
   const palette = tone === 'error'
     ? { border: '#fca5a5', background: '#fef2f2', text: '#991b1b' }
@@ -215,7 +232,8 @@ function renderEnrichmentDetails(asset, manager, state) {
   const hiddenDeadLinks = (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).length - suggestions.length;
   const contacts = Array.isArray(asset.supportContactsSuggestion) ? asset.supportContactsSuggestion : [];
   const showFollowup = status === 'followup_needed' && asset.enrichmentFollowupQuestion;
-  const linkedManuals = Array.isArray(asset.manualLinks) ? asset.manualLinks : [];
+  const manualState = getAuthoritativeManualState(asset);
+  const linkedManuals = manualState.manualLinks;
   const linkedSupport = Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : [];
   const actionFeedback = state?.assetUi?.lastActionByAsset?.[asset.id] || null;
   const statusHelp = status === 'permission_blocked'
@@ -234,7 +252,7 @@ function renderEnrichmentDetails(asset, manager, state) {
     ${actionFeedback?.message ? renderInlineFeedback(actionFeedback.message, actionFeedback.tone) : ''}
     ${statusHelp ? renderInlineFeedback(statusHelp, status === 'lookup_failed' ? 'error' : 'info') : ''}
     ${linkedManuals.length
-      ? renderInlineFeedback(`${linkedManuals.length} manual link${linkedManuals.length === 1 ? '' : 's'} already applied. Review suggestions below only if you need to replace or add coverage.`, 'success')
+      ? renderInlineFeedback(`${linkedManuals.length || manualState.manualLibraryRef ? `${linkedManuals.length || 1} manual link${(linkedManuals.length || 1) === 1 ? '' : 's'}` : 'Shared manual'} already applied${manualState.manualLibraryRef ? ` (library ref ${manualState.manualLibraryRef})` : ''}. Review suggestions below only if you need to replace or add coverage.`, 'success')
       : renderInlineFeedback('No manual is applied yet. Start with the best verified manual action below.', 'info')}
     <div class="tiny"><b>Model suggestion:</b> ${asset.normalizedName || 'n/a'}${asset.enrichmentConfidence ? ` (${Math.round(Number(asset.enrichmentConfidence) * 100)}% confidence)` : ''}</div>
     <div class="tiny" style="margin-bottom:8px;"><b>Inferred manufacturer:</b> ${asset.manufacturerSuggestion || asset.manufacturer || 'n/a'}${manager && asset.manufacturerSuggestion && asset.manufacturerSuggestion !== asset.manufacturer ? ` <button data-apply-enrichment="manufacturer" data-asset-id="${asset.id}" type="button">Apply manufacturer</button>` : ''}</div>
@@ -290,7 +308,7 @@ export function renderAssets(el, state, actions) {
   const assetFilter = state.route?.assetFilter || 'all';
   const scopedAssets = (scope.scopedAssets || []).filter((asset) => {
     if (assetFilter !== 'missing_docs' && state.assetUi.statusFilter === 'all') return true;
-    const hasDocs = (asset.manualLinks || []).length > 0;
+    const hasDocs = getAuthoritativeManualState(asset).hasAttachedManual;
     if (assetFilter === 'missing_docs' && hasDocs) return false;
     if (state.assetUi.statusFilter === 'missing_docs') return !hasDocs;
     if (state.assetUi.statusFilter === 'has_docs') return hasDocs;
@@ -298,7 +316,7 @@ export function renderAssets(el, state, actions) {
   }).filter((asset) => {
     const reviewState = `${asset.reviewState || ''}`.trim() || ((asset.documentationSuggestions || []).some((entry) => entry?.url) ? 'pending_review' : 'idle');
     if (state.assetUi.reviewFilter === 'all') return true;
-    if (state.assetUi.reviewFilter === 'missing_docs') return !(asset.manualLinks || []).length;
+    if (state.assetUi.reviewFilter === 'missing_docs') return !getAuthoritativeManualState(asset).hasAttachedManual;
     return reviewState === state.assetUi.reviewFilter;
   }).filter((asset) => {
     const enrichmentStatus = normalizeEnrichmentStatus(asset.enrichmentStatus || 'idle');
@@ -319,7 +337,7 @@ export function renderAssets(el, state, actions) {
     state.assetUi.enrichmentFilter !== 'all' ? `enrichment: ${state.assetUi.enrichmentFilter.replace('_', ' ')}` : ''
   ].filter(Boolean);
   const assetTasks = scope.scopedTasks;
-  const docsReadyCount = (scope.scopedAssets || []).filter((asset) => (asset.manualLinks || []).length > 0).length;
+  const docsReadyCount = (scope.scopedAssets || []).filter((asset) => getAuthoritativeManualState(asset).hasAttachedManual).length;
   const docsMissingCount = scope.assetsWithoutDocs.length;
 
   el.innerHTML = `
@@ -446,7 +464,8 @@ export function renderAssets(el, state, actions) {
         const overduePm = state.pmSchedules.filter((schedule) => schedule.assetId === asset.id && schedule.status !== 'completed');
         const recurring = repeatPatterns.filter((pattern) => pattern.assetId === asset.id);
         const library = state.troubleshootingLibrary?.filter((row) => row.assetId === asset.id).slice(0, 5) || [];
-        const docsStatus = docs.length || (asset.manualLinks || []).length ? 'linked' : 'missing';
+        const manualState = getAuthoritativeManualState(asset);
+        const docsStatus = docs.length || manualState.hasAttachedManual ? 'linked' : 'missing';
         const auditEntries = (state.auditLogs || []).filter((entry) => entry.entityType === 'assets' && entry.entityId === asset.id).slice(0, 6);
         const location = getAssetLocationRecord(state, asset);
         return `<details class="item" id="asset-${asset.id}" ${state.route?.assetId === asset.id ? 'open' : ''}>
@@ -465,7 +484,7 @@ export function renderAssets(el, state, actions) {
 
           <details><summary>Documentation / AI status (${docsStatus})</summary>
             <div class="tiny" style="margin:8px 0;">Linked manuals:</div>
-            <div style="margin:4px 0 8px;">${(asset.manualLinks || []).length ? (asset.manualLinks || []).map((url) => renderLinkChip(url, { removable: manager, removeAttr: `data-remove-manual="${asset.id}" data-url="${encodeURIComponent(url)}"` })).join('') : renderInlineFeedback('No manual linked yet. Run lookup or apply a suggested manual below.', 'info')}</div>
+            <div style="margin:4px 0 8px;">${manualState.manualLinks.length ? manualState.manualLinks.map((url) => renderLinkChip(url, { removable: manager, removeAttr: `data-remove-manual="${asset.id}" data-url="${encodeURIComponent(url)}"` })).join('') : (manualState.manualLibraryRef ? renderInlineFeedback(`Shared manual attached via library ref ${manualState.manualLibraryRef}.`, 'success') : renderInlineFeedback('No manual linked yet. Run lookup or apply a suggested manual below.', 'info'))}</div>
             <div class="tiny" style="margin:4px 0;">Linked support links:</div>
             <div style="margin:4px 0 8px;">${(asset.supportResourcesSuggestion || []).length ? (asset.supportResourcesSuggestion || []).map((entry) => {
           const url = entry?.url || entry;
@@ -486,7 +505,7 @@ export function renderAssets(el, state, actions) {
           ${recurring.length ? `<div class="tiny"><b>Recurring patterns:</b> ${recurring.map((entry) => `${entry.issueCategory || 'uncategorized'} (${entry.count})`).join(', ')}</div>` : ''}
           ${library.length ? `<div class="tiny"><b>Troubleshooting library:</b> ${library.map((row) => row.successfulFix || row.title).join(' | ')}</div>` : ''}
 
-          ${isAdmin(state.permissions) ? `<details><summary>Edit core fields</summary><form data-edit="${asset.id}" class="grid grid-2"><input name="name" value="${asset.name || ''}" placeholder="Asset name" /><input name="id" value="${asset.id || ''}" placeholder="Asset ID" /><input name="locationName" value="${asset.locationName || ''}" list="assetLocationNames" placeholder="Location" /><input name="serialNumber" value="${asset.serialNumber || ''}" placeholder="Serial number" /><input name="manufacturer" value="${asset.manufacturer || ''}" placeholder="Manufacturer" /><input name="status" value="${asset.status || ''}" placeholder="Status" /><input name="manualLinks" value="${(asset.manualLinks || []).join(', ')}" placeholder="Manual links (comma-separated)" /><textarea name="notes" placeholder="Notes">${asset.notes || ''}</textarea><button>Save core fields</button></form></details>` : ''}
+          ${isAdmin(state.permissions) ? `<details><summary>Edit core fields</summary><form data-edit="${asset.id}" class="grid grid-2"><input name="name" value="${asset.name || ''}" placeholder="Asset name" /><input name="id" value="${asset.id || ''}" placeholder="Asset ID" /><input name="locationName" value="${asset.locationName || ''}" list="assetLocationNames" placeholder="Location" /><input name="serialNumber" value="${asset.serialNumber || ''}" placeholder="Serial number" /><input name="manufacturer" value="${asset.manufacturer || ''}" placeholder="Manufacturer" /><input name="status" value="${asset.status || ''}" placeholder="Status" /><input name="manualLinks" value="${manualState.manualLinks.join(', ')}" placeholder="Manual links (comma-separated)" /><textarea name="notes" placeholder="Notes">${asset.notes || ''}</textarea><button>Save core fields</button></form></details>` : ''}
           ${canDelete(state.permissions) ? `<button data-del="${asset.id}" class="danger" type="button">Delete</button>` : ''}
         </details>`;
       } catch (error) {
@@ -641,3 +660,5 @@ export function renderAssets(el, state, actions) {
     actions.editAsset(assetForm.dataset.edit, Object.fromEntries(fd.entries()));
   }));
 }
+
+export { getAuthoritativeManualState };

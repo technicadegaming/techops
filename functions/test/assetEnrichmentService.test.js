@@ -20,7 +20,9 @@ const {
   repairLegacyAssetEnrichmentRecord,
   isSeededCatalogManualCandidate,
   rehydrateSeededManualDocumentationSuggestions,
-  classifyManualMatchSummary
+  classifyManualMatchSummary,
+  finalizeSingleAssetEnrichment,
+  hasAuthoritativeManualAttachment
 } = require('../src/services/assetEnrichmentService');
 const { resolveArcadeTitleFamily } = require('../src/services/arcadeTitleAliasService');
 const { findCatalogManualMatch } = require('../src/services/manualLookupCatalogService');
@@ -1808,6 +1810,63 @@ test('repairLegacyAssetEnrichmentRecord rehydrates Quik Drop live persisted seed
 
 
 
+
+test('finalizeSingleAssetEnrichment forces docs_found when authoritative manual attachment metadata exists', () => {
+  const result = finalizeSingleAssetEnrichment({
+    asset: { manualLibraryRef: '', manualStoragePath: '' },
+    cleanedResult: {
+      documentationSuggestions: [],
+      supportResourcesSuggestion: [],
+      enrichmentFollowupQuestion: '',
+      manualMatchSummary: { matchType: 'exact_manual', manualReady: false },
+    },
+    preview: { manualMatchSummary: { matchType: 'exact_manual', manualReady: true } },
+    manualFields: {
+      manualLibraryRef: 'manual-123',
+      manualStoragePath: '',
+      manualLinks: [],
+      manualSourceUrl: 'https://example.com/source',
+      supportUrl: 'https://example.com/support',
+      matchType: 'exact_manual',
+      manualReady: false,
+    },
+    resolvedStatus: 'followup_needed',
+  });
+
+  assert.equal(hasAuthoritativeManualAttachment(result.finalManualFields), true);
+  assert.equal(result.finalStatus, 'docs_found');
+  assert.equal(result.finalManualFields.manualReady, true);
+  assert.equal(result.finalManualMatchSummary.manualReady, true);
+  assert.equal(result.finalManualMatchSummary.manualLibraryRef, 'manual-123');
+});
+
+test('finalizeSingleAssetEnrichment strips non-durable searching statuses after completion without manual attachment', () => {
+  const result = finalizeSingleAssetEnrichment({
+    asset: {},
+    cleanedResult: {
+      documentationSuggestions: [],
+      supportResourcesSuggestion: [],
+      enrichmentFollowupQuestion: '',
+      manualMatchSummary: { matchType: 'unresolved', manualReady: false },
+    },
+    preview: {},
+    manualFields: {
+      manualLibraryRef: '',
+      manualStoragePath: '',
+      manualLinks: ['https://example.com/not-authoritative.pdf'],
+      manualSourceUrl: '',
+      supportUrl: '',
+      matchType: 'unresolved',
+      manualReady: false,
+    },
+    resolvedStatus: 'searching_docs',
+  });
+
+  assert.equal(result.finalStatus, 'no_match_yet');
+  assert.equal(result.finalManualFields.manualLinks.length, 0);
+  assert.equal(result.finalManualMatchSummary.manualReady, false);
+});
+
 test('enrichAssetDocumentation attaches acquired manual-library metadata for single-asset title-page acquisitions', async () => {
   const { db, assetWrites, assetState } = createEnrichmentDb({ name: 'Fast & Furious', manufacturer: 'Raw Thrills', companyId: 'company-1' });
 
@@ -2190,6 +2249,110 @@ test('enrichAssetDocumentation writes a terminal state before surfacing late aud
   assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'followup_needed');
   assert.equal(assetState.enrichmentStatus, 'followup_needed');
 });
+
+test('enrichAssetDocumentation emits terminal_status_write on defensive failure paths', async () => {
+  const { db } = createEnrichmentDb({ name: 'Broken Search', companyId: 'company-1' });
+  const originalLog = console.log;
+  const entries = [];
+  console.log = (...args) => { entries.push(args); };
+  try {
+    await assert.rejects(() => enrichAssetDocumentation({
+      db,
+      assetId: 'asset-1',
+      userId: 'user-1',
+      settings: { aiConfidenceThreshold: 0.45 },
+      triggerSource: 'manual',
+      followupAnswer: '',
+      traceId: 'trace-terminal-log-failure',
+      dependencies: { runLookupPreview: async () => { throw new Error('fetch failed'); } }
+    }), /fetch failed/);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.ok(entries.some(([label]) => label === 'assetEnrichment:final_counts'));
+  assert.ok(entries.some(([label]) => label === 'assetEnrichment:terminal_status_write'));
+});
+
+test('enrichAssetDocumentation logs authoritative single-asset finalization milestones', async () => {
+  const { db } = createEnrichmentDb({ name: 'Fast & Furious', manufacturer: 'Raw Thrills', companyId: 'company-1' });
+  const originalLog = console.log;
+  const entries = [];
+  console.log = (...args) => { entries.push(args); };
+  try {
+    await enrichAssetDocumentation({
+      db,
+      assetId: 'asset-1',
+      userId: 'user-1',
+      settings: { aiConfidenceThreshold: 0.45 },
+      triggerSource: 'manual',
+      followupAnswer: '',
+      traceId: 'trace-single-log-happy',
+      dependencies: {
+        runLookupPreview: async () => ({
+          confidence: 0.9,
+          normalizedName: 'Fast & Furious Arcade',
+          likelyManufacturer: 'Raw Thrills',
+          documentationSuggestions: [{
+            title: 'Fast & Furious Arcade Manual',
+            url: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
+            sourcePageUrl: 'https://rawthrills.com/games/fast-furious-arcade/',
+            sourceType: 'manual_library',
+            manualLibraryRef: 'manual-fast-furious',
+            manualStoragePath: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
+            cachedManual: true,
+            matchScore: 99,
+            exactTitleMatch: true,
+            exactManualMatch: true,
+            trustedSource: true,
+            verified: true,
+          }],
+          supportResourcesSuggestion: [],
+          supportContactsSuggestion: [],
+          matchType: 'exact_manual',
+          manualReady: true,
+          manualUrl: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
+          manualSourceUrl: 'https://rawthrills.com/games/fast-furious-arcade/',
+          supportUrl: 'https://rawthrills.com/games/fast-furious-arcade/',
+          manualMatchSummary: {
+            matchType: 'exact_manual',
+            manualReady: true,
+            manualUrl: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
+            manualLibraryRef: 'manual-fast-furious',
+            manualStoragePath: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
+          },
+          pipelineMeta: {
+            stage1MatchType: 'title_specific_source',
+            stage2Ran: true,
+            acquisitionSucceeded: true,
+            acquisitionState: 'succeeded',
+            manualLibraryRef: 'manual-fast-furious',
+            manualStoragePath: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
+          },
+        }),
+        findReusableVerifiedManuals: async () => [],
+        verifyDocumentationSuggestions: async (rows) => rows,
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  const labels = entries.map(([label]) => label);
+  for (const label of [
+    'singleAssetDocs:start',
+    'singleAssetDocs:research_result',
+    'singleAssetDocs:acquisition_result',
+    'singleAssetDocs:library_attach',
+    'singleAssetDocs:asset_write',
+    'singleAssetDocs:final_result',
+    'assetEnrichment:final_counts',
+    'assetEnrichment:terminal_status_write',
+  ]) {
+    assert.ok(labels.includes(label), `missing ${label}`);
+  }
+});
+
 function createEnrichmentDb(asset = {}, options = {}) {
   const manualLibraryState = { ...(options.manualLibrary || {}) };
   const assetState = { id: 'asset-1', ...asset };
