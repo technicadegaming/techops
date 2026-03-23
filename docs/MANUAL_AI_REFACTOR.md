@@ -46,6 +46,7 @@
 
 ## Admin repair note (stale enrichment cleanup)
 - Use `repairAssetDocumentationState` when an older asset already has a terminal `manualStatus` but still shows stale legacy enrichment-running state such as `queued`, `searching_docs`, or `in_progress`.
-- Run it in `dryRun` mode first, then apply only after reviewing the report.
+- For single-asset recovery, the callable can now be run directly against one `assetId` to safely attach an already-approved exact shared manual when validated, or else finalize the asset as `support_only` / `no_manual` while clearing stale running state.
+- Keep broader cleanup passes cautious: validate one asset first, then use `dryRun` + scoped review before any company-wide batch apply.
 - Prefer narrow targeting with a single `assetId`; if you need a wider pass, scope it by `companyId` and a small `limit`.
-- The repair only terminalizes stale enrichment metadata and review state; it does not rewrite attached manual linkage, support/manual architecture, or manual extraction records.
+- The single-asset repair only auto-attaches when exact approved evidence is already present; otherwise it terminalizes stale enrichment metadata without guessing a manual attachment.

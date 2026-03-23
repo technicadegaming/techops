@@ -21,6 +21,7 @@ const {
   enrichAssetDocumentation,
   previewAssetDocumentationLookup,
   planAssetDocumentationStateRepair,
+  planSingleAssetManualLiveRepair,
 } = require('./services/assetEnrichmentService');
 const {
   approveAssetManual,
@@ -454,12 +455,29 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
     const assetRef = db.collection('assets').doc(requestedAssetId);
     const assetSnap = await assetRef.get();
     if (!assetSnap.exists) throw new HttpsError('not-found', 'Asset not found');
-    const asset = { id: assetSnap.id, ...(assetSnap.data() || {}) };
+    let asset = { id: assetSnap.id, ...(assetSnap.data() || {}) };
     if (scopedCompanyId && normalizeCompanyId(asset.companyId) && scopedCompanyId !== normalizeCompanyId(asset.companyId)) {
       throw new HttpsError('invalid-argument', 'assetId/companyId mismatch');
     }
     scopedCompanyId = normalizeCompanyId(asset.companyId) || scopedCompanyId;
-    assetDocs = [{ ref: assetRef, asset }];
+    const manualLinkage = await backfillApprovedAssetManualLinkage({
+      db,
+      storage: admin.storage(),
+      asset,
+      userId: request.auth.uid,
+      dryRun,
+    });
+    if (!dryRun && manualLinkage.linked && !manualLinkage.skipped) {
+      const refreshedSnap = await assetRef.get();
+      if (refreshedSnap.exists) {
+        asset = { id: refreshedSnap.id, ...(refreshedSnap.data() || {}) };
+      }
+    }
+    assetDocs = [{
+      ref: assetRef,
+      asset,
+      manualLinkage,
+    }];
   } else {
     const authz = await authorizeCompanyMember({
       uid: request.auth.uid,
@@ -497,6 +515,7 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
   };
 
   for (const entry of assetDocs) {
+    if (requestedAssetId) break;
     report.summary.scanned += 1;
     try {
       const plan = await planAssetDocumentationStateRepair({
@@ -535,6 +554,83 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
         message: error?.message || String(error),
       });
     }
+  }
+
+  if (requestedAssetId && assetDocs.length === 1) {
+    const [{ ref, asset, manualLinkage }] = assetDocs;
+    report.summary.scanned = 1;
+    const liveRepair = await planSingleAssetManualLiveRepair({
+      asset,
+      userId: request.auth.uid,
+      exactManualLinked: manualLinkage?.linked === true && manualLinkage?.skipped !== true,
+      exactManualEvidence: manualLinkage?.evidence || '',
+    });
+    if (liveRepair.warnings.includes('active_enrichment_heartbeat')) {
+      report.summary.skipped = 1;
+      report.summary.patched = 0;
+      report.summary.unchanged = 0;
+      report.summary.errors = 0;
+      report.patched = [];
+      report.unchanged = [];
+      report.skipped = [{
+        assetId: liveRepair.assetId,
+        companyId: liveRepair.companyId,
+        manualStatus: liveRepair.priorState.manualStatus,
+        existingEnrichmentStatus: liveRepair.priorState.enrichmentStatus,
+        repairedEnrichmentStatus: null,
+        reason: 'active_enrichment_heartbeat',
+        changedFields: [],
+      }];
+    } else {
+      if (!dryRun && liveRepair.statusChanged) {
+        await ref.set(liveRepair.updatePayload, { merge: true });
+      }
+      report.summary.patched = liveRepair.statusChanged ? 1 : 0;
+      report.summary.unchanged = liveRepair.statusChanged ? 0 : 1;
+      report.summary.skipped = 0;
+      report.summary.errors = 0;
+      report.patched = liveRepair.statusChanged ? [{
+        assetId: liveRepair.assetId,
+        companyId: liveRepair.companyId,
+        manualStatus: liveRepair.finalState?.manualStatus || null,
+        existingEnrichmentStatus: liveRepair.priorState.enrichmentStatus,
+        repairedEnrichmentStatus: liveRepair.finalState?.enrichmentStatus || null,
+        reason: liveRepair.attachedManual ? 'single_asset_live_manual_attached' : 'single_asset_live_manual_finalized',
+        changedFields: Object.keys(liveRepair.updatePayload || {}),
+      }] : [];
+      report.unchanged = liveRepair.statusChanged ? [] : [{
+        assetId: liveRepair.assetId,
+        companyId: liveRepair.companyId,
+        manualStatus: liveRepair.finalState?.manualStatus || null,
+        existingEnrichmentStatus: liveRepair.priorState.enrichmentStatus,
+        repairedEnrichmentStatus: liveRepair.finalState?.enrichmentStatus || null,
+        reason: 'single_asset_live_manual_already_terminal',
+        changedFields: [],
+      }];
+      report.skipped = [];
+    }
+    report.liveRepair = {
+      assetId: liveRepair.assetId,
+      companyId: liveRepair.companyId,
+      priorState: liveRepair.priorState,
+      finalState: liveRepair.finalState,
+      attachedManual: liveRepair.attachedManual,
+      manualSource: liveRepair.manualSource || '',
+      statusChanged: liveRepair.statusChanged,
+      notes: liveRepair.notes,
+      warnings: [
+        ...(manualLinkage?.skipped ? [manualLinkage.reason] : []),
+        ...(liveRepair.warnings || []),
+      ],
+      linkage: manualLinkage ? {
+        linked: manualLinkage.linked === true,
+        patchedAsset: manualLinkage.patchedAsset === true,
+        materializedManual: manualLinkage.materializedManual === true,
+        reason: manualLinkage.reason || '',
+        evidence: manualLinkage.evidence || '',
+        manualId: manualLinkage.manualId || '',
+      } : null,
+    };
   }
 
   return report;
