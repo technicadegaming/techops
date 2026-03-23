@@ -23,7 +23,10 @@ const {
   repairLegacyAssetEnrichmentRecord,
   repairStaleInProgressAsset,
 } = require('./services/assetEnrichmentService');
-const { approveAssetManual } = require('./services/manualIngestionService');
+const {
+  approveAssetManual,
+  backfillApprovedAssetManualLinkage,
+} = require('./services/manualIngestionService');
 const { researchAssetTitles } = require('./services/manualResearchService');
 const {
   finalizeOnboardingBootstrap,
@@ -497,6 +500,34 @@ exports.approveAssetManual = onCall({}, async (request) => {
     sourceTitle: `${request.data?.sourceTitle || ''}`.trim(),
     sourceType: `${request.data?.sourceType || ''}`.trim() || 'approved_doc',
     approvedSuggestionIndex: Number.isInteger(request.data?.approvedSuggestionIndex) ? request.data.approvedSuggestionIndex : null,
+  });
+});
+
+exports.backfillApprovedAssetManualLinkage = onCall({}, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+  assertString(request.data?.assetId, 'assetId');
+
+  const authz = await authorizeAssetEnrichment({
+    db,
+    assetId: request.data.assetId,
+    uid: request.auth.uid,
+    getUserRole,
+  });
+
+  if (!authz.allowed) {
+    if (authz.scope === 'asset_not_found') throw new HttpsError('not-found', 'Asset not found');
+    throw new HttpsError('permission-denied', 'Insufficient role for manual linkage backfill');
+  }
+
+  const assetSnap = await db.collection('assets').doc(request.data.assetId).get();
+  if (!assetSnap.exists) throw new HttpsError('not-found', 'Asset not found');
+
+  return backfillApprovedAssetManualLinkage({
+    db,
+    storage: admin.storage(),
+    asset: { id: assetSnap.id, ...assetSnap.data() },
+    userId: request.auth.uid,
+    dryRun: request.data?.dryRun === true,
   });
 });
 
