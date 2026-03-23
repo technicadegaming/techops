@@ -218,16 +218,6 @@ function downloadJson(filename, payload) {
   downloadFile(filename, payload, 'application/json');
 }
 
-
-
-
-function dedupeUrls(values = []) {
-  return [...new Set((values || []).map((v) => `${v || ''}`.trim()).filter(Boolean))];
-}
-
-
-
-
 async function render() {
   navigationController.renderTabs();
   contextSwitcherController.renderHeaderContext();
@@ -322,10 +312,6 @@ async function render() {
     downloadFile,
     downloadJson,
     normalizeAssetId,
-    dedupeUrls,
-    enrichAssetDocumentation,
-    approveAssetManual,
-    isManager,
     createCompanyInvite,
     revokeInvite
   });

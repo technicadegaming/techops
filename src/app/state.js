@@ -8,7 +8,7 @@ export const sections = ['dashboard', 'operations', 'assets', 'calendar', 'repor
 export function createEmptyAssetDraft() {
   return {
     name: '', serialNumber: '', manufacturer: '', id: '', status: '', ownerWorkers: '', manualLinksText: '', historyNote: '', imageRefsText: '', videoRefsText: '', evidenceRefsText: '', notes: '',
-    manualLinks: [], supportResources: [], supportContacts: [], preview: null, previewStatus: 'idle', previewMeta: { inFlightQuery: '', lastCompletedQuery: '' }, draftNameNormalized: '',
+    manualLinks: [], supportResources: [], supportContacts: [], preview: null, previewStatus: 'idle', previewMeta: { inFlightQuery: '', lastCompletedQuery: '' }, previewContext: null, previewFeedback: '', draftContextStamp: '', draftNameNormalized: '',
     normalizedName: '', manualSourceUrl: '', supportEmail: '', supportPhone: '', supportUrl: '', matchConfidence: '', matchNotes: '', alternateNamesText: '',
     saveFeedback: '', saveSecondaryFeedback: '', saveDebugContext: '', saveFeedbackTone: 'success', saving: false
   };

@@ -35,6 +35,14 @@ async function loadAssetsHelpers() {
   return import('../src/features/assets.js');
 }
 
+async function loadAssetDraftContextHelpers() {
+  return import('../src/features/assetDraftContext.js');
+}
+
+async function loadAssetActions() {
+  return import('../src/features/assetActions.js');
+}
+
 function createSelectElement() {
   return {
     innerHTML: '',
@@ -634,6 +642,10 @@ function loadAppShellSource() {
   return require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'app.js'), 'utf8');
 }
 
+function loadAdminSource() {
+  return require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'admin.js'), 'utf8');
+}
+
 test('authoritative onboarding state resolves stale bootstrap records as complete and repair is idempotent', async () => {
   const { buildOnboardingRepairPlan, getAuthoritativeOnboardingState } = await loadOnboardingStatusHelpers();
   const state = {
@@ -732,4 +744,105 @@ test('asset helpers render manual outcome states consistently', async () => {
     enrichmentRequestedAt: new Date(Date.now() - (5 * 60 * 1000)).toISOString(),
     enrichmentHeartbeatAt: new Date(Date.now() - (4 * 60 * 1000)).toISOString(),
   }), 'no_match_yet');
+});
+
+test('asset draft context resolves valid company and location alignment', async () => {
+  const { resolveAssetDraftContext } = await loadAssetDraftContextHelpers();
+  const context = resolveAssetDraftContext({
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    companyLocations: [{ id: 'loc-1', companyId: 'company-a', name: 'Main Floor' }],
+    assetDraft: { locationId: 'loc-1', locationName: 'Main Floor' }
+  });
+
+  assert.equal(context.ok, true);
+  assert.equal(context.resolvedCompanyId, 'company-a');
+  assert.equal(context.selectedLocationCompanyId, 'company-a');
+  assert.equal(context.stamp, 'company-a|loc-1|main floor');
+});
+
+test('asset draft context blocks mismatched location company and unresolved membership', async () => {
+  const { resolveAssetDraftContext } = await loadAssetDraftContextHelpers();
+
+  const unresolved = resolveAssetDraftContext({
+    activeMembership: null,
+    company: { id: 'company-a' },
+    companyLocations: [],
+    assetDraft: {}
+  });
+  assert.equal(unresolved.ok, false);
+  assert.equal(unresolved.reason, 'membership_unresolved');
+
+  const mismatch = resolveAssetDraftContext({
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    companyLocations: [{ id: 'loc-2', companyId: 'company-b', name: 'Prize Zone' }],
+    assetDraft: { locationId: 'loc-2' }
+  });
+  assert.equal(mismatch.ok, false);
+  assert.equal(mismatch.reason, 'location_company_mismatch');
+});
+
+test('asset actions block save before Firestore write when company context is unresolved', async () => {
+  const { createAssetActions } = await loadAssetActions();
+  const state = {
+    assetDraft: {
+      name: 'Quick Drop',
+      manufacturer: 'Bay Tek Games',
+      locationId: '',
+      locationName: '',
+      preview: null,
+      previewContext: null,
+      previewStatus: 'idle',
+      previewMeta: { inFlightQuery: '', lastCompletedQuery: '' }
+    },
+    assets: [],
+    companyLocations: [],
+    permissions: { companyRole: 'owner', role: 'owner' },
+    activeMembership: null,
+    company: { id: 'company-a' },
+    user: { uid: 'user-1' },
+    assetUi: {}
+  };
+  let upsertCalls = 0;
+  let renders = 0;
+  const actions = createAssetActions({
+    state,
+    onLocationFilter: () => {},
+    render: () => { renders += 1; },
+    refreshData: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => { upsertCalls += 1; },
+    deleteEntity: async () => {},
+    approveAssetManual: async () => {},
+    enrichAssetDocumentation: async () => {},
+    previewAssetDocumentationLookup: async () => ({}),
+    researchAssetTitles: async () => ({}),
+    markAssetEnrichmentFailure: async () => ({}),
+    normalizeAssetId: (name) => `asset-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+    pickUniqueAssetId: (id) => id,
+    createEmptyAssetDraft: () => ({ previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } }),
+    withTimeout: async (promise) => promise,
+    normalizeSupportEntries: (entries) => entries,
+    canDelete: () => false,
+    isAdmin: () => true,
+    isManager: () => true,
+    buildAssetSaveErrorMessage: (error) => `${error.message}`,
+    buildAssetSaveDebugContext: () => ({ companyId: 'company-a', companyRole: 'owner' }),
+    isPermissionRelatedError: () => false,
+    buildPreviewQueryKey: () => ''
+  });
+
+  await actions.saveAsset('', { name: 'Quick Drop', manufacturer: 'Bay Tek Games' });
+
+  assert.equal(upsertCalls, 0);
+  assert.match(state.assetDraft.saveFeedback, /membership is still loading/i);
+  assert.ok(renders >= 1);
+});
+
+test('admin source no longer exposes a duplicate asset documentation review section', () => {
+  const source = loadAdminSource();
+  assert.doesNotMatch(source, /asset_review/);
+  assert.doesNotMatch(source, /Asset documentation review/);
+  assert.doesNotMatch(source, /data-run-review-enrichment/);
 });
