@@ -504,6 +504,8 @@ test('documentation review helpers keep support-only links out of approval while
   assert.deepEqual(bulkPatch.manualLinks, reviewable.map((entry) => entry.url));
   assert.equal(singlePatch.reviewState, 'approved');
   assert.equal(bulkPatch.reviewState, 'approved');
+  assert.equal(singlePatch.manualStatus, 'attached');
+  assert.equal(bulkPatch.manualStatus, 'attached');
 });
 
 
@@ -668,4 +670,13 @@ test('app shell routes stale bootstrap repairs through the callable flow instead
   assert.doesNotMatch(repairBody, /saveUserProfile\(/);
   assert.doesNotMatch(repairBody, /upsertEntity\('companyMemberships'/);
   assert.doesNotMatch(repairBody, /upsertEntity\('companies'/);
+});
+
+
+test('asset manual status derivation distinguishes attached vs support-only vs review-needed vs none', async () => {
+  const { deriveAssetManualStatus } = await import('./../src/features/assets.js');
+  assert.equal(deriveAssetManualStatus({ manualLibraryRef: 'manual-1', manualLinks: [] }), 'attached');
+  assert.equal(deriveAssetManualStatus({ documentationSuggestions: [{ url: 'https://example.com/manual.pdf', verified: true, exactTitleMatch: true, exactManualMatch: true }] }), 'review_needed');
+  assert.equal(deriveAssetManualStatus({ supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }] }), 'support_only');
+  assert.equal(deriveAssetManualStatus({ documentationSuggestions: [], supportResourcesSuggestion: [] }), 'no_manual');
 });

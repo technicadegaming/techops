@@ -200,6 +200,16 @@ async function rewriteManualChunks({ db, manualId = '', chunks = [] } = {}) {
   await Promise.all(writes.map((chunk) => chunkCollection.doc(`${chunk.chunkIndex}`).set(chunk)));
 }
 
+function deriveManualStatusFromAsset(asset = {}) {
+  const manualLibraryRef = normalizeString(asset?.manualLibraryRef, 180);
+  const manualStoragePath = normalizeString(asset?.manualStoragePath, 500);
+  const manualLinks = Array.isArray(asset?.manualLinks) ? asset.manualLinks.map((entry) => normalizeString(entry, 500)).filter(Boolean) : [];
+  if (manualLibraryRef || manualStoragePath || manualLinks.length) return 'attached';
+  const supportLinks = Array.isArray(asset?.supportResourcesSuggestion) ? asset.supportResourcesSuggestion.filter((entry) => normalizeString(entry?.url || entry, 500)) : [];
+  if (supportLinks.length) return 'support_only';
+  return 'no_manual';
+}
+
 async function materializeApprovedManualForAsset({
   db,
   storage,
@@ -373,6 +383,7 @@ async function backfillApprovedAssetManualLinkage({
     assetPatch.manualLinks = Array.from(new Set([...(Array.isArray(asset?.manualLinks) ? asset.manualLinks : []), desiredSharedPath].filter(Boolean)));
   }
 
+  assetPatch.manualStatus = deriveManualStatusFromAsset({ ...asset, ...assetPatch });
   result.patchedAsset = Object.keys(assetPatch).length > 0;
   if (!dryRun && result.patchedAsset) {
     await db.collection('assets').doc(result.assetId).set({
@@ -495,6 +506,7 @@ async function approveAssetManual({
     manualSourceUrl: library.sourcePageUrl || matchedSuggestion.sourcePageUrl || '',
     docsLastReviewedAt: now,
     enrichmentStatus: 'docs_found',
+    manualStatus: 'attached',
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedBy: userId
   };

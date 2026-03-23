@@ -38,3 +38,8 @@
 1. Backfill approved `manualLibrary` links on older assets where they are missing.
 2. Improve ingestion coverage so more approved shared manuals also materialize `manuals/{manualId}/chunks` for AI retrieval.
 3. Add targeted follow-up tests around asset approval flows that bridge `manualLibrary` into `manuals` extraction records.
+
+## Stabilization note (manual flow simplification)
+- `assets.manualStatus` is now the simple asset-facing contract for docs UI: `attached`, `support_only`, `review_needed`, or `no_manual`.
+- `manualLibrary` remains the shared canonical record and `manuals/{manualId}/chunks` remains the tenant/task-AI extraction layer, but the asset UI should not require understanding that split just to know whether a manual is attached.
+- Support/product links remain secondary evidence and must not be presented as an attached manual.

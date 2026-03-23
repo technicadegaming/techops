@@ -136,9 +136,13 @@ function renderAuditChip(label, tone = 'muted') {
   return `<span style="display:inline-flex; align-items:center; border-radius:999px; border:1px solid ${style.border}; background:${style.bg}; color:${style.text}; font-size:11px; padding:2px 8px; font-weight:700;">${label}</span>`;
 }
 
-function renderAssetScanChips(asset, { docsStatus = 'missing', openTasks = [], overduePm = [] } = {}) {
+function renderAssetScanChips(asset, { openTasks = [], overduePm = [] } = {}) {
   const chips = [];
-  chips.push(docsStatus === 'linked' ? renderAuditChip('docs found', 'good') : renderAuditChip('docs missing', 'warn'));
+  const manualStatus = deriveAssetManualStatus(asset);
+  if (manualStatus === 'attached') chips.push(renderAuditChip('manual attached', 'good'));
+  else if (manualStatus === 'review_needed') chips.push(renderAuditChip('manual review needed', 'warn'));
+  else if (manualStatus === 'support_only') chips.push(renderAuditChip('support only', 'info'));
+  else chips.push(renderAuditChip('no manual', 'warn'));
   if (['needs_review', 'pending_review'].includes((asset.reviewState || ''))) chips.push(renderAuditChip('review needed', 'warn'));
   if (['queued', 'searching_docs', 'in_progress'].includes(getEffectiveEnrichmentStatus(asset))) chips.push(renderAuditChip('enrichment running', 'info'));
   if (getEffectiveEnrichmentStatus(asset) === 'retry_needed') chips.push(renderAuditChip('retry needed', 'warn'));
@@ -165,6 +169,25 @@ function renderSuggestionSource(entry) {
   return provenance.join(' | ');
 }
 
+
+function hasRenderableUrl(entry = {}) {
+  return !!`${entry?.url || entry || ''}`.trim();
+}
+
+function getReviewableManualCandidateCount(asset = {}) {
+  return getReviewableDocumentationSuggestions(asset).length;
+}
+
+function deriveAssetManualStatus(asset = {}) {
+  const explicitStatus = `${asset?.manualStatus || ''}`.trim();
+  if (['attached', 'support_only', 'review_needed', 'no_manual'].includes(explicitStatus)) return explicitStatus;
+  const manualState = getAuthoritativeManualState(asset);
+  if (manualState.hasAttachedManual) return 'attached';
+  if (getReviewableManualCandidateCount(asset) > 0) return 'review_needed';
+  const supportOnlyCount = (Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []).filter((entry) => !entry?.deadPage && !entry?.unreachable && hasRenderableUrl(entry)).length;
+  if (supportOnlyCount > 0) return 'support_only';
+  return 'no_manual';
+}
 
 function getAuthoritativeManualState(asset = {}) {
   const manualLibraryRef = `${asset?.manualLibraryRef || ''}`.trim();
@@ -265,6 +288,7 @@ function renderEnrichmentDetails(asset, manager, state) {
   const manualState = getAuthoritativeManualState(asset);
   const linkedManuals = manualState.manualLinks;
   const linkedSupport = Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : [];
+  const manualStatus = deriveAssetManualStatus(asset);
   const actionFeedback = state?.assetUi?.lastActionByAsset?.[asset.id] || null;
   const statusHelp = status === 'retry_needed'
     ? 'The last enrichment run appears stale. Attached manuals remain authoritative; otherwise retry or clear the stuck state.'
@@ -285,9 +309,13 @@ function renderEnrichmentDetails(asset, manager, state) {
     </div>
     ${actionFeedback?.message ? renderInlineFeedback(actionFeedback.message, actionFeedback.tone) : ''}
     ${statusHelp ? renderInlineFeedback(statusHelp, status === 'lookup_failed' ? 'error' : 'info') : ''}
-    ${linkedManuals.length
-      ? renderInlineFeedback(`${linkedManuals.length || manualState.manualLibraryRef ? `${linkedManuals.length || 1} manual link${(linkedManuals.length || 1) === 1 ? '' : 's'}` : 'Shared manual'} already applied${manualState.manualLibraryRef ? ` (library ref ${manualState.manualLibraryRef})` : ''}. Review suggestions below only if you need to replace or add coverage.`, 'success')
-      : renderInlineFeedback('No manual is applied yet. Start with the best verified manual action below.', 'info')}
+    ${manualStatus === 'attached'
+      ? renderInlineFeedback(`${linkedManuals.length || manualState.manualLibraryRef ? `${linkedManuals.length || 1} manual link${(linkedManuals.length || 1) === 1 ? '' : 's'}` : 'Shared manual'} attached${manualState.manualLibraryRef ? ` (library ref ${manualState.manualLibraryRef})` : ''}.`, 'success')
+      : manualStatus === 'review_needed'
+        ? renderInlineFeedback('A manual candidate was found, but it still needs review before this asset counts as manual attached.', 'info')
+        : manualStatus === 'support_only'
+          ? renderInlineFeedback('Only support/product resources are linked right now. This asset does not have an attached manual yet.', 'info')
+          : renderInlineFeedback('No manual is applied yet. Start with the best verified manual action below.', 'info')}
     <div class="tiny"><b>Model suggestion:</b> ${asset.normalizedName || 'n/a'}${asset.enrichmentConfidence ? ` (${Math.round(Number(asset.enrichmentConfidence) * 100)}% confidence)` : ''}</div>
     <div class="tiny" style="margin-bottom:8px;"><b>Inferred manufacturer:</b> ${asset.manufacturerSuggestion || asset.manufacturer || 'n/a'}${manager && asset.manufacturerSuggestion && asset.manufacturerSuggestion !== asset.manufacturer ? ` <button data-apply-enrichment="manufacturer" data-asset-id="${asset.id}" type="button">Apply manufacturer</button>` : ''}</div>
 
@@ -500,6 +528,7 @@ export function renderAssets(el, state, actions) {
         const library = state.troubleshootingLibrary?.filter((row) => row.assetId === asset.id).slice(0, 5) || [];
         const manualState = getAuthoritativeManualState(asset);
         const docsStatus = docs.length || manualState.hasAttachedManual ? 'linked' : 'missing';
+        const manualStatus = deriveAssetManualStatus(asset);
         const auditEntries = (state.auditLogs || []).filter((entry) => entry.entityType === 'assets' && entry.entityId === asset.id).slice(0, 6);
         const location = getAssetLocationRecord(state, asset);
         return `<details class="item" id="asset-${asset.id}" ${state.route?.assetId === asset.id ? 'open' : ''}>
@@ -509,6 +538,7 @@ export function renderAssets(el, state, actions) {
             <div class="tiny">Location: ${location.label} | Manufacturer: ${asset.manufacturer || 'n/a'} | Serial: ${asset.serialNumber || 'n/a'}</div>
             <div class="tiny">Owners: ${(asset.ownerWorkers || []).join(', ') || 'unassigned'} | Urgency flags: ${openTasks.filter((task) => ['high', 'critical'].includes(task.severity)).length}</div>
             <div class="tiny">Quick stats: open ${openTasks.length} | overdue PM ${overduePm.length} | repeat failures ${recurring.reduce((sum, row) => sum + row.count, 0)} | recent repairs ${completedTasks.length}</div>
+            <div class="tiny">Manual outcome: ${manualStatus === 'attached' ? 'manual attached' : manualStatus === 'support_only' ? 'support only' : manualStatus === 'review_needed' ? 'manual candidate needs review' : 'no manual found'}</div>
             ${renderAssetScanChips(asset, { docsStatus, openTasks, overduePm })}
             <div class="action-row">
               ${openTasks[0] ? `<a href="?tab=operations&taskId=${encodeURIComponent(openTasks[0].id)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open active task</a>` : ''}
@@ -517,8 +547,9 @@ export function renderAssets(el, state, actions) {
           </div>
 
           <details><summary>Documentation / AI status (${docsStatus})</summary>
-            <div class="tiny" style="margin:8px 0;">Linked manuals:</div>
-            <div style="margin:4px 0 8px;">${manualState.manualLinks.length ? manualState.manualLinks.map((url) => renderLinkChip(url, { removable: manager, removeAttr: `data-remove-manual="${asset.id}" data-url="${encodeURIComponent(url)}"` })).join('') : (manualState.manualLibraryRef ? renderInlineFeedback(`Shared manual attached via library ref ${manualState.manualLibraryRef}.`, 'success') : renderInlineFeedback('No manual linked yet. Run lookup or apply a suggested manual below.', 'info'))}</div>
+            <div class="tiny" style="margin:8px 0;"><b>Manual status:</b> ${deriveAssetManualStatus(asset).replace('_', ' ')}</div>
+            <div class="tiny" style="margin:4px 0;">Attached manual:</div>
+            <div style="margin:4px 0 8px;">${manualState.manualLinks.length ? manualState.manualLinks.map((url) => renderLinkChip(url, { removable: manager, removeAttr: `data-remove-manual="${asset.id}" data-url="${encodeURIComponent(url)}"` })).join('') : (manualState.manualLibraryRef ? renderInlineFeedback(`Shared manual attached via library ref ${manualState.manualLibraryRef}.`, 'success') : renderInlineFeedback('No attached manual yet. Run lookup or approve a suggested manual below.', 'info'))}</div>
             <div class="tiny" style="margin:4px 0;">Linked support links:</div>
             <div style="margin:4px 0 8px;">${(asset.supportResourcesSuggestion || []).length ? (asset.supportResourcesSuggestion || []).map((entry) => {
           const url = entry?.url || entry;
@@ -695,4 +726,4 @@ export function renderAssets(el, state, actions) {
   }));
 }
 
-export { getAuthoritativeManualState, getEffectiveEnrichmentStatus, isEnrichmentStale };
+export { deriveAssetManualStatus, getAuthoritativeManualState, getEffectiveEnrichmentStatus, isEnrichmentStale };

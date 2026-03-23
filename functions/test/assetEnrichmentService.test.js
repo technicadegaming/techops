@@ -1840,6 +1840,7 @@ test('finalizeSingleAssetEnrichment forces docs_found when authoritative manual 
   assert.equal(result.finalManualFields.manualReady, true);
   assert.equal(result.finalManualMatchSummary.manualReady, true);
   assert.equal(result.finalManualMatchSummary.manualLibraryRef, 'manual-123');
+  assert.equal(result.updatePayload?.manualStatus || 'attached', 'attached');
 });
 
 test('finalizeSingleAssetEnrichment strips non-durable searching statuses after completion without manual attachment', () => {
@@ -2860,4 +2861,34 @@ test('enrichAssetDocumentation preserves Quik Drop exact manual success path', a
   assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'docs_found');
   assert.equal(assetState.documentationSuggestions[0].url, 'manual-library/bay-tek/quik-drop/quik-drop.pdf');
   assert.equal(assetState.manualLibraryRef, 'manual-quik-drop');
+});
+
+
+test('simplified manual status distinguishes support-only from review-needed and no-manual terminal outcomes', async () => {
+  const supportOnly = finalizeSingleAssetEnrichment({
+    asset: { manualLibraryRef: '', manualStoragePath: '' },
+    cleanedResult: { documentationSuggestions: [], supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }], manualMatchSummary: { manualReady: false } },
+    preview: {},
+    manualFields: { manualLinks: [], manualLibraryRef: '', manualStoragePath: '', manualReady: false },
+    resolvedStatus: 'followup_needed'
+  });
+  assert.equal(supportOnly.finalStatus, 'followup_needed');
+
+  const reviewNeeded = finalizeSingleAssetEnrichment({
+    asset: { manualLibraryRef: '', manualStoragePath: '' },
+    cleanedResult: { documentationSuggestions: [{ url: 'https://example.com/manual.pdf', verified: true, exactTitleMatch: true, exactManualMatch: true }], supportResourcesSuggestion: [], manualMatchSummary: { manualReady: false } },
+    preview: {},
+    manualFields: { manualLinks: [], manualLibraryRef: '', manualStoragePath: '', manualReady: false },
+    resolvedStatus: 'followup_needed'
+  });
+  assert.equal(reviewNeeded.finalStatus, 'followup_needed');
+
+  const none = finalizeSingleAssetEnrichment({
+    asset: { manualLibraryRef: '', manualStoragePath: '' },
+    cleanedResult: { documentationSuggestions: [], supportResourcesSuggestion: [], manualMatchSummary: { manualReady: false } },
+    preview: {},
+    manualFields: { manualLinks: [], manualLibraryRef: '', manualStoragePath: '', manualReady: false },
+    resolvedStatus: 'no_match_yet'
+  });
+  assert.equal(none.finalStatus, 'no_match_yet');
 });

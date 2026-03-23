@@ -1,4 +1,4 @@
-import { buildDocumentationApprovalPatch, buildDocumentationApprovalSelection } from './documentationReview.js';
+import { buildDocumentationApprovalPatch, buildDocumentationApprovalSelection, deriveManualStatus } from './documentationReview.js';
 import { buildAssetCsv, buildAssetImportRow, enrichAssetIntakeRows, parseTitleBulkInput } from './assetIntake.js';
 import {
   approveSuggestedManualSources,
@@ -70,7 +70,8 @@ export function createAssetActions(deps) {
       .filter((entry) => !entry?.deadPage && !entry?.unreachable && `${entry?.url || entry || ''}`.trim())
       .length;
     const reviewableCount = countReviewableSuggestions(asset);
-    const hasAttachedManual = !!(manualLibraryRef || manualStoragePath || manualLinks.length);
+    const manualStatus = deriveManualStatus(asset);
+    const hasAttachedManual = manualStatus === 'attached' || !!(manualLibraryRef || manualStoragePath || manualLinks.length);
 
     if (hasAttachedManual || status === 'docs_found' || status === 'verified_manual_found') {
       return {
@@ -151,6 +152,15 @@ export function createAssetActions(deps) {
             evidence: parseReferenceList(payload.evidenceRefsText).length ? parseReferenceList(payload.evidenceRefsText) : ((current.attachmentRefs && current.attachmentRefs.evidence) || [])
           },
           supportResourcesSuggestion: Array.isArray(draft.supportResources) && draft.supportResources.length ? draft.supportResources : (current.supportResourcesSuggestion || []),
+          manualStatus: deriveManualStatus({
+            ...current,
+            manualLinks: `${payload.manualLinks || ''}`.split(',').map((value) => value.trim()).filter(Boolean)
+              .concat(Array.isArray(draft.manualLinks) ? draft.manualLinks : [])
+              .filter(Boolean)
+              .filter((value, index, list) => list.indexOf(value) === index)
+              .slice(0, 5),
+            supportResourcesSuggestion: Array.isArray(draft.supportResources) && draft.supportResources.length ? draft.supportResources : (current.supportResourcesSuggestion || []),
+          }),
           supportContactsSuggestion: Array.isArray(draft.supportContacts) && draft.supportContacts.length ? draft.supportContacts : (current.supportContactsSuggestion || []),
           notes: `${payload.notes || ''}`.trim() || `${current.notes || ''}`.trim() || (draft.notes ? `${draft.notes}`.trim() : '')
         };
@@ -369,6 +379,11 @@ export function createAssetActions(deps) {
           categorySuggestion: row.categorySuggestion || '',
           importSource: 'bulk_title_intake',
           reviewState: row.rowStatus === 'good_match' ? 'ready' : 'pending_review',
+          manualStatus: deriveManualStatus({
+            manualLinks: row.manualUrl ? [row.manualUrl] : [],
+            supportResourcesSuggestion: normalizeSupportEntries(row.supportUrl ? [{ url: row.supportUrl, label: 'Support resource' }] : []),
+            documentationSuggestions: row.rowStatus === 'good_match' ? [] : (row.manualUrl ? [{ url: row.manualUrl, verified: true, exactTitleMatch: true, exactManualMatch: true }] : []),
+          }),
           reviewReason: row.rowStatus === 'good_match' ? '' : 'bulk_title_review',
           matchNotes: row.matchNotes || ''
         }, 'bulk import assets'), state.user);
@@ -510,7 +525,8 @@ export function createAssetActions(deps) {
         render();
         return;
       }
-      await upsertEntity('assets', id, { ...current, ...buildDocumentationApprovalPatch(current, approvedEntries, { reviewAction: 'asset_apply_top_trusted_docs' }) }, state.user);
+      const approvalPatch = buildDocumentationApprovalPatch(current, approvedEntries, { reviewAction: 'asset_apply_top_trusted_docs' });
+      await upsertEntity('assets', id, { ...current, ...approvalPatch, manualStatus: deriveManualStatus({ ...current, ...approvalPatch }) }, state.user);
       const approval = await approveManualSources(id, links, current, metadataByUrl);
       setAssetActionFeedback(id, `Applied ${links.length} trusted documentation link${links.length === 1 ? '' : 's'}${approval.completed ? ` and ingested ${approval.completed}` : ''}${approval.failed ? ` (${approval.failed} ingestion failed)` : ''}.`, approval.failed ? 'info' : 'success');
       await refreshData();
@@ -552,7 +568,7 @@ export function createAssetActions(deps) {
       if (!Object.keys(patch).length) return;
       const manualApproval = patch.__manualApproval || null;
       if (manualApproval) delete patch.__manualApproval;
-      await upsertEntity('assets', id, { ...current, ...patch }, state.user);
+      await upsertEntity('assets', id, { ...current, ...patch, manualStatus: deriveManualStatus({ ...current, ...patch }) }, state.user);
       const approval = manualApproval ? await approveManualSources(id, manualApproval.urls, current, manualApproval.metadataByUrl) : { completed: 0, failed: 0 };
       setAssetActionFeedback(id, `Applied ${mode === 'all' ? 'documentation suggestions' : mode}${approval.completed ? ` and ingested ${approval.completed} manual${approval.completed === 1 ? '' : 's'}` : ''}${approval.failed ? ` (${approval.failed} ingestion failed)` : ''}.`, approval.failed ? 'info' : 'success');
       await refreshData();
@@ -567,7 +583,8 @@ export function createAssetActions(deps) {
       const url = `${selected?.url || ''}`.trim();
       if (!url) return;
       const approvedSuggestionIndex = originalSuggestions.indexOf(selected);
-      await upsertEntity('assets', id, { ...current, ...buildDocumentationApprovalPatch(current, [selected], { reviewAction: 'asset_apply_single_manual' }) }, state.user);
+      const approvalPatch = buildDocumentationApprovalPatch(current, [selected], { reviewAction: 'asset_apply_single_manual' });
+      await upsertEntity('assets', id, { ...current, ...approvalPatch, manualStatus: deriveManualStatus({ ...current, ...approvalPatch }) }, state.user);
       const approval = await approveManualSources(id, [url], current, { [url]: { title: selected?.title, sourceType: selected?.sourceType, index: approvedSuggestionIndex >= 0 ? approvedSuggestionIndex : index } });
       setAssetActionFeedback(id, `Applied one documentation link${approval.completed ? ' and ingested it' : ''}${approval.failed ? ' (ingestion failed)' : ''}.`, approval.failed ? 'info' : 'success');
       await refreshData();
@@ -581,7 +598,8 @@ export function createAssetActions(deps) {
       const url = `${selected?.url || selected || ''}`.trim();
       if (!url) return;
       const label = selected?.label || selected?.title || url;
-      await upsertEntity('assets', id, { ...current, supportResourcesSuggestion: normalizeSupportEntries([...(current.supportResourcesSuggestion || []), { url, label }]) }, state.user);
+      const patch = { supportResourcesSuggestion: normalizeSupportEntries([...(current.supportResourcesSuggestion || []), { url, label }]) };
+      await upsertEntity('assets', id, { ...current, ...patch, manualStatus: deriveManualStatus({ ...current, ...patch }) }, state.user);
       setAssetActionFeedback(id, 'Applied one support link.', 'success');
       await refreshData();
       render();
@@ -591,7 +609,15 @@ export function createAssetActions(deps) {
       const clean = `${url || ''}`.trim();
       if (!clean) return;
       const current = state.assets.find((asset) => asset.id === id) || {};
-      await upsertEntity('assets', id, { ...current, manualLinks: (current.manualLinks || []).filter((entry) => `${entry}`.trim() !== clean) }, state.user);
+      const patch = {
+        manualLinks: (current.manualLinks || []).filter((entry) => `${entry}`.trim() !== clean),
+        ...(current.manualStoragePath && `${current.manualStoragePath}`.trim() === clean ? { manualStoragePath: '', manualLibraryRef: '' } : {})
+      };
+      if (!patch.manualLinks.length && !`${patch.manualStoragePath || current.manualStoragePath || ''}`.trim()) {
+        patch.manualLibraryRef = '';
+        patch.manualStoragePath = '';
+      }
+      await upsertEntity('assets', id, { ...current, ...patch, manualStatus: deriveManualStatus({ ...current, ...patch }) }, state.user);
       setAssetActionFeedback(id, 'Removed linked manual.', 'success');
       await refreshData();
       render();
@@ -601,10 +627,10 @@ export function createAssetActions(deps) {
       const clean = `${url || ''}`.trim();
       if (!clean) return;
       const current = state.assets.find((asset) => asset.id === id) || {};
-      await upsertEntity('assets', id, {
-        ...current,
+      const patch = {
         supportResourcesSuggestion: normalizeSupportEntries((current.supportResourcesSuggestion || []).filter((entry) => `${entry?.url || entry || ''}`.trim() !== clean))
-      }, state.user);
+      };
+      await upsertEntity('assets', id, { ...current, ...patch, manualStatus: deriveManualStatus({ ...current, ...patch }) }, state.user);
       setAssetActionFeedback(id, 'Removed linked support link.', 'success');
       await refreshData();
       render();
@@ -612,7 +638,8 @@ export function createAssetActions(deps) {
     removeAllManualLinks: async (id) => {
       if (!isAdmin(state.permissions)) return;
       const current = state.assets.find((asset) => asset.id === id) || {};
-      await upsertEntity('assets', id, { ...current, manualLinks: [] }, state.user);
+      const patch = { manualLinks: [], manualLibraryRef: '', manualStoragePath: '' };
+      await upsertEntity('assets', id, { ...current, ...patch, manualStatus: deriveManualStatus({ ...current, ...patch }) }, state.user);
       setAssetActionFeedback(id, 'Removed all linked manuals.', 'success');
       await refreshData();
       render();
@@ -620,7 +647,8 @@ export function createAssetActions(deps) {
     removeAllSupportLinks: async (id) => {
       if (!isAdmin(state.permissions)) return;
       const current = state.assets.find((asset) => asset.id === id) || {};
-      await upsertEntity('assets', id, { ...current, supportResourcesSuggestion: [] }, state.user);
+      const patch = { supportResourcesSuggestion: [] };
+      await upsertEntity('assets', id, { ...current, ...patch, manualStatus: deriveManualStatus({ ...current, ...patch }) }, state.user);
       setAssetActionFeedback(id, 'Removed all linked support links.', 'success');
       await refreshData();
       render();
@@ -638,7 +666,13 @@ export function createAssetActions(deps) {
         locationName: `${payload.locationName || current.locationName || ''}`.trim(),
         serialNumber: `${payload.serialNumber || current.serialNumber || ''}`.trim(),
         manufacturer: `${payload.manufacturer || current.manufacturer || ''}`.trim(),
-        manualLinks: `${payload.manualLinks || ''}`.split(',').map((value) => value.trim()).filter(Boolean)
+        manualLinks: `${payload.manualLinks || ''}`.split(',').map((value) => value.trim()).filter(Boolean),
+        ...(`${payload.manualLinks || ''}`.trim() ? {} : { manualLibraryRef: '', manualStoragePath: '' }),
+        manualStatus: deriveManualStatus({
+          ...current,
+          manualLinks: `${payload.manualLinks || ''}`.split(',').map((value) => value.trim()).filter(Boolean),
+          ...(`${payload.manualLinks || ''}`.trim() ? {} : { manualLibraryRef: '', manualStoragePath: '' })
+        })
       }, state.user);
       if (nextId !== currentId) await deleteEntity('assets', currentId, state.user);
       await refreshData();
