@@ -10,6 +10,7 @@ import {
 import { formatRelativeTime } from './notifications.js';
 import { sortDocumentationSuggestions } from './documentationSuggestions.js';
 import { getReviewableDocumentationSuggestions } from './documentationReview.js';
+import { buildAssetDraftContextDebug, doesPreviewContextMatch, resolveAssetDraftContext } from './assetDraftContext.js';
 
 function renderAssetCardFallback(asset, error) {
   const id = `${asset?.id || 'unknown'}`;
@@ -256,17 +257,25 @@ function renderHistoryTimeline(history = []) {
 }
 
 function renderPreviewPanel(state) {
+  const context = resolveAssetDraftContext(state, state.assetDraft || {});
   const preview = state.assetDraft?.preview || null;
   const status = state.assetDraft?.previewStatus || 'idle';
+  const previewFeedback = `${state.assetDraft?.previewFeedback || ''}`.trim();
+  if (!context.ok) return renderInlineFeedback(context.message, 'error');
+  if (previewFeedback) return renderInlineFeedback(previewFeedback, 'info');
   if (!preview && status === 'idle') return renderInlineFeedback('Preview assistant is idle. Use this only when you want to pre-check docs before saving.', 'info');
   if (!preview && ['searching', 'searching_refined'].includes(status)) return renderInlineFeedback('Searching official/manual sources...', 'info');
   if (!preview && status === 'no_strong_match') return renderInlineFeedback('No strong match yet. Verify manufacturer/model text and try again.', 'error');
+  if (preview && !doesPreviewContextMatch(context, state.assetDraft?.previewContext || {})) {
+    return renderInlineFeedback('Preview suggestions are stale because the active company or location changed. Run research again before applying or saving.', 'error');
+  }
 
   const docs = sortDocumentationSuggestions(preview?.documentationSuggestions || []).slice(0, 3);
   const support = (preview?.supportResourcesSuggestion || []).slice(0, 3);
   const statusTone = docs.length || support.length ? 'success' : 'info';
   return `
     ${renderInlineFeedback(`Preview status: ${status}${docs.length || support.length ? ' with suggestions ready to apply.' : ' with no strong links yet.'}`, statusTone)}
+    <div class="tiny">Context: ${buildAssetDraftContextDebug(context)}</div>
     <div class="tiny">Best match: ${preview?.normalizedName || 'n/a'} (${Math.round(Number(preview?.confidence || 0) * 100)}%)</div>
     <div class="tiny">Suggested manufacturer: ${preview?.likelyManufacturer || 'n/a'} | Category: ${preview?.likelyCategory || 'n/a'}</div>
     <div class="tiny">Manual/docs: ${docs.map((entry) => `<a href="${entry.url}" target="_blank" rel="noopener">${entry.title || entry.url}</a>`).join(' | ') || 'none'}</div>
@@ -361,6 +370,9 @@ function renderEnrichmentDetails(asset, manager, state) {
 
 export function renderAssets(el, state, actions) {
   const editable = canEditAssets(state.permissions);
+  const draftContext = resolveAssetDraftContext(state, state.assetDraft || {});
+  const previewContextMatches = !state.assetDraft?.preview || doesPreviewContextMatch(draftContext, state.assetDraft?.previewContext || {});
+  const saveBlocked = !draftContext.ok || !previewContextMatches;
   const manager = isManager(state.permissions);
   const repeatPatterns = detectRepeatIssues(state.tasks || []);
   const locationOptions = buildLocationOptions(state);
@@ -487,16 +499,19 @@ export function renderAssets(el, state, actions) {
         <summary class="tiny">Preview before save (optional)</summary>
         <div class="grid" style="gap:6px; border:1px solid #ddd; padding:8px; border-radius:8px; margin-top:8px;">
           <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-            <button type="button" data-preview-lookup="1" ${(editable && !['searching', 'searching_refined'].includes(state.assetDraft?.previewStatus)) ? '' : 'disabled'}>${['searching', 'searching_refined'].includes(state.assetDraft?.previewStatus) ? 'Researching...' : 'Research this title'}</button>
-            <span class="tiny">Uses the same shared research engine as bulk intake.</span>
+            <button type="button" data-preview-lookup="1" ${(editable && draftContext.ok && !['searching', 'searching_refined'].includes(state.assetDraft?.previewStatus)) ? '' : 'disabled'}>${['searching', 'searching_refined'].includes(state.assetDraft?.previewStatus) ? 'Researching...' : 'Research this title'}</button>
+            <span class="tiny">Uses the same shared research engine as bulk intake. Run this only after the company/location context is stable.</span>
           </div>
           ${renderPreviewPanel(state)}
         </div>
       </details>
+      ${!draftContext.ok ? `<div class="tiny" style="grid-column:1/-1; color:#b91c1c;">${draftContext.message}</div>` : ''}
+      ${draftContext.ok ? `<div class="tiny" style="grid-column:1/-1; color:#6b7280;">Active asset draft context: ${buildAssetDraftContextDebug(draftContext)}</div>` : ''}
+      ${(draftContext.ok && !previewContextMatches) ? `<div class="tiny" style="grid-column:1/-1; color:#b91c1c;">Preview suggestions were generated under a different company or location. Re-run research before saving.</div>` : ''}
       ${state.assetDraft?.saveFeedback ? `<div class="tiny" style="grid-column:1/-1; color:${state.assetDraft?.saveFeedbackTone === 'error' ? '#b91c1c' : '#166534'};">${state.assetDraft.saveFeedback}</div>` : ''}
       ${state.assetDraft?.saveSecondaryFeedback ? `<div class="tiny" style="grid-column:1/-1; color:#4b5563;">${state.assetDraft.saveSecondaryFeedback}</div>` : ''}
       ${state.assetDraft?.saveDebugContext ? `<div class="tiny" style="grid-column:1/-1; color:#6b7280;">${state.assetDraft.saveDebugContext}</div>` : ''}
-      <button type="submit" class="primary" ${editable && !state.assetDraft?.saving ? '' : 'disabled'}>${state.assetDraft?.saving ? 'Saving...' : 'Save asset'}</button>
+      <button type="submit" class="primary" ${editable && !state.assetDraft?.saving && !saveBlocked ? '' : 'disabled'}>${state.assetDraft?.saving ? 'Saving...' : 'Save asset'}</button>
       <datalist id="assetLocationNames">${locationOptions.filter((option) => option.name && option.id).map((option) => `<option value="${option.name}"></option>`).join('')}</datalist>
     </form>
 
@@ -654,6 +669,7 @@ export function renderAssets(el, state, actions) {
     const docs = (preview.documentationSuggestions || []).map((entry) => entry.url).filter(Boolean);
     const support = (preview.supportResourcesSuggestion || []).map((entry) => entry.url).filter(Boolean);
     const contacts = (preview.supportContactsSuggestion || []).map((entry) => `${entry.label || entry.contactType}: ${entry.value}`).filter(Boolean);
+    if (!draftContext.ok || !previewContextMatches) return;
     const mode = button.dataset.applyPreview;
     if (mode === 'support' || mode === 'all') actions.applyPreviewToDraft({ supportResources: support.slice(0, 3) });
     if (mode === 'contacts' || mode === 'all') actions.applyPreviewToDraft({ notes: contacts.join(' | '), supportContacts: preview.supportContactsSuggestion || [] });

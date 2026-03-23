@@ -1,4 +1,3 @@
-import { getReviewableDocumentationSuggestions } from './features/documentationReview.js';
 import { defaultAiSettings } from './data.js';
 import { canChangeAISettings, canManageBackups, isAdmin } from './roles.js';
 import { buildLocationOptions } from './features/locationContext.js';
@@ -59,7 +58,6 @@ const ADMIN_SECTIONS = [
   { id: 'invites', label: 'Invites' },
   { id: 'audit', label: 'Audit log' },
   { id: 'imports', label: 'Imports' },
-  { id: 'asset_review', label: 'Documentation review' },
   { id: 'tools', label: 'AI & notifications' },
   { id: 'danger', label: 'Danger zone' }
 ];
@@ -81,61 +79,6 @@ function renderCompanyAddress(company = {}) {
 function formatRoleLabel(value = '') { return `${value || 'staff'}`.replace(/_/g, ' '); }
 function renderStatusChip(label, tone = 'muted') { return `<span class="state-chip ${tone}">${label}</span>`; }
 
-
-
-function normalizeReviewState(asset = {}) {
-  const current = `${asset.reviewState || ''}`.trim();
-  if (['approved', 'rejected'].includes(current)) return current;
-  const suggestions = getReviewableDocumentationSuggestions(asset);
-  if (suggestions.length || `${asset.enrichmentStatus || ''}`.trim() === 'docs_found') return 'pending_review';
-  if (`${asset.enrichmentStatus || ''}`.trim() === 'followup_needed') return 'followup_needed';
-  if (`${asset.enrichmentStatus || ''}`.trim() === 'no_match_yet') return 'research_needed';
-  return current || 'idle';
-}
-
-function renderAssetReviewStatus(asset = {}) {
-  const reviewState = normalizeReviewState(asset);
-  if (reviewState === 'approved') return renderStatusChip('approved', 'success');
-  if (reviewState === 'rejected') return renderStatusChip('rejected', 'error');
-  if (reviewState === 'pending_review') return renderStatusChip('pending review', 'warn');
-  if (reviewState === 'followup_needed') return renderStatusChip('follow-up needed', 'info');
-  if (reviewState === 'research_needed') return renderStatusChip('manual research needed', 'warn');
-  return renderStatusChip('idle', 'muted');
-}
-
-function buildReviewQueue(assets = [], filter = 'pending_review') {
-  return assets.filter((asset) => {
-    const suggestions = getReviewableDocumentationSuggestions(asset);
-    const hasDocs = Array.isArray(asset.manualLinks) && asset.manualLinks.length > 0;
-    const reviewState = normalizeReviewState(asset);
-    if (filter === 'all') return true;
-    if (filter === 'pending_review') return reviewState === 'pending_review';
-    if (filter === 'followup_needed') return reviewState === 'followup_needed';
-    if (filter === 'research_needed') return reviewState === 'research_needed';
-    if (filter === 'has_suggestions') return suggestions.length > 0;
-    if (filter === 'missing_docs') return !hasDocs;
-    if (filter === 'approved') return reviewState === 'approved';
-    if (filter === 'rejected') return reviewState === 'rejected';
-    return true;
-  });
-}
-
-function matchesAssetReviewSearch(asset = {}, query = '') {
-  const clean = `${query || ''}`.trim().toLowerCase();
-  if (!clean) return true;
-  const suggestions = Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : [];
-  const searchable = [
-    asset.id,
-    asset.name,
-    asset.manufacturer,
-    asset.model,
-    asset.serialNumber,
-    asset.locationName,
-    asset.location,
-    ...suggestions.map((entry) => entry?.title || entry?.url || '')
-  ].map((value) => `${value || ''}`.trim().toLowerCase()).join(' ');
-  return searchable.includes(clean);
-}
 
 function formatDateLabel(value) {
   if (!value) return 'Not set';
@@ -201,28 +144,7 @@ export function renderAdmin(el, state, actions) {
     { id: 'operations_tasks', label: 'Operations / tasks' },
     { id: 'settings', label: 'Settings' }
   ];
-  const auditEntries = (state.auditLogs || []).filter((entry) => auditCategory === 'all' || entry.category === auditCategory).slice(0, 80);
-  const reviewFilter = adminUi.assetReviewFilter || 'pending_review';
-  const reviewFilterOptions = [
-    { id: 'pending_review', label: 'Pending review' },
-    { id: 'followup_needed', label: 'Follow-up needed' },
-    { id: 'research_needed', label: 'Research needed' },
-    { id: 'has_suggestions', label: 'Has suggestions' },
-    { id: 'missing_docs', label: 'Missing docs' },
-    { id: 'approved', label: 'Approved' },
-    { id: 'rejected', label: 'Rejected' },
-    { id: 'all', label: 'All assets' }
-  ];
-  const reviewSearch = `${adminUi.assetReviewSearch || ''}`.trim();
-  const filteredQueue = buildReviewQueue(state.assets || [], reviewFilter);
-  const reviewQueue = filteredQueue.filter((asset) => matchesAssetReviewSearch(asset, reviewSearch));
-  const reviewActiveFilters = [
-    reviewFilter !== 'pending_review' ? `queue: ${reviewFilter.replace('_', ' ')}` : '',
-    reviewSearch ? `search: "${reviewSearch}"` : ''
-  ].filter(Boolean);
-  const selectedAssetReviewIds = new Set(adminUi.selectedAssetReviewIds || []);
-  const selectedSuggestionsByAsset = adminUi.selectedSuggestionsByAsset || {};
-  const onboarding = state.onboarding || getAuthoritativeOnboardingState(state);
+  const auditEntries = (state.auditLogs || []).filter((entry) => auditCategory === 'all' || entry.category === auditCategory).slice(0, 80);  const onboarding = state.onboarding || getAuthoritativeOnboardingState(state);
 
   const locationManagerChoices = members.map((member) => `<option value="${getReadablePersonName(member.person || member)}">${getReadablePersonName(member.person || member)}</option>`).join('');
 
@@ -387,69 +309,6 @@ export function renderAdmin(el, state, actions) {
     <section class="item ${activeSection === 'audit' ? '' : 'hide'}" data-admin-section="audit"><h3>Audit log</h3><p class="tiny">Company activity history.</p><div class="row mt">${categoryOptions.map((option) => `<button type="button" data-audit-filter="${option.id}" class="filter-chip ${auditCategory === option.id ? 'active' : ''}">${option.label}</button>`).join('')}</div><div class="list mt">${auditEntries.map((entry) => `<div class="item tiny"><div class="row space"><b>${renderAuditLine(entry)}</b>${renderStatusChip(formatRelativeTime(entry.timestamp), 'muted')}</div><div>${entry.summary || ''}</div></div>`).join('') || '<div class="inline-state info">No audit entries in this view yet.</div>'}</div></section>
 
     <section class="item ${activeSection === 'imports' ? '' : 'hide'}" data-admin-section="imports"><h3>Workspace tools</h3><p class="tiny">Import templates, operational exports, and backup bundle tools for this company workspace.</p><div class="item" style="margin-top:8px;"><b>Import templates</b><div class="row mt"><button id="downloadAssetsTemplate" type="button">Download assets CSV template</button><button id="downloadEmployeesTemplate" type="button">Download workers CSV template</button></div></div><div class="grid grid-2 mt"><label>Assets CSV<input id="assetCsvInput" type="file" accept=".csv" /></label><button id="applyAssetCsv" type="button">Import assets</button><label>Workers CSV<input id="employeeCsvInput" type="file" accept=".csv" /></label><button id="applyEmployeeCsv" type="button">Import workers</button></div>${adminUi.importSummary ? `<div class="tiny mt">${adminUi.importSummary}</div>` : '<div class="tiny mt">Choose a CSV to preview rows before import.</div>'}<pre id="importPreview" class="tiny">${adminUi.importPreview || ''}</pre><div class="item mt"><b>CSV exports (company-scoped)</b><div class="tiny">Readable exports for operations and admin records. These files exclude invite tokens and other secrets.</div><div class="grid grid-2 mt"><button id="exportAssetsCsv" ${canManageBackups(state.permissions) ? '' : 'disabled'} type="button">Export assets CSV</button><button id="exportTasksCsv" ${canManageBackups(state.permissions) ? '' : 'disabled'} type="button">Export tasks CSV</button><button id="exportAuditCsv" ${canManageBackups(state.permissions) ? '' : 'disabled'} type="button">Export audit log CSV</button><button id="exportLocationsCsv" ${canManageBackups(state.permissions) ? '' : 'disabled'} type="button">Export locations CSV</button><button id="exportWorkersCsv" ${canManageBackups(state.permissions) ? '' : 'disabled'} type="button">Export workers CSV</button><button id="exportMembersCsv" ${canManageBackups(state.permissions) ? '' : 'disabled'} type="button">Export members CSV</button><button id="exportInvitesCsv" ${canManageBackups(state.permissions) ? '' : 'disabled'} type="button">Export invites CSV</button></div></div><div class="item mt"><b>Backup bundle</b><div class="tiny">Download one JSON bundle containing core company records for portability and backup confidence.</div><div class="row mt"><button id="exportCompanyBundle" ${canManageBackups(state.permissions) ? '' : 'disabled'} type="button">Export company backup (JSON)</button></div></div></section>
-
-
-    <section class="item ${activeSection === 'asset_review' ? '' : 'hide'}" data-admin-section="asset_review">
-      <h3>Asset documentation review</h3>
-      <p class="tiny">Run enrichment in bulk, then review and approve/reject suggested docs before attaching.</p>
-      <div class="row mt" style="align-items:center; gap:8px; flex-wrap:wrap;">
-        <label class="tiny">Filter
-          <select data-asset-review-filter>
-            ${reviewFilterOptions.map((option) => `<option value="${option.id}" ${reviewFilter === option.id ? 'selected' : ''}>${option.label}</option>`).join('')}
-          </select>
-        </label>
-        <label class="tiny">Search
-          <input type="search" data-asset-review-search placeholder="Asset, manufacturer, serial, suggestion title" value="${reviewSearch}" />
-        </label>
-        <button type="button" data-run-review-enrichment="all">Run enrichment for all eligible assets</button>
-        <button type="button" data-run-review-enrichment="filtered">Run enrichment for filtered assets</button>
-        <button type="button" data-run-review-enrichment="selected">Run enrichment for selected assets</button>
-        <button type="button" data-approve-selected-suggestions class="primary">Approve selected suggestions</button>
-        <button type="button" data-reject-selected-suggestions>Reject selected suggestions</button>
-        <button type="button" data-clear-review-filters ${reviewActiveFilters.length ? '' : 'disabled'}>Clear filters</button>
-      </div>
-      <div class="tiny mt">Queue: ${reviewQueue.length} of ${filteredQueue.length} assets in current filter.</div>
-      <div class="tiny mt">Active filters: ${reviewActiveFilters.length ? reviewActiveFilters.join(' · ') : 'default queue view'}</div>
-      <div class="list mt">
-        ${reviewQueue.map((asset) => {
-    const suggestions = getReviewableDocumentationSuggestions(asset);
-    const attached = Array.isArray(asset.manualLinks) ? asset.manualLinks : [];
-    const selectedSuggestions = new Set(selectedSuggestionsByAsset[asset.id] || []);
-    return `<div class="item" style="padding:10px; margin-bottom:8px;">
-            <div class="row space" style="align-items:flex-start; gap:8px; flex-wrap:wrap;">
-              <label class="tiny" style="display:flex; align-items:center; gap:6px;"><input type="checkbox" data-review-asset-select="${asset.id}" ${selectedAssetReviewIds.has(asset.id) ? 'checked' : ''} /> Select asset</label>
-              <div style="flex:1; min-width:260px;">
-                <b>${asset.name || asset.id}</b>
-                <div class="tiny">Manufacturer: ${asset.manufacturer || 'n/a'}</div>
-                <div class="tiny">Enrichment: ${asset.enrichmentStatus || 'idle'} | Review: ${renderAssetReviewStatus(asset)}</div>
-              </div>
-            </div>
-            <div class="grid grid-2 mt" style="gap:10px;">
-              <div>
-                <div class="tiny"><b>Suggested manuals to review</b></div>
-                ${suggestions.length ? suggestions.map((entry) => {
-      const url = `${entry.url || ''}`.trim();
-      return `<div class="tiny" style="display:flex; gap:8px; align-items:flex-start; justify-content:space-between; margin:4px 0;">
-                        <label style="display:flex; gap:6px; align-items:flex-start; flex:1;"><input type="checkbox" data-review-suggestion-select="${asset.id}" data-url="${encodeURIComponent(url)}" ${selectedSuggestions.has(url) ? 'checked' : ''} /><span><a href="${url}" target="_blank" rel="noopener">${entry.title || url}</a><br/>score: ${Number(entry.matchScore || 0)}${entry.verified ? ' | verified' : ''}</span></label>
-                        <span>
-                          <button type="button" data-approve-suggestion="${asset.id}" data-url="${encodeURIComponent(url)}">Approve</button>
-                          <button type="button" data-reject-suggestion="${asset.id}" data-url="${encodeURIComponent(url)}">Reject</button>
-                        </span>
-                      </div>`;
-    }).join('') : '<div class="inline-state info">No suggestions yet. Run enrichment.</div>'}
-              </div>
-              <div>
-                <div class="tiny"><b>Source/support links</b></div>
-                ${((asset.supportResourcesSuggestion || []).length ? (asset.supportResourcesSuggestion || []).map((entry) => `<div class="tiny" style="margin:4px 0;"><a href="${entry.url || ''}" target="_blank" rel="noopener">${entry.title || entry.label || entry.url || ''}</a></div>`).join('') : '<div class="inline-state info">No source/support links.</div>')}
-                <div class="tiny mt"><b>Already attached docs/resources</b></div>
-                ${attached.length ? attached.map((url) => `<div class="tiny" style="display:flex; justify-content:space-between; gap:8px; margin:4px 0;"><a href="${url}" target="_blank" rel="noopener">${url}</a><button type="button" data-remove-attached-manual="${asset.id}" data-url="${encodeURIComponent(url)}">Remove</button></div>`).join('') : '<div class="inline-state warn">No attached docs.</div>'}
-              </div>
-            </div>
-          </div>`;
-  }).join('') || '<div class="inline-state info">No assets in this review queue.</div>'}
-      </div>
-    </section>
-
     <section class="item ${activeSection === 'tools' ? '' : 'hide'}" data-admin-section="tools">
       <h3>AI and notification settings</h3>
       <div class="grid grid-2 settings-stack">
@@ -485,18 +344,6 @@ export function renderAdmin(el, state, actions) {
 
   el.querySelectorAll('[data-admin-tab]').forEach((button) => button.addEventListener('click', () => actions.setAdminSection(button.dataset.adminTab)));
   el.querySelectorAll('[data-audit-filter]').forEach((button) => button.addEventListener('click', () => actions.setAuditFilter(button.dataset.auditFilter)));
-  el.querySelector('[data-asset-review-filter]')?.addEventListener('change', (event) => actions.setAssetReviewFilter(event.target.value));
-  el.querySelector('[data-asset-review-search]')?.addEventListener('input', (event) => actions.setAssetReviewSearch(event.target.value));
-  el.querySelector('[data-clear-review-filters]')?.addEventListener('click', () => actions.clearAssetReviewFilters());
-  el.querySelectorAll('[data-review-asset-select]').forEach((input) => input.addEventListener('change', () => actions.toggleAssetReviewSelection(input.dataset.reviewAssetSelect, input.checked)));
-  el.querySelectorAll('[data-review-suggestion-select]').forEach((input) => input.addEventListener('change', () => actions.toggleAssetSuggestionSelection(input.dataset.reviewSuggestionSelect, decodeURIComponent(input.dataset.url || ''), input.checked)));
-  el.querySelectorAll('[data-run-review-enrichment]').forEach((button) => button.addEventListener('click', () => actions.runBulkAssetEnrichment(button.dataset.runReviewEnrichment)));
-  el.querySelector('[data-approve-selected-suggestions]')?.addEventListener('click', () => actions.approveSelectedSuggestions());
-  el.querySelector('[data-reject-selected-suggestions]')?.addEventListener('click', () => actions.rejectSelectedSuggestions());
-  el.querySelectorAll('[data-approve-suggestion]').forEach((button) => button.addEventListener('click', () => actions.approveAssetSuggestion(button.dataset.approveSuggestion, decodeURIComponent(button.dataset.url || ''))));
-  el.querySelectorAll('[data-reject-suggestion]').forEach((button) => button.addEventListener('click', () => actions.rejectAssetSuggestion(button.dataset.rejectSuggestion, decodeURIComponent(button.dataset.url || ''))));
-  el.querySelectorAll('[data-remove-attached-manual]').forEach((button) => button.addEventListener('click', () => actions.removeAttachedManualFromReview(button.dataset.removeAttachedManual, decodeURIComponent(button.dataset.url || ''))));
-
   const requiredPhrase = state.company?.name || 'CONFIRM';
   const confirmDanger = () => {
     const phrase = `${el.querySelector('#dangerPhrase')?.value || ''}`.trim();

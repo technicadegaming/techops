@@ -5,6 +5,11 @@ import {
   buildFollowupEnrichmentRequest,
   buildManualEnrichmentRequest
 } from './assetEnrichmentPipeline.js';
+import {
+  buildAssetDraftContextDebug,
+  doesPreviewContextMatch,
+  resolveAssetDraftContext
+} from './assetDraftContext.js';
 
 export function createAssetActions(deps) {
   const {
@@ -61,6 +66,52 @@ export function createAssetActions(deps) {
     .filter((entry) => !!`${entry?.url || ''}`.trim() && !entry?.deadPage && !entry?.unreachable && entry?.verified)
     .length;
 
+  const getDraftContext = (draft = state.assetDraft || {}) => resolveAssetDraftContext(state, draft);
+
+  const invalidatePreviewForContext = (contextMessage = '') => {
+    state.assetDraft = {
+      ...(state.assetDraft || {}),
+      preview: null,
+      previewContext: null,
+      previewStatus: 'idle',
+      previewFeedback: contextMessage,
+      previewMeta: { ...(state.assetDraft?.previewMeta || {}), inFlightQuery: '', lastCompletedQuery: '' },
+      draftContextStamp: ''
+    };
+  };
+
+  const syncDraftContextState = ({ clearPreview = false, contextMessage = '' } = {}) => {
+    const context = getDraftContext();
+    const currentPreviewContext = state.assetDraft?.previewContext || null;
+    const previewStale = !!(state.assetDraft?.preview && currentPreviewContext && !doesPreviewContextMatch(context, currentPreviewContext));
+
+    if (clearPreview || previewStale) {
+      invalidatePreviewForContext(contextMessage || (previewStale
+        ? 'Preview was cleared because the active company or location context changed.'
+        : 'Preview was cleared because the asset location changed.'));
+    }
+
+    state.assetDraft = {
+      ...(state.assetDraft || {}),
+      draftContextStamp: context.ok ? context.stamp : '',
+      saveDebugContext: buildAssetDraftContextDebug(context)
+    };
+    return context;
+  };
+
+  const blockDraftAction = (message, { preview = false, debugContext = null } = {}) => {
+    state.assetDraft = {
+      ...(state.assetDraft || {}),
+      saving: false,
+      saveFeedback: preview ? (state.assetDraft?.saveFeedback || '') : message,
+      saveSecondaryFeedback: '',
+      saveFeedbackTone: preview ? (state.assetDraft?.saveFeedbackTone || 'success') : 'error',
+      saveDebugContext: debugContext ? `Debug - ${buildAssetDraftContextDebug(debugContext)}` : (state.assetDraft?.saveDebugContext || ''),
+      previewFeedback: preview ? message : (state.assetDraft?.previewFeedback || '')
+    };
+    render();
+  };
+
   const buildCompletionFeedback = (asset = {}, result = {}) => {
     const status = `${result?.status || asset?.enrichmentStatus || 'idle'}`.trim() || 'idle';
     const manualLibraryRef = `${asset?.manualLibraryRef || ''}`.trim();
@@ -111,7 +162,23 @@ export function createAssetActions(deps) {
       const manufacturer = `${payload.manufacturer || ''}`.trim();
       if (!name) return alert('Asset name is required.');
       if (!manufacturer) return alert('Manufacturer is required.');
-      state.assetDraft = { ...(state.assetDraft || {}), saving: true, saveFeedback: '', saveFeedbackTone: 'success', saveDebugContext: '' };
+      const context = syncDraftContextState();
+      if (!context.ok) {
+        blockDraftAction(context.message, { debugContext: context });
+        return;
+      }
+      if (state.assetDraft?.preview && !doesPreviewContextMatch(context, state.assetDraft.previewContext)) {
+        blockDraftAction('Cannot save because the preview suggestions were generated for a different company or location context. Run research again before saving.', { debugContext: context });
+        return;
+      }
+      state.assetDraft = {
+        ...(state.assetDraft || {}),
+        saving: true,
+        saveFeedback: '',
+        saveSecondaryFeedback: '',
+        saveFeedbackTone: 'success',
+        saveDebugContext: `Debug - ${buildAssetDraftContextDebug(context)}`
+      };
       render();
       try {
         const desiredId = `${id || ''}`.trim() || normalizeAssetId(name);
@@ -123,8 +190,9 @@ export function createAssetActions(deps) {
           ...payload,
           id: finalId,
           name,
+          companyId: context.resolvedCompanyId,
           locationId: `${payload.locationId || current.locationId || ''}`.trim(),
-          locationName: `${payload.locationName || current.locationName || ''}`.trim(),
+          locationName: `${context.selectedLocationName || payload.locationName || current.locationName || ''}`.trim(),
           serialNumber: `${payload.serialNumber || current.serialNumber || ''}`.trim(),
           manufacturer: `${manufacturer || draft.manufacturer || current.manufacturer || ''}`.trim(),
           ownerWorkers: `${payload.ownerWorkers || ''}`.split(',').map((value) => value.trim()).filter(Boolean),
@@ -211,6 +279,11 @@ export function createAssetActions(deps) {
       }
     },
     previewAssetLookup: async (payload) => {
+      const context = syncDraftContextState();
+      if (!context.ok) {
+        blockDraftAction(context.message, { preview: true, debugContext: context });
+        return;
+      }
       const assetName = `${payload?.assetName || ''}`.trim();
       const normalizedQuery = deps.buildPreviewQueryKey(payload);
       const previewMeta = state.assetDraft?.previewMeta || { inFlightQuery: '', lastCompletedQuery: '' };
@@ -219,7 +292,9 @@ export function createAssetActions(deps) {
         state.assetDraft = {
           ...state.assetDraft,
           preview: null,
+          previewContext: null,
           previewStatus: 'idle',
+          previewFeedback: '',
           previewMeta: { ...previewMeta, inFlightQuery: '' },
           draftNameNormalized: normalizedName
         };
@@ -231,6 +306,7 @@ export function createAssetActions(deps) {
       state.assetDraft = {
         ...state.assetDraft,
         previewStatus: payload?.reason === 'manufacturer_refine' ? 'searching_refined' : 'searching',
+        previewFeedback: '',
         previewMeta: { ...previewMeta, inFlightQuery: normalizedQuery },
         draftNameNormalized: normalizedName
       };
@@ -248,8 +324,11 @@ export function createAssetActions(deps) {
         state.assetDraft = {
           ...state.assetDraft,
           preview: enrichedRow.preview,
+          previewContext: context,
           previewStatus: enrichedRow.preview?.status || 'found_suggestions',
+          previewFeedback: '',
           previewMeta: { inFlightQuery: '', lastCompletedQuery: normalizedQuery },
+          draftContextStamp: context.stamp,
           draftNameNormalized: normalizedName,
           normalizedName: enrichedRow.normalizedName || '',
           manualSourceUrl: enrichedRow.manualSourceUrl || '',
@@ -263,15 +342,28 @@ export function createAssetActions(deps) {
         state.assetDraft = {
           ...state.assetDraft,
           previewStatus: 'no_strong_match',
+          previewContext: context,
+          previewFeedback: '',
           previewMeta: { ...previewMeta, inFlightQuery: '' },
+          draftContextStamp: context.stamp,
           draftNameNormalized: normalizedName
         };
       }
       render();
     },
     applyPreviewToDraft: (partialPayload = {}) => {
+      const context = syncDraftContextState();
+      if (!context.ok) {
+        blockDraftAction(context.message, { preview: true, debugContext: context });
+        return;
+      }
+      if (state.assetDraft?.preview && !doesPreviewContextMatch(context, state.assetDraft.previewContext)) {
+        invalidatePreviewForContext('Preview was cleared because the active company or location context changed. Run research again before applying suggestions.');
+        render();
+        return;
+      }
       const { triggerRefinedPreview, ...draftPatch } = partialPayload;
-      state.assetDraft = { ...state.assetDraft, ...draftPatch };
+      state.assetDraft = { ...state.assetDraft, ...draftPatch, previewFeedback: '' };
       render();
       if (triggerRefinedPreview) {
         const draft = state.assetDraft || {};
@@ -303,9 +395,15 @@ export function createAssetActions(deps) {
     enrichBulkIntakeRows: async (options = {}) => {
       const existingRows = Array.isArray(state.assetUi?.bulkIntakeRows) ? state.assetUi.bulkIntakeRows : [];
       if (!existingRows.length) return;
+      const context = getDraftContext({ locationId: options.locationId || state.assetDraft?.locationId, locationName: options.defaultLocationName || state.assetDraft?.locationName });
+      if (!context.ok) {
+        state.assetDraft = { ...(state.assetDraft || {}), saveFeedback: context.message, saveFeedbackTone: 'error', saveDebugContext: `Debug - ${buildAssetDraftContextDebug(context)}` };
+        render();
+        return;
+      }
       state.assetUi = { ...(state.assetUi || {}), bulkIntakeStatus: 'enriching', bulkIntakeErrors: [] };
       render();
-      const companyId = `${state.company?.id || state.activeMembership?.companyId || ''}`.trim();
+      const companyId = context.resolvedCompanyId;
       const lookupRows = existingRows.map((row) => ({ ...row, locationName: row.locationName || options.defaultLocationName || '' }));
       const enrichedRows = await enrichAssetIntakeRows(lookupRows, {
         lookup: async (payload) => {
@@ -351,6 +449,11 @@ export function createAssetActions(deps) {
     importBulkIntakeRows: async () => {
       const rows = (state.assetUi?.bulkIntakeRows || []).filter((row) => !['skipped', 'unresolved'].includes(row.rowStatus));
       if (!rows.length) return;
+      const context = syncDraftContextState();
+      if (!context.ok) {
+        blockDraftAction(context.message, { debugContext: context });
+        return;
+      }
       for (const row of rows) {
         const desiredId = `${row.assetId || ''}`.trim() || normalizeAssetId(row.name || 'asset');
         const finalId = pickUniqueAssetId(desiredId, state.assets);
@@ -359,6 +462,7 @@ export function createAssetActions(deps) {
         if (row.supportPhone) supportContacts.push({ contactType: 'phone', label: 'Support phone', value: row.supportPhone });
         await upsertEntity('assets', finalId, withRequiredCompanyId({
           id: finalId,
+          companyId: context.resolvedCompanyId,
           name: row.name,
           manufacturer: row.manufacturer || row.manufacturerSuggestion || '',
           model: row.model || '',
@@ -427,6 +531,9 @@ export function createAssetActions(deps) {
     },
     updateAssetDraftField: (field, value) => {
       state.assetDraft = { ...state.assetDraft, [field]: value };
+      if (field === 'locationId' || field === 'locationName') {
+        syncDraftContextState({ clearPreview: true });
+      }
     },
     handleDraftNameChange: (assetName) => {
       const normalizedName = `${assetName || ''}`.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -436,7 +543,9 @@ export function createAssetActions(deps) {
       state.assetDraft = {
         ...state.assetDraft,
         preview: null,
+        previewContext: null,
         previewStatus: 'idle',
+        previewFeedback: '',
         previewMeta: { ...(state.assetDraft?.previewMeta || {}), inFlightQuery: '' },
         draftNameNormalized: normalizedName
       };
@@ -446,7 +555,9 @@ export function createAssetActions(deps) {
       state.assetDraft = {
         ...state.assetDraft,
         preview: null,
+        previewContext: null,
         previewStatus: 'idle',
+        previewFeedback: '',
         previewMeta: { ...(state.assetDraft?.previewMeta || {}), inFlightQuery: '' }
       };
       render();

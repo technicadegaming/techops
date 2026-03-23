@@ -22,10 +22,6 @@ export function createAdminController({
   downloadFile,
   downloadJson,
   normalizeAssetId,
-  dedupeUrls,
-  enrichAssetDocumentation,
-  approveAssetManual,
-  isManager,
   createCompanyInvite,
   revokeInvite
 }) {
@@ -50,10 +46,6 @@ export function createAdminController({
     downloadFile,
     downloadJson,
     normalizeAssetId,
-    dedupeUrls,
-    enrichAssetDocumentation,
-    approveAssetManual,
-    isManager,
     createCompanyInvite,
     revokeInvite
   });
