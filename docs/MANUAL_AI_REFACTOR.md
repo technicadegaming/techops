@@ -43,3 +43,9 @@
 - `assets.manualStatus` is now the simple asset-facing contract for docs UI: `attached`, `support_only`, `review_needed`, or `no_manual`.
 - `manualLibrary` remains the shared canonical record and `manuals/{manualId}/chunks` remains the tenant/task-AI extraction layer, but the asset UI should not require understanding that split just to know whether a manual is attached.
 - Support/product links remain secondary evidence and must not be presented as an attached manual.
+
+## Admin repair note (stale enrichment cleanup)
+- Use `repairAssetDocumentationState` when an older asset already has a terminal `manualStatus` but still shows stale legacy enrichment-running state such as `queued`, `searching_docs`, or `in_progress`.
+- Run it in `dryRun` mode first, then apply only after reviewing the report.
+- Prefer narrow targeting with a single `assetId`; if you need a wider pass, scope it by `companyId` and a small `limit`.
+- The repair only terminalizes stale enrichment metadata and review state; it does not rewrite attached manual linkage, support/manual architecture, or manual extraction records.

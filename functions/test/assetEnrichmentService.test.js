@@ -24,7 +24,8 @@ const {
   finalizeSingleAssetEnrichment,
   hasAuthoritativeManualAttachment,
   repairStaleInProgressAsset,
-  forceTerminalWriteIfStillActive
+  forceTerminalWriteIfStillActive,
+  planAssetDocumentationStateRepair
 } = require('../src/services/assetEnrichmentService');
 const { resolveArcadeTitleFamily } = require('../src/services/arcadeTitleAliasService');
 const { findCatalogManualMatch } = require('../src/services/manualLookupCatalogService');
@@ -1907,6 +1908,94 @@ test('repairLegacyAssetEnrichmentRecord forces support_only terminal manual outc
 
   assert.equal(repaired.manualStatus, 'support_only');
   assert.equal(repaired.enrichmentStatus, 'followup_needed');
+});
+
+test('planAssetDocumentationStateRepair dry-run reports stale terminal-manual assets without mutating unrelated data', async () => {
+  const asset = {
+    id: 'asset-terminal-1',
+    companyId: 'company-1',
+    enrichmentStatus: 'in_progress',
+    manualStatus: 'support_only',
+    supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }],
+    documentationSuggestions: [],
+    enrichmentFollowupQuestion: '',
+    manualLibraryRef: '',
+    manualStoragePath: '',
+    manualLinks: [],
+    notes: 'leave me alone',
+  };
+
+  const result = await planAssetDocumentationStateRepair({
+    asset,
+    userId: 'user-1',
+    verifySuggestions: async () => [],
+  });
+
+  assert.equal(result.patched, true);
+  assert.equal(result.reason, 'stale_terminal_manual_cleanup');
+  assert.equal(result.repairedEnrichmentStatus, 'followup_needed');
+  assert.equal(asset.notes, 'leave me alone');
+  assert.equal(result.updatePayload.notes, undefined);
+});
+
+test('planAssetDocumentationStateRepair skips non-terminal manual assets', async () => {
+  const result = await planAssetDocumentationStateRepair({
+    asset: {
+      id: 'asset-nonterminal-1',
+      companyId: 'company-1',
+      enrichmentStatus: 'in_progress',
+      manualStatus: '',
+      documentationSuggestions: [],
+      supportResourcesSuggestion: [],
+    },
+    userId: 'user-1',
+    verifySuggestions: async () => [],
+  });
+
+  assert.equal(result.skipped, true);
+  assert.equal(result.reason, 'manual_status_not_terminal');
+});
+
+test('planAssetDocumentationStateRepair leaves already-clean terminal assets unchanged', async () => {
+  const result = await planAssetDocumentationStateRepair({
+    asset: {
+      id: 'asset-clean-1',
+      companyId: 'company-1',
+      enrichmentStatus: 'followup_needed',
+      manualStatus: 'support_only',
+      supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }],
+    },
+    userId: 'user-1',
+    verifySuggestions: async () => [],
+  });
+
+  assert.equal(result.unchanged, true);
+  assert.equal(result.reason, 'already_terminalized');
+});
+
+test('planAssetDocumentationStateRepair preserves attached manual data while clearing stale running state', async () => {
+  const result = await planAssetDocumentationStateRepair({
+    asset: {
+      id: 'asset-attached-1',
+      companyId: 'company-1',
+      enrichmentStatus: 'in_progress',
+      manualStatus: 'attached',
+      manualLibraryRef: 'manual-1',
+      manualStoragePath: 'manual-library/company-1/manual.pdf',
+      manualLinks: ['manual-library/company-1/manual.pdf'],
+      documentationSuggestions: [],
+      supportResourcesSuggestion: [],
+    },
+    userId: 'user-1',
+    verifySuggestions: async () => [],
+  });
+
+  assert.equal(result.patched, true);
+  assert.equal(result.repairedEnrichmentStatus, 'docs_found');
+  assert.equal(result.updatePayload.manualStatus, 'attached');
+  assert.equal(result.updatePayload.manualLibraryRef, undefined);
+  assert.equal(result.updatePayload.manualStoragePath, undefined);
+  assert.equal(result.updatePayload.manualLinks, undefined);
 });
 
 test('forceTerminalWriteIfStillActive writes cleaned terminal state for stale non-durable runs', async () => {

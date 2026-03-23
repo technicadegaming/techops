@@ -20,8 +20,7 @@ const { normalizeAssetEnrichmentTriggerSource } = require('./lib/assetEnrichment
 const {
   enrichAssetDocumentation,
   previewAssetDocumentationLookup,
-  repairLegacyAssetEnrichmentRecord,
-  repairStaleInProgressAsset,
+  planAssetDocumentationStateRepair,
 } = require('./services/assetEnrichmentService');
 const {
   approveAssetManual,
@@ -429,47 +428,116 @@ exports.researchAssetTitles = onCall({ secrets: [OPENAI_API_KEY] }, async (reque
 
 exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
-  assertString(request.data?.assetId, 'assetId');
-
-  const authz = await authorizeAssetEnrichment({
-    db,
-    assetId: request.data.assetId,
-    uid: request.auth.uid,
-    getUserRole,
-  });
-
-  if (!authz.allowed) {
-    if (authz.scope === 'asset_not_found') throw new HttpsError('not-found', 'Asset not found');
-    throw new HttpsError('permission-denied', 'Insufficient role for asset enrichment');
+  const requestedAssetId = `${request.data?.assetId || ''}`.trim();
+  const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
+  const dryRun = request.data?.dryRun === true;
+  const limit = Math.max(1, Math.min(Number(request.data?.limit || 25) || 25, 100));
+  if (!requestedAssetId && !requestedCompanyId) {
+    throw new HttpsError('invalid-argument', 'assetId or companyId is required');
   }
 
-  const assetRef = db.collection('assets').doc(request.data.assetId);
-  const assetSnap = await assetRef.get();
-  if (!assetSnap.exists) throw new HttpsError('not-found', 'Asset not found');
-  const asset = assetSnap.data() || {};
-  const repaired = await repairStaleInProgressAsset({ asset })
-    || await repairLegacyAssetEnrichmentRecord({ asset });
+  let scopedCompanyId = requestedCompanyId;
+  let assetDocs = [];
+  if (requestedAssetId) {
+    const authz = await authorizeAssetEnrichment({
+      db,
+      assetId: requestedAssetId,
+      uid: request.auth.uid,
+      getUserRole,
+    });
 
-  await assetRef.set({
-    documentationSuggestions: repaired.documentationSuggestions,
-    supportResourcesSuggestion: repaired.supportResourcesSuggestion,
-    enrichmentFollowupQuestion: repaired.enrichmentFollowupQuestion,
-    enrichmentStatus: repaired.enrichmentStatus,
-    manualStatus: repaired.manualStatus,
-    reviewState: repaired.reviewState,
-    enrichmentFailedAt: repaired.enrichmentFailedAt,
-    enrichmentErrorCode: repaired.enrichmentErrorCode,
-    enrichmentErrorMessage: repaired.enrichmentErrorMessage,
-    enrichmentRecoveredAt: repaired.enrichmentRecoveredReason ? admin.firestore.FieldValue.serverTimestamp() : null,
-    enrichmentRecoveredReason: repaired.enrichmentRecoveredReason || '',
-    enrichmentRecoveredFromRunId: repaired.enrichmentRecoveredFromRunId || '',
-    enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    enrichmentHeartbeatAt: admin.firestore.FieldValue.serverTimestamp(),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    updatedBy: request.auth.uid
-  }, { merge: true });
+    if (!authz.allowed) {
+      if (authz.scope === 'asset_not_found') throw new HttpsError('not-found', 'Asset not found');
+      throw new HttpsError('permission-denied', 'Insufficient role for asset enrichment');
+    }
 
-  return { ok: true, assetId: request.data.assetId, ...repaired };
+    const assetRef = db.collection('assets').doc(requestedAssetId);
+    const assetSnap = await assetRef.get();
+    if (!assetSnap.exists) throw new HttpsError('not-found', 'Asset not found');
+    const asset = { id: assetSnap.id, ...(assetSnap.data() || {}) };
+    if (scopedCompanyId && normalizeCompanyId(asset.companyId) && scopedCompanyId !== normalizeCompanyId(asset.companyId)) {
+      throw new HttpsError('invalid-argument', 'assetId/companyId mismatch');
+    }
+    scopedCompanyId = normalizeCompanyId(asset.companyId) || scopedCompanyId;
+    assetDocs = [{ ref: assetRef, asset }];
+  } else {
+    const authz = await authorizeCompanyMember({
+      uid: request.auth.uid,
+      companyId: requestedCompanyId,
+      checkAccess: canRunAssetEnrichment,
+    });
+    if (!authz.allowed) {
+      throw new HttpsError('permission-denied', `Insufficient role for asset enrichment in company ${requestedCompanyId}`);
+    }
+    const querySnap = await db.collection('assets')
+      .where('companyId', '==', requestedCompanyId)
+      .limit(limit)
+      .get();
+    assetDocs = querySnap.docs.map((doc) => ({ ref: doc.ref, asset: { id: doc.id, ...(doc.data() || {}) } }));
+  }
+
+  const report = {
+    ok: true,
+    dryRun,
+    scope: requestedAssetId ? 'asset' : 'company',
+    assetId: requestedAssetId || null,
+    companyId: scopedCompanyId || requestedCompanyId || null,
+    limit,
+    summary: {
+      scanned: 0,
+      patched: 0,
+      unchanged: 0,
+      skipped: 0,
+      errors: 0,
+    },
+    patched: [],
+    unchanged: [],
+    skipped: [],
+    errors: [],
+  };
+
+  for (const entry of assetDocs) {
+    report.summary.scanned += 1;
+    try {
+      const plan = await planAssetDocumentationStateRepair({
+        asset: entry.asset,
+        userId: request.auth.uid,
+      });
+      const record = {
+        assetId: plan.assetId,
+        companyId: plan.companyId,
+        manualStatus: plan.manualStatus,
+        existingEnrichmentStatus: plan.existingEnrichmentStatus,
+        repairedEnrichmentStatus: plan.repairedEnrichmentStatus || null,
+        reason: plan.reason,
+        changedFields: plan.changedFields,
+      };
+      if (plan.skipped) {
+        report.summary.skipped += 1;
+        report.skipped.push(record);
+        continue;
+      }
+      if (plan.unchanged) {
+        report.summary.unchanged += 1;
+        report.unchanged.push(record);
+        continue;
+      }
+      if (!dryRun) {
+        await entry.ref.set(plan.updatePayload, { merge: true });
+      }
+      report.summary.patched += 1;
+      report.patched.push(record);
+    } catch (error) {
+      report.summary.errors += 1;
+      report.errors.push({
+        assetId: entry.asset.id,
+        companyId: `${entry.asset.companyId || ''}`.trim(),
+        message: error?.message || String(error),
+      });
+    }
+  }
+
+  return report;
 });
 
 exports.approveAssetManual = onCall({}, async (request) => {

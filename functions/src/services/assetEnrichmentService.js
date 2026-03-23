@@ -91,6 +91,7 @@ function buildAssetEnrichmentLogger({ traceId = '', assetId = '', triggerSource 
 }
 
 const STALE_ENRICHMENT_REPAIR_MS = 5 * 60 * 1000;
+const ACTIVE_ENRICHMENT_HEARTBEAT_MS = 2 * 60 * 1000;
 
 function createEnrichmentRunId() {
   return `enrich-${Date.now()}-${randomUUID().slice(0, 8)}`;
@@ -195,6 +196,12 @@ function isStaleInProgressAsset(asset = {}, thresholdMs = STALE_ENRICHMENT_REPAI
   const lastRunAt = getTimestampMillis(asset.enrichmentLastRunAt) || getTimestampMillis(asset.enrichmentUpdatedAt);
   if (!lastRunAt) return false;
   return (Date.now() - lastRunAt) >= thresholdMs;
+}
+
+function hasRecentEnrichmentHeartbeat(asset = {}, thresholdMs = ACTIVE_ENRICHMENT_HEARTBEAT_MS) {
+  const heartbeatAt = getTimestampMillis(asset.enrichmentHeartbeatAt);
+  if (!heartbeatAt) return false;
+  return (Date.now() - heartbeatAt) < thresholdMs;
 }
 
 function buildStaleRepairPayload(asset = {}, reason = 'stale_in_progress_repair') {
@@ -1435,6 +1442,92 @@ async function repairStaleInProgressAsset({ asset = {}, verifySuggestions = veri
   };
 }
 
+function buildAssetDocumentationRepairWrite({ repaired = {}, userId = '' } = {}) {
+  return {
+    documentationSuggestions: repaired.documentationSuggestions,
+    supportResourcesSuggestion: repaired.supportResourcesSuggestion,
+    enrichmentFollowupQuestion: repaired.enrichmentFollowupQuestion,
+    enrichmentStatus: repaired.enrichmentStatus,
+    manualStatus: repaired.manualStatus,
+    reviewState: repaired.reviewState,
+    enrichmentFailedAt: repaired.enrichmentFailedAt,
+    enrichmentErrorCode: repaired.enrichmentErrorCode,
+    enrichmentErrorMessage: repaired.enrichmentErrorMessage,
+    enrichmentRecoveredAt: repaired.enrichmentRecoveredReason ? admin.firestore.FieldValue.serverTimestamp() : null,
+    enrichmentRecoveredReason: repaired.enrichmentRecoveredReason || '',
+    enrichmentRecoveredFromRunId: repaired.enrichmentRecoveredFromRunId || '',
+    enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    enrichmentHeartbeatAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: userId,
+  };
+}
+
+function normalizeComparableValue(value) {
+  if (value === undefined) return null;
+  if (value === null || value === '') return null;
+  return value;
+}
+
+function listChangedRepairFields({ asset = {}, writePayload = {} } = {}) {
+  return [
+    'documentationSuggestions',
+    'supportResourcesSuggestion',
+    'enrichmentFollowupQuestion',
+    'enrichmentStatus',
+    'manualStatus',
+    'reviewState',
+    'enrichmentFailedAt',
+    'enrichmentErrorCode',
+    'enrichmentErrorMessage',
+    'enrichmentRecoveredReason',
+    'enrichmentRecoveredFromRunId',
+  ].filter((field) => JSON.stringify(normalizeComparableValue(asset[field])) !== JSON.stringify(normalizeComparableValue(writePayload[field])));
+}
+
+async function planAssetDocumentationStateRepair({ asset = {}, userId = '', verifySuggestions = verifyDocumentationSuggestions } = {}) {
+  const result = {
+    ok: true,
+    assetId: `${asset.id || ''}`.trim(),
+    companyId: `${asset.companyId || ''}`.trim(),
+    manualStatus: `${asset.manualStatus || ''}`.trim(),
+    existingEnrichmentStatus: `${asset.enrichmentStatus || ''}`.trim() || 'idle',
+    patched: false,
+    unchanged: false,
+    skipped: false,
+    reason: '',
+    changedFields: [],
+    updatePayload: null,
+  };
+  if (!TERMINAL_MANUAL_STATUSES.has(result.manualStatus)) {
+    result.skipped = true;
+    result.reason = 'manual_status_not_terminal';
+    return result;
+  }
+  if (!NON_DURABLE_ENRICHMENT_STATUSES.has(result.existingEnrichmentStatus)) {
+    result.unchanged = true;
+    result.reason = 'already_terminalized';
+    return result;
+  }
+  if (hasRecentEnrichmentHeartbeat(asset)) {
+    result.skipped = true;
+    result.reason = 'active_enrichment_heartbeat';
+    return result;
+  }
+  const repaired = await repairStaleInProgressAsset({ asset, verifySuggestions })
+    || await repairLegacyAssetEnrichmentRecord({ asset, verifySuggestions });
+  const updatePayload = buildAssetDocumentationRepairWrite({ repaired, userId });
+  const changedFields = listChangedRepairFields({ asset, writePayload: updatePayload });
+  result.manualStatus = repaired.manualStatus;
+  result.repairedEnrichmentStatus = repaired.enrichmentStatus;
+  result.reason = changedFields.length ? 'stale_terminal_manual_cleanup' : 'already_repaired';
+  result.changedFields = changedFields;
+  result.updatePayload = updatePayload;
+  result.patched = changedFields.length > 0;
+  result.unchanged = !result.patched;
+  return result;
+}
+
 async function recoverCatalogSourcePageManuals({ catalogMatch, draftAsset, normalizedName, manufacturerSuggestion, manufacturerProfile, fetchImpl = fetch }) {
   const sourcePages = (catalogMatch?.supportResources || []).filter((entry) => entry?.url);
   if (!sourcePages.length) return [];
@@ -2140,7 +2233,10 @@ module.exports = {
   repairLegacyAssetEnrichmentRecord,
   repairStaleInProgressAsset,
   isStaleInProgressAsset,
+  hasRecentEnrichmentHeartbeat,
   forceTerminalWriteIfStillActive,
+  buildAssetDocumentationRepairWrite,
+  planAssetDocumentationStateRepair,
   runLookupPreview,
   runAuthoritativeAssetResearch,
   buildSingleAssetDocumentationFields,
