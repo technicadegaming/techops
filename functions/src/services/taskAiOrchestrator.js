@@ -31,6 +31,16 @@ function compactExcerpt(text = '', maxLen = 380) {
   return `${text || ''}`.slice(0, maxLen).trim();
 }
 
+function dedupeBy(items = [], buildKey = (item) => JSON.stringify(item)) {
+  const seen = new Set();
+  return (Array.isArray(items) ? items : []).filter((item) => {
+    const key = `${buildKey(item) || ''}`;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 async function fetchDocExcerpt(url) {
   const response = await fetch(url, { method: 'GET' });
   if (!response.ok) throw new Error(`Fetch failed with status ${response.status}`);
@@ -99,17 +109,49 @@ function pickApprovedSuggestions(asset = {}) {
     .map((s) => ({ title: s.title || s.url, url: s.url, sourceType: 'approved_doc' }));
 }
 
+async function fetchManualLibraryContext(db, asset = {}) {
+  const manualLibraryRef = `${asset?.manualLibraryRef || ''}`.trim();
+  if (!db || !manualLibraryRef) return null;
+  const librarySnap = await db.collection('manualLibrary').doc(manualLibraryRef).get().catch(() => null);
+  if (!librarySnap?.exists) return null;
+  const record = { id: librarySnap.id, ...librarySnap.data() };
+  const linkedUrl = `${record.storagePath || record.resolvedDownloadUrl || record.originalDownloadUrl || ''}`.trim();
+  return {
+    title: record.canonicalTitle || record.sourceTitle || asset.name || linkedUrl || manualLibraryRef,
+    url: linkedUrl,
+    sourcePageUrl: `${record.sourcePageUrl || ''}`.trim(),
+    sourceType: 'manual_library_link',
+    manualLibraryRef: record.id,
+    storagePath: `${record.storagePath || ''}`.trim(),
+    manufacturer: record.manufacturer || '',
+    approvalState: record.approvalState || '',
+    excerpts: [
+      compactExcerpt([
+        record.canonicalTitle ? `Shared manual: ${record.canonicalTitle}` : '',
+        record.manufacturer ? `Manufacturer: ${record.manufacturer}` : '',
+        record.variant ? `Variant: ${record.variant}` : '',
+        record.sourcePageUrl ? `Source page: ${record.sourcePageUrl}` : '',
+        record.storagePath ? `Storage path: ${record.storagePath}` : '',
+        record.approved === true || record.approvalState === 'approved' ? 'Approval: approved shared manual record.' : 'Approval: shared manual record exists but still needs review.'
+      ].filter(Boolean).join(' | '), 500)
+    ].filter(Boolean)
+  };
+}
+
 /*
-Approved-manual ingestion path:
-- Approved manual source files live in Storage under a company-scoped path such as
-  companies/{companyId}/manuals/{assetId}/{manualId}/source.pdf.
-- Extracted/manual chunk text lives in Firestore at manuals/{manualId}/chunks documents.
-- buildDocumentationContext now prefers approved chunk excerpts first, then linked manual/support URLs.
+Manual context layering:
+- manualLibrary is the canonical shared manual record for acquisition/reuse.
+- Approved manual source files for a specific company/asset still live under
+  companies/{companyId}/manuals/{assetId}/{manualId}/source.pdf and extracted text
+  remains in manuals/{manualId}/chunks documents.
+- Task troubleshooting should prefer extracted approved chunks first, then the
+  asset-linked shared manual record, then troubleshooting fixes, then support/manual URLs.
 */
 
 async function buildDocumentationContext(db, asset = null, troubleshootingLibrary = []) {
   if (!asset) return { mode: 'web_internal_only', items: [] };
   const approvedChunkItems = await fetchApprovedManualChunkContext(db, asset).catch(() => []);
+  const linkedManualLibraryItem = await fetchManualLibraryContext(db, asset).catch(() => null);
   const troubleshootingItems = (Array.isArray(troubleshootingLibrary) ? troubleshootingLibrary : [])
     .filter((row) => row && (row.resolutionSummary || row.fixSummary || row.notes || row.title))
     .slice(0, approvedChunkItems.length ? 3 : 4)
@@ -120,13 +162,24 @@ async function buildDocumentationContext(db, asset = null, troubleshootingLibrar
       excerpts: [compactExcerpt(row.resolutionSummary || row.fixSummary || row.notes || '', 500)].filter(Boolean),
       confidence: row.confidence || null
     }));
-  const manualCandidates = (asset.manualLinks || []).filter(Boolean).slice(0, 3).map((url) => ({ title: url, url, sourceType: 'manual' }));
+  const manualCandidates = dedupeBy([
+    linkedManualLibraryItem,
+    ...(asset.manualStoragePath ? [{ title: asset.name || asset.manualStoragePath, url: asset.manualStoragePath, sourceType: 'manual' }] : []),
+    ...((asset.manualLinks || []).filter(Boolean).slice(0, 3).map((url) => ({ title: url, url, sourceType: 'manual' })))
+  ], (item) => item?.url || `${item?.sourceType || ''}:${item?.manualLibraryRef || ''}`);
   const fallbackCandidates = manualCandidates.length || approvedChunkItems.length ? [] : pickApprovedSuggestions(asset);
-  const supportCandidates = Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion.slice(0, approvedChunkItems.length ? 1 : 2).map((s) => ({ title: s.label || s.title || s.url, url: s.url || s, sourceType: 'support' })) : [];
+  const supportCandidates = Array.isArray(asset.supportResourcesSuggestion)
+    ? asset.supportResourcesSuggestion.slice(0, approvedChunkItems.length ? 1 : 2).map((s) => ({ title: s.label || s.title || s.url, url: s.url || s, sourceType: 'support' }))
+    : [];
 
-  const selected = [...manualCandidates, ...fallbackCandidates, ...supportCandidates].filter((x) => !!x.url).slice(0, 4);
-  const items = [...approvedChunkItems, ...troubleshootingItems];
+  const selected = dedupeBy([...manualCandidates, ...fallbackCandidates, ...supportCandidates].filter((x) => !!x?.url), (item) => item.url).slice(0, 4);
+  const items = [
+    ...approvedChunkItems,
+    ...(linkedManualLibraryItem ? [linkedManualLibraryItem] : []),
+    ...troubleshootingItems,
+  ];
   for (const source of selected) {
+    if (source.sourceType === 'manual_library_link') continue;
     try {
       const fetched = await fetchDocExcerpt(source.url);
       if (!fetched.excerpt) continue;
@@ -150,6 +203,8 @@ async function buildDocumentationContext(db, asset = null, troubleshootingLibrar
 
   const mode = items.some((x) => x.sourceType === 'approved_manual_chunk')
     ? 'approved_manual_internal'
+    : items.some((x) => x.sourceType === 'manual_library_link')
+    ? 'manual_library_backed'
     : items.some((x) => x.sourceType === 'troubleshooting_fix')
     ? 'troubleshooting_backed'
     : items.some((x) => x.sourceType === 'manual')

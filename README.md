@@ -95,7 +95,7 @@ Use this map to reduce doc-hunting:
 ### Root source of truth
 
 - The repository root files (for example `index.html`, Firebase config, and docs) are the authoritative source for the deployed app and operational workflows.
-- Legacy GitHub Pages export artifacts and root `CNAME` files are not part of the current Firebase Hosting deployment path and should not be reintroduced without a documented operational need.
+- The frontend is currently published via GitHub Pages with the root `CNAME` set to `wow.technicade.tech`; Firebase remains the backend/services layer for Auth, Firestore, Storage, and Functions.
 
 ### Runtime config injection (`window.__APP_CONFIG__`)
 
@@ -152,22 +152,23 @@ For full release guidance, use:
 - `docs/DEPLOYMENT.md` for deploy sequencing and post-deploy verification.
 - `docs/RELEASE_CHECKLIST.md` for pre-merge / pre-deploy / post-deploy checklists.
 
-Typical deploy commands:
+Typical backend deploy commands:
 
 ```bash
 firebase deploy --only firestore:rules
 firebase deploy --only storage
 firebase deploy --only firestore:indexes
 firebase deploy --only functions
-firebase deploy --only hosting
 ```
+
+Frontend publishing currently happens through GitHub Pages for `wow.technicade.tech` rather than `firebase deploy --only hosting`, because this repo's `firebase.json` does not define a Hosting target and the root `CNAME` points the Pages site at the production hostname.
 
 ### Recommended deploy order
 
 1. Rules (`firestore:rules`, then `storage`) to enforce tenancy boundaries first.
 2. Firestore indexes (if changed) so query dependencies are ready.
 3. Functions so backend behavior aligns with rules and indexes.
-4. Hosting for UI updates.
+4. GitHub Pages/frontend publish only when UI assets or docs served by Pages changed.
 
 ### Secrets handling expectations
 

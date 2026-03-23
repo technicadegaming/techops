@@ -40,7 +40,7 @@ Apply deploys in this order to reduce blast radius and avoid temporary policy dr
 2. Storage rules
 3. Firestore indexes (if changed)
 4. Cloud Functions
-5. Hosting
+5. GitHub Pages/frontend publish only when browser assets or root-site docs changed
 
 ### Commands
 
@@ -49,8 +49,9 @@ firebase deploy --only firestore:rules
 firebase deploy --only storage
 firebase deploy --only firestore:indexes
 firebase deploy --only functions
-firebase deploy --only hosting
 ```
+
+The frontend is currently served from GitHub Pages on `wow.technicade.tech`, confirmed by the root `CNAME` file and the lack of a `hosting` block in `firebase.json`. Do not treat `firebase deploy --only hosting` as the normal frontend release path unless the repo later adds a Firebase Hosting target intentionally.
 
 If no index changes are present, skip the indexes step.
 
@@ -68,14 +69,14 @@ After deploy, verify:
 2. Firestore reads/writes remain company scoped (`companyId` boundaries).
 3. Storage writes are restricted to `companies/{companyId}/...` paths.
 4. Cloud Functions respond without auth/regression errors.
-5. Hosting serves expected version and core app routes load.
+5. GitHub Pages serves the expected frontend version for `wow.technicade.tech` and core app routes load.
 
 ## Rollback / recovery guidance
 
 - **Functions rollback:** deploy the last known-good functions revision.
 - **Rules rollback:** re-deploy prior `firestore.rules` / `storage.rules` versions from source control.
-- **Hosting rollback:** re-deploy the previous known-good hosting artifact.
-- If tenant isolation is at risk, prioritize rules rollback first, then function/hosting recovery.
+- **Frontend rollback:** restore or republish the previous known-good GitHub Pages artifact/commit.
+- If tenant isolation is at risk, prioritize rules rollback first, then function/frontend recovery.
 
 ## CI alignment notes
 

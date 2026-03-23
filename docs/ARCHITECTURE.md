@@ -6,6 +6,7 @@ This repository hosts a Firebase-based multi-tenant operations portal for Scoot 
 
 ## Frontend
 
+- Hosting: GitHub Pages on `wow.technicade.tech` via the root `CNAME` file; this repo's `firebase.json` does not currently define a Firebase Hosting target.
 - Entry shell: `src/app.js`
 - Supporting shell modules:
   - `src/app/boot.js`
@@ -28,6 +29,7 @@ The app is framework-less JavaScript, intentionally preserved to avoid migration
 - Asset documentation enrichment: `functions/src/services/assetEnrichmentService.js`
 - Curated manual catalog lookup: `functions/src/services/manualLookupCatalogService.js` with workbook-seeded source data in `functions/src/data/manualLookupWorkbookSeed.json`, normalized via `functions/scripts/importManualLookupWorkbook.js` into `functions/src/data/manualLookupCatalog.json`
 - Manual live discovery fallback: `functions/src/services/manualDiscoveryService.js`
+- Manual acquisition + shared library: `functions/src/services/manualAcquisitionService.js`, `functions/src/services/manualLibraryService.js`
 - Manual ingestion/extraction: `functions/src/services/manualIngestionService.js`
 
 ## Multi-tenant boundaries
