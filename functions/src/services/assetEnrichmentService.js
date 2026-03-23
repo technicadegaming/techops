@@ -1578,6 +1578,16 @@ function hasAuthoritativeManualAttachment(manualFields = {}, existingAsset = {})
   );
 }
 
+
+function deriveManualStatus({ manualFields = {}, cleanedResult = {}, asset = {} } = {}) {
+  if (hasAuthoritativeManualAttachment(manualFields, asset)) return 'attached';
+  const reviewableCount = cleanDocumentationSuggestions(cleanedResult.documentationSuggestions || []).length;
+  if (reviewableCount > 0) return 'review_needed';
+  const supportCount = cleanSupportResourcesSuggestion(cleanedResult.supportResourcesSuggestion || [], cleanedResult.documentationSuggestions || []).length;
+  if (supportCount > 0) return 'support_only';
+  return 'no_manual';
+}
+
 function finalizeSingleAssetEnrichment({ asset = {}, cleanedResult = {}, preview = {}, manualFields = {}, resolvedStatus = '' } = {}) {
   const authoritativeManualAttached = hasAuthoritativeManualAttachment(manualFields, asset);
   if (authoritativeManualAttached) {
@@ -1912,6 +1922,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       enrichmentErrorCode: '',
       enrichmentErrorMessage: '',
       reviewState: finalReviewState,
+      manualStatus: deriveManualStatus({ manualFields: finalManualFields, cleanedResult, asset }),
       manualMatchSummary: finalManualMatchSummary,
       manualLinks: finalManualFields.manualLinks,
       manualLibraryRef: finalManualFields.manualLibraryRef,
