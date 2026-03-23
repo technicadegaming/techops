@@ -22,6 +22,7 @@ const {
   previewAssetDocumentationLookup,
   planAssetDocumentationStateRepair,
   planSingleAssetManualLiveRepair,
+  resolveForcedTerminalStatus,
 } = require('./services/assetEnrichmentService');
 const {
   approveAssetManual,
@@ -54,6 +55,26 @@ async function getAiSettings(companyId = null) {
   }
   const snap = await db.collection('appSettings').doc('ai').get();
   return { ...DEFAULT_SETTINGS, ...(snap.exists ? snap.data() : {}) };
+}
+
+async function finalizeAssetEnrichmentWhenAiDisabled({ assetId, userId }) {
+  const assetRef = db.collection('assets').doc(assetId);
+  const assetSnap = await assetRef.get();
+  if (!assetSnap.exists) throw new HttpsError('not-found', 'Asset not found');
+  const asset = assetSnap.data() || {};
+  const terminalStatus = resolveForcedTerminalStatus({ asset });
+  await assetRef.set({
+    enrichmentStatus: terminalStatus,
+    enrichmentPhase: 'terminalized',
+    enrichmentUpdatedAt: serverTimestamp(),
+    enrichmentHeartbeatAt: serverTimestamp(),
+    enrichmentFailedAt: null,
+    enrichmentErrorCode: '',
+    enrichmentErrorMessage: '',
+    updatedAt: serverTimestamp(),
+    updatedBy: userId,
+  }, { merge: true });
+  return terminalStatus;
 }
 
 async function loadTask(taskId) {
@@ -350,7 +371,11 @@ exports.enrichAssetDocumentation = onCall({ secrets: [OPENAI_API_KEY] }, async (
 
   const settings = await getAiSettings(authz.companyId);
   if (!settings.aiEnabled) {
-    return { ok: false, status: 'no_match_yet', message: 'AI is disabled by admin settings' };
+    const status = await finalizeAssetEnrichmentWhenAiDisabled({
+      assetId: request.data.assetId,
+      userId: request.auth.uid,
+    });
+    return { ok: false, status, message: 'AI is disabled by admin settings' };
   }
 
   return enrichAssetDocumentation({

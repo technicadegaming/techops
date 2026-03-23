@@ -2334,6 +2334,7 @@ module.exports = {
   repairStaleInProgressAsset,
   isStaleInProgressAsset,
   hasRecentEnrichmentHeartbeat,
+  resolveForcedTerminalStatus,
   forceTerminalWriteIfStillActive,
   buildAssetDocumentationRepairWrite,
   planAssetDocumentationStateRepair,

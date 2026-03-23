@@ -25,6 +25,7 @@ const {
   hasAuthoritativeManualAttachment,
   repairStaleInProgressAsset,
   forceTerminalWriteIfStillActive,
+  resolveForcedTerminalStatus,
   planAssetDocumentationStateRepair,
   planSingleAssetManualLiveRepair
 } = require('../src/services/assetEnrichmentService');
@@ -56,6 +57,36 @@ test('normalizeDocumentationSuggestions filters weak and malformed links and ran
 test('detectDeadPageText identifies common not-found/manual-missing responses', () => {
   assert.equal(detectDeadPageText('Manual Not Found for this model.'), true);
   assert.equal(detectDeadPageText('Welcome to the official operator manual.'), false);
+});
+
+test('resolveForcedTerminalStatus maps terminal manual outcomes to canonical enrichment statuses', () => {
+  assert.equal(resolveForcedTerminalStatus({
+    asset: {
+      manualStatus: 'no_manual',
+      enrichmentStatus: 'searching_docs',
+    }
+  }), 'no_match_yet');
+  assert.equal(resolveForcedTerminalStatus({
+    asset: {
+      manualStatus: 'support_only',
+      enrichmentStatus: 'searching_docs',
+      supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }],
+    }
+  }), 'followup_needed');
+  assert.equal(resolveForcedTerminalStatus({
+    asset: {
+      manualStatus: 'review_needed',
+      enrichmentStatus: 'in_progress',
+      documentationSuggestions: [{ url: 'https://example.com/manual.pdf', verified: true, exactTitleMatch: true, exactManualMatch: true }],
+    }
+  }), 'followup_needed');
+  assert.equal(resolveForcedTerminalStatus({
+    asset: {
+      manualStatus: 'attached',
+      enrichmentStatus: 'searching_docs',
+      manualLibraryRef: 'manual-1',
+    }
+  }), 'docs_found');
 });
 
 test('verifySuggestionUrl marks dead pages and verified links', async () => {
