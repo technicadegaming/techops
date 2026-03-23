@@ -142,9 +142,24 @@ async function forceTerminalWriteIfStillActive({ assetRef, userId, runId, log, p
   const latestAsset = latestSnap.data() || {};
   if (`${latestAsset.enrichmentRunId || ''}`.trim() !== `${runId}`.trim()) return null;
   if (!NON_DURABLE_ENRICHMENT_STATUSES.has(`${latestAsset.enrichmentStatus || ''}`.trim())) return null;
-  const forcedStatus = resolveForcedTerminalStatus({ asset: latestAsset, pipelineMeta });
+  const cleaned = cleanFinalEnrichmentResult(latestAsset);
+  const forcedStatus = resolveForcedTerminalStatus({ asset: { ...latestAsset, ...cleaned }, pipelineMeta });
   const payload = {
+    documentationSuggestions: cleaned.documentationSuggestions,
+    supportResourcesSuggestion: cleaned.supportResourcesSuggestion,
+    enrichmentFollowupQuestion: cleaned.enrichmentFollowupQuestion,
     enrichmentStatus: forcedStatus,
+    reviewState: deriveDocumentationReviewState({
+      ...latestAsset,
+      documentationSuggestions: cleaned.documentationSuggestions,
+      supportResourcesSuggestion: cleaned.supportResourcesSuggestion,
+      enrichmentStatus: forcedStatus,
+      enrichmentFollowupQuestion: cleaned.enrichmentFollowupQuestion,
+    }),
+    manualMatchSummary: {
+      ...(cleaned.manualMatchSummary || {}),
+      status: forcedStatus,
+    },
     enrichmentPhase: 'terminalized',
     enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
     enrichmentHeartbeatAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -170,7 +185,7 @@ function getTimestampMillis(value) {
 }
 
 function isStaleInProgressAsset(asset = {}, thresholdMs = STALE_ENRICHMENT_REPAIR_MS) {
-  if (`${asset.enrichmentStatus || ''}`.trim() !== 'in_progress') return false;
+  if (!NON_DURABLE_ENRICHMENT_STATUSES.has(`${asset.enrichmentStatus || ''}`.trim())) return false;
   const lastRunAt = getTimestampMillis(asset.enrichmentLastRunAt) || getTimestampMillis(asset.enrichmentUpdatedAt);
   if (!lastRunAt) return false;
   return (Date.now() - lastRunAt) >= thresholdMs;
@@ -178,8 +193,14 @@ function isStaleInProgressAsset(asset = {}, thresholdMs = STALE_ENRICHMENT_REPAI
 
 function buildStaleRepairPayload(asset = {}, reason = 'stale_in_progress_repair') {
   if (!isStaleInProgressAsset(asset)) return null;
+  const cleaned = cleanFinalEnrichmentResult(asset);
   return {
-    enrichmentStatus: resolveForcedTerminalStatus({ asset }),
+    documentationSuggestions: cleaned.documentationSuggestions,
+    supportResourcesSuggestion: cleaned.supportResourcesSuggestion,
+    enrichmentFollowupQuestion: cleaned.enrichmentFollowupQuestion,
+    reviewState: cleaned.reviewState,
+    manualMatchSummary: cleaned.manualMatchSummary,
+    enrichmentStatus: resolveForcedTerminalStatus({ asset: { ...asset, ...cleaned } }),
     enrichmentRecoveredAt: admin.firestore.FieldValue.serverTimestamp(),
     enrichmentRecoveredReason: reason,
     enrichmentRecoveredFromRunId: `${asset.enrichmentRunId || ''}`.trim(),
@@ -2093,6 +2114,7 @@ module.exports = {
   repairLegacyAssetEnrichmentRecord,
   repairStaleInProgressAsset,
   isStaleInProgressAsset,
+  forceTerminalWriteIfStillActive,
   runLookupPreview,
   runAuthoritativeAssetResearch,
   buildSingleAssetDocumentationFields,
