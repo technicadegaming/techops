@@ -64,7 +64,7 @@ If you are onboarding to the repo, read `README.md` first for the documentation 
 
 ### `assets`
 - **Purpose:** equipment/asset registry.
-- **Key fields (confirmed):** core identity fields such as `id`, `companyId`, `name`, `manufacturer`, `model`, `serialNumber`, `status`, `category`, `locationId`, `locationName`, `ownerWorkers`, `notes`; documentation/enrichment fields such as `manualLinks`, `approvedManualIds`, `documentationSuggestions`, `supportResourcesSuggestion`, `supportContactsSuggestion`, `enrichmentStatus`, `enrichmentRequestedAt`, `enrichmentLastRunAt`, `reviewState`; service history fields such as `history` and `attachmentRefs`.
+- **Key fields (confirmed):** core identity fields such as `id`, `companyId`, `name`, `manufacturer`, `model`, `serialNumber`, `status`, `category`, `locationId`, `locationName`, `ownerWorkers`, `notes`; documentation/enrichment fields such as `manualLinks`, `manualLibraryRef`, `manualStoragePath`, `approvedManualIds`, `documentationSuggestions`, `supportResourcesSuggestion`, `supportContactsSuggestion`, `enrichmentStatus`, `enrichmentRequestedAt`, `enrichmentLastRunAt`, `reviewState`; service history fields such as `history` and `attachmentRefs`.
 - **Tenant scoping:** company-scoped.
 - **Relationships:** tasks link to assets via `assetId`; manuals and troubleshooting library entries frequently point back to an asset.
 - **Rules/roles:** company lead+ can create/update via rules; manager+ is additionally required for some AI/manual tooling in functions.
@@ -84,11 +84,18 @@ If you are onboarding to the repo, read `README.md` first for the documentation 
 - **Relationships:** still loaded, exported, and clearable, but not the main day-to-day task object.
 - **Ambiguity:** field shape is not strongly documented in current code; treat as a legacy-compatible collection until a later cleanup pass confirms whether it can be narrowed or retired.
 
+### `manualLibrary`
+- **Purpose:** canonical shared manual/document registry reused across assets and companies when the same manual has already been acquired.
+- **Key fields (confirmed):** `canonicalTitle`, `familyTitle`, `manufacturer`, `normalizedManufacturer`, `variant`, `sourcePageUrl`, `originalDownloadUrl`, `resolvedDownloadUrl`, `storagePath`, `contentType`, `fileSize`, `sha256`, `extension`, `matchType`, `matchConfidence`, `approvalState`, `approved`, `reviewRequired`, `catalogEntryId`.
+- **Tenant scoping:** shared library collection rather than company-scoped operational data; assets link into it through `manualLibraryRef` and `manualStoragePath`.
+- **Relationships:** `manualLibrary` is the canonical shared manual identity; company/asset approval flows still materialize approved records into `manuals` for tenant-scoped ingestion history and chunk extraction.
+- **Current usage:** asset enrichment and manual acquisition reuse approved `manualLibrary` hits before re-downloading manuals, and approved asset attachments persist `manualLibraryRef` / `manualStoragePath` back onto the asset.
+
 ### `manuals`
 - **Purpose:** approved/manual-ingested documentation records for assets.
 - **Key fields (confirmed):** `id`, `companyId`, `assetId`, `assetName`, `manufacturer`, `sourceUrl`, `sourceTitle`, `sourceType`, `manualType`, `cabinetVariant`, `family`, `manualConfidence`, `approvedBy`, `approvedAt`, extraction fields (`extractionStatus`, `extractionRequestedAt`, `extractionStartedAt`, `extractionCompletedAt`, `extractionFailedAt`, `extractionError`, `chunkCount`), file metadata (`storagePath`, `contentType`, `fileName`, `byteSize`, `sha256`).
 - **Tenant scoping:** company-scoped.
-- **Relationships:** linked from assets through `approvedManualIds` / `manualLinks`; each manual can have a `chunks` subcollection used by task AI.
+- **Relationships:** linked from assets through `approvedManualIds`, `manualLinks`, and increasingly `manualLibraryRef` / `manualStoragePath`; each manual can have a `chunks` subcollection used by task AI.
 - **Rules/roles:** company lead+ can read/write the collection through rules; functions additionally gate approval actions by company role.
 
 #### `manuals/{manualId}/chunks`
@@ -169,6 +176,7 @@ If you are onboarding to the repo, read `README.md` first for the documentation 
 - `users` = identity; `workers` = assignable operational roster.
 - `companies` + `companyMemberships` determine the active tenant and permission context.
 - `tasks` are the main operations record; `operations` still exists but is not the primary task workflow.
-- `assets` can accumulate `manualLinks`, approved `manuals`, task history, and troubleshooting-library history.
+- `manualLibrary` is the shared canonical manual registry; `manuals` is still the company/asset-scoped approval + chunk-extraction layer used by task AI today.
+- `assets` can accumulate `manualLinks`, `manualLibraryRef`, approved `manuals`, task history, and troubleshooting-library history.
 - `taskAiRuns` and `taskAiFollowups` are part of the task lifecycle, not a separate tenant model.
 - `appSettings` and `notifications` are company-scoped operational support data, not global app config in the deployment sense.

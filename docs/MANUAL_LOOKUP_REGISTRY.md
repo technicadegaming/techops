@@ -175,7 +175,7 @@ Coverage should include workbook-seeded titles such as Quik Drop, Sink It, Fast 
 3. `npm run test:rules`
 4. Deploy rules first if any changed.
 5. Deploy functions.
-6. Deploy hosting only if UI changes are included.
+6. Publish GitHub Pages only if UI/static-site changes are included; do not assume Firebase Hosting is active for the frontend.
 
 ## Risk notes
 
