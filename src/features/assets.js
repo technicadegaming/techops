@@ -102,11 +102,18 @@ function getEffectiveEnrichmentStatus(asset = {}) {
   const normalizedStatus = normalizeEnrichmentStatus(asset.enrichmentStatus || 'idle');
   const manualState = getAuthoritativeManualState(asset);
   if (manualState.hasAttachedManual) return 'verified_manual_found';
+  const supportLinks = Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : [];
+  const hasFollowupContext = supportLinks.length || `${asset.supportUrl || ''}`.trim() || `${asset.manualSourceUrl || ''}`.trim() || `${asset.enrichmentFollowupQuestion || ''}`.trim();
+  const hasSuggestionContext = (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).some((entry) => `${entry?.url || ''}`.trim());
+  if (['queued', 'searching_docs', 'in_progress'].includes(normalizedStatus) && !hasRecentEnrichmentHeartbeat(asset) && isEnrichmentStale(asset)) {
+    if (hasSuggestionContext) return hasFollowupContext ? 'followup_needed' : 'no_match_yet';
+    if (hasFollowupContext) return 'followup_needed';
+    return 'retry_needed';
+  }
   if (!['queued', 'searching_docs', 'in_progress'].includes(normalizedStatus)) return normalizedStatus;
   if (hasRecentEnrichmentHeartbeat(asset)) return normalizedStatus;
   if (!isEnrichmentStale(asset)) return normalizedStatus;
-  const supportLinks = Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : [];
-  if (supportLinks.length || `${asset.supportUrl || ''}`.trim() || `${asset.manualSourceUrl || ''}`.trim() || `${asset.enrichmentFollowupQuestion || ''}`.trim()) return 'retry_needed';
+  if (hasFollowupContext) return 'retry_needed';
   return 'retry_needed';
 }
 
@@ -265,6 +272,8 @@ function renderEnrichmentDetails(asset, manager, state) {
     ? 'Lookup could not verify docs because this role lacks access to the enrichment path.'
     : status === 'lookup_failed'
       ? (asset.enrichmentErrorMessage || 'Lookup failed before suggestions were returned.')
+      : status === 'followup_needed'
+        ? 'Lookup completed without an auto-linked manual. Review any follow-up question or support context below.'
       : status === 'no_match_yet'
         ? 'No reliable documentation match has been found yet.'
         : '';

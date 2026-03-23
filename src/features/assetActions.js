@@ -57,6 +57,53 @@ export function createAssetActions(deps) {
     logLabel: 'approve_asset_manual'
   });
 
+  const countReviewableSuggestions = (asset = {}) => (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : [])
+    .filter((entry) => !!`${entry?.url || ''}`.trim() && !entry?.deadPage && !entry?.unreachable && entry?.verified)
+    .length;
+
+  const buildCompletionFeedback = (asset = {}, result = {}) => {
+    const status = `${result?.status || asset?.enrichmentStatus || 'idle'}`.trim() || 'idle';
+    const manualLibraryRef = `${asset?.manualLibraryRef || ''}`.trim();
+    const manualStoragePath = `${asset?.manualStoragePath || ''}`.trim();
+    const manualLinks = Array.isArray(asset?.manualLinks) ? asset.manualLinks.filter(Boolean) : [];
+    const supportCount = (Array.isArray(asset?.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : [])
+      .filter((entry) => !entry?.deadPage && !entry?.unreachable && `${entry?.url || entry || ''}`.trim())
+      .length;
+    const reviewableCount = countReviewableSuggestions(asset);
+    const hasAttachedManual = !!(manualLibraryRef || manualStoragePath || manualLinks.length);
+
+    if (hasAttachedManual || status === 'docs_found' || status === 'verified_manual_found') {
+      return {
+        message: `Documentation lookup finished. ${manualLibraryRef || manualStoragePath ? 'A shared manual was attached to this asset.' : 'Manual evidence is now linked to this asset.'}`,
+        tone: 'success'
+      };
+    }
+    if (reviewableCount > 0) {
+      return {
+        message: `Documentation lookup finished. ${reviewableCount} reviewable manual suggestion${reviewableCount === 1 ? ' is' : 's are'} ready below.`,
+        tone: 'success'
+      };
+    }
+    if (status === 'followup_needed') {
+      return {
+        message: supportCount
+          ? 'Documentation lookup finished. No reviewable manual was auto-linked, but support links or follow-up guidance are ready below.'
+          : 'Documentation lookup finished. More detail is needed to confirm the right manual.',
+        tone: 'info'
+      };
+    }
+    if (status === 'no_match_yet') {
+      return {
+        message: 'Documentation lookup finished with no manual suggestion yet. The asset is no longer marked as searching.',
+        tone: 'info'
+      };
+    }
+    return {
+      message: 'Documentation lookup finished.',
+      tone: 'info'
+    };
+  };
+
   const actions = {
     saveAsset: async (id, payload) => {
       const name = `${payload.name || ''}`.trim();
@@ -404,8 +451,11 @@ export function createAssetActions(deps) {
       await refreshData();
       render();
       try {
-        await enrichAssetDocumentation(id, buildManualEnrichmentRequest());
-        setAssetActionFeedback(id, 'Documentation lookup finished. Review the suggestions below.', 'success');
+        const result = await enrichAssetDocumentation(id, buildManualEnrichmentRequest());
+        await refreshData();
+        const refreshed = state.assets.find((asset) => asset.id === id) || {};
+        const feedback = buildCompletionFeedback(refreshed, result);
+        setAssetActionFeedback(id, feedback.message, feedback.tone);
       } catch (error) {
         console.error('[asset_manual_enrichment]', error);
         const failure = await markAssetEnrichmentFailure(id, error, true);
@@ -432,8 +482,11 @@ export function createAssetActions(deps) {
       await refreshData();
       render();
       try {
-        await enrichAssetDocumentation(id, buildFollowupEnrichmentRequest(trimmedAnswer));
-        setAssetActionFeedback(id, 'Follow-up submitted. Review the refreshed suggestions.', 'success');
+        const result = await enrichAssetDocumentation(id, buildFollowupEnrichmentRequest(trimmedAnswer));
+        await refreshData();
+        const refreshed = state.assets.find((asset) => asset.id === id) || {};
+        const feedback = buildCompletionFeedback(refreshed, result);
+        setAssetActionFeedback(id, feedback.message, feedback.tone);
       } catch (error) {
         console.error('[asset_followup_enrichment]', error);
         const failure = await markAssetEnrichmentFailure(id, error, true);

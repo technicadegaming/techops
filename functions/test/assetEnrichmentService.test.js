@@ -23,7 +23,8 @@ const {
   classifyManualMatchSummary,
   finalizeSingleAssetEnrichment,
   hasAuthoritativeManualAttachment,
-  repairStaleInProgressAsset
+  repairStaleInProgressAsset,
+  forceTerminalWriteIfStillActive
 } = require('../src/services/assetEnrichmentService');
 const { resolveArcadeTitleFamily } = require('../src/services/arcadeTitleAliasService');
 const { findCatalogManualMatch } = require('../src/services/manualLookupCatalogService');
@@ -1866,6 +1867,68 @@ test('finalizeSingleAssetEnrichment strips non-durable searching statuses after 
   assert.equal(result.finalStatus, 'no_match_yet');
   assert.equal(result.finalManualFields.manualLinks.length, 0);
   assert.equal(result.finalManualMatchSummary.manualReady, false);
+});
+
+test('repairStaleInProgressAsset terminalizes stale searching_docs records with follow-up context', async () => {
+  const repaired = await repairStaleInProgressAsset({
+    asset: {
+      enrichmentStatus: 'searching_docs',
+      enrichmentLastRunAt: new Date(Date.now() - (10 * 60 * 1000)).toISOString(),
+      documentationSuggestions: [],
+      supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }],
+      enrichmentFollowupQuestion: 'Confirm cabinet version?',
+      manualLibraryRef: '',
+      manualStoragePath: '',
+      manualLinks: [],
+    },
+    verifySuggestions: async () => [],
+  });
+
+  assert.equal(repaired.enrichmentStatus, 'followup_needed');
+  assert.equal(repaired.reviewState, 'followup_needed');
+});
+
+test('forceTerminalWriteIfStillActive writes cleaned terminal state for stale non-durable runs', async () => {
+  const writes = [];
+  const assetRef = {
+    async get() {
+      return {
+        exists: true,
+        data: () => ({
+          enrichmentRunId: 'run-1',
+          enrichmentStatus: 'in_progress',
+          documentationSuggestions: [{
+            url: 'https://example.com/manual.pdf',
+            title: 'Manual',
+            verified: true,
+            exactTitleMatch: true,
+            exactManualMatch: true,
+          }],
+          supportResourcesSuggestion: [],
+          enrichmentFollowupQuestion: '',
+          manualLibraryRef: '',
+          manualStoragePath: '',
+          manualLinks: [],
+        })
+      };
+    },
+    async set(payload) {
+      writes.push(payload);
+    }
+  };
+
+  const status = await forceTerminalWriteIfStillActive({
+    assetRef,
+    userId: 'user-1',
+    runId: 'run-1',
+    log: () => {},
+    reason: 'test_guard',
+  });
+
+  assert.equal(status, 'no_match_yet');
+  assert.equal(writes.length > 0, true);
+  assert.equal(writes[0].enrichmentStatus, 'no_match_yet');
+  assert.equal(writes[0].reviewState, 'pending_review');
 });
 
 test('enrichAssetDocumentation attaches acquired manual-library metadata for single-asset title-page acquisitions', async () => {

@@ -110,6 +110,22 @@ test('asset helpers downgrade stale in-progress runs without heartbeat to retry_
   assert.equal(getEffectiveEnrichmentStatus(staleAsset), 'retry_needed');
 });
 
+test('asset helpers treat stale running records with completed follow-up context as terminal followup_needed', async () => {
+  const { getEffectiveEnrichmentStatus } = await loadAssetsHelpers();
+  const staleAsset = {
+    enrichmentStatus: 'in_progress',
+    enrichmentRequestedAt: new Date(Date.now() - (5 * 60 * 1000)).toISOString(),
+    enrichmentHeartbeatAt: new Date(Date.now() - (4 * 60 * 1000)).toISOString(),
+    documentationSuggestions: [{ url: 'https://example.com/manual-source', title: 'Manual source' }],
+    supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }],
+    enrichmentFollowupQuestion: 'Confirm cabinet version?',
+    manualLibraryRef: '',
+    manualStoragePath: '',
+    manualLinks: [],
+  };
+  assert.equal(getEffectiveEnrichmentStatus(staleAsset), 'followup_needed');
+});
+
 test('applyActionCenterFocus translates dashboard focus into operations filters and route flags', async () => {
   const { applyActionCenterFocus, applyShellFocus } = await loadActionCenter();
 
