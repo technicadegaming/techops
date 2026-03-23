@@ -126,6 +126,30 @@ test('asset helpers treat stale running records with completed follow-up context
   assert.equal(getEffectiveEnrichmentStatus(staleAsset), 'followup_needed');
 });
 
+test('asset helpers treat terminal manual outcomes as not-running even when legacy enrichmentStatus is stale', async () => {
+  const { getEffectiveEnrichmentStatus } = await loadAssetsHelpers();
+  assert.equal(getEffectiveEnrichmentStatus({
+    manualStatus: 'support_only',
+    enrichmentStatus: 'in_progress',
+    supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }],
+    enrichmentRequestedAt: new Date(Date.now() - (5 * 60 * 1000)).toISOString(),
+    enrichmentHeartbeatAt: new Date(Date.now() - (4 * 60 * 1000)).toISOString(),
+  }), 'followup_needed');
+  assert.equal(getEffectiveEnrichmentStatus({
+    manualStatus: 'review_needed',
+    enrichmentStatus: 'searching_docs',
+    documentationSuggestions: [{ url: 'https://example.com/manual.pdf', verified: true, exactTitleMatch: true, exactManualMatch: true }],
+    enrichmentRequestedAt: new Date(Date.now() - (5 * 60 * 1000)).toISOString(),
+    enrichmentHeartbeatAt: new Date(Date.now() - (4 * 60 * 1000)).toISOString(),
+  }), 'followup_needed');
+  assert.equal(getEffectiveEnrichmentStatus({
+    manualStatus: 'no_manual',
+    enrichmentStatus: 'in_progress',
+    enrichmentRequestedAt: new Date(Date.now() - (5 * 60 * 1000)).toISOString(),
+    enrichmentHeartbeatAt: new Date(Date.now() - (4 * 60 * 1000)).toISOString(),
+  }), 'no_match_yet');
+});
+
 test('applyActionCenterFocus translates dashboard focus into operations filters and route flags', async () => {
   const { applyActionCenterFocus, applyShellFocus } = await loadActionCenter();
 
@@ -679,4 +703,33 @@ test('asset manual status derivation distinguishes attached vs support-only vs r
   assert.equal(deriveAssetManualStatus({ documentationSuggestions: [{ url: 'https://example.com/manual.pdf', verified: true, exactTitleMatch: true, exactManualMatch: true }] }), 'review_needed');
   assert.equal(deriveAssetManualStatus({ supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }] }), 'support_only');
   assert.equal(deriveAssetManualStatus({ documentationSuggestions: [], supportResourcesSuggestion: [] }), 'no_manual');
+});
+
+test('asset helpers render manual outcome states consistently', async () => {
+  const { deriveAssetManualStatus, getEffectiveEnrichmentStatus } = await import('./../src/features/assets.js');
+  assert.equal(deriveAssetManualStatus({ manualLibraryRef: 'manual-1', manualLinks: [] }), 'attached');
+  assert.equal(getEffectiveEnrichmentStatus({ manualStatus: 'attached', enrichmentStatus: 'in_progress', manualLibraryRef: 'manual-1' }), 'verified_manual_found');
+  assert.equal(deriveAssetManualStatus({ manualStatus: 'support_only', supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }] }), 'support_only');
+  assert.equal(getEffectiveEnrichmentStatus({
+    manualStatus: 'support_only',
+    enrichmentStatus: 'in_progress',
+    supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }],
+    enrichmentRequestedAt: new Date(Date.now() - (5 * 60 * 1000)).toISOString(),
+    enrichmentHeartbeatAt: new Date(Date.now() - (4 * 60 * 1000)).toISOString(),
+  }), 'followup_needed');
+  assert.equal(deriveAssetManualStatus({ documentationSuggestions: [{ url: 'https://example.com/manual.pdf', verified: true, exactTitleMatch: true, exactManualMatch: true }] }), 'review_needed');
+  assert.equal(getEffectiveEnrichmentStatus({
+    manualStatus: 'review_needed',
+    enrichmentStatus: 'searching_docs',
+    documentationSuggestions: [{ url: 'https://example.com/manual.pdf', verified: true, exactTitleMatch: true, exactManualMatch: true }],
+    enrichmentRequestedAt: new Date(Date.now() - (5 * 60 * 1000)).toISOString(),
+    enrichmentHeartbeatAt: new Date(Date.now() - (4 * 60 * 1000)).toISOString(),
+  }), 'followup_needed');
+  assert.equal(deriveAssetManualStatus({ manualStatus: 'no_manual', documentationSuggestions: [], supportResourcesSuggestion: [] }), 'no_manual');
+  assert.equal(getEffectiveEnrichmentStatus({
+    manualStatus: 'no_manual',
+    enrichmentStatus: 'in_progress',
+    enrichmentRequestedAt: new Date(Date.now() - (5 * 60 * 1000)).toISOString(),
+    enrichmentHeartbeatAt: new Date(Date.now() - (4 * 60 * 1000)).toISOString(),
+  }), 'no_match_yet');
 });

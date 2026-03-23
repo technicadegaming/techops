@@ -82,6 +82,7 @@ const MANUAL_INTENT_TOKENS = ['manual', 'operator', 'service', 'parts', 'install
 
 const TERMINAL_ENRICHMENT_STATUSES = new Set(['docs_found', 'no_match_yet', 'followup_needed', 'timed_out', 'lookup_failed']);
 const NON_DURABLE_ENRICHMENT_STATUSES = new Set(['searching_docs', 'in_progress', 'queued']);
+const TERMINAL_MANUAL_STATUSES = new Set(['attached', 'support_only', 'review_needed', 'no_manual']);
 
 function buildAssetEnrichmentLogger({ traceId = '', assetId = '', triggerSource = '' } = {}) {
   return (event, payload = {}) => {
@@ -129,7 +130,10 @@ function hasTimedOutAcquisition(asset = {}, pipelineMeta = null) {
 }
 
 function resolveForcedTerminalStatus({ asset = {}, pipelineMeta = null } = {}) {
-  if (hasAuthoritativeManualAttachment(asset, asset)) return 'docs_found';
+  const manualStatus = `${asset.manualStatus || ''}`.trim();
+  if (hasAuthoritativeManualAttachment(asset, asset) || manualStatus === 'attached') return 'docs_found';
+  if (manualStatus === 'review_needed' || manualStatus === 'support_only') return 'followup_needed';
+  if (manualStatus === 'no_manual') return 'no_match_yet';
   if (hasTimedOutAcquisition(asset, pipelineMeta)) return hasSupportOrSourceContext(asset) ? 'followup_needed' : 'timed_out';
   if (hasSupportOrSourceContext(asset)) return 'followup_needed';
   return 'no_match_yet';
@@ -143,7 +147,8 @@ async function forceTerminalWriteIfStillActive({ assetRef, userId, runId, log, p
   if (`${latestAsset.enrichmentRunId || ''}`.trim() !== `${runId}`.trim()) return null;
   if (!NON_DURABLE_ENRICHMENT_STATUSES.has(`${latestAsset.enrichmentStatus || ''}`.trim())) return null;
   const cleaned = cleanFinalEnrichmentResult(latestAsset);
-  const forcedStatus = resolveForcedTerminalStatus({ asset: { ...latestAsset, ...cleaned }, pipelineMeta });
+  const manualStatus = deriveManualStatus({ cleanedResult: cleaned, asset: latestAsset });
+  const forcedStatus = resolveForcedTerminalStatus({ asset: { ...latestAsset, ...cleaned, manualStatus }, pipelineMeta });
   const payload = {
     documentationSuggestions: cleaned.documentationSuggestions,
     supportResourcesSuggestion: cleaned.supportResourcesSuggestion,
@@ -160,6 +165,7 @@ async function forceTerminalWriteIfStillActive({ assetRef, userId, runId, log, p
       ...(cleaned.manualMatchSummary || {}),
       status: forcedStatus,
     },
+    manualStatus,
     enrichmentPhase: 'terminalized',
     enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
     enrichmentHeartbeatAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -194,13 +200,15 @@ function isStaleInProgressAsset(asset = {}, thresholdMs = STALE_ENRICHMENT_REPAI
 function buildStaleRepairPayload(asset = {}, reason = 'stale_in_progress_repair') {
   if (!isStaleInProgressAsset(asset)) return null;
   const cleaned = cleanFinalEnrichmentResult(asset);
+  const manualStatus = deriveManualStatus({ cleanedResult: cleaned, asset });
   return {
     documentationSuggestions: cleaned.documentationSuggestions,
     supportResourcesSuggestion: cleaned.supportResourcesSuggestion,
     enrichmentFollowupQuestion: cleaned.enrichmentFollowupQuestion,
     reviewState: cleaned.reviewState,
     manualMatchSummary: cleaned.manualMatchSummary,
-    enrichmentStatus: resolveForcedTerminalStatus({ asset: { ...asset, ...cleaned } }),
+    manualStatus,
+    enrichmentStatus: resolveForcedTerminalStatus({ asset: { ...asset, ...cleaned, manualStatus } }),
     enrichmentRecoveredAt: admin.firestore.FieldValue.serverTimestamp(),
     enrichmentRecoveredReason: reason,
     enrichmentRecoveredFromRunId: `${asset.enrichmentRunId || ''}`.trim(),
@@ -1401,8 +1409,15 @@ async function repairLegacyAssetEnrichmentRecord({ asset = {}, verifySuggestions
   });
   const hasExceptionContext = !!(`${asset.enrichmentErrorCode || ''}`.trim() || `${asset.enrichmentErrorMessage || ''}`.trim() || asset.enrichmentFailedAt);
   const shouldRetainFailureMetadata = cleaned.enrichmentStatus === 'lookup_failed' && hasExceptionContext;
+  const manualStatus = deriveManualStatus({ cleanedResult: cleaned, asset });
+  const repairedEnrichmentStatus = NON_DURABLE_ENRICHMENT_STATUSES.has(`${asset.enrichmentStatus || ''}`.trim())
+    || TERMINAL_MANUAL_STATUSES.has(`${asset.manualStatus || ''}`.trim())
+    ? resolveForcedTerminalStatus({ asset: { ...asset, ...cleaned, manualStatus } })
+    : cleaned.enrichmentStatus;
   return {
     ...cleaned,
+    manualStatus,
+    enrichmentStatus: repairedEnrichmentStatus,
     enrichmentFailedAt: shouldRetainFailureMetadata ? asset.enrichmentFailedAt : null,
     enrichmentErrorCode: shouldRetainFailureMetadata ? asset.enrichmentErrorCode : '',
     enrichmentErrorMessage: shouldRetainFailureMetadata ? asset.enrichmentErrorMessage : ''
