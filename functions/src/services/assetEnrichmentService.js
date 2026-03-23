@@ -1528,6 +1528,106 @@ async function planAssetDocumentationStateRepair({ asset = {}, userId = '', veri
   return result;
 }
 
+async function planSingleAssetManualLiveRepair({
+  asset = {},
+  userId = '',
+  verifySuggestions = verifyDocumentationSuggestions,
+  exactManualLinked = false,
+  exactManualEvidence = '',
+} = {}) {
+  const priorManualStatus = `${asset.manualStatus || ''}`.trim() || '';
+  const priorEnrichmentStatus = `${asset.enrichmentStatus || ''}`.trim() || 'idle';
+  const result = {
+    ok: true,
+    assetId: `${asset.id || ''}`.trim(),
+    companyId: `${asset.companyId || ''}`.trim(),
+    priorState: {
+      manualStatus: priorManualStatus || null,
+      enrichmentStatus: priorEnrichmentStatus,
+      manualLibraryRef: `${asset.manualLibraryRef || ''}`.trim() || null,
+      manualStoragePath: `${asset.manualStoragePath || ''}`.trim() || null,
+    },
+    finalState: null,
+    attachedManual: false,
+    manualSource: '',
+    statusChanged: false,
+    warnings: [],
+    notes: [],
+    updatePayload: null,
+  };
+
+  if (hasRecentEnrichmentHeartbeat(asset)) {
+    result.warnings.push('active_enrichment_heartbeat');
+    result.notes.push('Skipped live repair because the asset still has a recent enrichment heartbeat.');
+    result.finalState = { ...result.priorState };
+    return result;
+  }
+
+  const repaired = await repairLegacyAssetEnrichmentRecord({ asset, verifySuggestions });
+  const authoritativeAttached = hasAuthoritativeManualAttachment(asset, repaired);
+  let manualStatus = authoritativeAttached ? 'attached' : '';
+  if (!manualStatus) {
+    manualStatus = hasMeaningfulSupportContext(repaired.supportResourcesSuggestion || [])
+      || `${repaired.enrichmentFollowupQuestion || ''}`.trim()
+      || `${asset.supportUrl || ''}`.trim()
+      || `${asset.manualSourceUrl || ''}`.trim()
+      ? 'support_only'
+      : 'no_manual';
+  }
+
+  const enrichmentStatus = manualStatus === 'attached'
+    ? 'docs_found'
+    : (manualStatus === 'support_only' ? 'followup_needed' : 'no_match_yet');
+  const reviewState = manualStatus === 'attached'
+    ? deriveDocumentationReviewState({
+      ...asset,
+      ...repaired,
+      enrichmentStatus,
+      manualStatus,
+      enrichmentFollowupQuestion: '',
+    })
+    : (manualStatus === 'support_only' ? FOLLOWUP_RESEARCH_STATE : NO_MATCH_RESEARCH_STATE);
+
+  const writePayload = buildAssetDocumentationRepairWrite({
+    repaired: {
+      ...repaired,
+      manualStatus,
+      enrichmentStatus,
+      reviewState,
+      enrichmentFollowupQuestion: manualStatus === 'attached' ? '' : repaired.enrichmentFollowupQuestion,
+      enrichmentRecoveredReason: 'single_asset_live_manual_repair',
+      enrichmentRecoveredFromRunId: `${asset.enrichmentRunId || ''}`.trim(),
+    },
+    userId,
+  });
+
+  const changedFields = listChangedRepairFields({ asset, writePayload });
+  result.attachedManual = manualStatus === 'attached';
+  result.manualSource = result.attachedManual
+    ? (exactManualEvidence || `${asset.manualLibraryRef || asset.manualStoragePath || repaired.manualMatchSummary?.manualLibraryRef || repaired.manualMatchSummary?.manualStoragePath || ''}`.trim() || 'existing_asset_linkage')
+    : (manualStatus === 'support_only' ? 'support_context_only' : 'no_manual_evidence');
+  result.statusChanged = changedFields.length > 0;
+  result.notes.push(
+    result.attachedManual
+      ? 'Asset was finalized with an exact approved or already-attached manual.'
+      : (manualStatus === 'support_only'
+        ? 'No safe exact manual attachment was available; asset was finalized as support_only.'
+        : 'No safe exact manual or support evidence was available; asset was finalized as no_manual.')
+  );
+  if (!result.attachedManual && exactManualLinked === false && exactManualEvidence) {
+    result.warnings.push('exact_manual_attach_not_applied');
+  }
+  result.updatePayload = writePayload;
+  result.finalState = {
+    manualStatus,
+    enrichmentStatus,
+    reviewState,
+    manualLibraryRef: `${asset.manualLibraryRef || ''}`.trim() || null,
+    manualStoragePath: `${asset.manualStoragePath || ''}`.trim() || null,
+  };
+  return result;
+}
+
 async function recoverCatalogSourcePageManuals({ catalogMatch, draftAsset, normalizedName, manufacturerSuggestion, manufacturerProfile, fetchImpl = fetch }) {
   const sourcePages = (catalogMatch?.supportResources || []).filter((entry) => entry?.url);
   if (!sourcePages.length) return [];
@@ -2237,6 +2337,7 @@ module.exports = {
   forceTerminalWriteIfStillActive,
   buildAssetDocumentationRepairWrite,
   planAssetDocumentationStateRepair,
+  planSingleAssetManualLiveRepair,
   runLookupPreview,
   runAuthoritativeAssetResearch,
   buildSingleAssetDocumentationFields,

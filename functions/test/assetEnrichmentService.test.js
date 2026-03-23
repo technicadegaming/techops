@@ -25,7 +25,8 @@ const {
   hasAuthoritativeManualAttachment,
   repairStaleInProgressAsset,
   forceTerminalWriteIfStillActive,
-  planAssetDocumentationStateRepair
+  planAssetDocumentationStateRepair,
+  planSingleAssetManualLiveRepair
 } = require('../src/services/assetEnrichmentService');
 const { resolveArcadeTitleFamily } = require('../src/services/arcadeTitleAliasService');
 const { findCatalogManualMatch } = require('../src/services/manualLookupCatalogService');
@@ -1996,6 +1997,95 @@ test('planAssetDocumentationStateRepair preserves attached manual data while cle
   assert.equal(result.updatePayload.manualLibraryRef, undefined);
   assert.equal(result.updatePayload.manualStoragePath, undefined);
   assert.equal(result.updatePayload.manualLinks, undefined);
+});
+
+test('planSingleAssetManualLiveRepair clears stale in_progress and finalizes support-only without overwriting unrelated fields', async () => {
+  const result = await planSingleAssetManualLiveRepair({
+    asset: {
+      id: 'asset-quick-drop',
+      companyId: 'company-1',
+      name: 'Quik Drop',
+      manufacturer: 'Bay Tek Games',
+      enrichmentStatus: 'in_progress',
+      enrichmentRunId: 'run-quick-drop-1',
+      enrichmentLastRunAt: new Date(Date.now() - (6 * 60 * 1000)).toISOString(),
+      supportResourcesSuggestion: [{ title: 'Quik Drop support', url: 'https://www.baytekent.com/games/quik-drop/' }],
+      notes: 'leave me alone',
+      serialNumber: 'QD-1'
+    },
+    userId: 'user-1',
+    verifySuggestions: async () => []
+  });
+
+  assert.equal(result.finalState.manualStatus, 'support_only');
+  assert.equal(result.finalState.enrichmentStatus, 'followup_needed');
+  assert.equal(result.attachedManual, false);
+  assert.equal(result.updatePayload.manualStatus, 'support_only');
+  assert.equal(result.updatePayload.enrichmentStatus, 'followup_needed');
+  assert.equal('notes' in result.updatePayload, false);
+  assert.equal('serialNumber' in result.updatePayload, false);
+});
+
+test('planSingleAssetManualLiveRepair preserves exact attached manual outcomes and reports manual source', async () => {
+  const result = await planSingleAssetManualLiveRepair({
+    asset: {
+      id: 'asset-quick-drop',
+      companyId: 'company-1',
+      name: 'Quik Drop',
+      manufacturer: 'Bay Tek Games',
+      enrichmentStatus: 'in_progress',
+      enrichmentRunId: 'run-quick-drop-2',
+      enrichmentLastRunAt: new Date(Date.now() - (6 * 60 * 1000)).toISOString(),
+      manualLibraryRef: 'manual-quik-drop',
+      manualStoragePath: 'manual-library/bay-tek/quik-drop/existing.pdf',
+      manualLinks: ['manual-library/bay-tek/quik-drop/existing.pdf'],
+      documentationSuggestions: [{
+        title: 'Quik Drop Service Manual PDF',
+        url: 'manual-library/bay-tek/quik-drop/existing.pdf',
+        sourceType: 'manual_library',
+        verified: true,
+        exactTitleMatch: true,
+        exactManualMatch: true,
+      }]
+    },
+    userId: 'user-1',
+    exactManualLinked: true,
+    exactManualEvidence: 'manualLibraryRef',
+    verifySuggestions: async (rows) => rows
+  });
+
+  assert.equal(result.finalState.manualStatus, 'attached');
+  assert.equal(result.finalState.enrichmentStatus, 'docs_found');
+  assert.equal(result.attachedManual, true);
+  assert.equal(result.manualSource, 'manualLibraryRef');
+});
+
+test('planSingleAssetManualLiveRepair finalizes ambiguous manual-only evidence as no_manual instead of guessing', async () => {
+  const result = await planSingleAssetManualLiveRepair({
+    asset: {
+      id: 'asset-quick-drop',
+      companyId: 'company-1',
+      name: 'Quik Drop',
+      manufacturer: 'Bay Tek Games',
+      enrichmentStatus: 'searching_docs',
+      enrichmentRunId: 'run-quick-drop-3',
+      enrichmentLastRunAt: new Date(Date.now() - (6 * 60 * 1000)).toISOString(),
+      documentationSuggestions: [{
+        title: 'Possibly Quik Drop Manual',
+        url: 'https://example.com/quik-drop-manual.pdf',
+        sourceType: 'manual_library',
+        verified: false,
+        exactTitleMatch: true,
+        exactManualMatch: false,
+      }]
+    },
+    userId: 'user-1',
+    verifySuggestions: async () => []
+  });
+
+  assert.equal(result.finalState.manualStatus, 'no_manual');
+  assert.equal(result.finalState.enrichmentStatus, 'no_match_yet');
+  assert.equal(result.attachedManual, false);
 });
 
 test('forceTerminalWriteIfStillActive writes cleaned terminal state for stale non-durable runs', async () => {
