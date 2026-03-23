@@ -455,6 +455,7 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
     supportResourcesSuggestion: repaired.supportResourcesSuggestion,
     enrichmentFollowupQuestion: repaired.enrichmentFollowupQuestion,
     enrichmentStatus: repaired.enrichmentStatus,
+    manualStatus: repaired.manualStatus,
     reviewState: repaired.reviewState,
     enrichmentFailedAt: repaired.enrichmentFailedAt,
     enrichmentErrorCode: repaired.enrichmentErrorCode,

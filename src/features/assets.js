@@ -61,6 +61,7 @@ const ENRICHMENT_STATUS_STYLES = {
 
 const STALE_ENRICHMENT_MS = 3 * 60 * 1000;
 const ACTIVE_ENRICHMENT_HEARTBEAT_MS = 2 * 60 * 1000;
+const TERMINAL_MANUAL_STATUSES = new Set(['attached', 'support_only', 'review_needed', 'no_manual']);
 const LEGACY_STATUS_MAP = {
   needs_follow_up: 'followup_needed',
   docs_found: 'verified_manual_found',
@@ -100,8 +101,12 @@ function hasRecentEnrichmentHeartbeat(asset) {
 
 function getEffectiveEnrichmentStatus(asset = {}) {
   const normalizedStatus = normalizeEnrichmentStatus(asset.enrichmentStatus || 'idle');
-  const manualState = getAuthoritativeManualState(asset);
-  if (manualState.hasAttachedManual) return 'verified_manual_found';
+  const explicitManualStatus = `${asset?.manualStatus || ''}`.trim();
+  const manualStatus = deriveAssetManualStatus(asset);
+  if (manualStatus === 'attached') return 'verified_manual_found';
+  if (TERMINAL_MANUAL_STATUSES.has(explicitManualStatus) && ['queued', 'searching_docs', 'in_progress'].includes(normalizedStatus) && !hasRecentEnrichmentHeartbeat(asset)) {
+    return explicitManualStatus === 'no_manual' ? 'no_match_yet' : 'followup_needed';
+  }
   const supportLinks = Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : [];
   const hasFollowupContext = supportLinks.length || `${asset.supportUrl || ''}`.trim() || `${asset.manualSourceUrl || ''}`.trim() || `${asset.enrichmentFollowupQuestion || ''}`.trim();
   const hasSuggestionContext = (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).some((entry) => `${entry?.url || ''}`.trim());

@@ -1886,7 +1886,27 @@ test('repairStaleInProgressAsset terminalizes stale searching_docs records with 
   });
 
   assert.equal(repaired.enrichmentStatus, 'followup_needed');
+  assert.equal(repaired.manualStatus, 'support_only');
   assert.equal(repaired.reviewState, 'followup_needed');
+});
+
+test('repairLegacyAssetEnrichmentRecord forces support_only terminal manual outcomes out of in_progress', async () => {
+  const repaired = await repairLegacyAssetEnrichmentRecord({
+    asset: {
+      enrichmentStatus: 'in_progress',
+      manualStatus: 'support_only',
+      supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }],
+      documentationSuggestions: [],
+      enrichmentFollowupQuestion: '',
+      manualLibraryRef: '',
+      manualStoragePath: '',
+      manualLinks: [],
+    },
+    verifySuggestions: async () => [],
+  });
+
+  assert.equal(repaired.manualStatus, 'support_only');
+  assert.equal(repaired.enrichmentStatus, 'followup_needed');
 });
 
 test('forceTerminalWriteIfStillActive writes cleaned terminal state for stale non-durable runs', async () => {
@@ -1926,10 +1946,11 @@ test('forceTerminalWriteIfStillActive writes cleaned terminal state for stale no
     reason: 'test_guard',
   });
 
-  assert.equal(status, 'no_match_yet');
+  assert.equal(status, 'followup_needed');
   assert.equal(writes.length > 0, true);
-  assert.equal(writes[0].enrichmentStatus, 'no_match_yet');
+  assert.equal(writes[0].enrichmentStatus, 'followup_needed');
   assert.equal(writes[0].reviewState, 'pending_review');
+  assert.equal(writes[0].manualStatus, 'review_needed');
 });
 
 test('enrichAssetDocumentation attaches acquired manual-library metadata for single-asset title-page acquisitions', async () => {
@@ -2873,6 +2894,8 @@ test('simplified manual status distinguishes support-only from review-needed and
     resolvedStatus: 'followup_needed'
   });
   assert.equal(supportOnly.finalStatus, 'followup_needed');
+  assert.equal(supportOnly.finalManualFields.manualReady, false);
+  assert.equal(supportOnly.finalManualMatchSummary.manualReady, false);
 
   const reviewNeeded = finalizeSingleAssetEnrichment({
     asset: { manualLibraryRef: '', manualStoragePath: '' },
@@ -2882,6 +2905,8 @@ test('simplified manual status distinguishes support-only from review-needed and
     resolvedStatus: 'followup_needed'
   });
   assert.equal(reviewNeeded.finalStatus, 'followup_needed');
+  assert.equal(reviewNeeded.finalManualFields.manualReady, false);
+  assert.equal(reviewNeeded.finalManualMatchSummary.manualReady, false);
 
   const none = finalizeSingleAssetEnrichment({
     asset: { manualLibraryRef: '', manualStoragePath: '' },
@@ -2891,4 +2916,6 @@ test('simplified manual status distinguishes support-only from review-needed and
     resolvedStatus: 'no_match_yet'
   });
   assert.equal(none.finalStatus, 'no_match_yet');
+  assert.equal(none.finalManualFields.manualReady, false);
+  assert.equal(none.finalManualMatchSummary.manualReady, false);
 });
