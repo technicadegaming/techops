@@ -1,0 +1,20 @@
+{
+  "name": "scoot-business-techops",
+  "private": true,
+  "scripts": {
+    "manual-catalog:import": "npm run manual-catalog:import --prefix functions",
+    "test": "npm run test:functions && npm run test:rules",
+    "test:functions": "npm run test --prefix functions",
+    "test:rules": "firebase emulators:exec --project techops-rules --only firestore,storage \"node --test test/rules/security.rules.test.js\"",
+    "lint": "eslint src/**/*.js functions/src/**/*.js functions/test/**/*.js test/**/*.js",
+    "test:app-shell": "node --test test/appShellControllers.test.js"
+  },
+  "devDependencies": {
+    "eslint": "^9.22.0",
+    "@eslint/js": "^9.22.0",
+    "globals": "^15.15.0",
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "firebase": "^11.10.0",
+    "firebase-tools": "^14.12.1"
+  }
+}

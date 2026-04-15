@@ -1,0 +1,328 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function hasUserProfile() {
+      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasRole(role) {
+      return hasUserProfile() && userDoc().enabled == true && userDoc().role == role;
+    }
+
+    function isAdmin() {
+      return hasRole('admin');
+    }
+
+    function membershipDoc(companyId) {
+      return get(/databases/$(database)/documents/companyMemberships/$(companyId + "_" + request.auth.uid)).data;
+    }
+
+    function hasMembership(companyId) {
+      return signedIn() && exists(/databases/$(database)/documents/companyMemberships/$(companyId + "_" + request.auth.uid));
+    }
+
+    function hasActiveMembership(companyId) {
+      return hasMembership(companyId) && membershipDoc(companyId).status == 'active';
+    }
+
+    function hasCompanyRole(companyId, roles) {
+      return hasActiveMembership(companyId) && membershipDoc(companyId).role in roles;
+    }
+
+    function isCompanyStaff(companyId) {
+      return isAdmin() || hasCompanyRole(companyId, ['owner', 'admin', 'manager', 'assistant_manager', 'lead', 'staff']);
+    }
+
+    function isCompanyLead(companyId) {
+      return isAdmin() || hasCompanyRole(companyId, ['owner', 'admin', 'manager', 'assistant_manager', 'lead']);
+    }
+
+    function isCompanyElevated(companyId) {
+      return isAdmin() || hasCompanyRole(companyId, ['owner', 'admin', 'manager']);
+    }
+
+    function isCompanyCreator(companyId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/companies/$(companyId))
+        && get(/databases/$(database)/documents/companies/$(companyId)).data.createdBy == request.auth.uid;
+    }
+
+    function inviteDoc(inviteId) {
+      return get(/databases/$(database)/documents/companyInvites/$(inviteId)).data;
+    }
+
+    function hasInvite(inviteId) {
+      return exists(/databases/$(database)/documents/companyInvites/$(inviteId));
+    }
+
+    function hasCompanyField(data) {
+      return data.keys().hasAny(['companyId']) && data.companyId != null;
+    }
+
+    function isLegacyScopedRead(data) {
+      return isAdmin() && !hasCompanyField(data);
+    }
+
+    function canReadScopedResource(data) {
+      return (hasCompanyField(data) && isCompanyStaff(data.companyId)) || isLegacyScopedRead(data);
+    }
+
+    function canCreateScopedResource() {
+      return hasCompanyField(request.resource.data) && isCompanyLead(request.resource.data.companyId);
+    }
+
+    function canUpdateScopedResource() {
+      return hasCompanyField(request.resource.data)
+        && isCompanyLead(request.resource.data.companyId)
+        && (!hasCompanyField(resource.data) || resource.data.companyId == request.resource.data.companyId);
+    }
+
+    function canDeleteScopedResource() {
+      return (hasCompanyField(resource.data) && isCompanyElevated(resource.data.companyId)) || isLegacyScopedRead(resource.data);
+    }
+
+    function canSelfCreateMembershipFromInvite(data) {
+      return data.userId == request.auth.uid
+        && data.role in ['admin', 'manager', 'assistant_manager', 'lead', 'staff']
+        && data.keys().hasAny(['inviteId'])
+        && hasInvite(data.inviteId)
+        && inviteDoc(data.inviteId).companyId == data.companyId
+        && inviteDoc(data.inviteId).status == 'pending'
+        && inviteDoc(data.inviteId).role == data.role
+        && (
+          !inviteDoc(data.inviteId).keys().hasAny(['email'])
+          || inviteDoc(data.inviteId).email == null
+          || inviteDoc(data.inviteId).email == ''
+          || inviteDoc(data.inviteId).email == request.auth.token.email
+        );
+    }
+
+    function canAcceptInvite() {
+      return signedIn()
+        && hasCompanyField(resource.data)
+        && hasCompanyField(request.resource.data)
+        && resource.data.companyId == request.resource.data.companyId
+        && resource.data.status == 'pending'
+        && request.resource.data.status == 'accepted'
+        && request.resource.data.acceptedBy == request.auth.uid
+        && (
+          !resource.data.keys().hasAny(['email'])
+          || resource.data.email == null
+          || resource.data.email == ''
+          || resource.data.email == request.auth.token.email
+        );
+    }
+
+    match /users/{uid} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow create: if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow update: if isAdmin()
+        || (
+          signedIn()
+          && request.auth.uid == uid
+          && (
+            request.resource.data.role == resource.data.role
+            || (!resource.data.keys().hasAny(['role']) && request.resource.data.role == 'pending')
+          )
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /companies/{companyId} {
+      allow read: if isCompanyStaff(companyId) || isCompanyCreator(companyId);
+      allow create: if signedIn()
+        && request.resource.data.id == companyId
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update: if (isCompanyElevated(companyId) || isCompanyCreator(companyId))
+        && request.resource.data.id == companyId;
+      allow delete: if isAdmin();
+    }
+
+    match /companyMemberships/{membershipId} {
+      allow read: if isAdmin()
+        || (signedIn() && resource.data.userId == request.auth.uid)
+        || (hasCompanyField(resource.data) && isCompanyElevated(resource.data.companyId));
+
+      allow create: if signedIn()
+        && hasCompanyField(request.resource.data)
+        && request.resource.data.id == membershipId
+        && membershipId == (request.resource.data.companyId + "_" + request.resource.data.userId)
+        && exists(/databases/$(database)/documents/companies/$(request.resource.data.companyId))
+        && (
+          isCompanyElevated(request.resource.data.companyId)
+          || (
+            request.resource.data.userId == request.auth.uid
+            && (
+              isAdmin()
+              || isCompanyCreator(request.resource.data.companyId)
+              || canSelfCreateMembershipFromInvite(request.resource.data)
+            )
+          )
+        );
+
+      allow update: if hasCompanyField(resource.data)
+        && hasCompanyField(request.resource.data)
+        && resource.data.companyId == request.resource.data.companyId
+        && isCompanyElevated(resource.data.companyId);
+
+      allow delete: if hasCompanyField(resource.data) && isCompanyElevated(resource.data.companyId);
+    }
+
+    match /companyInvites/{inviteId} {
+      allow read: if (hasCompanyField(resource.data) && isCompanyElevated(resource.data.companyId))
+        || (
+          signedIn()
+          && resource.data.status == 'pending'
+          && (
+            !resource.data.keys().hasAny(['email'])
+            || resource.data.email == null
+            || resource.data.email == ''
+            || resource.data.email == request.auth.token.email
+          )
+        );
+      allow create: if hasCompanyField(request.resource.data) && isCompanyElevated(request.resource.data.companyId);
+      allow update: if hasCompanyField(resource.data)
+        && hasCompanyField(request.resource.data)
+        && resource.data.companyId == request.resource.data.companyId
+        && (isCompanyElevated(resource.data.companyId) || canAcceptInvite());
+      allow delete: if hasCompanyField(resource.data) && isCompanyElevated(resource.data.companyId);
+    }
+
+    match /companyLocations/{locationId} {
+      allow read: if canReadScopedResource(resource.data);
+      allow create: if hasCompanyField(request.resource.data) && isCompanyElevated(request.resource.data.companyId);
+      allow update: if hasCompanyField(request.resource.data)
+        && isCompanyElevated(request.resource.data.companyId)
+        && (!hasCompanyField(resource.data) || resource.data.companyId == request.resource.data.companyId);
+      allow delete: if canDeleteScopedResource();
+    }
+
+    match /workers/{workerId} {
+      allow read: if canReadScopedResource(resource.data);
+      allow create: if hasCompanyField(request.resource.data) && isCompanyElevated(request.resource.data.companyId);
+      allow update: if hasCompanyField(request.resource.data)
+        && isCompanyElevated(request.resource.data.companyId)
+        && (!hasCompanyField(resource.data) || resource.data.companyId == request.resource.data.companyId);
+      allow delete: if canDeleteScopedResource();
+    }
+
+    match /importHistory/{historyId} {
+      allow read: if (hasCompanyField(resource.data) && isCompanyElevated(resource.data.companyId)) || isLegacyScopedRead(resource.data);
+      allow create: if hasCompanyField(request.resource.data) && isCompanyElevated(request.resource.data.companyId);
+      allow update: if hasCompanyField(request.resource.data)
+        && isCompanyElevated(request.resource.data.companyId)
+        && (!hasCompanyField(resource.data) || resource.data.companyId == request.resource.data.companyId);
+      allow delete: if canDeleteScopedResource();
+    }
+
+    match /assets/{docId} {
+      allow read: if canReadScopedResource(resource.data);
+      allow create: if canCreateScopedResource();
+      allow update: if canUpdateScopedResource();
+      allow delete: if canDeleteScopedResource();
+    }
+
+    match /tasks/{docId} {
+      allow read: if canReadScopedResource(resource.data);
+      allow create: if canCreateScopedResource();
+      allow update: if canUpdateScopedResource();
+      allow delete: if canDeleteScopedResource();
+    }
+
+    match /operations/{docId} {
+      allow read: if canReadScopedResource(resource.data);
+      allow create: if canCreateScopedResource();
+      allow update: if canUpdateScopedResource();
+      allow delete: if canDeleteScopedResource();
+    }
+
+    match /manuals/{docId} {
+      allow read: if canReadScopedResource(resource.data);
+      allow create: if canCreateScopedResource();
+      allow update: if canUpdateScopedResource();
+      allow delete: if canDeleteScopedResource();
+
+      match /chunks/{chunkId} {
+        allow read: if canReadScopedResource(resource.data);
+        allow create: if canCreateScopedResource();
+        allow update: if canUpdateScopedResource();
+        allow delete: if canDeleteScopedResource();
+      }
+    }
+
+    match /notes/{docId} {
+      allow read: if canReadScopedResource(resource.data);
+      allow create: if canCreateScopedResource();
+      allow update: if canUpdateScopedResource();
+      allow delete: if canDeleteScopedResource();
+    }
+
+    match /pmSchedules/{docId} {
+      allow read: if canReadScopedResource(resource.data);
+      allow create: if canCreateScopedResource();
+      allow update: if canUpdateScopedResource();
+      allow delete: if canDeleteScopedResource();
+    }
+
+    match /appSettings/{docId} {
+      allow read: if canReadScopedResource(resource.data);
+      allow create: if hasCompanyField(request.resource.data) && isCompanyElevated(request.resource.data.companyId);
+      allow update: if hasCompanyField(request.resource.data)
+        && isCompanyElevated(request.resource.data.companyId)
+        && (!hasCompanyField(resource.data) || resource.data.companyId == request.resource.data.companyId);
+      allow delete: if canDeleteScopedResource();
+    }
+
+    match /taskAiRuns/{docId} {
+      allow read: if canReadScopedResource(resource.data);
+      allow create: if canCreateScopedResource();
+      allow update: if canUpdateScopedResource();
+      allow delete: if canDeleteScopedResource();
+    }
+
+    match /taskAiFollowups/{docId} {
+      allow read: if canReadScopedResource(resource.data);
+      allow create: if canCreateScopedResource();
+      allow update: if canUpdateScopedResource();
+      allow delete: if canDeleteScopedResource();
+    }
+
+    match /troubleshootingLibrary/{docId} {
+      allow read: if canReadScopedResource(resource.data);
+      allow create: if canCreateScopedResource();
+      allow update: if canUpdateScopedResource();
+      allow delete: if canDeleteScopedResource();
+    }
+
+
+    match /notifications/{docId} {
+      allow read: if canReadScopedResource(resource.data);
+      allow create: if canCreateScopedResource();
+      allow update: if hasCompanyField(resource.data)
+        && hasCompanyField(request.resource.data)
+        && resource.data.companyId == request.resource.data.companyId
+        && isCompanyStaff(resource.data.companyId)
+        && request.resource.data.userId == resource.data.userId;
+      allow delete: if canDeleteScopedResource();
+    }
+
+    match /auditLogs/{docId} {
+      allow read: if (hasCompanyField(resource.data) && isCompanyElevated(resource.data.companyId)) || isAdmin();
+      allow create: if (hasCompanyField(request.resource.data) && isCompanyStaff(request.resource.data.companyId))
+        || (signedIn() && !hasCompanyField(request.resource.data));
+      allow update, delete: if false;
+    }
+
+    match /backups/{docId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scoot Business Operations Portal</title>
+  <style>
+    :root{--bg:#f4f6fb;--card:#fff;--line:#d8dee8;--text:#14202b;--muted:#607080;--accent:#0f172a;--accent-2:#1d4ed8;--soft:#eef3fb;--good:#0f766e;--warn:#b45309;--bad:#b91c1c}
+    *{box-sizing:border-box} body{margin:0;font-family:Inter,Arial,sans-serif;background:linear-gradient(180deg,#f7f9fc,#eef3fa);color:var(--text)}
+    .wrap{max-width:1440px;margin:0 auto;padding:22px}.card{background:var(--card);border:1px solid var(--line);border-radius:20px;box-shadow:0 8px 24px rgba(15,23,42,.05);padding:18px}
+    .hide{display:none}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.space{justify-content:space-between}.grid{display:grid;gap:12px}.grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+    @media(max-width:900px){.grid-2{grid-template-columns:1fr}}
+    .tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}.tab{padding:10px;border-radius:12px;border:1px solid var(--line);background:#fff;cursor:pointer;font-weight:700}.tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+    .section{display:none}.section.active{display:block}
+    input,select,textarea,button{font:inherit} input,select,textarea{width:100%;padding:10px;border-radius:12px;border:1px solid var(--line)} textarea{min-height:90px}
+    button{padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:#fff;cursor:pointer} button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+    .badge{display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;background:var(--soft);border:1px solid var(--line);font-size:12px;font-weight:700}
+    .company-switcher,.location-switcher{min-width:220px;max-width:320px}
+    .app-context{display:grid;gap:8px;justify-items:end}
+    .scope-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+    .notif-wrap{position:relative}
+    .notif-btn{position:relative;padding:8px 10px;font-size:16px}
+    .notif-badge{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#b91c1c;color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center;border:1px solid #fff}
+    .notif-panel{position:absolute;top:42px;right:0;width:min(420px,92vw);max-height:70vh;overflow:auto;z-index:20;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 26px rgba(15,23,42,.18);padding:8px}
+    .tiny{font-size:12px;color:var(--muted)} .list{display:grid;gap:8px} .item{background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px}
+    .stats-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+    .stat-card{background:linear-gradient(180deg,#ffffff,#f8fbff);border:1px solid var(--line);border-radius:16px;padding:14px}
+    .stat-card strong{display:block;font-size:28px;line-height:1.1;margin-top:6px}
+    .stat-card.good{background:linear-gradient(180deg,#f0fdf9,#dcfce7)}
+    .stat-card.warn{background:linear-gradient(180deg,#fff7ed,#ffedd5)}
+    .stat-card.bad{background:linear-gradient(180deg,#fff5f5,#fee2e2)}
+    .priority-band{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;border:1px solid #fecaca;background:linear-gradient(180deg,#fff7f7,#fef2f2);border-radius:16px;padding:12px 14px}
+    .priority-band h3{margin:4px 0}
+    .dashboard-priority-grid .priority-card{border-width:2px}
+    .dashboard-priority-grid .stat-card.good:not(.priority-card){opacity:.9}
+    .filter-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .filter-chip{padding:8px 12px;border-radius:999px;border:1px solid var(--line);background:#fff;cursor:pointer}
+    .filter-chip.active{background:var(--accent);border-color:var(--accent);color:#fff}
+    .inline-state{border-radius:14px;padding:12px 14px;border:1px solid var(--line);background:var(--soft)}
+    .inline-state.success{background:#ecfdf5;border-color:#a7f3d0;color:#166534}
+    .inline-state.error{background:#fef2f2;border-color:#fecaca;color:#991b1b}
+    .inline-state.warn{background:#fff7ed;border-color:#fed7aa;color:#9a3412}
+    .inline-state.info{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
+    .kpi-line{display:flex;gap:12px;flex-wrap:wrap}
+    .kpi-line span{padding:4px 8px;border-radius:999px;background:#f8fafc;border:1px solid var(--line);font-size:12px}
+    .table{width:100%;border-collapse:collapse}.table th,.table td{border-bottom:1px solid var(--line);padding:8px;text-align:left;font-size:13px}
+    .danger{color:var(--bad)} .selected{border:2px solid var(--accent-2)} details{margin-top:8px} summary{cursor:pointer} .mt{margin-top:8px}
+    .onboarding-form label{display:grid;gap:6px}
+    .onboarding-location-fieldset{border:1px solid var(--line);border-radius:12px;padding:10px;margin:0}
+    .settings-stack{gap:14px}
+    .settings-stack .item{background:linear-gradient(180deg,#fff,#f8fbff)}
+    .settings-stack details summary{padding:6px 0}
+    .ops-toolbar{margin:12px 0}
+    .ops-location-field{min-width:220px}
+    .task-board{gap:12px}
+    .task-card{padding:0;overflow:hidden}
+    .task-summary{display:grid;gap:10px;padding:14px;list-style:none}
+    .task-summary::-webkit-details-marker{display:none}
+    .task-summary-main{display:grid;gap:8px}
+    .task-title-row{display:flex;gap:8px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap}
+    .task-summary-meta{display:flex;gap:8px;flex-wrap:wrap}
+    .task-summary-meta span{font-size:12px;color:var(--muted);padding:4px 8px;border-radius:999px;background:#f8fafc;border:1px solid var(--line)}
+    .task-body{padding:0 14px 14px}
+    .task-meta-grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+    .state-chip-row{display:flex;gap:8px;flex-wrap:wrap}
+    .state-chip{display:inline-flex;align-items:center;padding:6px 10px;border-radius:999px;border:1px solid var(--line);background:#f8fafc;font-size:12px;font-weight:700}
+    .state-chip.good{background:#ecfdf5;border-color:#a7f3d0;color:#166534}
+    .state-chip.warn{background:#fff7ed;border-color:#fed7aa;color:#9a3412}
+    .state-chip.bad{background:#fef2f2;border-color:#fecaca;color:#991b1b}
+    .state-chip.info{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
+    .state-chip.muted{background:#f8fafc;border-color:var(--line);color:var(--muted)}
+    .action-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .action-row button{flex:0 1 auto}
+    .action-row a{display:inline-flex;align-items:center;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:#fff;color:var(--text);text-decoration:none}
+    .timeline-list{display:grid;gap:8px}
+    .timeline-entry{border:1px solid var(--line);border-radius:12px;background:#f8fafc;padding:10px}
+    .attachment-block{display:grid;gap:6px}
+    .attachment-group{display:grid;gap:4px}
+    .attachment-list{display:flex;gap:6px;flex-wrap:wrap}
+    .closeout-form label{display:grid;gap:6px}
+    .closeout-wide{grid-column:1 / -1}
+    .closeout-actions{display:flex;justify-content:flex-start}
+    .closeout-summary{background:linear-gradient(180deg,#f8fbff,#eef7ff)}
+
+    .ops-intake-form{gap:10px}
+    .ops-intake-step h3{margin:0 0 4px}
+    .post-save-guide{border:1px solid #bfdbfe;background:linear-gradient(180deg,#eff6ff,#dbeafe)}
+    .task-actions{border:1px solid var(--line);border-radius:12px;padding:10px;background:#f8fafc}
+    .task-primary-actions button{font-weight:700}
+    .timeline-note{font-weight:600}
+    .evidence-group{display:grid;gap:8px;border:1px dashed var(--line);border-radius:10px;padding:10px;background:#fcfdff}
+    .followup-form label{display:grid;gap:6px}
+    .report-alert-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
+    .report-alert-card{border:1px solid var(--line);border-radius:14px;padding:12px;background:#fff}
+    button.report-jump,.report-location{width:100%;text-align:left}
+    @media(max-width:640px){.wrap{padding:10px}.card{padding:12px;border-radius:14px} input,select,textarea,button{font-size:16px}}
+    @media(max-width:640px){.kpi-line{gap:8px}.ops-location-field{min-width:0;width:100%}.task-summary{padding:12px}.task-body{padding:0 12px 12px}.action-row button{flex:1 1 calc(50% - 8px)}.closeout-actions button{width:100%}.task-summary-meta span{width:100%}.task-primary-actions button{flex:1 1 100%}}
+    @media(max-width:640px){.onboarding-row{display:grid;grid-template-columns:1fr;gap:10px}}
+    @media(max-width:640px){.stats-grid{grid-template-columns:1fr}.priority-band{padding:10px}.priority-band .kpi-line{width:100%}.notif-panel{right:-12px;width:calc(100vw - 24px)}}
+    @media(max-width:640px){.settings-stack{grid-template-columns:1fr !important}.tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.item{padding:8px}.onboarding-location-fieldset{padding:8px}.action-row button{flex:1 1 100%}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section id="authView" class="card">
+      <h1>Scoot Business Portal Login</h1>
+      <p class="tiny">Sign in required. All app data is stored in Firebase and protected by role-aware security rules.</p>
+      <div class="grid grid-2">
+        <form id="loginForm" class="card">
+          <h3>Login</h3>
+          <input name="email" type="email" placeholder="Email" required />
+          <input name="password" type="password" placeholder="Password" required />
+          <button class="primary" type="submit">Login</button>
+          <button type="button" id="forgotPasswordBtn">Forgot password?</button>
+          <button type="button" id="googleLoginBtn">Continue with Google</button>
+        </form>
+        <form id="registerForm" class="card">
+          <h3>Create account</h3>
+          <p class="tiny">Bootstrap admin access is off by default and only applies when `window.__APP_CONFIG__.bootstrapAdmins` is explicitly supplied at runtime.</p>
+          <input name="fullName" type="text" placeholder="Full name" autocomplete="name" required />
+          <input name="email" type="email" placeholder="Email" required />
+          <input name="password" type="password" placeholder="Password" autocomplete="new-password" required />
+          <input name="confirmPassword" type="password" placeholder="Confirm password" autocomplete="new-password" required />
+          <div class="tiny" id="registerPasswordHelp">Use at least 8 characters with upper, lower, and a number.</div>
+          <button class="primary" type="submit">Register</button>
+          <button type="button" id="googleRegisterBtn">Continue with Google</button>
+        </form>
+      </div>
+      <div class="item mt">
+        <label class="tiny">Invite code (optional, improves company handoff)
+          <input id="authInviteCode" placeholder="Paste invite code if you have one" />
+        </label>
+      </div>
+      <p id="authMessage" class="tiny"></p>
+    </section>
+
+    <main id="appView" class="hide">
+      <header class="card row space">
+        <div>
+          <h1>Scoot Business Operations Portal</h1>
+          <p class="tiny">Phase 1 foundation: auth, shared data, audit, role controls, migration, backup/restore.</p>
+        </div>
+        <div class="app-context">
+          <div class="row">
+            <span id="userBadge" class="badge"></span>
+            <button id="logoutBtn">Logout</button>
+          </div>
+          <div class="scope-bar">
+            <div class="notif-wrap">
+              <button id="notificationBell" class="notif-btn" aria-label="Notifications" type="button">🔔<span id="notificationBadge" class="notif-badge hide">0</span></button>
+              <div id="notificationPanel" class="notif-panel hide"></div>
+            </div>
+            <span id="locationScopeBadge" class="badge">Company-wide view</span>
+            <select id="activeLocationSwitcher" class="location-switcher" aria-label="Active location"></select>
+            <select id="activeCompanySwitcher" class="company-switcher hide" aria-label="Active company"></select>
+          </div>
+        </div>
+      </header>
+
+      <nav class="tabs" id="tabs"></nav>
+
+      <section id="dashboard" class="section card active"></section>
+      <section id="operations" class="section card"></section>
+      <section id="assets" class="section card"></section>
+      <section id="calendar" class="section card"></section>
+      <section id="reports" class="section card"></section>
+      <section id="account" class="section card"></section>
+      <section id="admin" class="section card"></section>
+    </main>
+  </div>
+
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
