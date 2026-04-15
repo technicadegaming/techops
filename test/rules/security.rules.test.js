@@ -19,7 +19,7 @@ const {
   deleteObject,
 } = require('firebase/storage');
 
-const projectId = process.env.GCLOUD_PROJECT || 'techops-rules';
+const projectId = process.env.GCLOUD_PROJECT || 'scootbusiness-d3112';
 const rulesTestEnvPromise = initializeTestEnvironment({
   projectId,
   firestore: {

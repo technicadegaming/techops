@@ -5,7 +5,7 @@
     "manual-catalog:import": "npm run manual-catalog:import --prefix functions",
     "test": "npm run test:functions && npm run test:rules",
     "test:functions": "npm run test --prefix functions",
-    "test:rules": "firebase emulators:exec --project techops-rules --only firestore,storage \"node --test test/rules/security.rules.test.js\"",
+    "test:rules": "firebase emulators:exec --project scootbusiness-d3112 --only firestore,storage \"node --test test/rules/security.rules.test.js\"",
     "lint": "eslint src/**/*.js functions/src/**/*.js functions/test/**/*.js test/**/*.js",
     "test:app-shell": "node --test test/appShellControllers.test.js"
   },
