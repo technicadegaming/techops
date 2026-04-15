@@ -39,8 +39,21 @@ function runCommand(command, args) {
   return { status: result.status ?? 1, command: printable };
 }
 
+function resolveFirebaseInvocation() {
+  try {
+    const firebaseCliEntrypoint = require.resolve('firebase-tools/lib/bin/firebase.js');
+    return { command: process.execPath, prefixArgs: [firebaseCliEntrypoint] };
+  } catch (_error) {
+    if (process.platform === 'win32') {
+      return { command: 'firebase.cmd', prefixArgs: [] };
+    }
+    return { command: 'firebase', prefixArgs: [] };
+  }
+}
+
 function runFirebase(args) {
-  return runCommand('firebase', args);
+  const firebaseInvocation = resolveFirebaseInvocation();
+  return runCommand(firebaseInvocation.command, [...firebaseInvocation.prefixArgs, ...args]);
 }
 
 function ensureEmulatorArtifacts(cacheDir) {
