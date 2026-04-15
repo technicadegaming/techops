@@ -17,6 +17,10 @@ async function loadAuthControllerHelpers() {
   return import('../src/app/authController.helpers.js');
 }
 
+async function loadBootstrapErrors() {
+  return import('../src/app/bootstrapErrors.js');
+}
+
 
 async function loadDocumentationReviewHelpers() {
   return import('../src/features/documentationReview.js');
@@ -156,6 +160,25 @@ test('asset helpers treat terminal manual outcomes as not-running even when lega
     enrichmentRequestedAt: new Date(Date.now() - (5 * 60 * 1000)).toISOString(),
     enrichmentHeartbeatAt: new Date(Date.now() - (4 * 60 * 1000)).toISOString(),
   }), 'no_match_yet');
+});
+
+test('bootstrap error helper surfaces blocked membership lookup permission step', async () => {
+  const { buildBootstrapErrorMessage } = await loadBootstrapErrors();
+  const message = buildBootstrapErrorMessage({
+    code: 'permission-denied',
+    message: 'Missing or insufficient permissions',
+    bootstrapStep: 'membership_lookup'
+  });
+  assert.match(message, /membership lookup/);
+  assert.match(message, /blocked by Firestore permissions/);
+});
+
+test('bootstrap error helper preserves non-permission fallback formatting', async () => {
+  const { buildBootstrapErrorMessage } = await loadBootstrapErrors();
+  assert.equal(
+    buildBootstrapErrorMessage(new Error('Network timeout while loading workspace context.')),
+    'Unable to finish account setup. Network timeout while loading workspace context.'
+  );
 });
 
 test('applyActionCenterFocus translates dashboard focus into operations filters and route flags', async () => {
