@@ -70,6 +70,7 @@ After deploy, verify:
 3. Storage writes are restricted to `companies/{companyId}/...` paths.
 4. Cloud Functions respond without auth/regression errors.
 5. GitHub Pages serves the expected frontend version for `wow.technicade.tech` and core app routes load.
+6. Firebase Auth authorized domains include `wow.technicade.tech` (live custom domain) and `scootbusiness-d3112.firebaseapp.com` so login/register + Google popup continue to work after release.
 
 ## Rollback / recovery guidance
 
