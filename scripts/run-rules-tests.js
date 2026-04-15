@@ -16,7 +16,7 @@ function findArtifact(cacheDir, pattern) {
 }
 
 function runFirebase(args) {
-  const result = spawnSync('firebase', args, { stdio: 'inherit', shell: true });
+  const result = spawnSync('firebase', args, { stdio: 'inherit' });
   return result.status ?? 1;
 }
 
