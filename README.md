@@ -125,13 +125,13 @@ Rules tests use the Firebase Local Emulator Suite via `firebase emulators:exec` 
 npm run test:rules
 ```
 
-This command starts local Firestore + Storage emulators, runs `test/rules/security.rules.test.js`, and then shuts emulators down automatically. On the first run in a given environment, the Firebase CLI may download emulator artifacts into `~/.cache/firebase/emulators` before the tests start.
+This command now runs through `scripts/run-rules-tests.js`: it verifies emulator artifacts are present (and attempts `firebase setup:emulators:firestore` + `firebase setup:emulators:storage` when needed), then starts local Firestore + Storage emulators, runs `test/rules/security.rules.test.js`, and shuts emulators down automatically. Emulator artifacts are cached in `~/.cache/firebase/emulators`.
 
 If emulator downloads fail with a 403 or another fetch/network error, the rules assertions have not been skipped—the emulator process never became healthy enough to run them. In that case:
 
 1. Re-run the command after transient network issues clear.
 2. Verify the environment can reach Firebase emulator artifact downloads.
-3. If you want to warm the cache before running the suite, use `firebase setup:emulators:firestore` and `firebase setup:emulators:storage`.
+3. If setup still fails, run `firebase setup:emulators:firestore` and `firebase setup:emulators:storage` directly to isolate environment/network/auth problems, then rerun `npm run test:rules`.
 
 GitHub Actions now caches `~/.cache/firebase/emulators` so CI does not need to re-download emulator binaries on every run. Local machines still depend on the Firebase CLI being able to populate that cache at least once.
 
@@ -170,6 +170,7 @@ Frontend publishing currently happens through GitHub Pages for `wow.technicade.t
 2. Firestore indexes (if changed) so query dependencies are ready.
 3. Functions so backend behavior aligns with rules and indexes.
 4. GitHub Pages/frontend publish only when UI assets or docs served by Pages changed.
+5. Confirm Firebase Auth authorized domains still include `wow.technicade.tech` and `scootbusiness-d3112.firebaseapp.com` so email/password and Google popup flows work on the live Pages hostname.
 
 ### Secrets handling expectations
 
