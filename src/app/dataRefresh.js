@@ -1,5 +1,11 @@
 import { countEntities, getAppSettings, listAudit, listEntities, setActiveCompanyContext } from '../data.js';
-import { ensureBootstrapCompanyForLegacyUser, getCompany, listCompanyMembers, listMembershipsByUser } from '../company.js';
+import {
+  canAutoAdoptLegacyWorkspace,
+  ensureBootstrapCompanyForLegacyUser,
+  getCompany,
+  listCompanyMembers,
+  listMembershipsByUser
+} from '../company.js';
 import { buildPermissionContext, isGlobalAdmin } from '../roles.js';
 import { ACTIVE_MEMBERSHIP_STORAGE_KEY, syncSetupWizardState } from './state.js';
 import { getAuthoritativeOnboardingState } from '../features/onboardingStatus.js';
@@ -138,11 +144,27 @@ export async function bootstrapCompanyContext(state, options = {}) {
   setActiveCompanyContext(null);
   state.company = null;
   state.activeMembership = null;
-  const memberships = await listMembershipsByUser(state.user.uid);
+  const memberships = await listMembershipsByUser(state.user.uid).catch((error) => {
+    error.bootstrapStep = 'membership_lookup';
+    throw error;
+  });
   state.memberships = memberships;
-  const hasLegacyData = (await countEntities('assets').catch(() => 0)) + (await countEntities('tasks').catch(() => 0)) + (await countEntities('operations').catch(() => 0)) > 0;
+
+  const shouldCheckLegacyData = canAutoAdoptLegacyWorkspace(state.user, state.profile);
+  let hasLegacyData = false;
+  if (shouldCheckLegacyData) {
+    hasLegacyData = (
+      (await countEntities('assets').catch(() => 0))
+      + (await countEntities('tasks').catch(() => 0))
+      + (await countEntities('operations').catch(() => 0))
+    ) > 0;
+  }
+
   if (!memberships.length) {
-    const adopted = await ensureBootstrapCompanyForLegacyUser(state.user, state.profile, hasLegacyData);
+    const adopted = await ensureBootstrapCompanyForLegacyUser(state.user, state.profile, hasLegacyData).catch((error) => {
+      error.bootstrapStep = 'legacy_workspace_auto_adopt';
+      throw error;
+    });
     if (adopted?.membership) state.memberships = [adopted.membership];
   }
 

@@ -78,6 +78,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.3/firebase-storage.js';
 import { createEmptyAssetDraft, createInitialState, sections, setOnboardingFeedback } from './app/state.js';
 import { finalizeOnboardingBootstrap, shouldFinalizeOnboardingBootstrap } from './app/bootstrapRepair.js';
+import { buildBootstrapErrorMessage } from './app/bootstrapErrors.js';
 
 const {
   authView,
@@ -91,18 +92,6 @@ const {
   notificationPanel
 } = resolveAppElements(document);
 const state = createInitialState();
-
-function isPermissionRelatedError(error) {
-  const code = `${error?.code || ''}`.toLowerCase();
-  const message = `${error?.message || error || ''}`.toLowerCase();
-  return code.includes('permission-denied') || message.includes('permission') || message.includes('missing or insufficient permissions');
-}
-
-
-function buildBootstrapErrorMessage(error) {
-  if (!isPermissionRelatedError(error)) return formatActionError(error, 'Unable to finish account setup.');
-  return 'Unable to finish account setup due to a workspace permission check. Your account was created, but bootstrap could not complete. Please retry in a moment or contact support if it keeps happening.';
-}
 
 const runAction = runActionFactory({ reportActionError });
 const withActiveCompanyId = (payload = {}, actionLabel = 'continue') => withRequiredCompanyId(state, payload, actionLabel);
