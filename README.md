@@ -91,6 +91,7 @@ Use this map to reduce doc-hunting:
 
 - `docs/MANUAL_LOOKUP_REGISTRY.md` — manual catalog import/verification workflow.
 - `docs/NEXT_PHASE_EXECUTION_PLAN.md` — near-term phased implementation sequence when planning follow-up work.
+- `docs/CURRENT_STATE.md` — verified recovery snapshot of current runtime wiring, callable surface, and local validation status.
 
 ### Root source of truth
 
