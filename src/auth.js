@@ -19,6 +19,27 @@ function buildProfilePersistenceError(error) {
   return new Error(detail ? `Unable to save your profile. ${detail}` : 'Unable to save your profile.');
 }
 
+function isPermissionDenied(error) {
+  const code = `${error?.code || ''}`.trim().toLowerCase();
+  const message = `${error?.message || ''}`.trim().toLowerCase();
+  return code.includes('permission-denied') || message.includes('missing or insufficient permissions');
+}
+
+async function saveUserProfileBestEffort(uid, profile, actor) {
+  try {
+    await saveUserProfile(uid, profile, actor);
+    return true;
+  } catch (error) {
+    if (!isPermissionDenied(error)) throw error;
+    console.warn('[auth] Skipping profile persistence because Firestore denied the write.', {
+      uid,
+      code: error?.code || '',
+      message: error?.message || String(error)
+    });
+    return false;
+  }
+}
+
 export async function login(email, password) {
   return signInWithEmailAndPassword(auth, email, password);
 }
@@ -52,7 +73,7 @@ export async function register(email, password, profile = {}) {
     await updateProfile(credential.user, { displayName: fullName });
   }
   try {
-    await saveUserProfile(credential.user.uid, {
+    await saveUserProfileBestEffort(credential.user.uid, {
       email: `${credential.user.email || email || ''}`.trim().toLowerCase(),
       emailLower: `${credential.user.email || email || ''}`.trim().toLowerCase(),
       fullName,
@@ -101,7 +122,7 @@ export async function syncSecuritySnapshot(user, profile = {}) {
     securityMfaEnrolled: Array.isArray(user.multiFactor?.enrolledFactors) && user.multiFactor.enrolledFactors.length > 0,
     securityLoginHistory: [entry, ...history].slice(0, 10)
   };
-  await saveUserProfile(user.uid, nextProfile, { uid: user.uid, email: user.email });
+  await saveUserProfileBestEffort(user.uid, nextProfile, { uid: user.uid, email: user.email });
   return nextProfile;
 }
 
@@ -128,7 +149,7 @@ export async function resolveProfile(user) {
       suppressLegacyAutoAdopt: !shouldBootstrapAdmin
     };
     try {
-      await saveUserProfile(user.uid, profile, { uid: user.uid, email: user.email });
+      await saveUserProfileBestEffort(user.uid, profile, { uid: user.uid, email: user.email });
     } catch (error) {
       throw buildProfilePersistenceError(error);
     }
@@ -154,7 +175,7 @@ export async function resolveProfile(user) {
       || nextProfile.memberLabel !== profile.memberLabel
     ) {
       try {
-        await saveUserProfile(user.uid, nextProfile, { uid: user.uid, email: user.email });
+        await saveUserProfileBestEffort(user.uid, nextProfile, { uid: user.uid, email: user.email });
       } catch (error) {
         throw buildProfilePersistenceError(error);
       }
