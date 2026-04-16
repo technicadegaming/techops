@@ -208,6 +208,39 @@ test('firestore: first user bootstrap cannot create owner membership for another
   );
 });
 
+test('firestore: first user bootstrap cannot create membership with malformed id format', async () => {
+  const testEnv = await rulesTestEnvPromise;
+  const uid = 'first-user';
+  const companyId = 'company-first';
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'users', uid), {
+      role: 'pending',
+      enabled: true,
+    });
+  });
+
+  const db = testEnv.authenticatedContext(uid).firestore();
+  await assertSucceeds(
+    setDoc(doc(db, 'companies', companyId), {
+      id: companyId,
+      name: 'First Workspace',
+      createdBy: uid,
+    }),
+  );
+
+  await assertFails(
+    setDoc(doc(db, 'companyMemberships', `${uid}_${companyId}`), {
+      id: `${uid}_${companyId}`,
+      companyId,
+      userId: uid,
+      role: 'owner',
+      status: 'active',
+      createdBy: uid,
+    }),
+  );
+});
+
 test('storage: company evidence path allows active member and blocks cross-company access', async () => {
   await seedMembership({ uid: 'staff-a', companyId: 'company-a', role: 'staff' });
   await seedMembership({ uid: 'staff-b', companyId: 'company-b', role: 'staff' });
