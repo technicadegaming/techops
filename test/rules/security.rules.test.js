@@ -241,6 +241,52 @@ test('firestore: first user bootstrap cannot create membership with malformed id
   );
 });
 
+test('firestore: user can create and update own profile without changing role', async () => {
+  const testEnv = await rulesTestEnvPromise;
+  const uid = 'profile-self';
+  const db = testEnv.authenticatedContext(uid).firestore();
+
+  await assertSucceeds(
+    setDoc(doc(db, 'users', uid), {
+      id: uid,
+      role: 'pending',
+      enabled: true,
+      fullName: 'Initial Name',
+    }),
+  );
+
+  await assertSucceeds(
+    setDoc(doc(db, 'users', uid), {
+      fullName: 'Updated Name',
+      role: 'pending',
+      emailVerified: true,
+    }, { merge: true }),
+  );
+});
+
+test('firestore: user cannot normalize an explicitly empty legacy role during self-update', async () => {
+  const testEnv = await rulesTestEnvPromise;
+  const uid = 'legacy-empty-role';
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'users', uid), {
+      id: uid,
+      role: '',
+      enabled: true,
+      fullName: 'Legacy User',
+    });
+  });
+
+  const db = testEnv.authenticatedContext(uid).firestore();
+
+  await assertFails(
+    setDoc(doc(db, 'users', uid), {
+      role: 'pending',
+      fullName: 'Legacy User',
+    }, { merge: true }),
+  );
+});
+
 test('storage: company evidence path allows active member and blocks cross-company access', async () => {
   await seedMembership({ uid: 'staff-a', companyId: 'company-a', role: 'staff' });
   await seedMembership({ uid: 'staff-b', companyId: 'company-b', role: 'staff' });
