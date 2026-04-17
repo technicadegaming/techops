@@ -30,6 +30,10 @@ async function loadAuthHandoffHelpers() {
 }
 
 
+async function loadMembershipCompatibilityHelpers() {
+  return import('../src/app/membershipCompatibility.js');
+}
+
 async function loadDocumentationReviewHelpers() {
   return import('../src/features/documentationReview.js');
 }
@@ -208,6 +212,32 @@ test('runtime collections mapping keeps explicit canonical overrides ahead of al
   );
   assert.equal(mapped.companies, 'companies_v2');
   assert.equal(mapped.companyMemberships, 'workspace_members');
+});
+
+
+test('membership compatibility normalizes canonical membership records', async () => {
+  const { normalizeMembershipRecords } = await loadMembershipCompatibilityHelpers();
+  const rows = normalizeMembershipRecords([
+    { id: 'co-1_u-1', companyId: 'co-1', userId: 'u-1', role: 'owner', status: 'active' }
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].companyId, 'co-1');
+  assert.equal(rows[0].userId, 'u-1');
+  assert.equal(rows[0].role, 'owner');
+  assert.equal(rows[0].status, 'active');
+});
+
+test('membership compatibility normalizes legacy workspace_members fields into canonical shape', async () => {
+  const { normalizeMembershipRecords } = await loadMembershipCompatibilityHelpers();
+  const rows = normalizeMembershipRecords([
+    { id: 'legacy-1', workspaceId: 'ws-1', uid: 'u-1', workspaceRole: 'manager', isActive: true },
+    { id: 'legacy-2', workspaceId: 'ws-1', uid: 'u-1', status: 'inactive' }
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].companyId, 'ws-1');
+  assert.equal(rows[0].userId, 'u-1');
+  assert.equal(rows[0].role, 'manager');
+  assert.equal(rows[0].status, 'active');
 });
 
 test('auth handoff fallback engages only for membership lookup permission denial and preserves onboarding path', async () => {
