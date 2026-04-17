@@ -155,13 +155,15 @@ export async function resolveProfile(user) {
     }
     isNewProfile = true;
   } else {
+    const hasExplicitRole = Object.prototype.hasOwnProperty.call(profile, 'role');
+    const persistedRole = hasExplicitRole ? profile.role : `${profile.role || ''}`.trim() || 'pending';
     const normalizedEmail = `${profile.email || user?.email || ''}`.trim().toLowerCase();
     const fullName = `${profile.fullName || profile.displayName || user?.displayName || ''}`.trim();
     const nextProfile = {
       ...profile,
       email: normalizedEmail,
       emailLower: normalizedEmail,
-      role: `${profile.role || ''}`.trim() || 'pending',
+      role: persistedRole,
       fullName,
       displayName: `${profile.displayName || fullName || user?.email || ''}`.trim(),
       memberLabel: fullName ? `${fullName} <${normalizedEmail}>` : normalizedEmail

@@ -13,6 +13,11 @@ If you are onboarding to the repo, read `README.md` first for the documentation 
 
 ## Firestore collections
 
+### Legacy compatibility collections (`workspaces`, `workspace_members`)
+- **Current status (confirmed):** the app’s committed defaults use `companies` and `companyMemberships`. Direct reads/writes to `workspaces` or `workspace_members` happen only if deployment-time `window.__APP_CONFIG__.collections` remaps canonical keys via runtime aliases in `src/app/runtimeCollections.js`.
+- **Compatibility intent:** this keeps older environments bootable while rules/data are being aligned, without hard-deleting old data.
+- **Operational guidance:** treat `companies` + `companyMemberships` as canonical for all new writes and troubleshooting. Keep legacy collections read-only for manual validation/backfill windows, then remove runtime alias overrides once migration is complete.
+
 ### `users`
 - **Purpose:** one profile per Firebase Auth user.
 - **Key fields (confirmed):** `id`, `email`, `emailLower`, `fullName`, `displayName`, `memberLabel`, `role`, `enabled`, `onboardingState`, `emailVerified`, `authProviders`, `lastLoginAt`, `securityLoginHistory`.

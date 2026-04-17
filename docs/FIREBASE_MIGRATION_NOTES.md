@@ -31,6 +31,15 @@
 - Create an admin-only script or one-time utility to set `companyId` on legacy docs in batches.
 - Validate counts before and after backfill.
 
+## Legacy collection deprecation notes
+- Canonical app paths are `companies`, `companyMemberships`, and `users`.
+- Legacy `workspaces` and `workspace_members` are only consulted when runtime collection overrides intentionally map canonical keys to those legacy names.
+- Recommended cleanup sequence:
+  1. Confirm no active deployment injects `window.__APP_CONFIG__.collections` aliases for `workspaces`/`workspace_members`.
+  2. Verify auth bootstrap and onboarding flows succeed against canonical collections in production.
+  3. Freeze legacy collections to read-only for manual rollback confidence.
+  4. Archive/export legacy collections, then plan a separate explicit deletion change if needed.
+
 ## Testing checklist
 - Existing admin can sign in without account recreation.
 - Existing legacy data still appears after bootstrap.
