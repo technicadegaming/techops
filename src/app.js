@@ -79,6 +79,7 @@ import {
 import { createEmptyAssetDraft, createInitialState, sections, setOnboardingFeedback } from './app/state.js';
 import { finalizeOnboardingBootstrap, shouldFinalizeOnboardingBootstrap } from './app/bootstrapRepair.js';
 import { buildBootstrapErrorMessage } from './app/bootstrapErrors.js';
+import { canFallbackToOnboarding, buildOnboardingFallbackState } from './app/authHandoff.js';
 
 const {
   authView,
@@ -359,6 +360,19 @@ watchAuth(async (user) => {
     await refreshData();
     await render();
   } catch (error) {
+    if (canFallbackToOnboarding(error)) {
+      console.warn('[watchAuth] Falling back to onboarding handoff without membership context.', error);
+      const fallbackState = buildOnboardingFallbackState(state);
+      Object.assign(state, fallbackState);
+      state.permissions = buildPermissionContext({ profile: state.profile, membership: null });
+      authController.setAuthMessage('');
+      setOnboardingFeedback(state, 'Signed in. Continue with workspace setup.', 'info', { pendingAction: '', handoffStatus: 'degraded' });
+      authView.classList.add('hide');
+      appView.classList.remove('hide');
+      await render();
+      return;
+    }
+
     console.error('[watchAuth]', error);
     authController.setAuthMessage(buildBootstrapErrorMessage(error));
     setOnboardingFeedback(state, authMessage.textContent, 'error', { pendingAction: '', handoffStatus: 'error' });

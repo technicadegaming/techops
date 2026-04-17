@@ -2,6 +2,8 @@
 // Safe to commit here: Firebase web client config and other non-privileged defaults required by the app.
 // Runtime overrides come from window.__APP_CONFIG__, which must be defined before app modules load if environment-specific values are needed.
 // Privilege-affecting overrides, including bootstrap admin emails, must be supplied intentionally at runtime rather than committed as defaults.
+import { normalizeCollections } from './app/runtimeCollections.js';
+
 const defaults = {
   firebase: {
     apiKey: 'AIzaSyAzTD9O87wTEhBlWdmDr5fbgES8o7a2Hbg',
@@ -39,7 +41,7 @@ export const appConfig = {
   ...runtimeConfig,
   bootstrapAdmins: normalizeBootstrapAdmins(runtimeConfig.bootstrapAdmins),
   firebase: { ...defaults.firebase, ...(runtimeConfig.firebase || {}) },
-  collections: { ...defaults.collections, ...(runtimeConfig.collections || {}) },
+  collections: normalizeCollections(defaults.collections, runtimeConfig.collections || {}),
   billing: { ...defaults.billing, ...(runtimeConfig.billing || {}) }
 };
 
