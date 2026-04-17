@@ -59,6 +59,10 @@ async function loadAssetActions() {
   return import('../src/features/assetActions.js');
 }
 
+async function loadManufacturerNormalizationHelpers() {
+  return import('../src/features/manufacturerNormalization.js');
+}
+
 function createSelectElement() {
   return {
     innerHTML: '',
@@ -172,6 +176,44 @@ test('asset helpers treat terminal manual outcomes as not-running even when lega
     enrichmentRequestedAt: new Date(Date.now() - (5 * 60 * 1000)).toISOString(),
     enrichmentHeartbeatAt: new Date(Date.now() - (4 * 60 * 1000)).toISOString(),
   }), 'no_match_yet');
+});
+
+test('asset helpers keep non-reviewable documentation candidates visible for follow-up messaging', async () => {
+  const { getDocumentationSuggestionBuckets } = await loadAssetsHelpers();
+  const buckets = getDocumentationSuggestionBuckets({
+    documentationSuggestions: [
+      {
+        title: 'Strong manual',
+        url: 'https://example.com/manual.pdf',
+        verified: true,
+        exactTitleMatch: true,
+        exactManualMatch: true,
+        trustedSource: true
+      },
+      {
+        title: 'Needs follow-up',
+        url: 'https://example.com/product-page',
+        verified: false,
+        exactTitleMatch: true,
+        exactManualMatch: false
+      },
+      {
+        title: 'Dead page',
+        url: 'https://example.com/dead',
+        deadPage: true
+      }
+    ]
+  });
+  assert.equal(buckets.reviewable.length, 1);
+  assert.equal(buckets.followupCandidates.length, 1);
+  assert.equal(buckets.allCandidates.length, 2);
+});
+
+test('manufacturer normalization canonicalizes Bay Tek aliases for display and apply actions', async () => {
+  const { normalizeManufacturerDisplayName } = await loadManufacturerNormalizationHelpers();
+  assert.equal(normalizeManufacturerDisplayName('baytek'), 'Bay Tek');
+  assert.equal(normalizeManufacturerDisplayName('baytek ent'), 'Bay Tek');
+  assert.equal(normalizeManufacturerDisplayName('Raw Thrills'), 'Raw Thrills');
 });
 
 test('bootstrap error helper surfaces blocked membership lookup permission step', async () => {
