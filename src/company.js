@@ -1,6 +1,7 @@
 import { collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from 'https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore.js';
 import { db } from './firebase.js';
 import { appConfig, isBootstrapAdminEmail } from './config.js';
+import { normalizeMembershipRecords } from './app/membershipCompatibility.js';
 import { logAudit } from './audit.js';
 import { buildInitialBillingScaffold } from './billing.js';
 
@@ -41,9 +42,41 @@ function randomCode(size = 8) {
   return out;
 }
 
-export async function listMembershipsByUser(uid) {
-  const snap = await getDocs(query(collection(db, C.companyMemberships), where('userId', '==', uid), where('status', '==', 'active')));
+function isPermissionDenied(error) {
+  const code = `${error?.code || ''}`.trim().toLowerCase();
+  const message = `${error?.message || ''}`.trim().toLowerCase();
+  return code.includes('permission-denied') || message.includes('missing or insufficient permissions');
+}
+
+async function queryMembershipsByUser(uid, userField, options = {}) {
+  const filters = [where(userField, '==', uid)];
+  if (options.requireActiveStatus) filters.push(where('status', '==', 'active'));
+  const snap = await getDocs(query(collection(db, C.companyMemberships), ...filters));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+export async function listMembershipsByUser(uid) {
+  const legacyMembershipCollection = `${C.companyMemberships || ''}`.trim() === 'workspace_members';
+
+  try {
+    const rows = await queryMembershipsByUser(uid, 'userId', { requireActiveStatus: true });
+    const normalized = normalizeMembershipRecords(rows);
+    if (normalized.length || !legacyMembershipCollection) return normalized;
+  } catch (error) {
+    if (!legacyMembershipCollection || !isPermissionDenied(error)) throw error;
+  }
+
+  const fallbackFields = ['uid', 'userUid', 'memberUid', 'memberId'];
+  const aggregate = [];
+  for (const field of fallbackFields) {
+    try {
+      const rows = await queryMembershipsByUser(uid, field);
+      aggregate.push(...rows);
+    } catch (error) {
+      if (!isPermissionDenied(error)) throw error;
+    }
+  }
+  return normalizeMembershipRecords(aggregate);
 }
 
 export async function getCompany(companyId) {
