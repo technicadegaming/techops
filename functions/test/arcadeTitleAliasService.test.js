@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 
 const {
   resolveArcadeTitleFamily,
-  expandArcadeTitleAliases
+  expandArcadeTitleAliases,
+  normalizeManufacturerName
 } = require('../src/services/arcadeTitleAliasService');
 
 test('resolveArcadeTitleFamily canonicalizes expert-known shorthand titles and infers manufacturers deterministically', () => {
@@ -30,4 +31,10 @@ test('expandArcadeTitleAliases keeps deterministic family aliases for manual loo
 
   assert.equal(sinkIt.includes('Sink It Shootout'), true);
   assert.equal(kingKong.includes('King Kong of Skull Island VR'), true);
+});
+
+test('normalizeManufacturerName canonicalizes Bay Tek shorthand aliases', () => {
+  assert.equal(normalizeManufacturerName('baytek'), 'Bay Tek');
+  assert.equal(normalizeManufacturerName('baytek ent'), 'Bay Tek');
+  assert.equal(normalizeManufacturerName('baytekent'), 'Bay Tek');
 });

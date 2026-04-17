@@ -10,6 +10,7 @@ import {
   doesPreviewContextMatch,
   resolveAssetDraftContext
 } from './assetDraftContext.js';
+import { normalizeManufacturerDisplayName } from './manufacturerNormalization.js';
 
 export function createAssetActions(deps) {
   const {
@@ -648,7 +649,7 @@ export function createAssetActions(deps) {
       const current = state.assets.find((asset) => asset.id === id) || {};
       const patch = {};
       if (mode === 'manufacturer' || mode === 'all') {
-        const suggestedManufacturer = `${current.manufacturerSuggestion || ''}`.trim();
+        const suggestedManufacturer = normalizeManufacturerDisplayName(current.manufacturerSuggestion || '');
         if (suggestedManufacturer) patch.manufacturer = suggestedManufacturer;
       }
       if (mode === 'manuals' || mode === 'all') {

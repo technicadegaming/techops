@@ -11,6 +11,7 @@ import { formatRelativeTime } from './notifications.js';
 import { sortDocumentationSuggestions } from './documentationSuggestions.js';
 import { getReviewableDocumentationSuggestions } from './documentationReview.js';
 import { buildAssetDraftContextDebug, doesPreviewContextMatch, resolveAssetDraftContext } from './assetDraftContext.js';
+import { normalizeManufacturerDisplayName } from './manufacturerNormalization.js';
 
 function renderAssetCardFallback(asset, error) {
   const id = `${asset?.id || 'unknown'}`;
@@ -184,6 +185,19 @@ function getReviewableManualCandidateCount(asset = {}) {
   return getReviewableDocumentationSuggestions(asset).length;
 }
 
+function getDocumentationSuggestionBuckets(asset = {}) {
+  const allCandidates = (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : [])
+    .filter((entry) => !entry?.deadPage && !entry?.unreachable && hasRenderableUrl(entry));
+  const reviewable = getReviewableDocumentationSuggestions(asset);
+  const reviewableUrls = new Set(reviewable.map((entry) => `${entry?.url || ''}`.trim().toLowerCase()).filter(Boolean));
+  const followupCandidates = allCandidates.filter((entry) => !reviewableUrls.has(`${entry?.url || ''}`.trim().toLowerCase()));
+  return {
+    reviewable,
+    followupCandidates,
+    allCandidates
+  };
+}
+
 function deriveAssetManualStatus(asset = {}) {
   const explicitStatus = `${asset?.manualStatus || ''}`.trim();
   if (['attached', 'support_only', 'review_needed', 'no_manual'].includes(explicitStatus)) return explicitStatus;
@@ -294,9 +308,11 @@ function renderPreviewPanel(state) {
 function renderEnrichmentDetails(asset, manager, state) {
   const status = getEffectiveEnrichmentStatus(asset);
   const stale = isEnrichmentStale(asset);
-  const suggestions = getReviewableDocumentationSuggestions(asset);
+  const suggestionBuckets = getDocumentationSuggestionBuckets(asset);
+  const suggestions = suggestionBuckets.reviewable;
+  const followupCandidates = suggestionBuckets.followupCandidates;
   const supportLinks = (Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []).filter((entry) => !entry?.deadPage && !entry?.unreachable);
-  const hiddenDeadLinks = (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).length - suggestions.length;
+  const hiddenDeadLinks = (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).length - suggestionBuckets.allCandidates.length;
   const contacts = Array.isArray(asset.supportContactsSuggestion) ? asset.supportContactsSuggestion : [];
   const showFollowup = status === 'followup_needed' && asset.enrichmentFollowupQuestion;
   const manualState = getAuthoritativeManualState(asset);
@@ -331,7 +347,7 @@ function renderEnrichmentDetails(asset, manager, state) {
           ? renderInlineFeedback('Only support/product resources are linked right now. This asset does not have an attached manual yet.', 'info')
           : renderInlineFeedback('No manual is applied yet. Start with the best verified manual action below.', 'info')}
     <div class="tiny"><b>Model suggestion:</b> ${asset.normalizedName || 'n/a'}${asset.enrichmentConfidence ? ` (${Math.round(Number(asset.enrichmentConfidence) * 100)}% confidence)` : ''}</div>
-    <div class="tiny" style="margin-bottom:8px;"><b>Inferred manufacturer:</b> ${asset.manufacturerSuggestion || asset.manufacturer || 'n/a'}${manager && asset.manufacturerSuggestion && asset.manufacturerSuggestion !== asset.manufacturer ? ` <button data-apply-enrichment="manufacturer" data-asset-id="${asset.id}" type="button">Apply manufacturer</button>` : ''}</div>
+    <div class="tiny" style="margin-bottom:8px;"><b>Inferred manufacturer:</b> ${normalizeManufacturerDisplayName(asset.manufacturerSuggestion || asset.manufacturer || '') || 'n/a'}${manager && asset.manufacturerSuggestion && normalizeManufacturerDisplayName(asset.manufacturerSuggestion) !== normalizeManufacturerDisplayName(asset.manufacturer) ? ` <button data-apply-enrichment="manufacturer" data-asset-id="${asset.id}" type="button">Apply manufacturer</button>` : ''}</div>
 
     <div style="margin-bottom:10px;">
       <div class="tiny" style="font-weight:700; margin-bottom:4px;">Suggested manuals to review</div>
@@ -340,7 +356,10 @@ function renderEnrichmentDetails(asset, manager, state) {
     const confidence = entry.confidence ? ` | ${Math.round(Number(entry.confidence) * 100)}%` : '';
     const score = Number.isFinite(Number(entry.matchScore)) ? ` | score ${Math.round(Number(entry.matchScore))}` : '';
     return `<div class="tiny" style="display:flex; justify-content:space-between; gap:8px; align-items:center; margin:2px 0;"><span><a href="${entry.url}" target="_blank" rel="noopener">${entry.title || entry.url}</a>${confidence}${score} | trust: ${renderSuggestionSource(entry)}</span>${manager ? `<button data-apply-doc-item="${asset.id}" data-doc-index="${index}" type="button">Apply this manual</button>` : ''}</div>`;
-  }).join('') : '<div class="tiny">No suggestion yet.</div>'}
+  }).join('') : (followupCandidates.length
+    ? `<div class="tiny">No verified manual yet. ${followupCandidates.length} candidate link${followupCandidates.length === 1 ? '' : 's'} need follow-up or stronger evidence.</div>
+        ${followupCandidates.slice(0, 2).map((entry) => `<div class="tiny" style="margin:2px 0;"><a href="${entry.url}" target="_blank" rel="noopener">${entry.title || entry.url}</a> | trust: ${renderSuggestionSource(entry)} | score ${Math.round(Number(entry.matchScore || 0)) || 'n/a'}</div>`).join('')}`
+    : '<div class="tiny">No suggestion yet.</div>')}
       ${manager && suggestions.length ? `<div style="margin-top:6px;"><button data-apply-enrichment="manuals" data-asset-id="${asset.id}" type="button" class="primary">Apply best verified manual</button> <button data-apply-docs="${asset.id}" type="button">Apply top trusted docs</button></div>` : ''}
     </div>
 
@@ -747,4 +766,4 @@ export function renderAssets(el, state, actions) {
   }));
 }
 
-export { deriveAssetManualStatus, getAuthoritativeManualState, getEffectiveEnrichmentStatus, isEnrichmentStale };
+export { deriveAssetManualStatus, getAuthoritativeManualState, getEffectiveEnrichmentStatus, isEnrichmentStale, getDocumentationSuggestionBuckets };
