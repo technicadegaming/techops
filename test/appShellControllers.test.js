@@ -21,6 +21,14 @@ async function loadBootstrapErrors() {
   return import('../src/app/bootstrapErrors.js');
 }
 
+async function loadRuntimeCollections() {
+  return import('../src/app/runtimeCollections.js');
+}
+
+async function loadAuthHandoffHelpers() {
+  return import('../src/app/authHandoff.js');
+}
+
 
 async function loadDocumentationReviewHelpers() {
   return import('../src/features/documentationReview.js');
@@ -179,6 +187,47 @@ test('bootstrap error helper preserves non-permission fallback formatting', asyn
     buildBootstrapErrorMessage(new Error('Network timeout while loading workspace context.')),
     'Unable to finish account setup. Network timeout while loading workspace context.'
   );
+});
+
+test('runtime collections mapping accepts workspace aliases for company bootstrap paths', async () => {
+  const { normalizeCollections } = await loadRuntimeCollections();
+  const mapped = normalizeCollections(
+    { companies: 'companies', companyMemberships: 'companyMemberships', users: 'users' },
+    { workspaces: 'workspaces', workspace_members: 'workspace_members' }
+  );
+  assert.equal(mapped.companies, 'workspaces');
+  assert.equal(mapped.companyMemberships, 'workspace_members');
+  assert.equal(mapped.users, 'users');
+});
+
+test('runtime collections mapping keeps explicit canonical overrides ahead of aliases', async () => {
+  const { normalizeCollections } = await loadRuntimeCollections();
+  const mapped = normalizeCollections(
+    { companies: 'companies', companyMemberships: 'companyMemberships' },
+    { companies: 'companies_v2', workspaces: 'workspaces', workspace_members: 'workspace_members' }
+  );
+  assert.equal(mapped.companies, 'companies_v2');
+  assert.equal(mapped.companyMemberships, 'workspace_members');
+});
+
+test('auth handoff fallback engages only for membership lookup permission denial and preserves onboarding path', async () => {
+  const { canFallbackToOnboarding, buildOnboardingFallbackState } = await loadAuthHandoffHelpers();
+  assert.equal(canFallbackToOnboarding({ code: 'permission-denied', bootstrapStep: 'membership_lookup' }), true);
+  assert.equal(canFallbackToOnboarding({ code: 'permission-denied', bootstrapStep: 'legacy_workspace_auto_adopt' }), false);
+
+  const state = {
+    company: { id: 'co-1' },
+    memberships: [{ id: 'co-1_u-1' }],
+    membershipCompanies: { 'co-1_u-1': { id: 'co-1' } },
+    activeMembership: { id: 'co-1_u-1' },
+    onboardingRequired: false
+  };
+  const fallback = buildOnboardingFallbackState(state);
+  assert.equal(fallback.onboardingRequired, true);
+  assert.equal(fallback.company, null);
+  assert.deepEqual(fallback.memberships, []);
+  assert.deepEqual(fallback.membershipCompanies, {});
+  assert.equal(fallback.activeMembership, null);
 });
 
 test('applyActionCenterFocus translates dashboard focus into operations filters and route flags', async () => {
