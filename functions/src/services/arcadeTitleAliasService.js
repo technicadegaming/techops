@@ -20,10 +20,15 @@ function normalizeManufacturerName(value = '') {
     ['baytekent', 'Bay Tek'],
     ['raw thrills', 'Raw Thrills'],
     ['rawthrills', 'Raw Thrills'],
+    ['raw thrills inc', 'Raw Thrills'],
+    ['raw thrills inc.', 'Raw Thrills'],
     ['lai', 'LAI Games'],
     ['lai games', 'LAI Games'],
+    ['lai games inc', 'LAI Games'],
     ['ice', 'ICE'],
-    ['innovative concepts in entertainment', 'ICE']
+    ['innovative concepts in entertainment', 'ICE'],
+    ['innovative concepts in entertainment inc', 'ICE'],
+    ['adrenaline amusements', 'Adrenaline Amusements']
   ]);
   return aliases.get(normalized) || `${value || ''}`.trim();
 }
@@ -54,8 +59,14 @@ const TITLE_ALIAS_FAMILIES = [
   },
   {
     canonical: 'King Kong of Skull Island VR',
-    aliases: ['King Kong VR', 'King Kong of Skull Island', 'King Kong Skull Island VR'],
+    aliases: ['King Kong VR', 'King Kong of Skull Island', 'King Kong Skull Island VR', 'King Kong of Skull Island', 'King Kong'],
     manufacturer: 'Raw Thrills'
+  },
+  {
+    canonical: 'Connect 4 Hoops',
+    aliases: ['Connect 4', 'Connect Four', 'Connect 4 Basketball', 'Connect 4 Hoops'],
+    manufacturer: 'Bay Tek',
+    alternateTitles: ['Connect Four Hoops']
   },
   {
     canonical: 'Fast & Furious Arcade',

@@ -24,6 +24,8 @@ test('buildManualSearchQueries prioritizes official domains for known manufactur
   assert.match(queries.officialQueries[0], /site:parts\.baytekent\.com/i);
   assert.match(queries.exactTitleQueries[0], /"Bay Tek(?: Games)?" "Quik Drop" "service manual" pdf/);
   assert.match(queries.fallbackQueries[0], /site:betson\.com/i);
+  assert.ok(queries.exactTitleQueries.some((query) => /"Quik Drop" manual pdf/i.test(query)));
+  assert.ok(queries.fallbackQueries.some((query) => /"Quik Drop" distributor manual/i.test(query)));
 });
 
 test('buildManufacturerDiscoveryAdapters exposes deterministic candidates for Bay Tek, ICE, and Raw Thrills', () => {
@@ -717,8 +719,8 @@ test('discoverManualDocumentation caps slow search work and degrades repeated pr
 
   assert.equal(result.documentationLinks.length, 0);
   assert.equal(result.supportResources.length, 0);
-  assert.equal(queries.length, 6);
-  assert.equal(result.queriesTried.length, 6);
+  assert.equal(queries.length, 12);
+  assert.equal(result.queriesTried.length, 12);
 });
 
 test('extractManualLinksFromHtmlPage returns empty rows when source fetch aborts', async () => {

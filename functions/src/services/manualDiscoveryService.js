@@ -5,7 +5,7 @@ const MAX_DISCOVERY_RESULTS = 10;
 const MAX_FOLLOWUP_FETCHES = 4;
 const MAX_ADAPTER_FETCHES = 8;
 const MAX_SEED_FETCHES = 6;
-const MAX_SEARCH_QUERIES = 6;
+const MAX_SEARCH_QUERIES = 12;
 const FETCH_TIMEOUT_MS = 3500;
 const SEARCH_FOLLOWUP_PRIORITY = 0;
 const ADAPTER_FOLLOWUP_PRIORITY = 1;
@@ -235,14 +235,32 @@ function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) 
     ? `(${manufacturerTerms.map((term) => `"${term}"`).join(' OR ')})`
     : '';
 
-  const exactTitleQueries = titleQueryVariants.flatMap((titleVariant) => manufacturerTerms.flatMap((term) => ([
-    `"${term}" "${titleVariant}" "service manual" pdf`,
-    `"${term}" "${titleVariant}" "operator manual" pdf`,
-    `"${term}" "${titleVariant}" "parts manual" pdf`,
-    `"${term}" "${titleVariant}" "installation manual" pdf`,
-    `"${term}" "${titleVariant}" manual pdf`,
-    `"${term}" "${titleVariant}" exact title pdf`
-  ])));
+  const exactTitleQueries = titleQueryVariants.flatMap((titleVariant) => {
+    const withManufacturer = manufacturerTerms.flatMap((term) => ([
+      `"${term}" "${titleVariant}" "service manual" pdf`,
+      `"${term}" "${titleVariant}" "operator manual" pdf`,
+      `"${term}" "${titleVariant}" "parts manual" pdf`,
+      `"${term}" "${titleVariant}" "installation manual" pdf`,
+      `"${term}" "${titleVariant}" manual pdf`,
+      `"${term}" "${titleVariant}" "install guide" pdf`
+    ]));
+    const titleOnly = [
+      `"${titleVariant}" manual pdf`,
+      `"${titleVariant}" "operator manual"`,
+      `"${titleVariant}" "service manual"`,
+      `"${titleVariant}" "installation manual"`,
+      `"${titleVariant}" support downloads`,
+      `"${titleVariant}" product page manual`
+    ];
+    return [...withManufacturer, ...titleOnly];
+  });
+
+  const dealerQueries = titleQueryVariants.flatMap((titleVariant) => ([
+    `"${titleVariant}" distributor manual`,
+    `"${titleVariant}" dealer manual`,
+    `"${titleVariant}" distributor support`,
+    `"${titleVariant}" dealer support`,
+  ]));
 
   const fallbackQueries = manufacturerProfile?.lowTrustSourceTokens?.flatMap((domain) => titleQueryVariants.flatMap((titleVariant) => ([
     `site:${domain} "${titleVariant}" ${manufacturerOrClause} (manual OR "service manual" OR "operator manual") (pdf OR download)`,
@@ -258,7 +276,7 @@ function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) 
   return {
     officialQueries: Array.from(new Set(officialQueries)).filter(Boolean),
     exactTitleQueries: Array.from(new Set(exactTitleQueries)).filter(Boolean),
-    fallbackQueries: Array.from(new Set(fallbackQueries)).filter(Boolean)
+    fallbackQueries: Array.from(new Set([...fallbackQueries, ...dealerQueries])).filter(Boolean)
   };
 }
 
@@ -923,6 +941,21 @@ async function discoverManualDocumentation({ assetName, normalizedName, manufact
   const manualRows = [];
   const supportRows = [];
   const followupPages = [];
+  const evidenceRows = [];
+  const recordEvidence = (entry = {}) => {
+    if (evidenceRows.length >= 60) return;
+    const url = `${entry.url || ''}`.trim();
+    if (!url) return;
+    evidenceRows.push({
+      queryMode: `${entry.queryMode || ''}`.slice(0, 40),
+      query: sanitizeDiagnosticValue(entry.query, 180),
+      title: sanitizeDiagnosticValue(entry.title, 140),
+      url,
+      classification: `${entry.classification || ''}`.slice(0, 60),
+      acceptedAs: `${entry.acceptedAs || ''}`.slice(0, 40),
+      rejectionReasons: Array.isArray(entry.rejectionReasons) ? entry.rejectionReasons.slice(0, 6) : [],
+    });
+  };
   const adapterCandidates = buildManufacturerDiscoveryAdapters({ title, manufacturerProfile });
   const seedPages = buildManufacturerDiscoverySeedPages({ title, manufacturerProfile });
 
@@ -1021,6 +1054,14 @@ async function discoverManualDocumentation({ assetName, normalizedName, manufact
           sourceType: classification.sourceType,
           discoverySource: mode
         });
+        recordEvidence({
+          queryMode: mode,
+          query,
+          title: result.title,
+          url: result.url,
+          classification: 'manual_candidate',
+          acceptedAs: 'verified_manual_candidate',
+        });
         continue;
       }
       if (classification.titleSpecificSupport && !classification.genericSupport) {
@@ -1032,6 +1073,23 @@ async function discoverManualDocumentation({ assetName, normalizedName, manufact
           url: result.url,
           resourceType: classification.resourceType,
           discoverySource: mode
+        });
+        recordEvidence({
+          queryMode: mode,
+          query,
+          title: result.title,
+          url: result.url,
+          classification: 'support_candidate',
+          acceptedAs: 'support_or_product_page',
+        });
+      } else {
+        recordEvidence({
+          queryMode: mode,
+          query,
+          title: result.title,
+          url: result.url,
+          classification: 'weak_lead',
+          rejectionReasons: classification.rejectionReasons,
         });
       }
     }
@@ -1084,7 +1142,8 @@ async function discoverManualDocumentation({ assetName, normalizedName, manufact
   return {
     documentationLinks,
     supportResources,
-    queriesTried: queries.map((entry) => entry.query)
+    queriesTried: queries.map((entry) => entry.query),
+    evidence: evidenceRows,
   };
 }
 
