@@ -88,7 +88,7 @@ function createFetchMock() {
   };
 }
 
-test('researchAssetTitles keeps stage 1 exact manuals without invoking stage 2 fallback', async () => {
+test('researchAssetTitles runs OpenAI first and still resolves durable Quick Drop manuals', async () => {
   let stageTwoCalls = 0;
   const result = await researchAssetTitles({
     db: createDb(),
@@ -100,18 +100,35 @@ test('researchAssetTitles keeps stage 1 exact manuals without invoking stage 2 f
     storage: createStorageMock(),
     researchFallback: async () => {
       stageTwoCalls += 1;
-      throw new Error('stage two should not run for exact catalog manuals');
+      return {
+        normalizedTitle: 'Quik Drop',
+        manufacturer: 'Bay Tek Games',
+        manufacturerInferred: false,
+        matchType: 'support_only',
+        manualReady: false,
+        reviewRequired: true,
+        manualUrl: '',
+        manualSourceUrl: 'https://parts.baytekent.com/support/quik-drop',
+        supportUrl: 'https://parts.baytekent.com/support/quik-drop',
+        supportEmail: '',
+        supportPhone: '',
+        confidence: 0.42,
+        matchNotes: 'OpenAI yielded weak support-only leads; trigger fallback scraping.',
+        candidates: [],
+        citations: [],
+        rawResearchSummary: 'No verified candidate returned from OpenAI.',
+      };
     },
   });
 
-  assert.equal(stageTwoCalls, 0);
+  assert.equal(stageTwoCalls, 1);
   assert.equal(result.results[0].matchType, 'exact_manual');
   assert.equal(result.results[0].manualReady, true);
-  assert.match(result.results[0].manualUrl, /^manual-library\/bay-tek\/quik-drop\/.+\.pdf$/i);
+  assert.match(result.results[0].manualUrl, /^manual-library\/bay-tek(?:-games)?\/quik-drop\/.+\.pdf$/i);
   assert.ok(result.results[0].manualLibraryRef);
 });
 
-test('researchAssetTitles invokes stage 2 fallback only for unresolved review-required titles', async () => {
+test('researchAssetTitles invokes OpenAI path first for unresolved review-required titles', async () => {
   let stageTwoCalls = 0;
   const result = await researchAssetTitles({
     db: createDb(),
@@ -340,7 +357,11 @@ test('researchAssetTitles emits explicit logs and backend validation can promote
     assert.ok(markers.includes('manualResearch:stage2_prompt_built'));
     assert.ok(markers.includes('manualResearch:stage2_response_received'));
     assert.ok(markers.includes('manualResearch:openai_candidate_json_returned'));
-    assert.ok(markers.includes('manualResearch:selected_candidate'));
+    assert.ok(markers.includes('manualResearch:OPENAI_SEARCH_STARTED'));
+    assert.ok(markers.includes('manualResearch:OPENAI_CANDIDATES_RECEIVED'));
+    assert.ok(markers.includes('manualResearch:OPENAI_SELECTED_CANDIDATE'));
+    assert.ok(markers.includes('manualResearch:ACQUISITION_RESULT'));
+    assert.ok(markers.includes('manualResearch:TERMINAL_STATUS_REASON'));
     assert.ok(markers.includes('manualResearch:stage2_candidates_extracted'));
     assert.ok(markers.includes('manualResearch:final_result'));
   } finally {
@@ -702,12 +723,29 @@ test('researchAssetTitles reuses previously approved company manuals before web 
     storage: createStorageMock(),
     researchFallback: async () => {
       stageTwoCalls += 1;
-      throw new Error('stage two should not run when approved manual reuse resolves the title');
+      return {
+        normalizedTitle: 'Quik Drop',
+        manufacturer: 'Bay Tek Games',
+        manufacturerInferred: false,
+        matchType: 'support_only',
+        manualReady: false,
+        reviewRequired: true,
+        manualUrl: '',
+        manualSourceUrl: 'https://www.betson.com/amusement-products/quik-drop/',
+        supportUrl: 'https://www.betson.com/amusement-products/quik-drop/',
+        supportEmail: '',
+        supportPhone: '',
+        confidence: 0.39,
+        matchNotes: 'No manual candidate from OpenAI.',
+        candidates: [],
+        citations: [],
+        rawResearchSummary: 'OpenAI returned no viable candidates.',
+      };
     },
   });
 
-  assert.equal(stageTwoCalls, 0);
+  assert.equal(stageTwoCalls, 1);
   assert.equal(result.results[0].manualReady, true);
-  assert.match(result.results[0].manualUrl, /^manual-library\/bay-tek\/quik-drop\/.+\.pdf$/i);
+  assert.match(result.results[0].manualUrl, /^manual-library\/bay-tek(?:-games)?\/quik-drop\/.+\.pdf$/i);
   assert.ok(result.results[0].manualLibraryRef);
 });
