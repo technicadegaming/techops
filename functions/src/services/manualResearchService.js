@@ -869,56 +869,85 @@ async function researchAssetTitles({
     }
 
     let manualLibraryAcquisition = null;
+    let acquiredCandidateIndex = -1;
     let acquisitionState = 'skipped';
     let acquisitionError = '';
+    let lastFailureState = '';
+    let lastFailureError = '';
     if (documentationSuggestions.length) {
       acquisitionState = 'started';
-      logManualResearchEvent('manual_acquisition_start', {
-        ...logContext,
-        title: originalTitle,
-        normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
-        manufacturer: summary.manufacturer || stageOne.manufacturer,
-        candidateUrl: documentationSuggestions[0]?.url || '',
-        sourcePageUrl: documentationSuggestions[0]?.sourcePageUrl || summary.manualSourceUrl || '',
-      });
-      manualLibraryAcquisition = await withTimeout(
-        acquireManualToLibrary({
-          db,
-          storage,
-          fetchImpl,
-          candidate: documentationSuggestions[0],
-          context: {
-            originalTitle,
-            canonicalTitle: summary.canonicalTitle || stageOne.canonicalTitleFamily,
+      for (let index = 0; index < documentationSuggestions.length; index += 1) {
+        const candidate = documentationSuggestions[index];
+        if (index > 0) {
+          logManualResearchEvent('CANDIDATE_RETRY', {
+            ...logContext,
+            title: originalTitle,
             normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
-            familyTitle: stageOne.canonicalTitleFamily,
             manufacturer: summary.manufacturer || stageOne.manufacturer,
-            manufacturerProfile: stageOne.manufacturerProfile,
-            manualSourceUrl: summary.manualSourceUrl,
-            manualUrl: summary.manualUrl,
-            matchType: summary.matchType,
-            matchConfidence: summary.matchConfidence || summary.confidence,
-            notes: summary.matchNotes || '',
-            catalogEntryId: stageOne.catalogMatch?.catalogEntryId || '',
-            seededFromWorkbook: stageOne.catalogMatch?.seededFromWorkbook === true,
-            downloadTimeoutMs: MANUAL_ACQUISITION_TIMEOUT_MS,
-          },
-        }),
-        MANUAL_ACQUISITION_TIMEOUT_MS,
-        `Manual acquisition timed out after ${MANUAL_ACQUISITION_TIMEOUT_MS}ms`,
-      ).catch((error) => {
-        acquisitionError = normalizeErrorMessage(error);
-        acquisitionState = `${error?.code || ''}` === 'deadline-exceeded' ? 'timed_out' : 'failed';
-        logManualResearchEvent(acquisitionState === 'timed_out' ? 'manual_acquisition_timeout' : 'manual_acquisition_failed', {
+            attempt: index + 1,
+            candidateUrl: candidate?.url || '',
+            previousCandidateUrl: documentationSuggestions[index - 1]?.url || '',
+          });
+        }
+        logManualResearchEvent('manual_acquisition_start', {
           ...logContext,
           title: originalTitle,
           normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
           manufacturer: summary.manufacturer || stageOne.manufacturer,
-          reason: acquisitionError,
+          candidateUrl: candidate?.url || '',
+          sourcePageUrl: candidate?.sourcePageUrl || summary.manualSourceUrl || '',
         });
-        return null;
-      });
-      if (manualLibraryAcquisition) acquisitionState = manualLibraryAcquisition.manualReady ? 'succeeded' : 'no_manual';
+        manualLibraryAcquisition = await withTimeout(
+          acquireManualToLibrary({
+            db,
+            storage,
+            fetchImpl,
+            candidate,
+            context: {
+              originalTitle,
+              canonicalTitle: summary.canonicalTitle || stageOne.canonicalTitleFamily,
+              normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+              familyTitle: stageOne.canonicalTitleFamily,
+              manufacturer: summary.manufacturer || stageOne.manufacturer,
+              manufacturerProfile: stageOne.manufacturerProfile,
+              manualSourceUrl: summary.manualSourceUrl,
+              manualUrl: summary.manualUrl,
+              matchType: summary.matchType,
+              matchConfidence: summary.matchConfidence || summary.confidence,
+              notes: summary.matchNotes || '',
+              catalogEntryId: stageOne.catalogMatch?.catalogEntryId || '',
+              seededFromWorkbook: stageOne.catalogMatch?.seededFromWorkbook === true,
+              downloadTimeoutMs: MANUAL_ACQUISITION_TIMEOUT_MS,
+            },
+          }),
+          MANUAL_ACQUISITION_TIMEOUT_MS,
+          `Manual acquisition timed out after ${MANUAL_ACQUISITION_TIMEOUT_MS}ms`,
+        ).catch((error) => {
+          acquisitionError = normalizeErrorMessage(error);
+          acquisitionState = `${error?.code || ''}` === 'deadline-exceeded' ? 'timed_out' : 'failed';
+          lastFailureState = acquisitionState;
+          lastFailureError = acquisitionError;
+          logManualResearchEvent(acquisitionState === 'timed_out' ? 'manual_acquisition_timeout' : 'manual_acquisition_failed', {
+            ...logContext,
+            title: originalTitle,
+            normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+            manufacturer: summary.manufacturer || stageOne.manufacturer,
+            reason: acquisitionError,
+            candidateUrl: candidate?.url || '',
+          });
+          return null;
+        });
+        if (manualLibraryAcquisition?.manualReady && manualLibraryAcquisition.manualLibrary) {
+          acquiredCandidateIndex = index;
+          acquisitionState = 'succeeded';
+          break;
+        }
+        if (!lastFailureState) acquisitionState = 'no_manual';
+      }
+      if (!manualLibraryAcquisition?.manualReady && lastFailureState) {
+        acquisitionState = lastFailureState;
+        acquisitionError = lastFailureError || acquisitionError;
+      }
     }
     if (manualLibraryAcquisition?.manualReady && manualLibraryAcquisition.manualLibrary) {
       const library = manualLibraryAcquisition.manualLibrary;
@@ -935,7 +964,7 @@ async function researchAssetTitles({
         manualStoragePath: library.storagePath || '',
         manualVariant: library.variant || '',
       };
-      documentationSuggestions = documentationSuggestions.map((entry, index) => index === 0 ? {
+      documentationSuggestions = documentationSuggestions.map((entry, index) => index === acquiredCandidateIndex ? {
         ...entry,
         url: storageUrl,
         sourcePageUrl: library.sourcePageUrl || entry.sourcePageUrl || '',
