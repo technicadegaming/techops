@@ -262,6 +262,16 @@ function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) 
     ? `(${manufacturerTerms.map((term) => `"${term}"`).join(' OR ')})`
     : '';
 
+  const primaryTitleVariant = titleQueryVariants[0] || cleanTitle;
+  const primaryManufacturerTerm = manufacturerTerms[0] || `${manufacturer || ''}`.trim();
+  const broadFirstQueries = Array.from(new Set([
+    `"${primaryTitleVariant}" arcade manual pdf`,
+    primaryManufacturerTerm ? `"${primaryTitleVariant}" "${primaryManufacturerTerm}" manual pdf` : '',
+    primaryManufacturerTerm ? `filetype:pdf ${primaryTitleVariant} ${primaryManufacturerTerm}`.replace(/\s+/g, ' ').trim() : '',
+    `"${primaryTitleVariant}" operator manual`,
+    `"${primaryTitleVariant}" service manual pdf`,
+  ].filter(Boolean)));
+
   const exactTitleQueries = titleQueryVariants.flatMap((titleVariant) => {
     const withManufacturer = manufacturerTerms.flatMap((term) => ([
       `"${term}" "${titleVariant}" "service manual" pdf`,
@@ -327,6 +337,7 @@ function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) 
   ].map((query) => query.replace(/\s+/g, ' ').trim()))));
 
   return {
+    broadFirstQueries: Array.from(new Set(broadFirstQueries)).filter(Boolean),
     officialQueries: Array.from(new Set(officialQueries)).filter(Boolean),
     exactTitleQueries: Array.from(new Set([...exactTitleQueries, ...globalQueries, ...broadQueries])).filter(Boolean),
     fallbackQueries: Array.from(new Set([...fallbackQueries, ...dealerQueries])).filter(Boolean)
@@ -377,18 +388,19 @@ function scoreManualCandidate(candidate = {}, { titleVariants = [], manufacturer
   };
 
   if (isDiscovered) add('discovered_source_bonus', 28);
-  if (isAdapterGuess) add('generated_adapter_guess_penalty', -14);
+  if (isAdapterGuess) add('generated_adapter_guess_penalty', -24);
   if (isDirectPdf) add('direct_pdf_bonus', 26);
   if (!isDirectPdf) add('non_pdf_penalty', -20);
+  if (isDirectPdf && /\/(?:uploads?|wp-content)\//.test(path)) add('direct_pdf_upload_path_bonus', 18);
   if (manufacturerAligned) add('manufacturer_alignment_bonus', 14);
   if (hasStrongTitleFamilyMatch) add('title_family_exact_bonus', 20);
   if (hasPartialTitleFamilyMatch) add('title_family_partial_bonus', 10);
   if (fileNameHasManualIntent) add('manual_filename_bonus', 10);
   if (fileNameHasPartNumber) add('manual_part_number_bonus', 22);
   if (fileNameHasRevision) add('manual_revision_bonus', 18);
-  if (adapterSlugGuessLike) add('adapter_slug_guess_penalty', -18);
-  if (/support|service-support|downloads?\/?$/.test(path) && !isDirectPdf) add('support_page_penalty', -20);
-  if (/brochure|spec|sell[-_ ]?sheet|catalog/.test(lowerUrl)) add('brochure_penalty', -22);
+  if (adapterSlugGuessLike) add('adapter_slug_guess_penalty', -26);
+  if (/support|service-support|downloads?\/?$/.test(path) && !isDirectPdf) add('support_page_penalty', -26);
+  if (/brochure|spec|sell[-_ ]?sheet|catalog|install(?:ation)?-?sheet/.test(lowerUrl)) add('brochure_penalty', -26);
   if (sourceType === 'support') add('support_source_penalty', -10);
 
   return {
@@ -452,14 +464,17 @@ function isQueryDrivenStoreAppUrl(url = '') {
   }
 }
 
-function buildDeadLinkQueries({ title = '', failedUrl = '' }) {
+function buildDeadLinkQueries({ title = '', manufacturer = '', failedUrl = '' }) {
   const fileName = extractFileNameFromUrl(failedUrl);
   const skipFileNameRecovery = isGenericDeadLinkBasename(fileName) || isQueryDrivenStoreAppUrl(failedUrl);
   const cleanTitle = `${title || ''}`.trim();
+  const cleanManufacturer = `${manufacturer || ''}`.trim();
   return Array.from(new Set([
     !skipFileNameRecovery && fileName ? `"${fileName}"` : '',
-    !skipFileNameRecovery && fileName ? `"${fileName}" manual` : '',
+    !skipFileNameRecovery && fileName ? `"${fileName}" pdf` : '',
     !skipFileNameRecovery && fileName ? `filetype:pdf "${fileName}"` : '',
+    cleanTitle ? `"${cleanTitle}" manual pdf` : '',
+    cleanTitle && cleanManufacturer ? `"${cleanTitle}" "${cleanManufacturer}" pdf` : '',
     cleanTitle ? `filetype:pdf "${cleanTitle}"` : '',
   ].filter(Boolean)));
 }
@@ -956,6 +971,34 @@ function dedupeByUrl(rows) {
   });
 }
 
+function getDiscoverySourcePriority(source = '') {
+  const normalized = `${source || ''}`.trim().toLowerCase();
+  if (normalized === 'official') return 5;
+  if (normalized === 'exact_pdf') return 4;
+  if (normalized === 'broad_first') return 3;
+  if (normalized === 'fallback') return 2;
+  if (normalized.startsWith('seed:') || normalized === 'html_followup') return 1;
+  if (normalized.startsWith('adapter:')) return 0;
+  return 1;
+}
+
+function consolidateByUrlWithSourcePreference(rows = []) {
+  const byUrl = new Map();
+  for (const row of rows) {
+    const key = `${row?.url || ''}`.trim().toLowerCase();
+    if (!key) continue;
+    const existing = byUrl.get(key);
+    if (!existing) {
+      byUrl.set(key, row);
+      continue;
+    }
+    if (getDiscoverySourcePriority(row.discoverySource) > getDiscoverySourcePriority(existing.discoverySource)) {
+      byUrl.set(key, { ...existing, ...row });
+    }
+  }
+  return Array.from(byUrl.values());
+}
+
 function buildFollowupExecutionPlan(followupPages) {
   const deduped = dedupeByUrl(followupPages);
   const searchPages = deduped.filter((page) => Number(page.priority) === SEARCH_FOLLOWUP_PRIORITY);
@@ -1250,8 +1293,9 @@ async function discoverManualDocumentation({
     .map((value) => normalizePhrase(value))
     .filter(Boolean);
   const logEvent = buildDiagnosticLogger({ logger, traceId });
-  const { officialQueries, exactTitleQueries, fallbackQueries } = buildManualSearchQueries({ manufacturer, title, manufacturerProfile });
+  const { broadFirstQueries, officialQueries, exactTitleQueries, fallbackQueries } = buildManualSearchQueries({ manufacturer, title, manufacturerProfile });
   const queries = [
+    ...broadFirstQueries.map((query) => ({ query, mode: 'broad_first' })),
     ...officialQueries.map((query) => ({ query, mode: 'official' })),
     ...exactTitleQueries.map((query) => ({ query, mode: 'exact_pdf' })),
     ...fallbackQueries.map((query) => ({ query, mode: 'fallback' })),
@@ -1367,6 +1411,18 @@ async function discoverManualDocumentation({
         url: result.url
       }))
     });
+    if (!results.length) {
+      logEvent('result_classification', {
+        mode,
+        title: '',
+        url: '',
+        includeManual: false,
+        includeSupport: false,
+        exactMachineManual: false,
+        titleSpecificSupport: false,
+        rejectionReasons: ['no_results']
+      });
+    }
 
     for (const result of results) {
       const classification = classifyManualCandidate({
@@ -1473,10 +1529,15 @@ async function discoverManualDocumentation({
   const validatedManualRows = [];
   const recoveryRows = [];
   const deadManualUrls = new Set();
-  const rankedManualRows = dedupeByUrl([...manualRows, ...followedRows])
+  const rankedManualRows = consolidateByUrlWithSourcePreference([...manualRows, ...followedRows])
     .map((candidate) => scoreManualCandidate(candidate, { titleVariants, manufacturerTerms }))
     .filter(Boolean)
-    .sort((a, b) => b.candidateScore - a.candidateScore || `${a.url || ''}`.localeCompare(`${b.url || ''}`));
+    .sort((a, b) => {
+      const aDiscoveredDirectPdf = !`${a.discoverySource || ''}`.startsWith('adapter:') && a.candidateScoringFlags?.isDirectPdf;
+      const bDiscoveredDirectPdf = !`${b.discoverySource || ''}`.startsWith('adapter:') && b.candidateScoringFlags?.isDirectPdf;
+      if (aDiscoveredDirectPdf !== bDiscoveredDirectPdf) return aDiscoveredDirectPdf ? -1 : 1;
+      return b.candidateScore - a.candidateScore || `${a.url || ''}`.localeCompare(`${b.url || ''}`);
+    });
   const candidateManualRows = rankedManualRows.slice(0, MAX_DISCOVERY_RESULTS * 2);
   if (candidateManualRows.length > 1) {
     const best = candidateManualRows[0];
@@ -1505,22 +1566,34 @@ async function discoverManualDocumentation({
     }))
   });
   for (const candidate of candidateManualRows) {
+    logEvent('CANDIDATE_RETRY', {
+      candidateUrl: candidate.url,
+      discoverySource: candidate.discoverySource,
+      candidateScore: candidate.candidateScore,
+      attempt: validatedManualRows.length + deadManualUrls.size + 1,
+    });
     try {
       const response = await fetchWithTimeout(candidate.url, { method: 'HEAD', headers: { 'user-agent': SEARCH_USER_AGENT } }, fetchImpl);
       if (response.ok) {
         validatedManualRows.push(candidate);
+        logEvent('FINAL_CANDIDATE_SUCCESS', {
+          candidateUrl: candidate.url,
+          discoverySource: candidate.discoverySource,
+          candidateScore: candidate.candidateScore,
+        });
         continue;
       }
       if (response.status !== 404) continue;
       deadManualUrls.add(candidate.url.toLowerCase());
-      const deadLinkQueries = buildDeadLinkQueries({ title, failedUrl: candidate.url });
+      const deadLinkQueries = buildDeadLinkQueries({ title, manufacturer, failedUrl: candidate.url });
+      logEvent('RECOVERY_SEARCH_STARTED', { url: candidate.url, status: response.status, fileName: extractFileNameFromUrl(candidate.url), queries: deadLinkQueries });
       logEvent('dead_link_recovery_start', { url: candidate.url, status: response.status, fileName: extractFileNameFromUrl(candidate.url), queries: deadLinkQueries });
       for (const query of deadLinkQueries) {
         for (let attempt = 0; attempt < providerPlan.length; attempt += 1) {
           const provider = providerPlan[attempt];
           const results = await provider.fn(query, fetchImpl, searchProviderOptions).catch(() => null);
           if (!Array.isArray(results)) continue;
-          logEvent('dead_link_recovery_attempt', { failedUrl: candidate.url, provider: provider.name, attempt: attempt + 1, query: sanitizeDiagnosticValue(query, 160), results: results.length });
+          logEvent('RECOVERY_RESULTS', { failedUrl: candidate.url, provider: provider.name, attempt: attempt + 1, query: sanitizeDiagnosticValue(query, 160), results: results.length });
           for (const result of results.slice(0, MAX_SEARCH_RESULTS_PER_QUERY)) {
             const classification = classifyManualCandidate({
               title: result.title,
