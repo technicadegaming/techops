@@ -589,6 +589,46 @@ test('source page that exists but has no downloadable manual stays support/follo
   assert.equal(result.results[0].pipelineMeta.acquisitionState, 'no_manual');
 });
 
+test('Connect 4 brochure/spec PDFs remain support_product_page candidates and never claim durable manual attachment', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{ originalTitle: 'Connect 4 Hoops', manufacturerHint: 'Bay Tek Games' }],
+    traceId: 'test-connect-4-brochure-spec',
+    storage: createStorageMock(),
+    fetchImpl: async (url, options = {}) => ({
+      ok: true,
+      status: 200,
+      url,
+      headers: { get: () => options.method === 'HEAD' ? 'application/pdf' : 'text/html' },
+      text: async () => '<html><body>Product brochure and specs only.</body></html>',
+      arrayBuffer: async () => Buffer.from('<html><body>Not a manual</body></html>'),
+    }),
+    researchFallback: async () => ({
+      normalizedTitle: 'Connect 4 Hoops',
+      manufacturer: 'Bay Tek Games',
+      matchType: 'title_specific_source',
+      manualReady: false,
+      reviewRequired: true,
+      manualUrl: 'https://www.betson.com/wp-content/uploads/connect-4-hoops-brochure.pdf',
+      manualSourceUrl: 'https://www.betson.com/amusement-products/connect-4-hoops/',
+      supportUrl: 'https://www.betson.com/amusement-products/connect-4-hoops/',
+      confidence: 0.58,
+      matchNotes: 'Brochure/spec links found; no install/service manual.',
+      citations: [],
+      rawResearchSummary: 'Connect 4 brochure and spec docs.',
+    }),
+  });
+
+  assert.equal(result.results[0].manualReady, false);
+  assert.equal(result.results[0].status, 'followup_needed');
+  assert.equal(result.results[0].manualLibraryRef, '');
+  assert.equal(result.results[0].manualStoragePath, '');
+  assert.equal(result.results[0].pipelineMeta.acquisitionState, 'no_manual');
+  assert.equal(result.results[0].documentationSuggestions[0].candidateBucket, 'support_product_page');
+});
+
 test('researchAssetTitles reuses previously approved company manuals before web fallback', async () => {
   let stageTwoCalls = 0;
   const result = await researchAssetTitles({

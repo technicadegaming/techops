@@ -1903,6 +1903,44 @@ test('finalizeSingleAssetEnrichment strips non-durable searching statuses after 
   assert.equal(result.finalManualMatchSummary.manualReady, false);
 });
 
+test('finalizeSingleAssetEnrichment upgrades no_manual acquisition evidence to followup_needed when no durable manual is attached', () => {
+  const result = finalizeSingleAssetEnrichment({
+    asset: {},
+    cleanedResult: {
+      documentationSuggestions: [],
+      supportResourcesSuggestion: [],
+      enrichmentFollowupQuestion: '',
+      manualMatchSummary: { matchType: 'title_specific_source', manualReady: false },
+    },
+    preview: {},
+    manualFields: {
+      manualLibraryRef: '',
+      manualStoragePath: '',
+      manualLinks: [],
+      manualSourceUrl: '',
+      supportUrl: '',
+      matchType: 'title_specific_source',
+      manualReady: false,
+    },
+    acquisitionState: 'no_manual',
+    resolvedStatus: 'no_match_yet',
+  });
+
+  assert.equal(result.finalStatus, 'followup_needed');
+  assert.equal(result.authoritativeManualAttached, false);
+});
+
+test('hasAuthoritativeManualAttachment ignores non-durable http manualStoragePath values', () => {
+  assert.equal(hasAuthoritativeManualAttachment({
+    manualLibraryRef: '',
+    manualStoragePath: 'https://example.com/manuals/connect-4-spec-sheet.pdf',
+  }), false);
+  assert.equal(hasAuthoritativeManualAttachment({
+    manualLibraryRef: '',
+    manualStoragePath: 'manual-library/bay-tek/connect-4/guide.pdf',
+  }), true);
+});
+
 test('repairStaleInProgressAsset terminalizes stale searching_docs records with follow-up context', async () => {
   const repaired = await repairStaleInProgressAsset({
     asset: {
