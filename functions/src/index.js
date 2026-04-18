@@ -354,6 +354,12 @@ exports.regenerateTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, as
 });
 
 exports.enrichAssetDocumentation = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
+  console.error('ENRICH_DEBUG', JSON.stringify({
+    data: request.data || null,
+    uid: request.auth?.uid || null,
+    appCheck: request.app ? 'present' : 'missing',
+  }));
+
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
   assertString(request.data?.assetId, 'assetId');
 
@@ -364,12 +370,22 @@ exports.enrichAssetDocumentation = onCall({ secrets: [OPENAI_API_KEY] }, async (
     getUserRole,
   });
 
+  console.error('ENRICH_AUTHZ', JSON.stringify(authz));
+
   if (!authz.allowed) {
     if (authz.scope === 'asset_not_found') throw new HttpsError('not-found', 'Asset not found');
     throw new HttpsError('permission-denied', 'Insufficient role for asset enrichment');
   }
 
-  const settings = await getAiSettings(authz.companyId);
+  const resolvedCompanyId = normalizeCompanyId(authz.companyId || request.data?.companyId);
+
+  const settings = await getAiSettings(resolvedCompanyId);
+
+  console.error('ENRICH_SETTINGS', JSON.stringify({
+    companyId: resolvedCompanyId || null,
+    aiEnabled: !!settings.aiEnabled,
+  }));
+
   if (!settings.aiEnabled) {
     const status = await finalizeAssetEnrichmentWhenAiDisabled({
       assetId: request.data.assetId,
@@ -377,6 +393,13 @@ exports.enrichAssetDocumentation = onCall({ secrets: [OPENAI_API_KEY] }, async (
     });
     return { ok: false, status, message: 'AI is disabled by admin settings' };
   }
+
+  console.error('ENRICH_CALL_SERVICE', JSON.stringify({
+    assetId: request.data?.assetId || null,
+    trigger: request.data?.trigger || null,
+    followupAnswer: `${request.data?.followupAnswer || ''}`.trim(),
+    companyId: resolvedCompanyId || null,
+  }));
 
   return enrichAssetDocumentation({
     db,
