@@ -1026,7 +1026,10 @@ function scoreSuggestion({ row, asset, fallbackConfidence, normalizedName, manuf
     verificationMetadata: row.verificationMetadata || null,
     notes: row.notes || '',
     catalogEntryId: row.catalogEntryId || '',
-    linkType: row.linkType || ''
+    linkType: row.linkType || '',
+    discoverySource: row.discoverySource || '',
+    discoveryCandidateScore: Number(row.candidateScore || 0) || 0,
+    discoveryCandidateScoreContributions: Array.isArray(row.candidateScoreContributions) ? row.candidateScoreContributions : [],
   };
 
   return {
