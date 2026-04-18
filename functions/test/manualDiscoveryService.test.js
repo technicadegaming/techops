@@ -27,8 +27,22 @@ test('buildManualSearchQueries prioritizes official domains for known manufactur
   assert.ok(queries.exactTitleQueries.some((query) => /"Quik Drop" manual pdf/i.test(query)));
   assert.ok(queries.exactTitleQueries.some((query) => /"Quik Drop" operator manual pdf/i.test(query)));
   assert.ok(queries.exactTitleQueries.some((query) => /filetype:pdf "Quik Drop"/i.test(query)));
+  assert.ok(queries.exactTitleQueries.some((query) => /^quik drop manual pdf$/i.test(query)));
   assert.ok(queries.fallbackQueries.some((query) => /"Quik Drop" distributor manual/i.test(query)));
   assert.ok(queries.fallbackQueries.some((query) => /site:mossdistributing\.com/i.test(query)));
+});
+
+test('buildManualSearchQueries includes broadened non-quoted query variants for Raw Thrills title families', () => {
+  const profile = getManufacturerProfile('Raw Thrills', 'King Kong VR');
+  const queries = buildManualSearchQueries({
+    manufacturer: 'Raw Thrills',
+    title: 'King Kong VR',
+    manufacturerProfile: profile,
+  });
+  const normalized = queries.exactTitleQueries.map((query) => query.toLowerCase());
+  assert.equal(normalized.includes('raw thrills king kong of skull island vr pdf'), true);
+  assert.equal(normalized.includes('king kong of skull island vr raw thrills manual'), true);
+  assert.equal(normalized.includes('filetype:pdf king kong of skull island vr raw thrills'), true);
 });
 
 test('buildManufacturerDiscoveryAdapters exposes deterministic candidates for Bay Tek, ICE, and Raw Thrills', () => {
@@ -392,10 +406,10 @@ test('discoverManualDocumentation extracts real Bay Tek search results and follo
     logger: { log: () => {} }
   });
 
-  assert.deepEqual(result.documentationLinks.map((row) => row.url), [
+  assert.deepEqual(result.documentationLinks.map((row) => row.url).sort(), [
+    'https://parts.baytekent.com/downloads/quik-drop-operator-manual.pdf',
     'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf',
-    'https://parts.baytekent.com/downloads/quik-drop-operator-manual.pdf'
-  ]);
+  ].sort());
   assert.equal(result.supportResources.some((row) => /#|main-content/.test(row.url)), false);
   assert.equal(result.supportResources.some((row) => row.url === 'https://parts.baytekent.com/support'), false);
 });
@@ -565,6 +579,48 @@ test('discoverManualDocumentation prioritizes search-discovered follow-up pages 
   assert.equal(htmlFetchCounts.get('https://rawthrills.com/games/jurassic-park-arcade-support'), 1);
   assert.equal(htmlFetchCounts.get('https://rawthrills.com/games/jurassic-park-arcade-support-a'), 1);
   assert.equal(htmlFetchCounts.get('https://rawthrills.com/games/jurassic-park-arcade-support-d'), 1);
+});
+
+test('discoverManualDocumentation prefers discovered numbered/revisioned Raw Thrills PDFs over guessed adapter slugs', async () => {
+  const profile = getManufacturerProfile('Raw Thrills', 'King Kong VR');
+  const logs = [];
+  const searchProvider = async () => ([
+    {
+      title: 'King Kong of Skull Island Manual REV6',
+      url: 'https://rawthrills.com/wp-content/uploads/040-00078-01_King_Kong_of_Skull_Island_Manual_REV6.pdf'
+    }
+  ]);
+  const fetchMock = async (url, options = {}) => {
+    const method = options?.method || 'GET';
+    if (method === 'HEAD') {
+      if (url === 'https://rawthrills.com/wp-content/uploads/040-00078-01_King_Kong_of_Skull_Island_Manual_REV6.pdf') {
+        return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+      }
+      if (/king-kong-of-skull-island-vr-operator-manual\.pdf$/.test(url) || /king-kong-vr-operator-manual\.pdf$/.test(url)) {
+        return { ok: false, status: 404, headers: { get: () => 'text/html' } };
+      }
+    }
+    if (url === 'https://rawthrills.com/games/king-kong-of-skull-island-vr-support') {
+      return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+    }
+    return { ok: true, status: 200, headers: { get: () => 'application/pdf' }, text: async () => '' };
+  };
+
+  const result = await discoverManualDocumentation({
+    assetName: 'King Kong VR',
+    normalizedName: 'King Kong of Skull Island VR',
+    manufacturer: 'Raw Thrills',
+    manufacturerProfile: profile,
+    searchProvider,
+    fetchImpl: fetchMock,
+    logger: { log: (...args) => logs.push(args) },
+    traceId: 'trace-king-kong-ranking',
+  });
+
+  assert.equal(result.documentationLinks[0]?.url, 'https://rawthrills.com/wp-content/uploads/040-00078-01_King_Kong_of_Skull_Island_Manual_REV6.pdf');
+  assert.equal(result.documentationLinks[0]?.discoverySource, 'official');
+  assert.equal(logs.some((entry) => entry[0] === 'manualDiscovery:candidate_preference'), true);
+  assert.equal(logs.some((entry) => entry[0] === 'manualDiscovery:candidate_scoring'), true);
 });
 
 

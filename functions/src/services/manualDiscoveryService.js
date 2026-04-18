@@ -128,6 +128,9 @@ const GENERIC_DEAD_LINK_BASENAMES = new Set([
   'file',
   'view',
 ]);
+const MANUAL_FILENAME_TOKENS = /(manual|operator|service|install(?:ation)?|owners?|operations?)/i;
+const MANUAL_PART_NUMBER_PATTERN = /\b\d{2,4}-\d{4,6}(?:-\d{2,4})?\b/i;
+const MANUAL_REVISION_PATTERN = /\b(?:rev(?:ision)?)[\s._-]*\d+[a-z]?\b/i;
 
 function buildExactTitleVariants(title, normalizedTitle) {
   return expandArcadeTitleAliases([title, normalizedTitle])
@@ -293,6 +296,24 @@ function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) 
     `"${titleVariant}" manufacturer manual`,
     `filetype:pdf "${titleVariant}"`,
   ]));
+  const broadQueries = titleQueryVariants.flatMap((titleVariant) => {
+    const lowerManufacturer = `${manufacturerProfile?.key || manufacturer || ''}`.trim().toLowerCase();
+    return [
+      `${titleVariant} manual pdf`,
+      `${titleVariant} operator manual pdf`,
+      `${titleVariant} service manual pdf`,
+      `${titleVariant} ${manufacturer || ''} manual`.trim(),
+      `${titleVariant} ${manufacturer || ''} pdf`.trim(),
+      `filetype:pdf ${titleVariant} ${manufacturer || ''}`.trim(),
+      ...(lowerManufacturer === 'raw thrills'
+        ? [
+            `raw thrills ${titleVariant} pdf`,
+            `${titleVariant} raw thrills manual`,
+            `filetype:pdf ${titleVariant} raw thrills`,
+          ]
+        : [])
+    ].map((query) => query.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  });
 
   const fallbackQueries = manufacturerProfile?.lowTrustSourceTokens?.flatMap((domain) => titleQueryVariants.flatMap((titleVariant) => ([
     `site:${domain} "${titleVariant}" ${manufacturerOrClause} (manual OR "service manual" OR "operator manual") (pdf OR download)`,
@@ -307,8 +328,86 @@ function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) 
 
   return {
     officialQueries: Array.from(new Set(officialQueries)).filter(Boolean),
-    exactTitleQueries: Array.from(new Set([...exactTitleQueries, ...globalQueries])).filter(Boolean),
+    exactTitleQueries: Array.from(new Set([...exactTitleQueries, ...globalQueries, ...broadQueries])).filter(Boolean),
     fallbackQueries: Array.from(new Set([...fallbackQueries, ...dealerQueries])).filter(Boolean)
+  };
+}
+
+function tokenizeForMatch(value = '') {
+  return normalizePhrase(value).split(' ').filter((token) => token.length >= 3);
+}
+
+function scoreManualCandidate(candidate = {}, { titleVariants = [], manufacturerTerms = [] } = {}) {
+  const url = `${candidate.url || ''}`.trim();
+  if (!url) return null;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const lowerUrl = url.toLowerCase();
+  const host = parsed.hostname.toLowerCase();
+  const path = parsed.pathname.toLowerCase();
+  const fileName = extractFileNameFromUrl(url).toLowerCase();
+  const normalizedFileName = normalizePhrase(fileName.replace(/\.[a-z0-9]+$/i, ''));
+  const sourceType = `${candidate.sourceType || ''}`.toLowerCase();
+  const discoverySource = `${candidate.discoverySource || ''}`.trim();
+  const isAdapterGuess = discoverySource.startsWith('adapter:');
+  const isDiscovered = !isAdapterGuess;
+  const isDirectPdf = /\.pdf($|[?#])/.test(lowerUrl);
+  const fileNameHasManualIntent = MANUAL_FILENAME_TOKENS.test(fileName);
+  const fileNameHasPartNumber = MANUAL_PART_NUMBER_PATTERN.test(fileName);
+  const fileNameHasRevision = MANUAL_REVISION_PATTERN.test(fileName);
+  const manufacturerAligned = manufacturerTerms.some((term) => term && normalizePhrase(`${host} ${path}`).includes(normalizePhrase(term)));
+  const hasStrongTitleFamilyMatch = titleVariants.some((variant) => variant && normalizePhrase(`${candidate.title || ''} ${normalizedFileName} ${path}`).includes(variant));
+  const titleTokens = new Set(titleVariants.flatMap((variant) => tokenizeForMatch(variant)));
+  const matchTokenCount = Array.from(titleTokens).filter((token) => normalizePhrase(`${candidate.title || ''} ${normalizedFileName} ${path}`).includes(token)).length;
+  const hasPartialTitleFamilyMatch = !hasStrongTitleFamilyMatch && matchTokenCount >= 2;
+  const adapterSlugGuessLike = isAdapterGuess
+    && /\/wp-content\/uploads\//.test(path)
+    && !fileNameHasPartNumber
+    && !fileNameHasRevision;
+
+  let score = 0;
+  const contributions = [];
+  const add = (reason, points) => {
+    score += points;
+    contributions.push({ reason, points });
+  };
+
+  if (isDiscovered) add('discovered_source_bonus', 28);
+  if (isAdapterGuess) add('generated_adapter_guess_penalty', -14);
+  if (isDirectPdf) add('direct_pdf_bonus', 26);
+  if (!isDirectPdf) add('non_pdf_penalty', -20);
+  if (manufacturerAligned) add('manufacturer_alignment_bonus', 14);
+  if (hasStrongTitleFamilyMatch) add('title_family_exact_bonus', 20);
+  if (hasPartialTitleFamilyMatch) add('title_family_partial_bonus', 10);
+  if (fileNameHasManualIntent) add('manual_filename_bonus', 10);
+  if (fileNameHasPartNumber) add('manual_part_number_bonus', 22);
+  if (fileNameHasRevision) add('manual_revision_bonus', 18);
+  if (adapterSlugGuessLike) add('adapter_slug_guess_penalty', -18);
+  if (/support|service-support|downloads?\/?$/.test(path) && !isDirectPdf) add('support_page_penalty', -20);
+  if (/brochure|spec|sell[-_ ]?sheet|catalog/.test(lowerUrl)) add('brochure_penalty', -22);
+  if (sourceType === 'support') add('support_source_penalty', -10);
+
+  return {
+    ...candidate,
+    discoverySource,
+    candidateScore: score,
+    candidateScoreContributions: contributions,
+    candidateScoringFlags: {
+      isDiscovered,
+      isAdapterGuess,
+      isDirectPdf,
+      manufacturerAligned,
+      hasStrongTitleFamilyMatch,
+      hasPartialTitleFamilyMatch,
+      fileNameHasManualIntent,
+      fileNameHasPartNumber,
+      fileNameHasRevision,
+      adapterSlugGuessLike,
+    }
   };
 }
 
@@ -1147,6 +1246,9 @@ async function discoverManualDocumentation({
 }) {
   const title = normalizedName || assetName;
   const titleVariants = buildExactTitleVariants(assetName, normalizedName);
+  const manufacturerTerms = buildManufacturerQueryTerms(manufacturer, manufacturerProfile)
+    .map((value) => normalizePhrase(value))
+    .filter(Boolean);
   const logEvent = buildDiagnosticLogger({ logger, traceId });
   const { officialQueries, exactTitleQueries, fallbackQueries } = buildManualSearchQueries({ manufacturer, title, manufacturerProfile });
   const queries = [
@@ -1371,7 +1473,37 @@ async function discoverManualDocumentation({
   const validatedManualRows = [];
   const recoveryRows = [];
   const deadManualUrls = new Set();
-  const candidateManualRows = dedupeByUrl([...manualRows, ...followedRows]).slice(0, MAX_DISCOVERY_RESULTS * 2);
+  const rankedManualRows = dedupeByUrl([...manualRows, ...followedRows])
+    .map((candidate) => scoreManualCandidate(candidate, { titleVariants, manufacturerTerms }))
+    .filter(Boolean)
+    .sort((a, b) => b.candidateScore - a.candidateScore || `${a.url || ''}`.localeCompare(`${b.url || ''}`));
+  const candidateManualRows = rankedManualRows.slice(0, MAX_DISCOVERY_RESULTS * 2);
+  if (candidateManualRows.length > 1) {
+    const best = candidateManualRows[0];
+    const bestAdapter = candidateManualRows.find((row) => row.discoverySource.startsWith('adapter:'));
+    if (bestAdapter && best.url !== bestAdapter.url && !best.discoverySource.startsWith('adapter:')) {
+      logEvent('candidate_preference', {
+        chosenUrl: best.url,
+        chosenSource: best.discoverySource,
+        chosenScore: best.candidateScore,
+        adapterUrl: bestAdapter.url,
+        adapterSource: bestAdapter.discoverySource,
+        adapterScore: bestAdapter.candidateScore,
+        reason: 'discovered_candidate_outranked_adapter_guess',
+        chosenContributions: best.candidateScoreContributions,
+        adapterContributions: bestAdapter.candidateScoreContributions,
+      });
+    }
+  }
+  logEvent('candidate_scoring', {
+    candidates: candidateManualRows.slice(0, 6).map((entry) => ({
+      url: entry.url,
+      discoverySource: entry.discoverySource,
+      score: entry.candidateScore,
+      flags: entry.candidateScoringFlags,
+      contributions: entry.candidateScoreContributions,
+    }))
+  });
   for (const candidate of candidateManualRows) {
     try {
       const response = await fetchWithTimeout(candidate.url, { method: 'HEAD', headers: { 'user-agent': SEARCH_USER_AGENT } }, fetchImpl);
@@ -1418,7 +1550,11 @@ async function discoverManualDocumentation({
     ...validatedManualRows,
     ...recoveryRows,
     ...candidateManualRows.filter((row) => !deadManualUrls.has(`${row.url || ''}`.toLowerCase()))
-  ]).slice(0, MAX_DISCOVERY_RESULTS);
+  ])
+    .map((candidate) => scoreManualCandidate(candidate, { titleVariants, manufacturerTerms }))
+    .filter(Boolean)
+    .sort((a, b) => b.candidateScore - a.candidateScore || `${a.url || ''}`.localeCompare(`${b.url || ''}`))
+    .slice(0, MAX_DISCOVERY_RESULTS);
   const supportResources = dedupeByUrl(supportRows).slice(0, MAX_DISCOVERY_RESULTS);
 
   logEvent('complete', {

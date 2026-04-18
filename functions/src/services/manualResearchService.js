@@ -849,6 +849,25 @@ async function researchAssetTitles({
       stageOne.searchEvidence = discoveredFallback.searchEvidence;
     }
 
+    if (documentationSuggestions.length) {
+      const selectedSuggestion = documentationSuggestions[0];
+      const selectedSource = normalizeString(selectedSuggestion?.discoverySource || '', 80) || 'stage2_or_catalog';
+      const selectedOrigin = selectedSource.startsWith('adapter:') ? 'generated_adapter_guess' : 'discovered_source';
+      logManualResearchEvent('selected_candidate_origin', {
+        ...logContext,
+        title: originalTitle,
+        normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+        manufacturer: summary.manufacturer || stageOne.manufacturer,
+        selectedCandidateUrl: selectedSuggestion?.url || '',
+        selectedCandidateOrigin: selectedOrigin,
+        selectedCandidateSource: selectedSource,
+        selectedCandidateScore: Number(selectedSuggestion?.discoveryCandidateScore || 0) || Number(selectedSuggestion?.matchScore || 0) || 0,
+        selectedCandidateScoreContributions: Array.isArray(selectedSuggestion?.discoveryCandidateScoreContributions)
+          ? selectedSuggestion.discoveryCandidateScoreContributions
+          : [],
+      });
+    }
+
     let manualLibraryAcquisition = null;
     let acquisitionState = 'skipped';
     let acquisitionError = '';
