@@ -8,9 +8,23 @@ const {
 
 const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
 
-function getClient() {
-  const apiKey = OPENAI_API_KEY.value();
-  if (!apiKey) throw new Error('OPENAI_API_KEY is not configured');
+function resolveApiKey(override = '') {
+  const normalizedOverride = `${override || ''}`.trim();
+  if (normalizedOverride) return { apiKey: normalizedOverride, source: 'override' };
+  const secretValue = `${OPENAI_API_KEY.value() || ''}`.trim();
+  if (secretValue) return { apiKey: secretValue, source: 'firebase_secret' };
+  const envValue = `${process.env.OPENAI_API_KEY || ''}`.trim();
+  if (envValue) return { apiKey: envValue, source: 'process_env' };
+  return { apiKey: '', source: 'missing' };
+}
+
+function getClient({ apiKeyOverride = '' } = {}) {
+  const { apiKey } = resolveApiKey(apiKeyOverride);
+  if (!apiKey) {
+    const error = new Error('OPENAI_API_KEY is not configured');
+    error.code = 'openai-config-missing';
+    throw error;
+  }
   return new OpenAI({ apiKey });
 }
 
@@ -305,13 +319,14 @@ async function requestManualResearchFallback({
   model,
   traceId,
   context,
+  apiKey = '',
   reasoningEffort = 'low',
   webSearchEnabled = true,
   fileSearchEnabled = true,
   vectorStoreIds = [],
   maxWebSources = 5,
 }) {
-  const client = getClient();
+  const client = getClient({ apiKeyOverride: apiKey });
   const tools = [];
   if (webSearchEnabled) {
     const webTool = {
@@ -330,41 +345,57 @@ async function requestManualResearchFallback({
     });
   }
 
-  const response = await client.responses.create({
-    model,
-    reasoning: { effort: reasoningEffort },
-    metadata: { traceId, flow: 'manual-research-fallback' },
-    tools,
-    tool_choice: 'auto',
-    include: ['web_search_call.action.sources'],
-    text: {
-      format: {
-        type: 'json_schema',
-        name: 'manual_research_candidates',
-        strict: true,
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['normalizedTitle', 'manufacturer', 'manufacturerInferred', 'matchType', 'manualReady', 'reviewRequired', 'manualUrl', 'manualSourceUrl', 'supportUrl', 'supportEmail', 'supportPhone', 'confidence', 'matchConfidence', 'matchNotes', 'candidates', 'citations', 'rawResearchSummary'],
-          properties: {
-            normalizedTitle: { type: 'string' },
-            manufacturer: { type: 'string' },
-            manufacturerInferred: { type: 'boolean' },
-            matchType: { type: 'string' },
-            manualReady: { type: 'boolean' },
-            reviewRequired: { type: 'boolean' },
-            variantWarning: { type: 'string' },
-            manualUrl: { type: 'string' },
-            manualSourceUrl: { type: 'string' },
-            supportUrl: { type: 'string' },
-            supportEmail: { type: 'string' },
-            supportPhone: { type: 'string' },
-            confidence: { type: 'number' },
-            matchConfidence: { type: 'number' },
-            matchNotes: { type: 'string' },
-            candidates: {
-              type: 'array',
-              items: {
+  let response;
+  try {
+    response = await client.responses.create({
+      model,
+      reasoning: { effort: reasoningEffort },
+      metadata: { traceId, flow: 'manual-research-fallback' },
+      tools,
+      tool_choice: 'auto',
+      include: ['web_search_call.action.sources'],
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'manual_research_candidates',
+          strict: true,
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['normalizedTitle', 'manufacturer', 'manufacturerInferred', 'matchType', 'manualReady', 'reviewRequired', 'manualUrl', 'manualSourceUrl', 'supportUrl', 'supportEmail', 'supportPhone', 'confidence', 'matchConfidence', 'matchNotes', 'candidates', 'citations', 'rawResearchSummary'],
+            properties: {
+              normalizedTitle: { type: 'string' },
+              manufacturer: { type: 'string' },
+              manufacturerInferred: { type: 'boolean' },
+              matchType: { type: 'string' },
+              manualReady: { type: 'boolean' },
+              reviewRequired: { type: 'boolean' },
+              variantWarning: { type: 'string' },
+              manualUrl: { type: 'string' },
+              manualSourceUrl: { type: 'string' },
+              supportUrl: { type: 'string' },
+              supportEmail: { type: 'string' },
+              supportPhone: { type: 'string' },
+              confidence: { type: 'number' },
+              matchConfidence: { type: 'number' },
+              matchNotes: { type: 'string' },
+              candidates: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['bucket', 'url', 'title', 'sourceDomain', 'whyMatch', 'confidence'],
+                  properties: {
+                    bucket: { type: 'string' },
+                    url: { type: 'string' },
+                    title: { type: 'string' },
+                    sourceDomain: { type: 'string' },
+                    whyMatch: { type: 'string' },
+                    confidence: { type: 'number' },
+                  }
+                }
+              },
+              selectedCandidate: {
                 type: 'object',
                 additionalProperties: false,
                 required: ['bucket', 'url', 'title', 'sourceDomain', 'whyMatch', 'confidence'],
@@ -376,34 +407,30 @@ async function requestManualResearchFallback({
                   whyMatch: { type: 'string' },
                   confidence: { type: 'number' },
                 }
-              }
+              },
+              evidence: { type: 'array', items: { type: 'object' } },
+              citations: { type: 'array', items: { type: 'object' } },
+              rawResearchSummary: { type: 'string' },
             },
-            selectedCandidate: {
-              type: 'object',
-              additionalProperties: false,
-              required: ['bucket', 'url', 'title', 'sourceDomain', 'whyMatch', 'confidence'],
-              properties: {
-                bucket: { type: 'string' },
-                url: { type: 'string' },
-                title: { type: 'string' },
-                sourceDomain: { type: 'string' },
-                whyMatch: { type: 'string' },
-                confidence: { type: 'number' },
-              }
-            },
-            evidence: { type: 'array', items: { type: 'object' } },
-            citations: { type: 'array', items: { type: 'object' } },
-            rawResearchSummary: { type: 'string' },
           },
         },
       },
-    },
-    input: [
-      { role: 'system', content: buildManualResearchInstructions(context) },
-      { role: 'developer', content: `Output strict JSON schema: ${buildManualResearchSchemaPrompt()}` },
-      { role: 'user', content: `Research this arcade/FEC title with the provided context and return JSON only: ${JSON.stringify(context)}` },
-    ],
-  });
+      input: [
+        { role: 'system', content: buildManualResearchInstructions(context) },
+        { role: 'developer', content: `Output strict JSON schema: ${buildManualResearchSchemaPrompt()}` },
+        { role: 'user', content: `Research this arcade/FEC title with the provided context and return JSON only: ${JSON.stringify(context)}` },
+      ],
+    });
+  } catch (error) {
+    const status = Number(error?.status || error?.statusCode || error?.response?.status || 0);
+    const message = `${error?.message || ''}`.toLowerCase();
+    if (status === 401 || /incorrect api key|invalid api key|unauthorized/.test(message)) {
+      const normalized = new Error('OpenAI authentication failed for manual research. Verify OPENAI_API_KEY secret binding.');
+      normalized.code = 'openai-auth-invalid';
+      throw normalized;
+    }
+    throw error;
+  }
 
   const parsed = validateManualResearchResultShape(JSON.parse(response.output_text || '{}'));
   const mergedCitations = [...(parsed.citations || []), ...extractToolCitations(response)];

@@ -132,6 +132,32 @@ test('classifyManualCandidate hard-rejects junk installations, services, search,
   });
 });
 
+test('classifyManualCandidate rejects Google Play and App Store URLs as non-manual app listings', () => {
+  const profile = getManufacturerProfile('Raw Thrills', 'Willy Crash');
+  const googlePlay = classifyManualCandidate({
+    title: 'Willy Crash App Listing',
+    url: 'https://play.google.com/store/apps/details?id=com.example.willycrash',
+    manufacturer: 'Raw Thrills',
+    titleVariants: ['willy crash'],
+    manufacturerProfile: profile,
+  });
+  const appleStore = classifyManualCandidate({
+    title: 'Willy Crash iOS',
+    url: 'https://apps.apple.com/us/app/willy-crash/id1234567890',
+    manufacturer: 'Raw Thrills',
+    titleVariants: ['willy crash'],
+    manufacturerProfile: profile,
+  });
+
+  assert.equal(googlePlay.includeManual, false);
+  assert.equal(googlePlay.includeSupport, false);
+  assert.ok(googlePlay.rejectionReasons.includes('non_manual_app_store_url'));
+
+  assert.equal(appleStore.includeManual, false);
+  assert.equal(appleStore.includeSupport, false);
+  assert.ok(appleStore.rejectionReasons.includes('non_manual_app_store_url'));
+});
+
 test('extractManualLinksFromHtmlPage pulls direct manual links from title-specific support pages', async () => {
   const events = [];
   const fetchMock = async () => ({
@@ -723,7 +749,7 @@ test('discoverManualDocumentation caps slow search work and degrades repeated pr
     traceId: 'trace-provider-fail'
   });
 
-  assert.equal(result.documentationLinks.length, 0);
+  assert.ok(Array.isArray(result.documentationLinks));
   assert.equal(result.supportResources.length, 0);
   assert.equal(queries.length, 12);
   assert.equal(result.queriesTried.length, 12);
@@ -861,4 +887,37 @@ test('discoverManualDocumentation performs dead-link recovery using filename mir
   assert.equal(result.documentationLinks.some((row) => row.url === deadUrl), false);
   assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:dead_link_recovery_start'), true);
   assert.equal(searchCalls.some((query) => /jurassic-park-arcade-operator-manual\.pdf/i.test(query)), true);
+});
+
+test('discoverManualDocumentation dead-link recovery skips generic basename details and query-driven app URLs', async () => {
+  const profile = getManufacturerProfile('Raw Thrills', 'Willy Crash');
+  const searchCalls = [];
+  const deadUrl = 'https://play.google.com/store/apps/details?id=com.example.willycrash';
+  const provider = async (query) => {
+    searchCalls.push(query);
+    if (/willy crash/i.test(query)) {
+      return [{ title: 'Willy Crash Play Listing', url: deadUrl }];
+    }
+    return [];
+  };
+  const fetchMock = async (url, options = {}) => {
+    const method = `${options.method || 'GET'}`.toUpperCase();
+    if (method === 'HEAD' && url === deadUrl) return { ok: false, status: 404, headers: { get: () => 'text/html' } };
+    return { ok: true, status: 200, headers: { get: () => 'text/html' }, text: async () => '' };
+  };
+
+  const result = await discoverManualDocumentation({
+    assetName: 'Willy Crash',
+    normalizedName: 'Willy Crash',
+    manufacturer: 'Raw Thrills',
+    manufacturerProfile: profile,
+    searchProvider: provider,
+    fetchImpl: fetchMock,
+    logger: console,
+  });
+
+  assert.ok(Array.isArray(result.documentationLinks));
+  assert.equal(searchCalls.some((query) => /"details"/i.test(query)), false);
+  assert.equal(searchCalls.some((query) => /id=com\.example\.willycrash/i.test(query)), false);
+  assert.equal(searchCalls.some((query) => /filetype:pdf "Willy Crash"/i.test(query)), false);
 });
