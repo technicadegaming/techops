@@ -137,6 +137,24 @@ test('researchAssetTitles invokes stage 2 fallback only for unresolved review-re
         supportPhone: '(847) 459-5000',
         confidence: 0.62,
         matchNotes: 'Found product and support context but no verified manual.',
+        candidates: [
+          {
+            bucket: 'verified_pdf_candidate',
+            url: 'https://rawthrills.com/wp-content/uploads/king-kong-of-skull-island-vr-operator-manual.pdf',
+            title: 'King Kong of Skull Island VR Operator Manual',
+            sourceDomain: 'rawthrills.com',
+            whyMatch: 'Exact title and manufacturer match.',
+            confidence: 0.92,
+          },
+        ],
+        selectedCandidate: {
+          bucket: 'verified_pdf_candidate',
+          url: 'https://rawthrills.com/wp-content/uploads/king-kong-of-skull-island-vr-operator-manual.pdf',
+          title: 'King Kong of Skull Island VR Operator Manual',
+          sourceDomain: 'rawthrills.com',
+          whyMatch: 'Exact title and manufacturer match.',
+          confidence: 0.92,
+        },
         citations: [{ url: 'https://rawthrills.com/service-support/', title: 'Raw Thrills Service Support' }],
         rawResearchSummary: 'No downloadable manual located on official sources.',
       };
@@ -151,6 +169,8 @@ test('researchAssetTitles invokes stage 2 fallback only for unresolved review-re
   assert.equal(result.results[0].manualMatchSummary.matchType, result.results[0].matchType);
   assert.equal(result.results[0].manualMatchSummary.supportUrl, result.results[0].supportUrl);
   assert.ok(Array.isArray(result.results[0].pipelineMeta.searchEvidence));
+  assert.equal(result.results[0].pipelineMeta.selectedCandidate?.bucket, 'verified_pdf_candidate');
+  assert.match(result.results[0].pipelineMeta.selectedCandidate?.url || '', /king-kong-of-skull-island-vr-operator-manual\.pdf/i);
   assert.ok(result.results[0].documentationSuggestions.every((entry) => typeof entry.candidateBucket === 'string' && entry.candidateBucket));
 });
 
@@ -291,6 +311,22 @@ test('researchAssetTitles emits explicit logs and backend validation can promote
         supportPhone: '(847) 459-5000',
         confidence: 0.84,
         matchNotes: 'Official operator manual found.',
+        candidates: [{
+          bucket: 'verified_pdf_candidate',
+          url: 'https://rawthrills.com/wp-content/uploads/king-kong-of-skull-island-vr-operator-manual.pdf',
+          title: 'King Kong of Skull Island VR Operator Manual',
+          sourceDomain: 'rawthrills.com',
+          whyMatch: 'Official PDF on manufacturer domain.',
+          confidence: 0.9,
+        }],
+        selectedCandidate: {
+          bucket: 'verified_pdf_candidate',
+          url: 'https://rawthrills.com/wp-content/uploads/king-kong-of-skull-island-vr-operator-manual.pdf',
+          title: 'King Kong of Skull Island VR Operator Manual',
+          sourceDomain: 'rawthrills.com',
+          whyMatch: 'Official PDF on manufacturer domain.',
+          confidence: 0.9,
+        },
         citations: [{ url: 'https://rawthrills.com/games/king-kong-of-skull-island-vr/', title: 'King Kong of Skull Island VR' }],
         rawResearchSummary: 'Found official PDF.',
         responseMeta: { model: 'gpt-5-mini' }
@@ -303,6 +339,8 @@ test('researchAssetTitles emits explicit logs and backend validation can promote
     assert.ok(markers.includes('manualResearch:stage2_start'));
     assert.ok(markers.includes('manualResearch:stage2_prompt_built'));
     assert.ok(markers.includes('manualResearch:stage2_response_received'));
+    assert.ok(markers.includes('manualResearch:openai_candidate_json_returned'));
+    assert.ok(markers.includes('manualResearch:selected_candidate'));
     assert.ok(markers.includes('manualResearch:stage2_candidates_extracted'));
     assert.ok(markers.includes('manualResearch:final_result'));
   } finally {
@@ -616,6 +654,14 @@ test('Connect 4 brochure/spec PDFs remain support_product_page candidates and ne
       supportUrl: 'https://www.betson.com/amusement-products/connect-4-hoops/',
       confidence: 0.58,
       matchNotes: 'Brochure/spec links found; no install/service manual.',
+      candidates: [{
+        bucket: 'brochure_or_spec_doc',
+        url: 'https://www.betson.com/wp-content/uploads/connect-4-hoops-brochure.pdf',
+        title: 'Connect 4 Hoops Brochure',
+        sourceDomain: 'betson.com',
+        whyMatch: 'Product brochure; no service/operator language.',
+        confidence: 0.72,
+      }],
       citations: [],
       rawResearchSummary: 'Connect 4 brochure and spec docs.',
     }),
@@ -626,6 +672,8 @@ test('Connect 4 brochure/spec PDFs remain support_product_page candidates and ne
   assert.equal(result.results[0].manualLibraryRef, '');
   assert.equal(result.results[0].manualStoragePath, '');
   assert.equal(result.results[0].pipelineMeta.acquisitionState, 'no_manual');
+  assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'no_durable_manual:no_manual');
+  assert.equal(result.results[0].pipelineMeta.returnedCandidates[0]?.bucket, 'brochure_or_spec_doc');
   assert.equal(result.results[0].documentationSuggestions[0].candidateBucket, 'support_product_page');
 });
 
