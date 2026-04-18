@@ -12,6 +12,7 @@ test('resolveArcadeTitleFamily canonicalizes expert-known shorthand titles and i
     ['Quick Drop', 'Quik Drop', 'Bay Tek'],
     ['Virtual Rabbids', 'Virtual Rabbids: The Big Ride', 'LAI Games'],
     ['King Kong VR', 'King Kong of Skull Island VR', 'Raw Thrills'],
+    ['Connect Four', 'Connect 4 Hoops', 'Bay Tek'],
     ['Fast and Furious', 'Fast & Furious Arcade', 'Raw Thrills'],
     ['Sink-It', 'Sink It', 'Bay Tek'],
     ['Hypershoot', 'HYPERshoot', 'LAI Games']
@@ -37,4 +38,5 @@ test('normalizeManufacturerName canonicalizes Bay Tek shorthand aliases', () => 
   assert.equal(normalizeManufacturerName('baytek'), 'Bay Tek');
   assert.equal(normalizeManufacturerName('baytek ent'), 'Bay Tek');
   assert.equal(normalizeManufacturerName('baytekent'), 'Bay Tek');
+  assert.equal(normalizeManufacturerName('Raw Thrills Inc.'), 'Raw Thrills');
 });

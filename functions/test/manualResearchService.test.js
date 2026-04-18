@@ -150,6 +150,8 @@ test('researchAssetTitles invokes stage 2 fallback only for unresolved review-re
   assert.equal(result.results[0].supportUrl, 'https://rawthrills.com/games/king-kong-of-skull-island/');
   assert.equal(result.results[0].manualMatchSummary.matchType, result.results[0].matchType);
   assert.equal(result.results[0].manualMatchSummary.supportUrl, result.results[0].supportUrl);
+  assert.ok(Array.isArray(result.results[0].pipelineMeta.searchEvidence));
+  assert.ok(result.results[0].documentationSuggestions.every((entry) => typeof entry.candidateBucket === 'string' && entry.candidateBucket));
 });
 
 for (const matchType of ['title_specific_source', 'support_only', 'family_match_needs_review', 'unresolved']) {

@@ -191,11 +191,24 @@ function getDocumentationSuggestionBuckets(asset = {}) {
   const reviewable = getReviewableDocumentationSuggestions(asset);
   const reviewableUrls = new Set(reviewable.map((entry) => `${entry?.url || ''}`.trim().toLowerCase()).filter(Boolean));
   const followupCandidates = allCandidates.filter((entry) => !reviewableUrls.has(`${entry?.url || ''}`.trim().toLowerCase()));
+  const strongReviewCandidates = followupCandidates.filter((entry) => ['verified_manual', 'likely_manual_install_service_doc'].includes(`${entry?.candidateBucket || ''}`));
+  const weakLeads = followupCandidates.filter((entry) => `${entry?.candidateBucket || ''}` === 'weak_lead');
   return {
     reviewable,
     followupCandidates,
-    allCandidates
+    allCandidates,
+    strongReviewCandidates,
+    weakLeads
   };
+}
+
+function renderCandidateBucket(entry = {}) {
+  const bucket = `${entry?.candidateBucket || ''}`.trim();
+  if (bucket === 'verified_manual') return 'verified manual';
+  if (bucket === 'likely_manual_install_service_doc') return 'likely manual/install/service doc';
+  if (bucket === 'support_product_page') return 'support/product page';
+  if (bucket === 'weak_lead') return 'weak lead';
+  return 'candidate';
 }
 
 function deriveAssetManualStatus(asset = {}) {
@@ -311,7 +324,10 @@ function renderEnrichmentDetails(asset, manager, state) {
   const suggestionBuckets = getDocumentationSuggestionBuckets(asset);
   const suggestions = suggestionBuckets.reviewable;
   const followupCandidates = suggestionBuckets.followupCandidates;
+  const strongReviewCandidates = suggestionBuckets.strongReviewCandidates;
+  const weakLeads = suggestionBuckets.weakLeads;
   const supportLinks = (Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []).filter((entry) => !entry?.deadPage && !entry?.unreachable);
+  const strongSupportLinks = supportLinks.filter((entry) => `${entry?.candidateBucket || ''}` !== 'weak_lead');
   const hiddenDeadLinks = (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).length - suggestionBuckets.allCandidates.length;
   const contacts = Array.isArray(asset.supportContactsSuggestion) ? asset.supportContactsSuggestion : [];
   const showFollowup = status === 'followup_needed' && asset.enrichmentFollowupQuestion;
@@ -356,17 +372,21 @@ function renderEnrichmentDetails(asset, manager, state) {
     const confidence = entry.confidence ? ` | ${Math.round(Number(entry.confidence) * 100)}%` : '';
     const score = Number.isFinite(Number(entry.matchScore)) ? ` | score ${Math.round(Number(entry.matchScore))}` : '';
     return `<div class="tiny" style="display:flex; justify-content:space-between; gap:8px; align-items:center; margin:2px 0;"><span><a href="${entry.url}" target="_blank" rel="noopener">${entry.title || entry.url}</a>${confidence}${score} | trust: ${renderSuggestionSource(entry)}</span>${manager ? `<button data-apply-doc-item="${asset.id}" data-doc-index="${index}" type="button">Apply this manual</button>` : ''}</div>`;
-  }).join('') : (followupCandidates.length
-    ? `<div class="tiny">No verified manual yet. ${followupCandidates.length} candidate link${followupCandidates.length === 1 ? '' : 's'} need follow-up or stronger evidence.</div>
-        ${followupCandidates.slice(0, 2).map((entry) => `<div class="tiny" style="margin:2px 0;"><a href="${entry.url}" target="_blank" rel="noopener">${entry.title || entry.url}</a> | trust: ${renderSuggestionSource(entry)} | score ${Math.round(Number(entry.matchScore || 0)) || 'n/a'}</div>`).join('')}`
-    : '<div class="tiny">No suggestion yet.</div>')}
+  }).join('') : (strongReviewCandidates.length
+    ? `<div class="tiny">No verified manual yet. ${strongReviewCandidates.length} strong review candidate${strongReviewCandidates.length === 1 ? '' : 's'} found.</div>
+        ${strongReviewCandidates.slice(0, 3).map((entry) => `<div class="tiny" style="margin:2px 0;"><a href="${entry.url}" target="_blank" rel="noopener">${entry.title || entry.url}</a> | ${renderCandidateBucket(entry)} | trust: ${renderSuggestionSource(entry)} | score ${Math.round(Number(entry.matchScore || 0)) || 'n/a'}</div>`).join('')}
+        ${weakLeads.length ? `<div class="tiny" style="margin-top:4px;">Suppressed ${weakLeads.length} weak lead${weakLeads.length === 1 ? '' : 's'} from manual auto-attach.</div>` : ''}`
+    : (followupCandidates.length
+      ? `<div class="tiny">No verified manual yet. ${followupCandidates.length} candidate link${followupCandidates.length === 1 ? '' : 's'} need follow-up or stronger evidence.</div>`
+    : '<div class="tiny">No suggestion yet.</div>'))}
       ${manager && suggestions.length ? `<div style="margin-top:6px;"><button data-apply-enrichment="manuals" data-asset-id="${asset.id}" type="button" class="primary">Apply best verified manual</button> <button data-apply-docs="${asset.id}" type="button">Apply top trusted docs</button></div>` : ''}
     </div>
 
     <div style="margin-bottom:10px;">
       <div class="tiny" style="font-weight:700; margin-bottom:4px;">Support links and contacts</div>
-      ${supportLinks.length ? supportLinks.map((entry, index) => `<div class="tiny" style="display:flex; justify-content:space-between; gap:8px; align-items:center; margin:2px 0;"><span><a href="${entry.url || entry}" target="_blank" rel="noopener">${entry.label || entry.title || entry.url || entry}</a> | trust: ${renderSuggestionSource(entry)}</span>${manager ? `<button data-apply-support-item="${asset.id}" data-support-index="${index}" type="button">Apply this link</button>` : ''}</div>`).join('') : '<div class="tiny">No support suggestion yet.</div>'}
-      ${manager && supportLinks.length ? `<div style="margin-top:6px;"><button data-apply-enrichment="support" data-asset-id="${asset.id}" type="button">Apply support resources</button></div>` : ''}
+      ${strongSupportLinks.length ? strongSupportLinks.map((entry, index) => `<div class="tiny" style="display:flex; justify-content:space-between; gap:8px; align-items:center; margin:2px 0;"><span><a href="${entry.url || entry}" target="_blank" rel="noopener">${entry.label || entry.title || entry.url || entry}</a> | ${renderCandidateBucket(entry)} | trust: ${renderSuggestionSource(entry)}</span>${manager ? `<button data-apply-support-item="${asset.id}" data-support-index="${index}" type="button">Apply this link</button>` : ''}</div>`).join('') : '<div class="tiny">No strong support suggestion yet.</div>'}
+      ${supportLinks.length > strongSupportLinks.length ? `<div class="tiny">Hidden ${supportLinks.length - strongSupportLinks.length} weak support lead${supportLinks.length - strongSupportLinks.length === 1 ? '' : 's'}.</div>` : ''}
+      ${manager && strongSupportLinks.length ? `<div style="margin-top:6px;"><button data-apply-enrichment="support" data-asset-id="${asset.id}" type="button">Apply support resources</button></div>` : ''}
     </div>
 
     <div style="margin-bottom:10px;">

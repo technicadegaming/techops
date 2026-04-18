@@ -117,6 +117,26 @@ function sanitizeCitations(entries = []) {
     .slice(0, 12);
 }
 
+function classifySuggestionBucket(entry = {}) {
+  const verified = entry?.verified === true;
+  const exactManualMatch = entry?.exactManualMatch === true;
+  const matchScore = Number(entry?.matchScore || 0);
+  const url = normalizeUrl(entry?.url || '').toLowerCase();
+  if (verified && exactManualMatch) return 'verified_manual';
+  if ((verified && matchScore >= 60) || /manual|operator|service|install|\.pdf($|[?#])/.test(url)) return 'likely_manual_install_service_doc';
+  if (/(support|product|download|service|parts)/.test(url) || ['support', 'official_site', 'parts', 'distributor'].includes(`${entry?.resourceType || entry?.sourceType || ''}`.toLowerCase())) {
+    return 'support_product_page';
+  }
+  return 'weak_lead';
+}
+
+function withSuggestionBucket(entry = {}) {
+  return {
+    ...entry,
+    candidateBucket: classifySuggestionBucket(entry),
+  };
+}
+
 function buildDomainAllowlist({ manufacturerProfile, titleFamily }) {
   return Array.from(new Set([
     ...((manufacturerProfile?.preferredSourceTokens || []).map((value) => `${value || ''}`.trim().toLowerCase())),
@@ -322,11 +342,12 @@ async function runStageOneLookup({
     manufacturerInferred: !input.manufacturerHint && !!manufacturer,
     titleFamily,
     manufacturerProfile,
-    documentationSuggestions,
-    supportResourcesSuggestion,
+    documentationSuggestions: documentationSuggestions.map(withSuggestionBucket),
+    supportResourcesSuggestion: supportResourcesSuggestion.map(withSuggestionBucket),
     supportContactsSuggestion: [],
     summary,
     catalogMatch,
+    searchEvidence: Array.isArray(discovered.evidence) ? discovered.evidence : [],
     stage: 'stage1',
   };
 }
@@ -497,6 +518,7 @@ async function researchAssetTitles({
     let documentationSuggestions = stageOne.documentationSuggestions;
     let supportResourcesSuggestion = stageOne.supportResourcesSuggestion;
     let supportContactsSuggestion = stageOne.supportContactsSuggestion;
+    const stage2CandidateAudit = [];
 
     logManualResearchEvent('stage1_result', {
       ...logContext,
@@ -579,6 +601,14 @@ async function researchAssetTitles({
         verifiedStageTwoDocs
           .filter((entry) => !(entry.verified && entry.exactManualMatch))
           .forEach((entry) => {
+            stage2CandidateAudit.push({
+              url: entry.url || '',
+              bucket: classifySuggestionBucket(entry),
+              decision: 'rejected',
+              reason: entry.verificationStatus || entry.verificationKind || 'manual_contract_not_authoritative',
+              exactManualMatch: entry.exactManualMatch === true,
+              verified: entry.verified === true,
+            });
             logManualResearchEvent('candidate_rejected', {
               ...logContext,
               title: originalTitle,
@@ -590,6 +620,18 @@ async function researchAssetTitles({
               verificationKind: entry.verificationKind || '',
               verificationStatus: entry.verificationStatus || '',
               exactManualMatch: entry.exactManualMatch === true,
+            });
+          });
+        verifiedStageTwoDocs
+          .filter((entry) => entry.verified && entry.exactManualMatch)
+          .forEach((entry) => {
+            stage2CandidateAudit.push({
+              url: entry.url || '',
+              bucket: classifySuggestionBucket(entry),
+              decision: 'accepted',
+              reason: 'verified_exact_manual',
+              exactManualMatch: true,
+              verified: true,
             });
           });
         documentationSuggestions = mergeDocumentationSuggestions({
@@ -604,7 +646,7 @@ async function researchAssetTitles({
           normalizedName: stageTwo.normalizedTitle || stageOne.normalizedTitle,
           manufacturerSuggestion: stageTwo.manufacturer || stageOne.manufacturer,
           kind: 'support',
-        });
+        }).map(withSuggestionBucket);
         supportContactsSuggestion = [
           ...(stageTwo.supportEmail ? [{ label: 'Support email', value: stageTwo.supportEmail, contactType: 'email' }] : []),
           ...(stageTwo.supportPhone ? [{ label: 'Support phone', value: stageTwo.supportPhone, contactType: 'phone' }] : []),
@@ -735,7 +777,7 @@ async function researchAssetTitles({
         manualLibraryRef: library.id,
         manualStoragePath: library.storagePath || '',
         cachedManual: true,
-      } : entry);
+      } : entry).map(withSuggestionBucket);
     } else {
       summary = {
         ...summary,
@@ -774,8 +816,8 @@ async function researchAssetTitles({
       manufacturer: summary.manufacturer || stageOne.manufacturer || '',
       manufacturerInferred: typeof summary.manufacturerInferred === 'boolean' ? summary.manufacturerInferred : stageOne.manufacturerInferred,
       citations: sanitizeCitations(summary.citations),
-      documentationSuggestions,
-      supportResourcesSuggestion,
+      documentationSuggestions: documentationSuggestions.map(withSuggestionBucket),
+      supportResourcesSuggestion: supportResourcesSuggestion.map(withSuggestionBucket),
       supportContactsSuggestion,
       manualMatchSummary: {
         ...summary,
@@ -789,6 +831,8 @@ async function researchAssetTitles({
         acquisitionError,
         manualLibraryRef: summary.manualLibraryRef || '',
         manualStoragePath: summary.manualStoragePath || '',
+        searchEvidence: Array.isArray(stageOne.searchEvidence) ? stageOne.searchEvidence : [],
+        stage2CandidateAudit,
       },
       locationId: normalizeString(locationId, 120),
       manualLibraryRef: summary.manualLibraryRef || '',
