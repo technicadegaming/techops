@@ -25,7 +25,10 @@ test('buildManualSearchQueries prioritizes official domains for known manufactur
   assert.match(queries.exactTitleQueries[0], /"Bay Tek(?: Games)?" "Quik Drop" "service manual" pdf/);
   assert.match(queries.fallbackQueries[0], /site:betson\.com/i);
   assert.ok(queries.exactTitleQueries.some((query) => /"Quik Drop" manual pdf/i.test(query)));
+  assert.ok(queries.exactTitleQueries.some((query) => /"Quik Drop" operator manual pdf/i.test(query)));
+  assert.ok(queries.exactTitleQueries.some((query) => /filetype:pdf "Quik Drop"/i.test(query)));
   assert.ok(queries.fallbackQueries.some((query) => /"Quik Drop" distributor manual/i.test(query)));
+  assert.ok(queries.fallbackQueries.some((query) => /site:mossdistributing\.com/i.test(query)));
 });
 
 test('buildManufacturerDiscoveryAdapters exposes deterministic candidates for Bay Tek, ICE, and Raw Thrills', () => {
@@ -417,6 +420,9 @@ test('discoverManualDocumentation regression coverage for Bay Tek, ICE, and Raw 
         text: async () => '<a href="/manuals/sink-it-operator-manual.pdf">Sink It Operator Manual</a>'
       };
     }
+    if (url === 'https://parts.baytekent.com/manuals/sink-it-operator-manual.pdf') {
+      return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+    }
     if (url === 'https://support.icegame.com/manuals/air-fx-service-manual.pdf') {
       return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
     }
@@ -787,4 +793,72 @@ test('searchDuckDuckGoHtml falls back to lite results when html endpoint markup 
     title: 'Jurassic Park Arcade Support',
     url: 'https://rawthrills.com/games/jurassic-park-arcade-support'
   }]);
+});
+
+test('discoverManualDocumentation retries provider chain and falls back when primary provider fails', async () => {
+  const profile = getManufacturerProfile('Raw Thrills', 'Jurassic Park Arcade');
+  const events = [];
+  const fetchMock = async (url, options = {}) => {
+    const method = `${options.method || 'GET'}`.toUpperCase();
+    if (method === 'HEAD') return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+    if (url.startsWith('https://www.bing.com/search?')) return { ok: false, status: 403, text: async () => '' };
+    if (url.startsWith('https://duckduckgo.com/html/?q=')) {
+      return {
+        ok: true,
+        text: async () => `<a class="result__a" href="${'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf'}">Jurassic Park Arcade Operator Manual</a>`
+      };
+    }
+    return { ok: true, text: async () => '' };
+  };
+
+  const result = await discoverManualDocumentation({
+    assetName: 'Jurassic Park Arcade',
+    normalizedName: 'Jurassic Park Arcade',
+    manufacturer: 'Raw Thrills',
+    manufacturerProfile: profile,
+    fetchImpl: fetchMock,
+    logger: { log: (...args) => events.push(args) },
+    searchProviderOptions: { primarySearchProvider: 'bing_html' },
+  });
+
+  assert.equal(result.documentationLinks.some((row) => /jurassic-park-arcade-operator-manual\.pdf$/i.test(row.url)), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:search_retry' && entry[1]?.provider === 'bing_html'), true);
+});
+
+test('discoverManualDocumentation performs dead-link recovery using filename mirror search', async () => {
+  const profile = getManufacturerProfile('Raw Thrills', 'Jurassic Park Arcade');
+  const events = [];
+  const searchCalls = [];
+  const deadUrl = 'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf';
+  const mirrorUrl = 'https://mirror.example.com/manuals/jurassic-park-arcade-operator-manual.pdf';
+  const provider = async (query) => {
+    searchCalls.push(query);
+    if (/jurassic park arcade/i.test(query)) {
+      return [{ title: 'Jurassic Park Arcade Operator Manual', url: deadUrl }];
+    }
+    if (/jurassic-park-arcade-operator-manual\.pdf/i.test(query)) {
+      return [{ title: 'Jurassic Park Arcade Operator Manual Mirror', url: mirrorUrl }];
+    }
+    return [];
+  };
+  const fetchMock = async (url, options = {}) => {
+    const method = `${options.method || 'GET'}`.toUpperCase();
+    if (method === 'HEAD' && url === deadUrl) return { ok: false, status: 404, headers: { get: () => 'application/pdf' } };
+    return { ok: true, status: 200, headers: { get: () => 'application/pdf' }, text: async () => '' };
+  };
+
+  const result = await discoverManualDocumentation({
+    assetName: 'Jurassic Park Arcade',
+    normalizedName: 'Jurassic Park Arcade',
+    manufacturer: 'Raw Thrills',
+    manufacturerProfile: profile,
+    searchProvider: provider,
+    fetchImpl: fetchMock,
+    logger: { log: (...args) => events.push(args) },
+  });
+
+  assert.equal(result.documentationLinks.some((row) => row.url === mirrorUrl), true);
+  assert.equal(result.documentationLinks.some((row) => row.url === deadUrl), false);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:dead_link_recovery_start'), true);
+  assert.equal(searchCalls.some((query) => /jurassic-park-arcade-operator-manual\.pdf/i.test(query)), true);
 });

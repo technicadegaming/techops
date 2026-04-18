@@ -7,8 +7,16 @@ const MAX_ADAPTER_FETCHES = 8;
 const MAX_SEED_FETCHES = 6;
 const MAX_SEARCH_QUERIES = 12;
 const FETCH_TIMEOUT_MS = 3500;
+const SEARCH_PROVIDER_TIMEOUT_MS = 4500;
 const SEARCH_FOLLOWUP_PRIORITY = 0;
 const ADAPTER_FOLLOWUP_PRIORITY = 1;
+const KNOWN_DISTRIBUTOR_DOMAINS = [
+  'betson.com',
+  'mossdistributing.com',
+  'primetimeamusements.com',
+  'appleindustries.com',
+  'sureshotredemption.com',
+];
 const JUNK_PATH_PATTERNS = [
   /\/consultative-services(\/|$)/,
   /\/financial-services(\/|$)/,
@@ -260,6 +268,14 @@ function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) 
     `"${titleVariant}" dealer manual`,
     `"${titleVariant}" distributor support`,
     `"${titleVariant}" dealer support`,
+    ...KNOWN_DISTRIBUTOR_DOMAINS.map((domain) => `site:${domain} "${titleVariant}" (manual OR "service manual" OR "operator manual" OR download)`),
+  ]));
+
+  const globalQueries = titleQueryVariants.flatMap((titleVariant) => ([
+    `"${titleVariant}" operator manual pdf`,
+    `"${titleVariant}" service manual`,
+    `"${titleVariant}" manufacturer manual`,
+    `filetype:pdf "${titleVariant}"`,
   ]));
 
   const fallbackQueries = manufacturerProfile?.lowTrustSourceTokens?.flatMap((domain) => titleQueryVariants.flatMap((titleVariant) => ([
@@ -275,9 +291,30 @@ function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) 
 
   return {
     officialQueries: Array.from(new Set(officialQueries)).filter(Boolean),
-    exactTitleQueries: Array.from(new Set(exactTitleQueries)).filter(Boolean),
+    exactTitleQueries: Array.from(new Set([...exactTitleQueries, ...globalQueries])).filter(Boolean),
     fallbackQueries: Array.from(new Set([...fallbackQueries, ...dealerQueries])).filter(Boolean)
   };
+}
+
+function extractFileNameFromUrl(url = '') {
+  try {
+    const parsed = new URL(url);
+    const fileName = parsed.pathname.split('/').filter(Boolean).pop() || '';
+    return decodeURIComponent(fileName).trim();
+  } catch {
+    return '';
+  }
+}
+
+function buildDeadLinkQueries({ title = '', failedUrl = '' }) {
+  const fileName = extractFileNameFromUrl(failedUrl);
+  const cleanTitle = `${title || ''}`.trim();
+  return Array.from(new Set([
+    fileName ? `"${fileName}"` : '',
+    fileName ? `"${fileName}" manual` : '',
+    fileName ? `filetype:pdf "${fileName}"` : '',
+    cleanTitle ? `filetype:pdf "${cleanTitle}"` : '',
+  ].filter(Boolean)));
 }
 
 async function searchDuckDuckGoHtml(query, fetchImpl = fetch) {
@@ -287,6 +324,94 @@ async function searchDuckDuckGoHtml(query, fetchImpl = fetch) {
 
   const liteHtml = await fetchDuckDuckGoSearchPage(query, 'https://lite.duckduckgo.com/lite/?q=', fetchImpl);
   return extractDuckDuckGoAnchors(liteHtml);
+}
+
+function extractBingAnchors(html = '') {
+  const anchors = Array.from(`${html || ''}`.matchAll(/<li[^>]*\bclass\s*=\s*["'][^"']*\bb_algo\b[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi));
+  const rows = [];
+  const seen = new Set();
+  for (const match of anchors) {
+    const block = match[1] || '';
+    const anchorMatch = block.match(/<a\b[^>]*href\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/i);
+    if (!anchorMatch) continue;
+    const href = escapeHtml(anchorMatch[2] || anchorMatch[3] || anchorMatch[4] || '').trim();
+    const title = escapeHtml(anchorMatch[5] || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const url = extractHref(href);
+    if (!url || !title) continue;
+    const key = `${url}::${title}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({ title, url });
+    if (rows.length >= MAX_SEARCH_RESULTS_PER_QUERY) break;
+  }
+  return rows;
+}
+
+async function searchBingHtml(query, fetchImpl = fetch) {
+  const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}&count=${MAX_SEARCH_RESULTS_PER_QUERY}`;
+  const response = await fetchWithTimeout(url, { headers: { 'user-agent': SEARCH_USER_AGENT } }, fetchImpl, SEARCH_PROVIDER_TIMEOUT_MS);
+  if (!response.ok) throw new Error(`Bing search failed with status ${response.status}`);
+  const html = await response.text();
+  return extractBingAnchors(html);
+}
+
+async function searchSerpApi(query, fetchImpl = fetch, options = {}) {
+  const apiKey = `${options.serpApiKey || process.env.SERPAPI_API_KEY || ''}`.trim();
+  if (!apiKey) throw new Error('SERPAPI_API_KEY missing');
+  const url = `https://serpapi.com/search.json?engine=google&q=${encodeURIComponent(query)}&num=${MAX_SEARCH_RESULTS_PER_QUERY}&api_key=${encodeURIComponent(apiKey)}`;
+  const response = await fetchWithTimeout(url, { headers: { 'user-agent': SEARCH_USER_AGENT } }, fetchImpl, SEARCH_PROVIDER_TIMEOUT_MS);
+  if (!response.ok) throw new Error(`SerpAPI search failed with status ${response.status}`);
+  const payload = await response.json().catch(() => ({}));
+  const organic = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
+  return organic
+    .map((item) => ({
+      title: `${item?.title || ''}`.trim(),
+      url: `${item?.link || ''}`.trim(),
+    }))
+    .filter((item) => item.title && item.url)
+    .slice(0, MAX_SEARCH_RESULTS_PER_QUERY);
+}
+
+async function searchBingApi(query, fetchImpl = fetch, options = {}) {
+  const apiKey = `${options.bingApiKey || process.env.BING_SEARCH_API_KEY || ''}`.trim();
+  if (!apiKey) throw new Error('BING_SEARCH_API_KEY missing');
+  const endpoint = `${options.bingEndpoint || process.env.BING_SEARCH_ENDPOINT || 'https://api.bing.microsoft.com/v7.0/search'}`.trim();
+  const url = `${endpoint}?q=${encodeURIComponent(query)}&count=${MAX_SEARCH_RESULTS_PER_QUERY}`;
+  const response = await fetchWithTimeout(url, {
+    headers: {
+      'user-agent': SEARCH_USER_AGENT,
+      'Ocp-Apim-Subscription-Key': apiKey,
+    }
+  }, fetchImpl, SEARCH_PROVIDER_TIMEOUT_MS);
+  if (!response.ok) throw new Error(`Bing API search failed with status ${response.status}`);
+  const payload = await response.json().catch(() => ({}));
+  const values = Array.isArray(payload?.webPages?.value) ? payload.webPages.value : [];
+  return values
+    .map((item) => ({
+      title: `${item?.name || ''}`.trim(),
+      url: `${item?.url || ''}`.trim(),
+    }))
+    .filter((item) => item.title && item.url)
+    .slice(0, MAX_SEARCH_RESULTS_PER_QUERY);
+}
+
+function buildSearchProviderPlan(options = {}) {
+  const primary = `${options.primarySearchProvider || ''}`.trim().toLowerCase();
+  const providers = [];
+  if (primary === 'serpapi') providers.push({ name: 'serpapi', fn: searchSerpApi });
+  if (primary === 'bing_api') providers.push({ name: 'bing_api', fn: searchBingApi });
+  if (primary === 'bing_html') providers.push({ name: 'bing_html', fn: searchBingHtml });
+  if (primary === 'duckduckgo_html') providers.push({ name: 'duckduckgo_html', fn: searchDuckDuckGoHtml });
+
+  if (!providers.some((entry) => entry.name === 'serpapi') && (`${options.serpApiKey || process.env.SERPAPI_API_KEY || ''}`.trim())) {
+    providers.push({ name: 'serpapi', fn: searchSerpApi });
+  }
+  if (!providers.some((entry) => entry.name === 'bing_api') && (`${options.bingApiKey || process.env.BING_SEARCH_API_KEY || ''}`.trim())) {
+    providers.push({ name: 'bing_api', fn: searchBingApi });
+  }
+  if (!providers.some((entry) => entry.name === 'bing_html')) providers.push({ name: 'bing_html', fn: searchBingHtml });
+  if (!providers.some((entry) => entry.name === 'duckduckgo_html')) providers.push({ name: 'duckduckgo_html', fn: searchDuckDuckGoHtml });
+  return providers;
 }
 
 function detectSourceType(url, manufacturerProfile) {
@@ -304,7 +429,7 @@ function detectSourceType(url, manufacturerProfile) {
     return host.includes('parts.') ? 'parts' : 'support';
   }
   if ((manufacturerProfile?.sourceTokens || []).some((token) => host.includes(token))) return 'manufacturer';
-  if (/betson|moss|distribut/i.test(host)) return 'distributor';
+  if (KNOWN_DISTRIBUTOR_DOMAINS.some((domain) => host.includes(domain.replace(/^www\./, ''))) || /betson|moss|distribut/i.test(host)) return 'distributor';
   if (/archive\.org|ipdb|arcade-museum|arcade-history|manual/.test(host)) return 'manual_library';
   return 'other';
 }
@@ -926,7 +1051,18 @@ async function probeAdapterCandidates({ candidates, manufacturer, titleVariants,
   }
 }
 
-async function discoverManualDocumentation({ assetName, normalizedName, manufacturer, manufacturerProfile, searchHints = [], searchProvider = searchDuckDuckGoHtml, fetchImpl = fetch, logger = console, traceId = '' }) {
+async function discoverManualDocumentation({
+  assetName,
+  normalizedName,
+  manufacturer,
+  manufacturerProfile,
+  searchHints = [],
+  searchProvider = null,
+  searchProviderOptions = {},
+  fetchImpl = fetch,
+  logger = console,
+  traceId = ''
+}) {
   const title = normalizedName || assetName;
   const titleVariants = buildExactTitleVariants(assetName, normalizedName);
   const logEvent = buildDiagnosticLogger({ logger, traceId });
@@ -958,12 +1094,15 @@ async function discoverManualDocumentation({ assetName, normalizedName, manufact
   };
   const adapterCandidates = buildManufacturerDiscoveryAdapters({ title, manufacturerProfile });
   const seedPages = buildManufacturerDiscoverySeedPages({ title, manufacturerProfile });
+  const providerPlan = searchProvider
+    ? [{ name: searchProvider?.name || 'custom_search_provider', fn: searchProvider }]
+    : buildSearchProviderPlan(searchProviderOptions);
 
   logEvent('start', {
     assetName: sanitizeDiagnosticValue(assetName, 120),
     normalizedName: sanitizeDiagnosticValue(normalizedName, 120),
     manufacturer: sanitizeDiagnosticValue(manufacturer, 120),
-    provider: searchProvider?.name || 'anonymous_search_provider',
+    providers: providerPlan.map((provider) => provider.name),
     adapterCount: adapterCandidates.length,
     seedPageCount: seedPages.length,
     queriesTried: queries.map((entry) => ({ mode: entry.mode, query: sanitizeDiagnosticValue(entry.query, 160) }))
@@ -1008,18 +1147,35 @@ async function discoverManualDocumentation({ assetName, normalizedName, manufact
   }
 
   for (const { query, mode } of queries) {
-    const results = await searchProvider(query, fetchImpl).catch((error) => {
-      logEvent('search_error', {
-        provider: searchProvider?.name || 'anonymous_search_provider',
+    let providerUsed = 'none';
+    let results = [];
+    for (let attempt = 0; attempt < providerPlan.length; attempt += 1) {
+      const provider = providerPlan[attempt];
+      logEvent('search_provider_attempt', {
         mode,
         query: sanitizeDiagnosticValue(query, 160),
-        reason: isAbortLikeError(error) ? 'timeout' : sanitizeDiagnosticValue(error?.message || String(error), 120)
+        provider: provider.name,
+        attempt: attempt + 1,
       });
-      return [];
-    });
+      const providerResults = await provider.fn(query, fetchImpl, searchProviderOptions).catch((error) => {
+        logEvent('search_retry', {
+          provider: provider.name,
+          mode,
+          query: sanitizeDiagnosticValue(query, 160),
+          attempt: attempt + 1,
+          reason: isAbortLikeError(error) ? 'timeout' : sanitizeDiagnosticValue(error?.message || String(error), 120),
+        });
+        return null;
+      });
+      if (Array.isArray(providerResults)) {
+        results = providerResults;
+        providerUsed = provider.name;
+        break;
+      }
+    }
 
     logEvent('search_results', {
-      provider: searchProvider?.name || 'anonymous_search_provider',
+      provider: providerUsed,
       mode,
       query: sanitizeDiagnosticValue(query, 160),
       topResults: results.slice(0, 5).map((result) => ({
@@ -1130,7 +1286,57 @@ async function discoverManualDocumentation({ assetName, normalizedName, manufact
     followedRows.push(...extracted);
   }
 
-  const documentationLinks = dedupeByUrl([...manualRows, ...followedRows]).slice(0, MAX_DISCOVERY_RESULTS);
+  const validatedManualRows = [];
+  const recoveryRows = [];
+  const deadManualUrls = new Set();
+  const candidateManualRows = dedupeByUrl([...manualRows, ...followedRows]).slice(0, MAX_DISCOVERY_RESULTS * 2);
+  for (const candidate of candidateManualRows) {
+    try {
+      const response = await fetchWithTimeout(candidate.url, { method: 'HEAD', headers: { 'user-agent': SEARCH_USER_AGENT } }, fetchImpl);
+      if (response.ok) {
+        validatedManualRows.push(candidate);
+        continue;
+      }
+      if (response.status !== 404) continue;
+      deadManualUrls.add(candidate.url.toLowerCase());
+      const deadLinkQueries = buildDeadLinkQueries({ title, failedUrl: candidate.url });
+      logEvent('dead_link_recovery_start', { url: candidate.url, status: response.status, fileName: extractFileNameFromUrl(candidate.url), queries: deadLinkQueries });
+      for (const query of deadLinkQueries) {
+        for (let attempt = 0; attempt < providerPlan.length; attempt += 1) {
+          const provider = providerPlan[attempt];
+          const results = await provider.fn(query, fetchImpl, searchProviderOptions).catch(() => null);
+          if (!Array.isArray(results)) continue;
+          logEvent('dead_link_recovery_attempt', { failedUrl: candidate.url, provider: provider.name, attempt: attempt + 1, query: sanitizeDiagnosticValue(query, 160), results: results.length });
+          for (const result of results.slice(0, MAX_SEARCH_RESULTS_PER_QUERY)) {
+            const classification = classifyManualCandidate({
+              title: result.title,
+              url: result.url,
+              manufacturer,
+              titleVariants,
+              manufacturerProfile
+            });
+            if (!classification.includeManual) continue;
+            if (deadManualUrls.has(`${result.url || ''}`.toLowerCase())) continue;
+            recoveryRows.push({
+              title: result.title,
+              url: result.url,
+              sourceType: classification.sourceType,
+              discoverySource: 'dead_link_recovery'
+            });
+          }
+          if (recoveryRows.length >= MAX_SEARCH_RESULTS_PER_QUERY) break;
+        }
+        if (recoveryRows.length >= MAX_SEARCH_RESULTS_PER_QUERY) break;
+      }
+    } catch {
+      // ignore fetch errors for validation
+    }
+  }
+  const documentationLinks = dedupeByUrl([
+    ...validatedManualRows,
+    ...recoveryRows,
+    ...candidateManualRows.filter((row) => !deadManualUrls.has(`${row.url || ''}`.toLowerCase()))
+  ]).slice(0, MAX_DISCOVERY_RESULTS);
   const supportResources = dedupeByUrl(supportRows).slice(0, MAX_DISCOVERY_RESULTS);
 
   logEvent('complete', {

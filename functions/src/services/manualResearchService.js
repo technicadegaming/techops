@@ -250,6 +250,7 @@ async function saveCachedResearchResult({ db, companyId, normalizedTitle, manufa
 
 async function runStageOneLookup({
   db,
+  settings = {},
   input,
   fetchImpl = fetch,
   companyId = '',
@@ -296,6 +297,12 @@ async function runStageOneLookup({
     manufacturer,
     manufacturerProfile,
     searchHints: [],
+    searchProviderOptions: {
+      primarySearchProvider: settings.manualResearchPrimarySearchProvider || '',
+      serpApiKey: settings.manualResearchSerpApiKey || process.env.SERPAPI_API_KEY || '',
+      bingApiKey: settings.manualResearchBingApiKey || process.env.BING_SEARCH_API_KEY || '',
+      bingEndpoint: settings.manualResearchBingEndpoint || process.env.BING_SEARCH_ENDPOINT || '',
+    },
     logger: console,
     traceId: `manual-research-stage1-${Date.now()}`,
     fetchImpl,
@@ -493,6 +500,7 @@ async function researchAssetTitles({
     if (!originalTitle) continue;
     const stageOne = await runStageOneLookup({
       db,
+      settings,
       input: {
         originalTitle,
         manufacturerHint: normalizeString(row?.manufacturerHint || '', 120),
