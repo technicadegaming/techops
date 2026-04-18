@@ -1780,9 +1780,13 @@ function buildSingleAssetDocumentationFields({ preview = {}, cleanedResult = {},
 }
 
 function hasAuthoritativeManualAttachment(manualFields = {}, existingAsset = {}) {
+  const candidatePath = `${manualFields?.manualStoragePath || existingAsset?.manualStoragePath || ''}`.trim();
+  const durableStoragePath = candidatePath
+    && !/^https?:\/\//i.test(candidatePath)
+    && /(manual-library\/|^companies\/[^/]+\/manual-library\/)/i.test(candidatePath);
   return !!(
     `${manualFields?.manualLibraryRef || existingAsset?.manualLibraryRef || ''}`.trim()
-    || `${manualFields?.manualStoragePath || existingAsset?.manualStoragePath || ''}`.trim()
+    || durableStoragePath
   );
 }
 
@@ -1796,8 +1800,25 @@ function deriveManualStatus({ manualFields = {}, cleanedResult = {}, asset = {} 
   return 'no_manual';
 }
 
-function finalizeSingleAssetEnrichment({ asset = {}, cleanedResult = {}, preview = {}, manualFields = {}, resolvedStatus = '' } = {}) {
+function finalizeSingleAssetEnrichment({
+  asset = {},
+  cleanedResult = {},
+  preview = {},
+  manualFields = {},
+  resolvedStatus = '',
+  acquisitionState = '',
+} = {}) {
   const authoritativeManualAttached = hasAuthoritativeManualAttachment(manualFields, asset);
+  const normalizedAcquisitionState = `${acquisitionState || ''}`.trim();
+  const acquisitionAttemptedWithoutAttachment = !authoritativeManualAttached
+    && ['started', 'no_manual', 'failed', 'timed_out'].includes(normalizedAcquisitionState);
+  const shouldForceFollowupForAcquisitionEvidence = acquisitionAttemptedWithoutAttachment
+    && `${resolvedStatus || ''}`.trim() !== 'lookup_failed';
+  const resolutionReason = authoritativeManualAttached
+    ? 'durable_manual_attached'
+    : (shouldForceFollowupForAcquisitionEvidence
+      ? `acquisition_${normalizedAcquisitionState || 'attempted'}_without_durable_manual`
+      : `${resolvedStatus || ''}`.trim() || 'default_no_match');
   if (authoritativeManualAttached) {
     const authoritativeLinks = Array.from(new Set([
       `${manualFields.manualStoragePath || asset.manualStoragePath || ''}`.trim(),
@@ -1832,12 +1853,13 @@ function finalizeSingleAssetEnrichment({ asset = {}, cleanedResult = {}, preview
         enrichmentFollowupQuestion: '',
       }),
       authoritativeManualAttached,
+      resolutionReason,
     };
   }
 
   const mustDowngradeToTerminal = `${resolvedStatus || ''}`.trim() === 'docs_found'
     || NON_DURABLE_ENRICHMENT_STATUSES.has(`${resolvedStatus || ''}`.trim());
-  const finalStatus = mustDowngradeToTerminal
+  const downgradedStatus = mustDowngradeToTerminal
     ? resolveTerminalEnrichmentStatus({
       documentationSuggestions: [],
       supportResourcesSuggestion: cleanedResult.supportResourcesSuggestion,
@@ -1845,6 +1867,9 @@ function finalizeSingleAssetEnrichment({ asset = {}, cleanedResult = {}, preview
       manualMatchSummary: { ...(cleanedResult.manualMatchSummary || {}), manualReady: false, manualUrl: '', manualLibraryRef: '', manualStoragePath: '' },
     })
     : `${resolvedStatus || ''}`.trim() || 'no_match_yet';
+  const finalStatus = shouldForceFollowupForAcquisitionEvidence
+    ? 'followup_needed'
+    : downgradedStatus;
   return {
     finalStatus,
     finalManualFields: {
@@ -1870,6 +1895,7 @@ function finalizeSingleAssetEnrichment({ asset = {}, cleanedResult = {}, preview
       enrichmentFollowupQuestion: cleanedResult.enrichmentFollowupQuestion,
     }),
     authoritativeManualAttached: false,
+    resolutionReason,
   };
 }
 
@@ -2109,11 +2135,13 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       finalManualMatchSummary,
       finalReviewState,
       authoritativeManualAttached,
+      resolutionReason,
     } = finalizeSingleAssetEnrichment({
       asset,
       cleanedResult,
       preview,
       manualFields,
+      acquisitionState: pipelineMeta.acquisitionState || '',
       resolvedStatus: pipelineMeta.acquisitionState === 'timed_out' && !hasAuthoritativeManualAttachment(manualFields, asset)
         ? (hasSupportOrSourceContext({ ...asset, ...manualFields, supportResourcesSuggestion: cleanedResult.supportResourcesSuggestion, enrichmentFollowupQuestion: cleanedResult.enrichmentFollowupQuestion }) ? 'followup_needed' : 'timed_out')
         : status,
@@ -2183,6 +2211,20 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       elapsedMs: Date.now() - startedAt,
     });
     log('terminal_status_write', { runId, enrichmentStatus: finalStatus, authoritativeManualAttached });
+    buildSingleAssetDocLog('terminal_status_reason', {
+      runId,
+      assetId,
+      companyId: `${asset.companyId || ''}`.trim(),
+      title: asset.name || normalizedName || '',
+      manufacturer: asset.manufacturer || manufacturerSuggestion || '',
+      callablePath,
+      finalStatus,
+      resolvedStatusInput: status,
+      acquisitionState: pipelineMeta.acquisitionState || '',
+      authoritativeManualAttached,
+      reason: resolutionReason,
+      elapsedMs: Date.now() - startedAt,
+    });
     if (authoritativeManualAttached) {
       buildSingleAssetDocLog('library_attach', {
         runId,

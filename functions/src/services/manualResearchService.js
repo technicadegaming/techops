@@ -122,6 +122,9 @@ function classifySuggestionBucket(entry = {}) {
   const exactManualMatch = entry?.exactManualMatch === true;
   const matchScore = Number(entry?.matchScore || 0);
   const url = normalizeUrl(entry?.url || '').toLowerCase();
+  const title = normalizeString(entry?.title || '', 200).toLowerCase();
+  const brochureLike = /(brochure|spec(?:ification)?(?:\s*sheet)?|sell[\s-]?sheet|flyer|catalog)/.test(`${title} ${url}`);
+  if (brochureLike) return 'support_product_page';
   if (verified && exactManualMatch) return 'verified_manual';
   if ((verified && matchScore >= 60) || /manual|operator|service|install|\.pdf($|[?#])/.test(url)) return 'likely_manual_install_service_doc';
   if (/(support|product|download|service|parts)/.test(url) || ['support', 'official_site', 'parts', 'distributor'].includes(`${entry?.resourceType || entry?.sourceType || ''}`.toLowerCase())) {
