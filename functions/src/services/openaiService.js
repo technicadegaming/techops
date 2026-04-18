@@ -181,12 +181,38 @@ async function requestAssetDocumentationLookup({ model, traceId, context }) {
 }
 
 function buildManualResearchInstructions(context = {}) {
+  const originalTitle = `${context.originalTitle || ''}`.trim();
+  const normalizedTitle = `${context.normalizedTitle || ''}`.trim();
+  const manufacturerHint = `${context.manufacturerHint || ''}`.trim();
+  const aliases = Array.isArray(context.titleAliases) ? context.titleAliases.filter(Boolean) : [];
+  const queryPhrases = [
+    `"${originalTitle}" "${manufacturerHint}" operator manual pdf`,
+    `"${originalTitle}" "${manufacturerHint}" service manual pdf`,
+    `"${originalTitle}" "${manufacturerHint}" install manual pdf`,
+    `"${originalTitle}" "${manufacturerHint}" manual download`,
+    ...(normalizedTitle && normalizedTitle.toLowerCase() !== originalTitle.toLowerCase()
+      ? [
+        `"${normalizedTitle}" "${manufacturerHint}" operator manual pdf`,
+        `"${normalizedTitle}" "${manufacturerHint}" service manual pdf`,
+        `"${normalizedTitle}" "${manufacturerHint}" install manual pdf`,
+        `"${normalizedTitle}" "${manufacturerHint}" manual download`,
+      ]
+      : []),
+    ...aliases.flatMap((alias) => ([
+      `"${alias}" "${manufacturerHint}" operator manual pdf`,
+      `"${alias}" "${manufacturerHint}" service manual pdf`,
+      `"${alias}" "${manufacturerHint}" install manual pdf`,
+      `"${alias}" "${manufacturerHint}" manual download`,
+    ])),
+  ].filter(Boolean);
   return [
     'You are a manual research assistant for arcade/FEC asset intake.',
-    'Research the arcade manual for the specific title, family, and manufacturer like an expert operator would.',
-    'Find the best actual manual candidate for the requested title.',
+    'Research the arcade manual for the specific title, family, and manufacturer like an expert operator would using web_search first.',
     'Search for operator manuals, service manuals, install/installation guides, parts manuals, and real downloadable manual pages.',
-    'Prefer official manufacturer sources, direct PDFs, trusted distributor/manual hosts, and approved internal docs when provided.',
+    'Run official manufacturer and major distributor domains first; if no strong manual appears, expand to broader web search.',
+    'Use and adapt these required queries verbatim where relevant:',
+    ...queryPhrases.map((query) => `- ${query}`),
+    'Use exact title variants and known aliases throughout the search.',
     'Keep three concepts separate: manualUrl (actual manual candidate), manualSourceUrl (title-specific source page), and supportUrl (support context only).',
     'Generic support hubs are useful context but never count as manuals.',
     'Only set manualUrl when you have direct manual/download proof. Never put generic support/product/category/search pages in manualUrl.',
@@ -196,8 +222,13 @@ function buildManualResearchInstructions(context = {}) {
     'Be title-family aware about close variants, for example: Quick Drop/Quik Drop, Virtual Rabbids/Virtual Rabbids The Big Ride, King Kong VR/King Kong of Skull Island VR, Fast and Furious/Fast & Furious Arcade, Sink-It/Sink It/Sink It Shootout, and HYPERshoot.',
     'Never treat header/footer/nav links, service directories, consultative-services pages, installations pages, office-coffee pages, career pages, account/cart/login pages, or generic site-search/category pages as manuals.',
     'Be conservative. Do not invent manuals, URLs, titles, contact info, or confidence.',
+    'Return ranked candidates in buckets: verified_pdf_candidate, title_specific_support_page, likely_install_or_service_doc, brochure_or_spec_doc, weak_lead.',
+    'Each candidate must include url, title, sourceDomain, whyMatch, and confidence.',
+    'Set selectedCandidate to the best manual attempt if one exists.',
     'Return JSON only. Put concise reasoning in matchNotes and optional rawResearchSummary, not chain-of-thought.',
     `Allowed manufacturer/trusted domains: ${(context.allowedDomains || []).join(', ') || 'none provided'}.`,
+    `Input title: "${originalTitle}", normalized family title: "${normalizedTitle}", manufacturer hint: "${manufacturerHint}".`,
+    `Aliases: ${aliases.join(', ') || 'none'}.`,
   ].join('\n');
 }
 
@@ -218,6 +249,22 @@ function buildManualResearchSchemaPrompt() {
     confidence: 0.0,
     matchConfidence: 0.0,
     matchNotes: 'string',
+    candidates: [{
+      bucket: 'verified_pdf_candidate|title_specific_support_page|likely_install_or_service_doc|brochure_or_spec_doc|weak_lead',
+      url: 'https://...',
+      title: 'string',
+      sourceDomain: 'string',
+      whyMatch: 'string',
+      confidence: 0.0,
+    }],
+    selectedCandidate: {
+      bucket: 'verified_pdf_candidate|title_specific_support_page|likely_install_or_service_doc|brochure_or_spec_doc|weak_lead',
+      url: 'https://...',
+      title: 'string',
+      sourceDomain: 'string',
+      whyMatch: 'string',
+      confidence: 0.0,
+    },
     evidence: [{ url: 'https://...', title: 'string', reason: 'string' }],
     citations: [{ url: 'https://...', title: 'string' }],
     rawResearchSummary: 'string'
@@ -284,6 +331,67 @@ async function requestManualResearchFallback({
     tools,
     tool_choice: 'auto',
     include: ['web_search_call.action.sources'],
+    text: {
+      format: {
+        type: 'json_schema',
+        name: 'manual_research_candidates',
+        strict: true,
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['normalizedTitle', 'manufacturer', 'manufacturerInferred', 'matchType', 'manualReady', 'reviewRequired', 'manualUrl', 'manualSourceUrl', 'supportUrl', 'supportEmail', 'supportPhone', 'confidence', 'matchConfidence', 'matchNotes', 'candidates', 'citations', 'rawResearchSummary'],
+          properties: {
+            normalizedTitle: { type: 'string' },
+            manufacturer: { type: 'string' },
+            manufacturerInferred: { type: 'boolean' },
+            matchType: { type: 'string' },
+            manualReady: { type: 'boolean' },
+            reviewRequired: { type: 'boolean' },
+            variantWarning: { type: 'string' },
+            manualUrl: { type: 'string' },
+            manualSourceUrl: { type: 'string' },
+            supportUrl: { type: 'string' },
+            supportEmail: { type: 'string' },
+            supportPhone: { type: 'string' },
+            confidence: { type: 'number' },
+            matchConfidence: { type: 'number' },
+            matchNotes: { type: 'string' },
+            candidates: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['bucket', 'url', 'title', 'sourceDomain', 'whyMatch', 'confidence'],
+                properties: {
+                  bucket: { type: 'string' },
+                  url: { type: 'string' },
+                  title: { type: 'string' },
+                  sourceDomain: { type: 'string' },
+                  whyMatch: { type: 'string' },
+                  confidence: { type: 'number' },
+                }
+              }
+            },
+            selectedCandidate: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['bucket', 'url', 'title', 'sourceDomain', 'whyMatch', 'confidence'],
+              properties: {
+                bucket: { type: 'string' },
+                url: { type: 'string' },
+                title: { type: 'string' },
+                sourceDomain: { type: 'string' },
+                whyMatch: { type: 'string' },
+                confidence: { type: 'number' },
+              }
+            },
+            evidence: { type: 'array', items: { type: 'object' } },
+            citations: { type: 'array', items: { type: 'object' } },
+            rawResearchSummary: { type: 'string' },
+          },
+        },
+      },
+    },
     input: [
       { role: 'system', content: buildManualResearchInstructions(context) },
       { role: 'developer', content: `Output strict JSON schema: ${buildManualResearchSchemaPrompt()}` },

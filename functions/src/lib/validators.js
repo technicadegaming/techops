@@ -118,6 +118,40 @@ function validateManualResearchResultShape(result) {
   if (typeof result.manualReady !== 'boolean') throw new Error('Missing manualReady');
   if (typeof result.reviewRequired !== 'boolean') throw new Error('Missing reviewRequired');
   if (typeof result.confidence !== 'number') throw new Error('Missing confidence');
+  const validCandidateBuckets = new Set([
+    'verified_pdf_candidate',
+    'title_specific_support_page',
+    'likely_install_or_service_doc',
+    'brochure_or_spec_doc',
+    'weak_lead',
+  ]);
+  const candidateRows = Array.isArray(result.candidates) ? result.candidates : [];
+  const candidates = candidateRows
+    .filter((entry) => entry && typeof entry === 'object')
+    .map((entry) => ({
+      bucket: validCandidateBuckets.has(`${entry.bucket || ''}`.trim()) ? `${entry.bucket}`.trim() : 'weak_lead',
+      url: isHttpUrl(entry.url) ? `${entry.url}`.trim() : '',
+      title: typeof entry.title === 'string' ? entry.title.trim().slice(0, 220) : '',
+      sourceDomain: typeof entry.sourceDomain === 'string' ? entry.sourceDomain.trim().slice(0, 160).toLowerCase() : '',
+      whyMatch: typeof entry.whyMatch === 'string' ? entry.whyMatch.trim().slice(0, 320) : '',
+      confidence: Number.isFinite(Number(entry.confidence)) ? Math.max(0, Math.min(1, Number(entry.confidence))) : 0,
+    }))
+    .filter((entry) => entry.url)
+    .slice(0, 25);
+  const selectedCandidate = result.selectedCandidate && typeof result.selectedCandidate === 'object'
+    ? {
+      bucket: validCandidateBuckets.has(`${result.selectedCandidate.bucket || ''}`.trim()) ? `${result.selectedCandidate.bucket}`.trim() : '',
+      url: isHttpUrl(result.selectedCandidate.url) ? `${result.selectedCandidate.url}`.trim() : '',
+      title: typeof result.selectedCandidate.title === 'string' ? result.selectedCandidate.title.trim().slice(0, 220) : '',
+      sourceDomain: typeof result.selectedCandidate.sourceDomain === 'string'
+        ? result.selectedCandidate.sourceDomain.trim().slice(0, 160).toLowerCase()
+        : '',
+      whyMatch: typeof result.selectedCandidate.whyMatch === 'string' ? result.selectedCandidate.whyMatch.trim().slice(0, 320) : '',
+      confidence: Number.isFinite(Number(result.selectedCandidate.confidence))
+        ? Math.max(0, Math.min(1, Number(result.selectedCandidate.confidence)))
+        : 0,
+    }
+    : null;
   return {
     normalizedTitle,
     manufacturer,
@@ -133,6 +167,8 @@ function validateManualResearchResultShape(result) {
     supportPhone: typeof result.supportPhone === 'string' ? result.supportPhone.trim().slice(0, 80) : '',
     confidence: Math.max(0, Math.min(1, result.confidence)),
     matchNotes: typeof result.matchNotes === 'string' ? result.matchNotes.trim().slice(0, 400) : '',
+    candidates,
+    selectedCandidate: selectedCandidate?.url ? selectedCandidate : null,
     citations: Array.isArray(result.citations)
       ? result.citations
         .filter((entry) => entry && typeof entry.url === 'string' && isHttpUrl(entry.url))
