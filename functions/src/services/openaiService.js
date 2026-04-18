@@ -189,20 +189,26 @@ function buildManualResearchInstructions(context = {}) {
     `"${originalTitle}" "${manufacturerHint}" operator manual pdf`,
     `"${originalTitle}" "${manufacturerHint}" service manual pdf`,
     `"${originalTitle}" "${manufacturerHint}" install manual pdf`,
+    `"${originalTitle}" manual download`,
     `"${originalTitle}" "${manufacturerHint}" manual download`,
+    `filetype:pdf "${originalTitle}"`,
     ...(normalizedTitle && normalizedTitle.toLowerCase() !== originalTitle.toLowerCase()
       ? [
         `"${normalizedTitle}" "${manufacturerHint}" operator manual pdf`,
         `"${normalizedTitle}" "${manufacturerHint}" service manual pdf`,
         `"${normalizedTitle}" "${manufacturerHint}" install manual pdf`,
+        `"${normalizedTitle}" manual download`,
         `"${normalizedTitle}" "${manufacturerHint}" manual download`,
+        `filetype:pdf "${normalizedTitle}"`,
       ]
       : []),
     ...aliases.flatMap((alias) => ([
       `"${alias}" "${manufacturerHint}" operator manual pdf`,
       `"${alias}" "${manufacturerHint}" service manual pdf`,
       `"${alias}" "${manufacturerHint}" install manual pdf`,
+      `"${alias}" manual download`,
       `"${alias}" "${manufacturerHint}" manual download`,
+      `filetype:pdf "${alias}"`,
     ])),
   ].filter(Boolean);
   return [

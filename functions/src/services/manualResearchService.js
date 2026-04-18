@@ -32,6 +32,11 @@ const FALLBACK_MATCH_TYPES = new Set([
   'family_match_needs_review',
   'unresolved',
 ]);
+const OPENAI_WEAK_CANDIDATE_BUCKETS = new Set([
+  'weak_lead',
+  'title_specific_support_page',
+  'brochure_or_spec_doc',
+]);
 
 const CACHE_COLLECTION = 'assetTitleResearchCache';
 const MAX_TITLE_BATCH = 50;
@@ -292,11 +297,9 @@ async function saveCachedResearchResult({ db, companyId, normalizedTitle, manufa
 
 async function runStageOneLookup({
   db,
-  settings = {},
   input,
   fetchImpl = fetch,
   companyId = '',
-  maxWebSources = 5,
 }) {
   const titleFamily = resolveArcadeTitleFamily({
     title: input.originalTitle,
@@ -333,38 +336,14 @@ async function runStageOneLookup({
     })
     : [];
 
-  const discovered = await discoverManualDocumentation({
-    assetName: input.originalTitle,
-    normalizedName: normalizedTitle,
-    manufacturer,
-    manufacturerProfile,
-    searchHints: [],
-    searchProviderOptions: {
-      primarySearchProvider: settings.manualResearchPrimarySearchProvider || '',
-      serpApiKey: settings.manualResearchSerpApiKey || process.env.SERPAPI_API_KEY || '',
-      bingApiKey: settings.manualResearchBingApiKey || process.env.BING_SEARCH_API_KEY || '',
-      bingEndpoint: settings.manualResearchBingEndpoint || process.env.BING_SEARCH_ENDPOINT || '',
-    },
-    logger: console,
-    traceId: `manual-research-stage1-${Date.now()}`,
-    fetchImpl,
-  });
-  const discoveredDocumentationSuggestions = normalizeDocumentationSuggestions({
-    links: (discovered.documentationLinks || []).slice(0, Math.max(1, maxWebSources)),
-    confidence: 0.6,
-    asset: { name: input.originalTitle, manufacturer },
-    normalizedName: normalizedTitle,
-    manufacturerSuggestion: manufacturer,
-  });
   const documentationSuggestions = mergeDocumentationSuggestions({
     existingSuggestions: [...verifiedCatalogSuggestions, ...reusedSuggestions],
-    nextSuggestions: discoveredDocumentationSuggestions,
+    nextSuggestions: [],
     preserveExistingCandidates: true,
   });
   const supportResourcesSuggestion = normalizeDocumentationSuggestions({
     links: [
       ...(catalogMatch?.supportResources || []),
-      ...(discovered.supportResources || []).slice(0, Math.max(1, maxWebSources)),
     ],
     confidence: Math.max(0.45, Number(catalogMatch?.confidence || 0)),
     asset: { name: input.originalTitle, manufacturer },
@@ -396,8 +375,51 @@ async function runStageOneLookup({
     supportContactsSuggestion: [],
     summary,
     catalogMatch,
-    searchEvidence: Array.isArray(discovered.evidence) ? discovered.evidence : [],
+    searchEvidence: [],
     stage: 'stage1',
+  };
+}
+
+async function runDiscoveryFallback({
+  settings = {},
+  input,
+  stageOne,
+  fetchImpl = fetch,
+  maxWebSources = 5,
+}) {
+  const discovered = await discoverManualDocumentation({
+    assetName: input.originalTitle,
+    normalizedName: stageOne.normalizedTitle,
+    manufacturer: stageOne.manufacturer,
+    manufacturerProfile: stageOne.manufacturerProfile,
+    searchHints: [],
+    searchProviderOptions: {
+      primarySearchProvider: settings.manualResearchPrimarySearchProvider || '',
+      serpApiKey: settings.manualResearchSerpApiKey || process.env.SERPAPI_API_KEY || '',
+      bingApiKey: settings.manualResearchBingApiKey || process.env.BING_SEARCH_API_KEY || '',
+      bingEndpoint: settings.manualResearchBingEndpoint || process.env.BING_SEARCH_ENDPOINT || '',
+    },
+    logger: console,
+    traceId: `manual-research-fallback-${Date.now()}`,
+    fetchImpl,
+  });
+  return {
+    documentationSuggestions: normalizeDocumentationSuggestions({
+      links: (discovered.documentationLinks || []).slice(0, Math.max(1, maxWebSources)),
+      confidence: 0.6,
+      asset: { name: input.originalTitle, manufacturer: stageOne.manufacturer },
+      normalizedName: stageOne.normalizedTitle,
+      manufacturerSuggestion: stageOne.manufacturer,
+    }),
+    supportResourcesSuggestion: normalizeDocumentationSuggestions({
+      links: (discovered.supportResources || []).slice(0, Math.max(1, maxWebSources)),
+      confidence: 0.45,
+      asset: { name: input.originalTitle, manufacturer: stageOne.manufacturer },
+      normalizedName: stageOne.normalizedTitle,
+      manufacturerSuggestion: stageOne.manufacturer,
+      kind: 'support',
+    }),
+    searchEvidence: Array.isArray(discovered.evidence) ? discovered.evidence : [],
   };
 }
 
@@ -586,97 +608,141 @@ async function researchAssetTitles({
       normalizedTitle: stageOne.normalizedTitle,
       manufacturer: stageOne.manufacturer,
       stage1MatchType: stageOne.summary.matchType,
-      ranStage2: false,
+      ranStage2: true,
       candidateManualCount: cleanCount(stageOne.documentationSuggestions),
       supportCandidateCount: stageOne.supportResourcesSuggestion.length,
       finalManualReady: stageOne.summary.manualReady === true,
     });
-
-    if (FALLBACK_MATCH_TYPES.has(stageOne.summary.matchType)) {
-      logManualResearchEvent('stage2_invoked', {
+    logManualResearchEvent('OPENAI_SEARCH_STARTED', {
+      ...logContext,
+      title: originalTitle,
+      normalizedTitle: stageOne.normalizedTitle,
+      manufacturer: stageOne.manufacturer,
+    });
+    const stageTwo = await runStageTwoResearch({
+      db,
+      settings,
+      companyId,
+      includeInternalDocs,
+      input: row,
+      stageOne,
+      traceId: `${traceId || 'manual-research'}:${originalTitle}`,
+      maxWebSources,
+      researchFallback,
+    }).catch((error) => {
+      logManualResearchEvent('stage2_validation_failed', {
         ...logContext,
         title: originalTitle,
         normalizedTitle: stageOne.normalizedTitle,
         manufacturer: stageOne.manufacturer,
         stage1MatchType: stageOne.summary.matchType,
+        ranStage2: true,
+        reason: normalizeString(error?.message || String(error), 220),
       });
-      const stageTwo = await runStageTwoResearch({
-        db,
-        settings,
-        companyId,
-        includeInternalDocs,
-        input: row,
-        stageOne,
-        traceId: `${traceId || 'manual-research'}:${originalTitle}`,
-        maxWebSources,
-        researchFallback,
-      }).catch((error) => {
-        logManualResearchEvent('stage2_validation_failed', {
+      return null;
+    });
+    let shouldFallbackToScraping = true;
+    if (stageTwo) {
+      logManualResearchEvent('openai_search_invocation', {
+        ...logContext,
+        title: originalTitle,
+        normalizedTitle: stageOne.normalizedTitle,
+        manufacturer: stageOne.manufacturer,
+        matchType: stageOne.summary.matchType,
+      });
+      const mapped = mapResearchResultToSuggestions(stageTwo, stageOne.manufacturerProfile);
+      stage2ReturnedCandidates = Array.isArray(stageTwo.candidates)
+        ? stageTwo.candidates.map((entry = {}) => ({
+          bucket: normalizeString(entry.bucket || '', 80),
+          url: normalizeUrl(entry.url || ''),
+          title: normalizeString(entry.title || '', 200),
+          sourceDomain: normalizeString(entry.sourceDomain || '', 160),
+          whyMatch: normalizeString(entry.whyMatch || '', 240),
+          confidence: Number(entry.confidence || 0) || 0,
+        })).filter((entry) => entry.url)
+        : [];
+      logManualResearchEvent('OPENAI_CANDIDATES_RECEIVED', {
+        ...logContext,
+        title: originalTitle,
+        normalizedTitle: stageOne.normalizedTitle,
+        manufacturer: stageOne.manufacturer,
+        candidateCount: stage2ReturnedCandidates.length,
+      });
+      const chosenCandidate = stageTwo.selectedCandidate?.url
+        ? stageTwo.selectedCandidate
+        : (Array.isArray(stageTwo.candidates)
+          ? stageTwo.candidates.find((entry) => ['verified_pdf_candidate', 'likely_install_or_service_doc'].includes(`${entry?.bucket || ''}`))
+          : null);
+      stage2SelectedCandidate = chosenCandidate?.url
+        ? {
+          bucket: normalizeString(chosenCandidate.bucket || '', 80),
+          url: normalizeUrl(chosenCandidate.url || ''),
+          title: normalizeString(chosenCandidate.title || '', 200),
+          sourceDomain: normalizeString(chosenCandidate.sourceDomain || '', 160),
+          whyMatch: normalizeString(chosenCandidate.whyMatch || '', 240),
+          confidence: Number(chosenCandidate.confidence || 0) || 0,
+        }
+        : null;
+      if (chosenCandidate?.url) {
+        logManualResearchEvent('OPENAI_SELECTED_CANDIDATE', {
           ...logContext,
           title: originalTitle,
           normalizedTitle: stageOne.normalizedTitle,
-          manufacturer: stageOne.manufacturer,
+          manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
+          selectedCandidateUrl: chosenCandidate.url,
+          selectedCandidateBucket: chosenCandidate.bucket || '',
+        });
+      }
+      const normalizedStageTwoDocs = normalizeDocumentationSuggestions({
+        links: mapped.documentationSuggestions,
+        confidence: Number(stageTwo.confidence || stageOne.summary.confidence || 0),
+        asset: { name: originalTitle, manufacturer: stageTwo.manufacturer || stageOne.manufacturer },
+        normalizedName: stageTwo.normalizedTitle || stageOne.normalizedTitle,
+        manufacturerSuggestion: stageTwo.manufacturer || stageOne.manufacturer,
+      });
+      const verifiedStageTwoDocs = normalizedStageTwoDocs.length
+        ? await verifyDocumentationSuggestions(normalizedStageTwoDocs, fetchImpl)
+        : [];
+      const acceptedManualCandidateCount = verifiedStageTwoDocs.filter((entry) => entry.verified && entry.exactManualMatch).length;
+      shouldFallbackToScraping = shouldRunFallbackScraping({
+        returnedCandidates: stage2ReturnedCandidates,
+        acceptedManualCandidateCount,
+      });
+      if (stageTwo.manualUrl && !normalizedStageTwoDocs.length) {
+        logManualResearchEvent('candidate_rejected', {
+          ...logContext,
+          title: originalTitle,
+          normalizedTitle: stageOne.normalizedTitle,
+          manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
           stage1MatchType: stageOne.summary.matchType,
           ranStage2: true,
-          reason: normalizeString(error?.message || String(error), 220),
+          candidateUrl: stageTwo.manualUrl,
+          reason: 'manual_contract_not_authoritative',
         });
-        return null;
+      }
+      logManualResearchEvent('stage2_candidates_extracted', {
+        ...logContext,
+        title: originalTitle,
+        normalizedTitle: stageOne.normalizedTitle,
+        manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
+        stage1MatchType: stageOne.summary.matchType,
+        ranStage2: true,
+        candidateCount: normalizedStageTwoDocs.length,
+        rejectedCandidateCount: Math.max(0, normalizedStageTwoDocs.length - acceptedManualCandidateCount),
+        acceptedManualCandidateCount,
+        supportCandidateCount: mapped.supportResourcesSuggestion.length,
       });
-      if (stageTwo) {
-        logManualResearchEvent('openai_search_invocation', {
-          ...logContext,
-          title: originalTitle,
-          normalizedTitle: stageOne.normalizedTitle,
-          manufacturer: stageOne.manufacturer,
-          matchType: stageOne.summary.matchType,
-        });
-        const mapped = mapResearchResultToSuggestions(stageTwo, stageOne.manufacturerProfile);
-        stage2ReturnedCandidates = Array.isArray(stageTwo.candidates)
-          ? stageTwo.candidates.map((entry = {}) => ({
-            bucket: normalizeString(entry.bucket || '', 80),
-            url: normalizeUrl(entry.url || ''),
-            title: normalizeString(entry.title || '', 200),
-            sourceDomain: normalizeString(entry.sourceDomain || '', 160),
-            whyMatch: normalizeString(entry.whyMatch || '', 240),
-            confidence: Number(entry.confidence || 0) || 0,
-          })).filter((entry) => entry.url)
-          : [];
-        const chosenCandidate = stageTwo.selectedCandidate?.url
-          ? stageTwo.selectedCandidate
-          : (Array.isArray(stageTwo.candidates)
-            ? stageTwo.candidates.find((entry) => ['verified_pdf_candidate', 'likely_install_or_service_doc'].includes(`${entry?.bucket || ''}`))
-            : null);
-        stage2SelectedCandidate = chosenCandidate?.url
-          ? {
-            bucket: normalizeString(chosenCandidate.bucket || '', 80),
-            url: normalizeUrl(chosenCandidate.url || ''),
-            title: normalizeString(chosenCandidate.title || '', 200),
-            sourceDomain: normalizeString(chosenCandidate.sourceDomain || '', 160),
-            whyMatch: normalizeString(chosenCandidate.whyMatch || '', 240),
-            confidence: Number(chosenCandidate.confidence || 0) || 0,
-          }
-          : null;
-        if (chosenCandidate?.url) {
-          logManualResearchEvent('selected_candidate', {
-            ...logContext,
-            title: originalTitle,
-            normalizedTitle: stageOne.normalizedTitle,
-            manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
-            selectedCandidateUrl: chosenCandidate.url,
-            selectedCandidateBucket: chosenCandidate.bucket || '',
+      verifiedStageTwoDocs
+        .filter((entry) => !(entry.verified && entry.exactManualMatch))
+        .forEach((entry) => {
+          stage2CandidateAudit.push({
+            url: entry.url || '',
+            bucket: classifySuggestionBucket(entry),
+            decision: 'rejected',
+            reason: entry.verificationStatus || entry.verificationKind || 'manual_contract_not_authoritative',
+            exactManualMatch: entry.exactManualMatch === true,
+            verified: entry.verified === true,
           });
-        }
-        const normalizedStageTwoDocs = normalizeDocumentationSuggestions({
-          links: mapped.documentationSuggestions,
-          confidence: Number(stageTwo.confidence || stageOne.summary.confidence || 0),
-          asset: { name: originalTitle, manufacturer: stageTwo.manufacturer || stageOne.manufacturer },
-          normalizedName: stageTwo.normalizedTitle || stageOne.normalizedTitle,
-          manufacturerSuggestion: stageTwo.manufacturer || stageOne.manufacturer,
-        });
-        const verifiedStageTwoDocs = normalizedStageTwoDocs.length
-          ? await verifyDocumentationSuggestions(normalizedStageTwoDocs, fetchImpl)
-          : [];
-        if (stageTwo.manualUrl && !normalizedStageTwoDocs.length) {
           logManualResearchEvent('candidate_rejected', {
             ...logContext,
             title: originalTitle,
@@ -684,125 +750,101 @@ async function researchAssetTitles({
             manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
             stage1MatchType: stageOne.summary.matchType,
             ranStage2: true,
-            candidateUrl: stageTwo.manualUrl,
-            reason: 'manual_contract_not_authoritative',
+            candidateUrl: entry.url || '',
+            verificationKind: entry.verificationKind || '',
+            verificationStatus: entry.verificationStatus || '',
+            exactManualMatch: entry.exactManualMatch === true,
           });
-        }
-        logManualResearchEvent('stage2_candidates_extracted', {
+        });
+      verifiedStageTwoDocs
+        .filter((entry) => entry.verified && entry.exactManualMatch)
+        .forEach((entry) => {
+          stage2CandidateAudit.push({
+            url: entry.url || '',
+            bucket: classifySuggestionBucket(entry),
+            decision: 'accepted',
+            reason: 'verified_exact_manual',
+            exactManualMatch: true,
+            verified: true,
+          });
+        });
+      documentationSuggestions = mergeDocumentationSuggestions({
+        existingSuggestions: documentationSuggestions,
+        nextSuggestions: verifiedStageTwoDocs,
+        preserveExistingCandidates: true,
+      });
+      supportResourcesSuggestion = normalizeDocumentationSuggestions({
+        links: [...supportResourcesSuggestion, ...mapped.supportResourcesSuggestion],
+        confidence: Number(stageTwo.confidence || stageOne.summary.confidence || 0),
+        asset: { name: originalTitle, manufacturer: stageTwo.manufacturer || stageOne.manufacturer },
+        normalizedName: stageTwo.normalizedTitle || stageOne.normalizedTitle,
+        manufacturerSuggestion: stageTwo.manufacturer || stageOne.manufacturer,
+        kind: 'support',
+      }).map(withSuggestionBucket);
+      supportContactsSuggestion = [
+        ...(stageTwo.supportEmail ? [{ label: 'Support email', value: stageTwo.supportEmail, contactType: 'email' }] : []),
+        ...(stageTwo.supportPhone ? [{ label: 'Support phone', value: stageTwo.supportPhone, contactType: 'phone' }] : []),
+      ];
+      const reclassified = classifyManualMatchSummary({
+        inputTitle: originalTitle,
+        titleFamily: stageOne.titleFamily,
+        documentationSuggestions,
+        supportResourcesSuggestion,
+        supportContactsSuggestion,
+        confidence: Number(stageTwo.confidence || stageOne.summary.confidence || 0),
+        catalogMatch: stageOne.catalogMatch,
+      });
+      if (stageTwo.manualUrl && !reclassified.manualReady) {
+        logManualResearchEvent('stage2_validation_failed', {
           ...logContext,
           title: originalTitle,
           normalizedTitle: stageOne.normalizedTitle,
           manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
           stage1MatchType: stageOne.summary.matchType,
           ranStage2: true,
-          candidateCount: normalizedStageTwoDocs.length,
-          rejectedCandidateCount: Math.max(0, normalizedStageTwoDocs.length - verifiedStageTwoDocs.filter((entry) => entry.verified && entry.exactManualMatch).length),
-          acceptedManualCandidateCount: verifiedStageTwoDocs.filter((entry) => entry.verified && entry.exactManualMatch).length,
-          supportCandidateCount: mapped.supportResourcesSuggestion.length,
+          reason: 'manual_candidate_rejected_by_backend_validation',
+          candidateManualUrl: stageTwo.manualUrl,
         });
-        verifiedStageTwoDocs
-          .filter((entry) => !(entry.verified && entry.exactManualMatch))
-          .forEach((entry) => {
-            stage2CandidateAudit.push({
-              url: entry.url || '',
-              bucket: classifySuggestionBucket(entry),
-              decision: 'rejected',
-              reason: entry.verificationStatus || entry.verificationKind || 'manual_contract_not_authoritative',
-              exactManualMatch: entry.exactManualMatch === true,
-              verified: entry.verified === true,
-            });
-            logManualResearchEvent('candidate_rejected', {
-              ...logContext,
-              title: originalTitle,
-              normalizedTitle: stageOne.normalizedTitle,
-              manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
-              stage1MatchType: stageOne.summary.matchType,
-              ranStage2: true,
-              candidateUrl: entry.url || '',
-              verificationKind: entry.verificationKind || '',
-              verificationStatus: entry.verificationStatus || '',
-              exactManualMatch: entry.exactManualMatch === true,
-            });
-          });
-        verifiedStageTwoDocs
-          .filter((entry) => entry.verified && entry.exactManualMatch)
-          .forEach((entry) => {
-            stage2CandidateAudit.push({
-              url: entry.url || '',
-              bucket: classifySuggestionBucket(entry),
-              decision: 'accepted',
-              reason: 'verified_exact_manual',
-              exactManualMatch: true,
-              verified: true,
-            });
-          });
-        documentationSuggestions = mergeDocumentationSuggestions({
-          existingSuggestions: documentationSuggestions,
-          nextSuggestions: verifiedStageTwoDocs,
-          preserveExistingCandidates: true,
-        });
-        supportResourcesSuggestion = normalizeDocumentationSuggestions({
-          links: [...supportResourcesSuggestion, ...mapped.supportResourcesSuggestion],
-          confidence: Number(stageTwo.confidence || stageOne.summary.confidence || 0),
-          asset: { name: originalTitle, manufacturer: stageTwo.manufacturer || stageOne.manufacturer },
-          normalizedName: stageTwo.normalizedTitle || stageOne.normalizedTitle,
-          manufacturerSuggestion: stageTwo.manufacturer || stageOne.manufacturer,
-          kind: 'support',
-        }).map(withSuggestionBucket);
-        supportContactsSuggestion = [
-          ...(stageTwo.supportEmail ? [{ label: 'Support email', value: stageTwo.supportEmail, contactType: 'email' }] : []),
-          ...(stageTwo.supportPhone ? [{ label: 'Support phone', value: stageTwo.supportPhone, contactType: 'phone' }] : []),
-        ];
-        const reclassified = classifyManualMatchSummary({
-          inputTitle: originalTitle,
-          titleFamily: stageOne.titleFamily,
-          documentationSuggestions,
-          supportResourcesSuggestion,
-          supportContactsSuggestion,
-          confidence: Number(stageTwo.confidence || stageOne.summary.confidence || 0),
-          catalogMatch: stageOne.catalogMatch,
-        });
-        if (stageTwo.manualUrl && !reclassified.manualReady) {
-          logManualResearchEvent('stage2_validation_failed', {
-            ...logContext,
-            title: originalTitle,
-            normalizedTitle: stageOne.normalizedTitle,
-            manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
-            stage1MatchType: stageOne.summary.matchType,
-            ranStage2: true,
-            reason: 'manual_candidate_rejected_by_backend_validation',
-            candidateManualUrl: stageTwo.manualUrl,
-          });
-        }
-        summary = {
-          ...summary,
-          ...reclassified,
-          originalTitle,
-          manufacturer: stageTwo.manufacturer || reclassified.manufacturer || summary.manufacturer || '',
-          manufacturerInferred: typeof stageTwo.manufacturerInferred === 'boolean'
-            ? stageTwo.manufacturerInferred
-            : reclassified.manufacturerInferred,
-          supportEmail: stageTwo.supportEmail || '',
-          supportPhone: stageTwo.supportPhone || '',
-          matchNotes: [reclassified.matchNotes, stageTwo.matchNotes].filter(Boolean).join(' | '),
-          citations: sanitizeCitations(stageTwo.citations),
-          rawResearchSummary: stageTwo.rawResearchSummary || '',
-          researchTimestamp: new Date().toISOString(),
-          researchSourceType: stageTwo.sourceType || 'responses_api',
-        };
       }
-    } else {
-      logManualResearchEvent('stage2_skipped', {
-        ...logContext,
-        title: originalTitle,
-        normalizedTitle: stageOne.normalizedTitle,
-        manufacturer: stageOne.manufacturer,
-        stage1MatchType: stageOne.summary.matchType,
-        ranStage2: false,
-        reason: 'stage1_manual_ready',
-        finalMatchType: stageOne.summary.matchType,
-        manualReady: stageOne.summary.manualReady === true,
+      summary = {
+        ...summary,
+        ...reclassified,
+        originalTitle,
+        manufacturer: stageTwo.manufacturer || reclassified.manufacturer || summary.manufacturer || '',
+        manufacturerInferred: typeof stageTwo.manufacturerInferred === 'boolean'
+          ? stageTwo.manufacturerInferred
+          : reclassified.manufacturerInferred,
+        supportEmail: stageTwo.supportEmail || '',
+        supportPhone: stageTwo.supportPhone || '',
+        matchNotes: [reclassified.matchNotes, stageTwo.matchNotes].filter(Boolean).join(' | '),
+        citations: sanitizeCitations(stageTwo.citations),
+        rawResearchSummary: stageTwo.rawResearchSummary || '',
+        researchTimestamp: new Date().toISOString(),
+        researchSourceType: stageTwo.sourceType || 'responses_api',
+      };
+    }
+    if (shouldFallbackToScraping) {
+      const discoveredFallback = await runDiscoveryFallback({
+        settings,
+        input: { originalTitle },
+        stageOne,
+        fetchImpl,
+        maxWebSources,
       });
+      documentationSuggestions = mergeDocumentationSuggestions({
+        existingSuggestions: documentationSuggestions,
+        nextSuggestions: discoveredFallback.documentationSuggestions,
+        preserveExistingCandidates: true,
+      });
+      supportResourcesSuggestion = normalizeDocumentationSuggestions({
+        links: [...supportResourcesSuggestion, ...discoveredFallback.supportResourcesSuggestion],
+        confidence: Number(summary.confidence || stageOne.summary.confidence || 0),
+        asset: { name: originalTitle, manufacturer: summary.manufacturer || stageOne.manufacturer },
+        normalizedName: summary.normalizedTitle || stageOne.normalizedTitle,
+        manufacturerSuggestion: summary.manufacturer || stageOne.manufacturer,
+        kind: 'support',
+      }).map(withSuggestionBucket);
+      stageOne.searchEvidence = discoveredFallback.searchEvidence;
     }
 
     let manualLibraryAcquisition = null;
@@ -889,6 +931,27 @@ async function researchAssetTitles({
         manualUrl: '',
       };
     }
+    logManualResearchEvent('ACQUISITION_RESULT', {
+      ...logContext,
+      title: originalTitle,
+      normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+      manufacturer: summary.manufacturer || stageOne.manufacturer,
+      acquisitionState,
+      manualReady: summary.manualReady === true,
+      manualLibraryRef: summary.manualLibraryRef || '',
+      manualStoragePath: summary.manualStoragePath || '',
+      acquisitionError,
+    });
+    const terminalStateReason = summary.manualReady === true
+      ? 'docs_found_after_durable_storage'
+      : (acquisitionError ? `acquisition_failed:${acquisitionError}` : `no_durable_manual:${acquisitionState}`);
+    logManualResearchEvent('TERMINAL_STATUS_REASON', {
+      ...logContext,
+      title: originalTitle,
+      normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+      manufacturer: summary.manufacturer || stageOne.manufacturer,
+      terminalStateReason,
+    });
 
     logManualResearchEvent('final_result', {
       ...logContext,
@@ -896,7 +959,7 @@ async function researchAssetTitles({
       normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
       manufacturer: summary.manufacturer || stageOne.manufacturer,
       stage1MatchType: stageOne.summary.matchType,
-      ranStage2: FALLBACK_MATCH_TYPES.has(stageOne.summary.matchType),
+      ranStage2: true,
       candidateManualCount: Array.isArray(documentationSuggestions) ? documentationSuggestions.length : 0,
       rejectedCandidateCount: Math.max(0, (Array.isArray(documentationSuggestions) ? documentationSuggestions.length : 0) - cleanCount(documentationSuggestions)),
       acceptedManualCount: cleanCount(documentationSuggestions),
@@ -907,9 +970,7 @@ async function researchAssetTitles({
       manualLibraryRef: summary.manualLibraryRef || '',
       manualStoragePath: summary.manualStoragePath || '',
       acquisitionState,
-      terminalStateReason: summary.manualReady === true
-        ? 'docs_found_after_durable_storage'
-        : (acquisitionError ? `acquisition_failed:${acquisitionError}` : `no_durable_manual:${acquisitionState}`),
+      terminalStateReason,
       elapsedMs: Date.now() - startedAt,
     });
 
@@ -929,7 +990,7 @@ async function researchAssetTitles({
       },
       pipelineMeta: {
         stage1MatchType: stageOne.summary.matchType || '',
-        stage2Ran: FALLBACK_MATCH_TYPES.has(stageOne.summary.matchType),
+        stage2Ran: true,
         sourcePageExtracted: Array.isArray(documentationSuggestions) && documentationSuggestions.some((entry) => !!`${entry?.sourcePageUrl || ''}`.trim()),
         acquisitionSucceeded: summary.manualReady === true && !!`${summary.manualLibraryRef || ''}`.trim(),
         acquisitionState,
@@ -940,9 +1001,7 @@ async function researchAssetTitles({
         returnedCandidates: stage2ReturnedCandidates,
         selectedCandidate: stage2SelectedCandidate,
         stage2CandidateAudit,
-        terminalStateReason: summary.manualReady === true
-          ? 'docs_found_after_durable_storage'
-          : (acquisitionError ? `acquisition_failed:${acquisitionError}` : `no_durable_manual:${acquisitionState}`),
+        terminalStateReason,
       },
       locationId: normalizeString(locationId, 120),
       manualLibraryRef: summary.manualLibraryRef || '',
@@ -964,6 +1023,15 @@ function cleanCount(documentationSuggestions = []) {
   return (Array.isArray(documentationSuggestions) ? documentationSuggestions : [])
     .filter((entry) => entry?.verified && entry?.exactManualMatch)
     .length;
+}
+
+function shouldRunFallbackScraping({
+  returnedCandidates = [],
+  acceptedManualCandidateCount = 0,
+} = {}) {
+  if (acceptedManualCandidateCount > 0) return false;
+  if (!Array.isArray(returnedCandidates) || !returnedCandidates.length) return true;
+  return returnedCandidates.every((candidate = {}) => OPENAI_WEAK_CANDIDATE_BUCKETS.has(`${candidate.bucket || ''}`.trim()));
 }
 
 module.exports = {
