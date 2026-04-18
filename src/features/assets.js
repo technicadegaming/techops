@@ -181,6 +181,11 @@ function hasRenderableUrl(entry = {}) {
   return !!`${entry?.url || entry || ''}`.trim();
 }
 
+function isStoredManualUrl(value = '') {
+  const normalized = `${value || ''}`.trim().toLowerCase();
+  return normalized.startsWith('manual-library/') || normalized.startsWith('companies/');
+}
+
 function getReviewableManualCandidateCount(asset = {}) {
   return getReviewableDocumentationSuggestions(asset).length;
 }
@@ -228,7 +233,7 @@ function getAuthoritativeManualState(asset = {}) {
   const manualLinks = Array.isArray(asset?.manualLinks) ? asset.manualLinks : [];
   const authoritativeLinks = Array.from(new Set([
     manualStoragePath,
-    ...manualLinks.map((value) => `${value || ''}`.trim()),
+    ...manualLinks.map((value) => `${value || ''}`.trim()).filter((value) => isStoredManualUrl(value)),
   ].filter(Boolean))).slice(0, 5);
   return {
     manualLibraryRef,

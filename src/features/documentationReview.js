@@ -5,7 +5,11 @@ export function deriveManualStatus(asset = {}) {
   if (['attached', 'support_only', 'review_needed', 'no_manual'].includes(explicitStatus)) return explicitStatus;
   const manualLibraryRef = `${asset?.manualLibraryRef || ''}`.trim();
   const manualStoragePath = `${asset?.manualStoragePath || ''}`.trim();
-  const manualLinks = Array.isArray(asset?.manualLinks) ? asset.manualLinks.map((entry) => `${entry || ''}`.trim()).filter(Boolean) : [];
+  const manualLinks = Array.isArray(asset?.manualLinks)
+    ? asset.manualLinks
+      .map((entry) => `${entry || ''}`.trim())
+      .filter((entry) => entry.startsWith('manual-library/') || entry.startsWith('companies/'))
+    : [];
   if (manualLibraryRef || manualStoragePath || manualLinks.length) return 'attached';
   const reviewableSuggestions = getReviewableDocumentationSuggestions(asset);
   if (reviewableSuggestions.length) return 'review_needed';
@@ -61,14 +65,10 @@ export function buildDocumentationApprovalPatch(asset = {}, approvedEntries = []
   if (!approvedUrls.length) return null;
   const dedupe = (values = []) => Array.from(new Set(values.map((value) => `${value || ''}`.trim()).filter(Boolean)));
   return {
-    manualLinks: dedupe([...(asset.manualLinks || []), ...approvedUrls]),
     reviewSelectedSuggestionUrls: dedupe([...(asset.reviewSelectedSuggestionUrls || []), ...approvedUrls]),
     reviewApprovedSuggestionUrls: dedupe([...(asset.reviewApprovedSuggestionUrls || []), ...approvedUrls]),
     reviewRejectedSuggestionUrls: (asset.reviewRejectedSuggestionUrls || []).filter((url) => !approvedUrls.includes(`${url || ''}`.trim())),
     reviewState: 'approved',
-    reviewLastAction: reviewAction,
-    enrichmentStatus: 'verified_manual_found',
-    enrichmentFollowupQuestion: '',
-    manualStatus: 'attached'
+    reviewLastAction: reviewAction
   };
 }

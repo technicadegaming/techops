@@ -120,8 +120,8 @@ test('asset helpers prefer authoritative manual attachment fields over legacy se
     manualStoragePath: '',
     manualLinks: ['https://example.com/manual.pdf'],
   });
-  assert.equal(fallback.hasAttachedManual, true);
-  assert.deepEqual(fallback.manualLinks, ['https://example.com/manual.pdf']);
+  assert.equal(fallback.hasAttachedManual, false);
+  assert.deepEqual(fallback.manualLinks, []);
 });
 
 test('asset helpers downgrade stale in-progress runs without heartbeat to retry_needed', async () => {
@@ -676,12 +676,12 @@ test('documentation review helpers keep support-only links out of approval while
   const bulkPatch = buildDocumentationApprovalPatch(asset, topTrusted, { reviewAction: 'bulk_approve' });
 
   assert.deepEqual(topTrusted.map((entry) => entry.url), reviewable.map((entry) => entry.url));
-  assert.deepEqual(singlePatch.manualLinks, ['https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf']);
-  assert.deepEqual(bulkPatch.manualLinks, reviewable.map((entry) => entry.url));
   assert.equal(singlePatch.reviewState, 'approved');
   assert.equal(bulkPatch.reviewState, 'approved');
-  assert.equal(singlePatch.manualStatus, 'attached');
-  assert.equal(bulkPatch.manualStatus, 'attached');
+  assert.deepEqual(singlePatch.reviewApprovedSuggestionUrls, ['https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf']);
+  assert.deepEqual(bulkPatch.reviewApprovedSuggestionUrls, reviewable.map((entry) => entry.url));
+  assert.equal(singlePatch.enrichmentStatus, undefined);
+  assert.equal(bulkPatch.manualStatus, undefined);
 });
 
 

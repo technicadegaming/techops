@@ -501,6 +501,94 @@ test('stage 2 support-only context never produces docs_found semantics', async (
   assert.notEqual(result.results[0].status, 'docs_found');
 });
 
+test('manual-like candidate URL that is dead never promotes docs_found and remains followup_needed', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{ originalTitle: 'Dead Link Racer', manufacturerHint: 'Raw Thrills' }],
+    traceId: 'test-dead-manual-url',
+    storage: createStorageMock(),
+    fetchImpl: async (url) => {
+      if (String(url).endsWith('.pdf')) {
+        return {
+          ok: false,
+          status: 404,
+          url,
+          headers: { get: () => 'application/pdf' },
+          arrayBuffer: async () => Buffer.from(''),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        url,
+        headers: { get: () => 'text/html' },
+        text: async () => 'Support page only',
+      };
+    },
+    researchFallback: async () => ({
+      normalizedTitle: 'Dead Link Racer',
+      manufacturer: 'Raw Thrills',
+      matchType: 'exact_manual',
+      manualReady: true,
+      reviewRequired: false,
+      manualUrl: 'https://rawthrills.com/manuals/dead-link-racer-operator-manual.pdf',
+      manualSourceUrl: 'https://rawthrills.com/games/dead-link-racer/',
+      supportUrl: 'https://rawthrills.com/service-support/',
+      confidence: 0.79,
+      matchNotes: 'Manual-looking URL found but inaccessible.',
+      citations: [],
+      rawResearchSummary: 'Dead PDF URL.',
+    }),
+  });
+
+  assert.equal(result.results[0].manualReady, false);
+  assert.equal(result.results[0].status, 'followup_needed');
+  assert.equal(result.results[0].manualLibraryRef, '');
+  assert.equal(result.results[0].manualStoragePath, '');
+  assert.equal(result.results[0].manualUrl, '');
+  assert.equal(result.results[0].pipelineMeta.acquisitionState, 'no_manual');
+});
+
+test('source page that exists but has no downloadable manual stays support/followup and never attaches', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{ originalTitle: 'Support Hub Deluxe', manufacturerHint: 'Bay Tek Games' }],
+    traceId: 'test-source-without-download',
+    storage: createStorageMock(),
+    fetchImpl: async (url) => ({
+      ok: true,
+      status: 200,
+      url,
+      headers: { get: () => 'text/html' },
+      text: async () => '<html><body><a href="/support">Support</a><a href="/contact">Contact</a></body></html>',
+    }),
+    researchFallback: async () => ({
+      normalizedTitle: 'Support Hub Deluxe',
+      manufacturer: 'Bay Tek Games',
+      matchType: 'manual_page_with_download',
+      manualReady: true,
+      reviewRequired: false,
+      manualUrl: 'https://baytekent.com/games/support-hub-deluxe/',
+      manualSourceUrl: 'https://baytekent.com/games/support-hub-deluxe/',
+      supportUrl: 'https://baytekent.com/support/',
+      confidence: 0.66,
+      matchNotes: 'Page is reachable but no downloadable document.',
+      citations: [],
+      rawResearchSummary: 'No PDF link present.',
+    }),
+  });
+
+  assert.equal(result.results[0].manualReady, false);
+  assert.equal(result.results[0].status, 'followup_needed');
+  assert.equal(result.results[0].manualUrl, '');
+  assert.equal(result.results[0].manualLibraryRef, '');
+  assert.equal(result.results[0].pipelineMeta.acquisitionState, 'no_manual');
+});
+
 test('researchAssetTitles reuses previously approved company manuals before web fallback', async () => {
   let stageTwoCalls = 0;
   const result = await researchAssetTitles({
