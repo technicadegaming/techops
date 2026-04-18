@@ -124,6 +124,18 @@ test('asset helpers prefer authoritative manual attachment fields over legacy se
   assert.deepEqual(fallback.manualLinks, []);
 });
 
+test('asset manual links resolve storage paths to Firebase Storage downloads instead of site-relative GitHub Pages paths', async () => {
+  const { buildStoredManualDownloadUrl } = await loadAssetsHelpers();
+  const storagePath = 'manual-library/bay-tek/quik-drop/existing.pdf';
+  const resolved = buildStoredManualDownloadUrl(storagePath);
+  assert.match(resolved, /^https:\/\/firebasestorage\.googleapis\.com\/v0\/b\/[^/]+\/o\/manual-library%2Fbay-tek%2Fquik-drop%2Fexisting\.pdf\?alt=media$/);
+  assert.equal(resolved.startsWith('https://wow.technicade.tech/manual-library/'), false);
+  assert.equal(resolved.includes('/manual-library/bay-tek/quik-drop/existing.pdf?alt=media'), false);
+  const tenantPath = 'companies/company-a/manuals/asset-1/manual-1/source.pdf';
+  const tenantResolved = buildStoredManualDownloadUrl(tenantPath);
+  assert.match(tenantResolved, /^https:\/\/firebasestorage\.googleapis\.com\/v0\/b\/[^/]+\/o\/companies%2Fcompany-a%2Fmanuals%2Fasset-1%2Fmanual-1%2Fsource\.pdf\?alt=media$/);
+});
+
 test('asset helpers downgrade stale in-progress runs without heartbeat to retry_needed', async () => {
   const { getEffectiveEnrichmentStatus } = await loadAssetsHelpers();
   const staleAsset = {
