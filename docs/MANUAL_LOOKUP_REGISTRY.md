@@ -151,6 +151,8 @@ The following always remain review-required context and must **not** be promoted
 The additive AI/manual-research settings surface is:
 
 - `OPENAI_API_KEY` Firebase secret.
+  - Stage 2 manual-research uses the same exported secret binding as deployed callable/triggers and falls back to `process.env.OPENAI_API_KEY` only when explicitly present at runtime.
+  - OpenAI `401` auth failures are normalized/logged as `openai-auth-invalid` and the pipeline continues with deterministic scraping fallback.
 - `manualResearchModel` (falls back to `aiModel`).
 - `manualResearchReasoningEffort` (`low` or `medium` recommended).
 - `manualResearchWebSearchEnabled` (`true` by default).

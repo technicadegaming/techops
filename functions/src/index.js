@@ -1,7 +1,6 @@
 const admin = require('firebase-admin');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
-const { defineSecret } = require('firebase-functions/params');
 
 const { DEFAULT_SETTINGS, runPipeline } = require('./services/taskAiOrchestrator');
 const { assertString, sanitizeFollowupAnswers } = require('./lib/validators');
@@ -32,8 +31,7 @@ const { researchAssetTitles } = require('./services/manualResearchService');
 const {
   finalizeOnboardingBootstrap,
 } = require('./services/onboardingBootstrapService');
-
-const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
+const { OPENAI_API_KEY } = require('./services/openaiService');
 
 admin.initializeApp();
 const db = admin.firestore();

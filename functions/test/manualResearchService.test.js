@@ -698,6 +698,84 @@ test('Connect 4 brochure/spec PDFs remain support_product_page candidates and ne
   assert.equal(result.results[0].documentationSuggestions[0].candidateBucket, 'support_product_page');
 });
 
+test('Betson sell sheet links stay support/review only and never become manual candidates', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{ originalTitle: 'Willy Crash', manufacturerHint: 'Raw Thrills' }],
+    traceId: 'test-willy-crash-betson-sell-sheet',
+    storage: createStorageMock(),
+    fetchImpl: async (url, options = {}) => ({
+      ok: true,
+      status: 200,
+      url,
+      headers: { get: () => options.method === 'HEAD' ? 'application/pdf' : 'text/html' },
+      text: async () => '<html><body>Sell sheet marketing collateral.</body></html>',
+      arrayBuffer: async () => Buffer.from('<html><body>Sell sheet only</body></html>'),
+    }),
+    researchFallback: async () => ({
+      normalizedTitle: 'Willy Crash',
+      manufacturer: 'Raw Thrills',
+      matchType: 'support_only',
+      manualReady: false,
+      reviewRequired: true,
+      manualUrl: 'https://www.betson.com/wp-content/uploads/2024/06/willy-crash-sell-sheet.pdf',
+      manualSourceUrl: 'https://www.betson.com/amusement-products/willy-crash/',
+      supportUrl: 'https://www.betson.com/amusement-products/willy-crash/',
+      confidence: 0.53,
+      matchNotes: 'Sell sheet discovered; no manual.',
+      candidates: [{
+        bucket: 'brochure_or_spec_doc',
+        url: 'https://www.betson.com/wp-content/uploads/2024/06/willy-crash-sell-sheet.pdf',
+        title: 'Willy Crash Sell Sheet',
+        sourceDomain: 'betson.com',
+        whyMatch: 'Marketing collateral only',
+        confidence: 0.71,
+      }],
+      citations: [],
+      rawResearchSummary: 'Only Betson sell sheet and product page were discovered.',
+    }),
+  });
+
+  assert.equal(result.results[0].manualReady, false);
+  assert.equal(result.results[0].status, 'followup_needed');
+  assert.equal(result.results[0].manualUrl, '');
+  assert.equal(result.results[0].manualLibraryRef, '');
+  assert.equal(result.results[0].pipelineMeta.acquisitionState, 'no_manual');
+  assert.equal(result.results[0].documentationSuggestions[0]?.candidateBucket, 'support_product_page');
+});
+
+test('OpenAI auth/config failures are logged and fall back to scraping without throwing', async () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args);
+  try {
+    const result = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true },
+      companyId: 'company-1',
+      titles: [{ originalTitle: 'Willy Crash', manufacturerHint: 'Raw Thrills' }],
+      traceId: 'test-openai-auth-config-fail',
+      fetchImpl: createFetchMock(),
+      storage: createStorageMock(),
+      researchFallback: async () => {
+        const error = new Error('OpenAI authentication failed for manual research. Verify OPENAI_API_KEY secret binding.');
+        error.code = 'openai-auth-invalid';
+        throw error;
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.results.length, 1);
+    const failureLog = logs.find((entry) => entry[0] === 'manualResearch:stage2_validation_failed');
+    assert.ok(failureLog);
+    assert.equal(failureLog[1]?.reasonCode, 'openai-auth-invalid');
+  } finally {
+    console.log = originalLog;
+  }
+});
+
 test('researchAssetTitles reuses previously approved company manuals before web fallback', async () => {
   let stageTwoCalls = 0;
   const result = await researchAssetTitles({

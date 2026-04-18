@@ -630,6 +630,7 @@ async function researchAssetTitles({
       maxWebSources,
       researchFallback,
     }).catch((error) => {
+      const reasonCode = normalizeString(error?.code || '', 80);
       logManualResearchEvent('stage2_validation_failed', {
         ...logContext,
         title: originalTitle,
@@ -638,6 +639,7 @@ async function researchAssetTitles({
         stage1MatchType: stageOne.summary.matchType,
         ranStage2: true,
         reason: normalizeString(error?.message || String(error), 220),
+        reasonCode,
       });
       return null;
     });

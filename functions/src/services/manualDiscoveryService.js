@@ -112,6 +112,22 @@ const BETSON_UTILITY_PATHS = [
   /^\/services\/?$/,
   /^\/support\/?$/
 ];
+const GENERIC_DEAD_LINK_BASENAMES = new Set([
+  'details',
+  'detail',
+  'index',
+  'download',
+  'downloads',
+  'app',
+  'apps',
+  'manual',
+  'manuals',
+  'support',
+  'service',
+  'default',
+  'file',
+  'view',
+]);
 
 function buildExactTitleVariants(title, normalizedTitle) {
   return expandArcadeTitleAliases([title, normalizedTitle])
@@ -306,13 +322,45 @@ function extractFileNameFromUrl(url = '') {
   }
 }
 
+function normalizeDeadLinkBasename(fileName = '') {
+  const decoded = `${fileName || ''}`.trim().toLowerCase();
+  if (!decoded) return '';
+  return decoded
+    .replace(/\.[a-z0-9]{2,5}$/i, '')
+    .replace(/[-_]+/g, ' ')
+    .trim();
+}
+
+function isGenericDeadLinkBasename(fileName = '') {
+  const normalized = normalizeDeadLinkBasename(fileName);
+  if (!normalized) return true;
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  if (!tokens.length) return true;
+  if (tokens.length <= 2 && tokens.every((token) => GENERIC_DEAD_LINK_BASENAMES.has(token))) return true;
+  return GENERIC_DEAD_LINK_BASENAMES.has(normalized);
+}
+
+function isQueryDrivenStoreAppUrl(url = '') {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    if (/(^|\.)play\.google\.com$/.test(host) && /^\/store\/apps\/details\/?$/.test(path) && parsed.searchParams.has('id')) return true;
+    if (/(^|\.)apps\.apple\.com$/.test(host) && /\/app\//.test(path)) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 function buildDeadLinkQueries({ title = '', failedUrl = '' }) {
   const fileName = extractFileNameFromUrl(failedUrl);
+  const skipFileNameRecovery = isGenericDeadLinkBasename(fileName) || isQueryDrivenStoreAppUrl(failedUrl);
   const cleanTitle = `${title || ''}`.trim();
   return Array.from(new Set([
-    fileName ? `"${fileName}"` : '',
-    fileName ? `"${fileName}" manual` : '',
-    fileName ? `filetype:pdf "${fileName}"` : '',
+    !skipFileNameRecovery && fileName ? `"${fileName}"` : '',
+    !skipFileNameRecovery && fileName ? `"${fileName}" manual` : '',
+    !skipFileNameRecovery && fileName ? `filetype:pdf "${fileName}"` : '',
     cleanTitle ? `filetype:pdf "${cleanTitle}"` : '',
   ].filter(Boolean)));
 }
@@ -516,10 +564,36 @@ function hasBetsonTitleSpecificPath(pathname, titleVariants) {
 function hasJunkManualCandidateUrl(url = '') {
   try {
     const parsed = new URL(url);
-    return JUNK_PATH_PATTERNS.some((pattern) => pattern.test(`${parsed.pathname}${parsed.search || ''}`.toLowerCase()));
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    const combinedPath = `${path}${parsed.search || ''}`.toLowerCase();
+    if (/(^|\.)play\.google\.com$/.test(host) || /(^|\.)apps\.apple\.com$/.test(host)) return true;
+    if (/\/(app|apps)\//.test(path) || /\/details\/?$/.test(path)) return true;
+    if (/\/(install|installation|service-hub|servicehub|download-center|app-detail)\b/.test(path)) return true;
+    return JUNK_PATH_PATTERNS.some((pattern) => pattern.test(combinedPath));
   } catch {
     return true;
   }
+}
+
+function classifyNonManualUrl(parsed) {
+  const host = parsed.hostname.toLowerCase();
+  const path = parsed.pathname.toLowerCase();
+  const combined = `${path}${parsed.search || ''}`.toLowerCase();
+
+  if (/(^|\.)play\.google\.com$/.test(host) || /(^|\.)apps\.apple\.com$/.test(host)) {
+    return { reason: 'non_manual_app_store_url', allowSupport: false };
+  }
+  if (/\/store\/apps\/details\/?/.test(path) || /\/(app|apps)\//.test(path) || /\/app-detail/.test(path)) {
+    return { reason: 'non_manual_app_detail_page', allowSupport: false };
+  }
+  if (/\/(install|installation|installations|service-hub|servicehub|service-center|downloads?-center)\b/.test(path)) {
+    return { reason: 'non_manual_install_or_service_hub', allowSupport: true };
+  }
+  if (/\/(catalog|brochure|brochures|products?|amusement-products|showroom|collections?)\b/.test(combined)) {
+    return { reason: 'non_manual_marketing_or_catalog', allowSupport: true };
+  }
+  return null;
 }
 
 function hasStrongManualIntentSignal(text = '') {
@@ -575,6 +649,7 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
   const likelyChromeLink = /(?:nav|menu|footer|header|breadcrumb|search|category)/.test(titleAndPathAndQuery);
   const sourceType = detectSourceType(url, manufacturerProfile);
   const resourceType = detectResourceType(url, manufacturerProfile);
+  const nonManualUrlClass = classifyNonManualUrl(parsed);
   const bayTekDomain = isBayTekDomain(host);
   const bayTekUtility = isBayTekProfile(manufacturerProfile) && bayTekDomain && isBayTekUtilityPath(path);
   const bayTekTitleSpecificPath = isBayTekProfile(manufacturerProfile) && bayTekDomain && hasBayTekTitleSpecificPath(path, titleVariants);
@@ -606,18 +681,25 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
   const genericSupport = isGenericSupportPath(path, titleVariants) || bayTekUtility || betsonUtility;
   const includeManual = titleMatch
     && manufacturerMatch
+    && !nonManualUrlClass
     && !junkPath
     && !likelyChromeLink
     && !genericSupport
     && !bayTekUtility
     && !betsonUtility
     && (directFile || strongManualIntent || explicitManualBearingHtml || hostManualIntent || (betsonDomain && /\/wp-content\/uploads\//.test(path)));
-  const includeSupport = !junkPath && !likelyChromeLink && !bayTekUtility && !betsonUtility && titleSpecificSupport;
+  const includeSupport = !junkPath
+    && !likelyChromeLink
+    && !bayTekUtility
+    && !betsonUtility
+    && (!nonManualUrlClass || nonManualUrlClass.allowSupport)
+    && titleSpecificSupport;
   const rejectionReasons = [];
 
   if (!titleMatch) rejectionReasons.push('missing_title_match');
   if (!manufacturerMatch) rejectionReasons.push('missing_manufacturer_match');
   if (!directFile && !strongManualIntent && !hostManualIntent) rejectionReasons.push('missing_manual_signal');
+  if (nonManualUrlClass?.reason) rejectionReasons.push(nonManualUrlClass.reason);
   if (genericSupport) rejectionReasons.push('generic_support_page');
   if (junkPath) rejectionReasons.push('junk_path');
   if (likelyChromeLink) rejectionReasons.push('chrome_or_nav_link');
