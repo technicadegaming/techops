@@ -319,21 +319,28 @@ function buildManufacturerQueryTerms(manufacturer, manufacturerProfile) {
   ].filter(Boolean)));
 }
 
-function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) {
-  const titleFamily = resolveArcadeTitleFamily({ title, manufacturer });
+function buildManualSearchQueries({
+  manufacturer,
+  title,
+  manufacturerProfile,
+  titleVariants = [],
+  titleFamily = null,
+}) {
+  const resolvedTitleFamily = titleFamily || resolveArcadeTitleFamily({ title, manufacturer });
   const typedTitle = `${title || ''}`.trim();
-  const cleanTitle = `${titleFamily.canonicalTitle || typedTitle}`.trim();
+  const cleanTitle = `${resolvedTitleFamily.canonicalTitle || typedTitle}`.trim();
   if (!cleanTitle) return { officialQueries: [], exactTitleQueries: [], fallbackQueries: [] };
   const titleQueryVariants = expandArcadeTitleAliases([
+    ...titleVariants,
     typedTitle,
     cleanTitle,
-    titleFamily.familyTitle || '',
-    ...(titleFamily.alternateTitles || []),
-  ]).slice(0, 8);
+    resolvedTitleFamily.familyTitle || '',
+    ...(resolvedTitleFamily.alternateTitles || []),
+  ]).slice(0, 10);
   const preferredDomains = manufacturerProfile?.preferredSourceTokens?.length
     ? manufacturerProfile.preferredSourceTokens
     : (manufacturerProfile?.sourceTokens || []).slice(0, 2);
-  const manufacturerTerms = buildManufacturerQueryTerms(titleFamily.manufacturer || manufacturer, manufacturerProfile).slice(0, 7);
+  const manufacturerTerms = buildManufacturerQueryTerms(resolvedTitleFamily.manufacturer || manufacturer, manufacturerProfile).slice(0, 7);
   const manufacturerOrClause = manufacturerTerms.length
     ? `(${manufacturerTerms.map((term) => `"${term}"`).join(' OR ')})`
     : '';
@@ -426,6 +433,44 @@ function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) 
     officialQueries: Array.from(new Set(officialQueries)).filter(Boolean),
     exactTitleQueries: Array.from(new Set([...exactTitleQueries, ...globalQueries, ...broadQueries])).filter(Boolean),
     fallbackQueries: Array.from(new Set([...fallbackQueries, ...dealerQueries])).filter(Boolean)
+  };
+}
+
+function buildDeterministicSearchPlan({
+  assetName,
+  normalizedName,
+  manufacturer,
+  manufacturerProfile,
+  searchHints = [],
+}) {
+  const titleFamily = resolveArcadeTitleFamily({
+    title: normalizedName || assetName || '',
+    manufacturer: manufacturer || '',
+  });
+  const baseTitleVariants = expandArcadeTitleAliases([
+    ...buildExactTitleVariants(assetName, normalizedName),
+    `${titleFamily.canonicalTitle || ''}`.trim(),
+    `${titleFamily.familyTitle || ''}`.trim(),
+    ...((titleFamily.alternateTitles || []).map((value) => `${value || ''}`.trim())),
+  ])
+    .map((value) => `${value || ''}`.trim())
+    .filter(Boolean)
+    .slice(0, 10);
+  const queries = buildManualSearchQueries({
+    manufacturer,
+    title: normalizedName || assetName || '',
+    manufacturerProfile,
+    titleVariants: baseTitleVariants,
+    titleFamily,
+  });
+  return {
+    titleFamily,
+    titleVariants: baseTitleVariants,
+    broadFirstQueries: queries.broadFirstQueries,
+    officialQueries: queries.officialQueries,
+    exactTitleQueries: queries.exactTitleQueries,
+    fallbackQueries: queries.fallbackQueries,
+    searchHints: (Array.isArray(searchHints) ? searchHints : []).slice(0, 3),
   };
 }
 
@@ -1412,18 +1457,25 @@ async function discoverManualDocumentation({
   traceId = ''
 }) {
   const title = normalizedName || assetName;
-  const titleVariants = buildExactTitleVariants(assetName, normalizedName);
   const manufacturerTerms = buildManufacturerQueryTerms(manufacturer, manufacturerProfile)
     .map((value) => normalizePhrase(value))
     .filter(Boolean);
   const logEvent = buildDiagnosticLogger({ logger, traceId });
-  const { broadFirstQueries, officialQueries, exactTitleQueries, fallbackQueries } = buildManualSearchQueries({ manufacturer, title, manufacturerProfile });
+  const searchPlan = buildDeterministicSearchPlan({
+    assetName,
+    normalizedName,
+    manufacturer,
+    manufacturerProfile,
+    searchHints,
+  });
+  const titleVariants = searchPlan.titleVariants;
+  const { broadFirstQueries, officialQueries, exactTitleQueries, fallbackQueries } = searchPlan;
   const queries = [
     ...broadFirstQueries.map((query) => ({ query, mode: 'broad_first' })),
     ...officialQueries.map((query) => ({ query, mode: 'official' })),
     ...exactTitleQueries.map((query) => ({ query, mode: 'exact_pdf' })),
     ...fallbackQueries.map((query) => ({ query, mode: 'fallback' })),
-    ...searchHints.slice(0, 3).map((query) => ({ query, mode: 'hint' }))
+    ...searchPlan.searchHints.map((query) => ({ query, mode: 'hint' }))
   ].slice(0, MAX_SEARCH_QUERIES);
 
   const manualRows = [];
@@ -1435,6 +1487,7 @@ async function discoverManualDocumentation({
   let searchNoResultsCount = 0;
   const providerAttemptCounts = {};
   const providerZeroResultCounts = {};
+  const providerSequenceTried = [];
   let providerFallbackInvoked = false;
   const recordEvidence = (entry = {}) => {
     if (evidenceRows.length >= 60) return;
@@ -1464,6 +1517,21 @@ async function discoverManualDocumentation({
     adapterCount: adapterCandidates.length,
     seedPageCount: seedPages.length,
     queriesTried: queries.map((entry) => ({ mode: entry.mode, query: sanitizeDiagnosticValue(entry.query, 160) }))
+  });
+  logEvent('deterministic_search_plan_built', {
+    title: sanitizeDiagnosticValue(title, 140),
+    manufacturer: sanitizeDiagnosticValue(manufacturer, 120),
+    queryCount: queries.length,
+    broadFirstCount: broadFirstQueries.length,
+    officialCount: officialQueries.length,
+    exactCount: exactTitleQueries.length,
+    fallbackCount: fallbackQueries.length,
+  });
+  logEvent('title_variants_used', {
+    variants: titleVariants.slice(0, 10),
+  });
+  logEvent('official_queries_queued', {
+    queries: officialQueries.slice(0, 8).map((query) => sanitizeDiagnosticValue(query, 160)),
   });
 
   if (seedPages.length) {
@@ -1509,7 +1577,14 @@ async function discoverManualDocumentation({
     let results = [];
     for (let attempt = 0; attempt < providerPlan.length; attempt += 1) {
       const provider = providerPlan[attempt];
+      providerSequenceTried.push(provider.name);
       providerAttemptCounts[provider.name] = Number(providerAttemptCounts[provider.name] || 0) + 1;
+      logEvent('provider_batch_started', {
+        mode,
+        query: sanitizeDiagnosticValue(query, 160),
+        provider: provider.name,
+        attempt: attempt + 1,
+      });
       logEvent('search_provider_attempt', {
         mode,
         query: sanitizeDiagnosticValue(query, 160),
@@ -1808,9 +1883,18 @@ async function discoverManualDocumentation({
     htmlFollowups: dedupeByUrl(followupPages).map((row) => row.url)
   });
   logEvent('run_summary', {
+    title: sanitizeDiagnosticValue(title, 140),
+    manufacturer: sanitizeDiagnosticValue(manufacturer, 120),
+    titleVariantsUsed: titleVariants.slice(0, 10),
+    providerSequenceTried: Array.from(new Set(providerSequenceTried)),
     providerAttempts: providerAttemptCounts,
     providerZeroResults: providerZeroResultCounts,
     fallbackInvoked: providerFallbackInvoked,
+    selectedCandidateUrl: documentationLinks[0]?.url || '',
+    selectedCandidateTier: documentationLinks[0]?.candidateScoringFlags?.isAdapterGuess ? 'D_generated_vendor_guess' : 'B_or_C_discovered_candidate',
+    deadCandidatesSuppressedCount: deadManualUrls.size,
+    acquisitionState: documentationLinks.length ? 'candidate_validated' : 'no_candidate_validated',
+    terminalReason: documentationLinks.length ? 'docs_discovered' : 'deterministic-search-no-results',
     searchTimeoutCount,
     searchNoResultsCount,
   });
@@ -1821,11 +1905,15 @@ async function discoverManualDocumentation({
     queriesTried: queries.map((entry) => entry.query),
     evidence: evidenceRows,
     diagnostics: {
+      titleVariantsUsed: titleVariants.slice(0, 10),
       searchTimeoutCount,
       searchNoResultsCount,
       providerAttempts: providerAttemptCounts,
       providerZeroResultCounts: providerZeroResultCounts,
       providerFallbackInvoked,
+      providerSequenceTried: Array.from(new Set(providerSequenceTried)),
+      selectedCandidateUrl: documentationLinks[0]?.url || '',
+      deadCandidatesSuppressedCount: deadManualUrls.size,
     },
   };
 }
@@ -1834,6 +1922,7 @@ module.exports = {
   hasJunkManualCandidateUrl,
   buildManufacturerQueryTerms,
   buildManualSearchQueries,
+  buildDeterministicSearchPlan,
   buildManufacturerDiscoverySeedPages,
   buildManufacturerDiscoveryAdapters,
   searchDuckDuckGoHtml,

@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   buildManufacturerQueryTerms,
+  buildDeterministicSearchPlan,
   buildManualSearchQueries,
   buildManufacturerDiscoverySeedPages,
   buildManufacturerDiscoveryAdapters,
@@ -50,6 +51,24 @@ test('buildManualSearchQueries includes broadened non-quoted query variants for 
   assert.equal(normalized.includes('raw thrills king kong of skull island vr pdf'), true);
   assert.equal(normalized.includes('king kong of skull island vr raw thrills manual'), true);
   assert.equal(normalized.includes('filetype:pdf king kong of skull island vr raw thrills'), true);
+});
+
+test('buildDeterministicSearchPlan includes typed/normalized/family variants and baseline deterministic queries', () => {
+  const profile = getManufacturerProfile('LAI Games', 'Virtual Rabbids');
+  const plan = buildDeterministicSearchPlan({
+    assetName: 'Virtual Rabbids',
+    normalizedName: 'Virtual Rabbids: The Big Ride',
+    manufacturer: 'LAI Games',
+    manufacturerProfile: profile,
+    searchHints: ['virtual rabbids service manual'],
+  });
+
+  assert.equal(plan.titleVariants.includes('Virtual Rabbids'), true);
+  assert.equal(plan.titleVariants.includes('Virtual Rabbids: The Big Ride'), true);
+  assert.ok(plan.broadFirstQueries.some((query) => query === '"Virtual Rabbids" arcade manual'));
+  assert.ok(plan.broadFirstQueries.some((query) => query === '"Virtual Rabbids" install guide'));
+  assert.ok(plan.broadFirstQueries.some((query) => query === '"Virtual Rabbids" pdf'));
+  assert.ok(plan.officialQueries.every((query) => query.startsWith('site:')));
 });
 
 test('buildManufacturerDiscoveryAdapters exposes deterministic candidates for Bay Tek, ICE, and Raw Thrills', () => {
@@ -429,6 +448,56 @@ test('discoverManualDocumentation logs broad-first query execution order and rec
   const orderEvent = events.find((entry) => entry.event === 'manualDiscovery:query_execution_order');
   assert.ok(orderEvent);
   assert.equal(orderEvent.payload?.order?.[0]?.mode, 'broad_first');
+});
+
+test('discoverManualDocumentation falls back from all-zero Bing batch to DuckDuckGo and uses fallback provider results', async () => {
+  const logs = [];
+  const profile = getManufacturerProfile('LAI Games', 'Virtual Rabbids');
+  const fetchMock = async (url, options = {}) => {
+    const asString = String(url);
+    if (asString.includes('bing.com/search?')) {
+      return { ok: true, status: 200, headers: { get: () => 'text/html' }, text: async () => '<html><body>No results</body></html>' };
+    }
+    if (asString.includes('duckduckgo.com/html/?q=')) {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'text/html' },
+        text: async () => `
+          <a class="result__a" rel="nofollow" href="https://duckduckgo.com/l/?uddg=${encodeURIComponent('https://laigames.com/downloads/virtual-rabbids-operator-manual.pdf')}">
+            Virtual Rabbids Operator Manual
+          </a>
+        `,
+      };
+    }
+    if (asString.includes('duckduckgo.com/lite/?q=')) {
+      return { ok: true, status: 200, headers: { get: () => 'text/html' }, text: async () => '' };
+    }
+    if (asString === 'https://laigames.com/downloads/virtual-rabbids-operator-manual.pdf') {
+      return { ok: true, status: 200, headers: { get: () => 'application/pdf' }, text: async () => '', arrayBuffer: async () => Buffer.from('%PDF-1.4') };
+    }
+    if (options.method === 'HEAD') {
+      return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+    }
+    return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '' };
+  };
+
+  const result = await discoverManualDocumentation({
+    assetName: 'Virtual Rabbids',
+    normalizedName: 'Virtual Rabbids: The Big Ride',
+    manufacturer: 'LAI Games',
+    manufacturerProfile: profile,
+    searchProviderOptions: { primarySearchProvider: 'bing_html' },
+    fetchImpl: fetchMock,
+    logger: { log: (event, payload) => logs.push([event, payload]) },
+    traceId: 'fallback-bing-to-ddg',
+  });
+
+  assert.equal(result.documentationLinks.some((row) => row.url === 'https://laigames.com/downloads/virtual-rabbids-operator-manual.pdf'), true);
+  assert.equal(logs.some(([event]) => event === 'manualDiscovery:provider_batch_started'), true);
+  assert.equal(logs.some(([event]) => event === 'manualDiscovery:provider_zero_results'), true);
+  assert.equal(logs.some(([event]) => event === 'manualDiscovery:provider_fallback_invoked'), true);
+  assert.equal(logs.some(([event]) => event === 'manualDiscovery:provider_fallback_completed'), true);
 });
 
 test('discoverManualDocumentation extracts real Bay Tek search results and follows title-specific result pages instead of chrome anchors', async () => {
