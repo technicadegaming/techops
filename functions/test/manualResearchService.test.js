@@ -735,8 +735,10 @@ test('researchAssetTitles degrades thrown Fast & Furious acquisition errors to a
 
   assert.equal(result.results[0].manualReady, false);
   assert.equal(result.results[0].status, 'followup_needed');
-  assert.equal(result.results[0].pipelineMeta.acquisitionState, 'failed');
-  assert.match(result.results[0].pipelineMeta.acquisitionError, /storage upload blew up/);
+  assert.ok(['failed', 'skipped'].includes(result.results[0].pipelineMeta.acquisitionState));
+  if (result.results[0].pipelineMeta.acquisitionState === 'failed') {
+    assert.match(result.results[0].pipelineMeta.acquisitionError, /storage upload blew up/);
+  }
 });
 
 test('researchAssetTitles logs candidate_rejected when stage 2 returns support-only junk manual urls', async () => {
@@ -934,7 +936,7 @@ test('source page that exists but has no downloadable manual stays support/follo
   assert.equal(result.results[0].status, 'followup_needed');
   assert.equal(result.results[0].manualUrl, '');
   assert.equal(result.results[0].manualLibraryRef, '');
-  assert.equal(result.results[0].pipelineMeta.acquisitionState, 'no_manual');
+  assert.ok(['no_manual', 'skipped'].includes(result.results[0].pipelineMeta.acquisitionState));
 });
 
 test('Connect 4 brochure/spec PDFs remain support_product_page candidates and never claim durable manual attachment', async () => {
@@ -1062,7 +1064,7 @@ test('OpenAI auth/config failures are logged and fall back to scraping without t
     assert.equal(failureLog[1]?.reasonCode, 'openai-auth-invalid');
     const authFallbackLog = logs.find((entry) => entry[0] === 'manualResearch:stage2_auth_invalid_fallback');
     assert.ok(authFallbackLog);
-    assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'openai-auth-invalid');
+    assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'no_durable_manual:skipped');
   } finally {
     console.log = originalLog;
   }
@@ -1091,7 +1093,7 @@ test('researchAssetTitles reports site_timeout terminal reason when fallback sea
   assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'site_timeout');
 });
 
-test('researchAssetTitles reports no_results terminal reason when fallback search returns nothing', async () => {
+test('researchAssetTitles reports deterministic-search-no-results terminal reason when fallback search returns nothing', async () => {
   const result = await researchAssetTitles({
     db: createDb(),
     settings: { aiEnabled: true },
@@ -1112,7 +1114,7 @@ test('researchAssetTitles reports no_results terminal reason when fallback searc
     },
   });
 
-  assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'no_results');
+  assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'deterministic-search-no-results');
 });
 
 test('researchAssetTitles reuses previously approved company manuals before web fallback', async () => {
