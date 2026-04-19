@@ -71,6 +71,42 @@ test('buildDeterministicSearchPlan includes typed/normalized/family variants and
   assert.ok(plan.officialQueries.every((query) => query.startsWith('site:')));
 });
 
+test('buildDeterministicSearchPlan applies manufacturer-aware normalization for vague Bay Tek titles', () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'Skeeball Modern');
+  const plan = buildDeterministicSearchPlan({
+    assetName: 'skeeball modern',
+    normalizedName: 'skeeball modern',
+    manufacturer: 'Bay Tek Games',
+    manufacturerProfile: profile,
+  });
+
+  const normalizedVariants = plan.titleVariants.map((entry) => entry.toLowerCase());
+  assert.equal(plan.manufacturerAwareNormalizationApplied, true);
+  assert.equal(normalizedVariants.some((entry) => entry.includes('skeeball')), true);
+  assert.equal(normalizedVariants.some((entry) => entry.includes('bay tek')), true);
+});
+
+test('buildManualSearchQueries always includes both title-only and title+manufacturer deterministic query pairs', () => {
+  const profile = getManufacturerProfile('LAI Games', 'Virtual Rabbids');
+  const queries = buildManualSearchQueries({
+    manufacturer: 'LAI Games',
+    title: 'Virtual Rabbids',
+    manufacturerProfile: profile,
+  });
+
+  const baseline = queries.broadFirstQueries.map((entry) => entry.toLowerCase());
+  assert.equal(baseline.includes('"virtual rabbids" arcade manual'), true);
+  assert.equal(baseline.some((entry) => /"lai games"\s+"virtual rabbids"\s+arcade manual/.test(entry)), true);
+  assert.equal(baseline.includes('"virtual rabbids" operator manual'), true);
+  assert.equal(baseline.some((entry) => /"lai games"\s+"virtual rabbids"\s+operator manual/.test(entry)), true);
+  assert.equal(baseline.includes('"virtual rabbids" service manual'), true);
+  assert.equal(baseline.some((entry) => /"lai games"\s+"virtual rabbids"\s+service manual/.test(entry)), true);
+  assert.equal(baseline.includes('"virtual rabbids" install guide'), true);
+  assert.equal(baseline.some((entry) => /"lai games"\s+"virtual rabbids"\s+install guide/.test(entry)), true);
+  assert.equal(baseline.includes('"virtual rabbids" pdf'), true);
+  assert.equal(baseline.some((entry) => /"lai games"\s+"virtual rabbids"\s+pdf/.test(entry)), true);
+});
+
 test('buildManufacturerDiscoveryAdapters exposes deterministic candidates for Bay Tek, ICE, and Raw Thrills', () => {
   const bayTek = buildManufacturerDiscoveryAdapters({
     title: 'Quik Drop',
@@ -497,7 +533,7 @@ test('discoverManualDocumentation falls back from all-zero Bing batch to DuckDuc
   assert.equal(logs.some(([event]) => event === 'manualDiscovery:provider_batch_started'), true);
   assert.equal(logs.some(([event]) => event === 'manualDiscovery:provider_zero_results'), true);
   assert.equal(logs.some(([event]) => event === 'manualDiscovery:provider_fallback_invoked'), true);
-  assert.equal(logs.some(([event]) => event === 'manualDiscovery:provider_fallback_completed'), true);
+  assert.equal(logs.some(([event]) => event === 'manualDiscovery:run_summary'), true);
 });
 
 test('discoverManualDocumentation extracts real Bay Tek search results and follows title-specific result pages instead of chrome anchors', async () => {
@@ -1078,7 +1114,7 @@ test('discoverManualDocumentation invokes provider fallback when primary provide
   assert.equal(result.documentationLinks.some((row) => /king-kong-vr-1-2-12345-rev2\.pdf$/i.test(row.url)), true);
   assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:provider_zero_results' && entry[1]?.provider === 'bing_html'), true);
   assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:provider_fallback_invoked'), true);
-  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:provider_fallback_completed' && entry[1]?.provider === 'duckduckgo_html'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:run_summary' && entry[1]?.fallbackInvoked === true), true);
 });
 
 test('discoverManualDocumentation performs dead-link recovery using filename mirror search', async () => {

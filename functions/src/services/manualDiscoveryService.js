@@ -156,6 +156,79 @@ function buildExactTitleVariants(title, normalizedTitle) {
     .filter((value) => value.length >= 3);
 }
 
+const MANUFACTURER_VARIANT_EXPANSIONS = {
+  'bay tek': ['bay tek', 'baytek', 'bay tek games'],
+  'lai games': ['lai games', 'lai'],
+  'raw thrills': ['raw thrills', 'rawthrills'],
+};
+
+function buildManufacturerAwareTitleVariants({
+  title = '',
+  normalizedTitle = '',
+  manufacturer = '',
+  titleFamily = null,
+  manufacturerProfile = null,
+  logEvent = () => {},
+} = {}) {
+  const typedTitle = `${title || ''}`.trim();
+  const normalizedInput = `${normalizedTitle || ''}`.trim();
+  const family = titleFamily || resolveArcadeTitleFamily({ title: normalizedInput || typedTitle, manufacturer });
+  const normalizedManufacturer = normalizePhrase(manufacturerProfile?.key || family.manufacturer || manufacturer);
+  const manufacturerAliases = MANUFACTURER_VARIANT_EXPANSIONS[normalizedManufacturer] || [];
+  const generated = [];
+  const seen = new Set();
+  const pushVariant = (value = '', reason = '') => {
+    const cleaned = `${value || ''}`.replace(/\s+/g, ' ').trim();
+    if (!cleaned) return;
+    const key = normalizePhrase(cleaned);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    generated.push(cleaned);
+    logEvent('title_variant_generated', {
+      variant: sanitizeDiagnosticValue(cleaned, 120),
+      reason: sanitizeDiagnosticValue(reason, 80),
+    });
+  };
+  const addSplitJoinPermutations = (value = '', reason = '') => {
+    const clean = `${value || ''}`.trim();
+    if (!clean) return;
+    pushVariant(clean, reason);
+    pushVariant(clean.replace(/[-_/]+/g, ' '), `${reason}:depunctuated`);
+    pushVariant(clean.replace(/\s+/g, '-'), `${reason}:hyphenated`);
+    pushVariant(clean.replace(/['’]/g, ''), `${reason}:deapostrophe`);
+    pushVariant(clean.replace(/\s+/g, ''), `${reason}:joined`);
+    if (/\bs\b/i.test(clean)) pushVariant(clean.replace(/\bs\b/gi, ''), `${reason}:singularized`);
+  };
+
+  addSplitJoinPermutations(typedTitle, 'typed_title');
+  addSplitJoinPermutations(normalizedInput, 'normalized_title');
+  addSplitJoinPermutations(family.canonicalTitle || '', 'family_canonical');
+  addSplitJoinPermutations(family.familyDisplayTitle || family.familyTitle || '', 'family_display');
+  (family.alternateTitles || []).forEach((value) => addSplitJoinPermutations(value, 'family_alias'));
+  expandArcadeTitleAliases([typedTitle, normalizedInput, family.canonicalTitle, ...(family.alternateTitles || [])])
+    .forEach((value) => addSplitJoinPermutations(value, 'known_alias'));
+
+  const tokenized = normalizePhrase(normalizedInput || typedTitle).split(' ').filter(Boolean);
+  if (tokenized.length > 1) {
+    pushVariant(tokenized.slice().reverse().join(' '), 'token_reordered');
+    pushVariant(tokenized.sort().join(' '), 'token_sorted');
+  }
+  if (normalizedManufacturer) {
+    const aliases = Array.from(new Set([
+      manufacturerProfile?.key || '',
+      manufacturer,
+      family.manufacturer || '',
+      ...manufacturerAliases,
+    ].map((value) => `${value || ''}`.trim()).filter(Boolean))).slice(0, 3);
+    aliases.forEach((alias) => {
+      pushVariant(`${alias} ${typedTitle || normalizedInput}`.trim(), 'manufacturer_prefixed_title');
+      pushVariant(`${typedTitle || normalizedInput} ${alias}`.trim(), 'manufacturer_suffixed_title');
+    });
+  }
+
+  return generated.slice(0, 20);
+}
+
 function slugifyTitle(title) {
   return normalizePhrase(title).replace(/\s+/g, '-');
 }
@@ -351,9 +424,13 @@ function buildManualSearchQueries({
     `"${titleVariant}" arcade manual`,
     primaryManufacturerTerm ? `"${primaryManufacturerTerm}" "${titleVariant}" arcade manual` : '',
     `"${titleVariant}" operator manual`,
+    primaryManufacturerTerm ? `"${primaryManufacturerTerm}" "${titleVariant}" operator manual` : '',
     `"${titleVariant}" service manual`,
+    primaryManufacturerTerm ? `"${primaryManufacturerTerm}" "${titleVariant}" service manual` : '',
     `"${titleVariant}" install guide`,
+    primaryManufacturerTerm ? `"${primaryManufacturerTerm}" "${titleVariant}" install guide` : '',
     `"${titleVariant}" pdf`,
+    primaryManufacturerTerm ? `"${primaryManufacturerTerm}" "${titleVariant}" pdf` : '',
   ]));
   const broadFirstQueries = Array.from(new Set([
     ...deterministicBaselineQueries,
@@ -442,35 +519,69 @@ function buildDeterministicSearchPlan({
   manufacturer,
   manufacturerProfile,
   searchHints = [],
+  logEvent = () => {},
 }) {
+  const rawTitle = `${assetName || ''}`.trim();
+  const normalizedTitle = `${normalizedName || assetName || ''}`.trim();
   const titleFamily = resolveArcadeTitleFamily({
-    title: normalizedName || assetName || '',
+    title: normalizedTitle,
     manufacturer: manufacturer || '',
   });
+  const manufacturerAwareVariants = buildManufacturerAwareTitleVariants({
+    title: rawTitle,
+    normalizedTitle,
+    manufacturer,
+    titleFamily,
+    manufacturerProfile,
+    logEvent,
+  });
   const baseTitleVariants = expandArcadeTitleAliases([
-    ...buildExactTitleVariants(assetName, normalizedName),
+    ...manufacturerAwareVariants,
+    ...buildExactTitleVariants(rawTitle, normalizedTitle),
     `${titleFamily.canonicalTitle || ''}`.trim(),
     `${titleFamily.familyTitle || ''}`.trim(),
     ...((titleFamily.alternateTitles || []).map((value) => `${value || ''}`.trim())),
   ])
+    .flatMap((value) => [`${value || ''}`.trim(), normalizePhrase(value)])
     .map((value) => `${value || ''}`.trim())
     .filter(Boolean)
-    .slice(0, 10);
+    .slice(0, 12);
   const queries = buildManualSearchQueries({
     manufacturer,
-    title: normalizedName || assetName || '',
+    title: normalizedTitle,
     manufacturerProfile,
     titleVariants: baseTitleVariants,
     titleFamily,
   });
+  const titleOnlyCount = queries.broadFirstQueries.filter((query) => !/"[^"]+"\s+"[^"]+"/.test(query)).length;
+  const manufacturerAndTitleCount = queries.broadFirstQueries.length - titleOnlyCount;
+  logEvent('manufacturer_aware_normalization_applied', {
+    rawTitle: sanitizeDiagnosticValue(rawTitle, 120),
+    normalizedTitle: sanitizeDiagnosticValue(normalizedTitle, 120),
+    manufacturer: sanitizeDiagnosticValue(manufacturer, 120),
+    manufacturerAwareNormalizationApplied: !!(manufacturer && rawTitle),
+    manufacturerAwareVariantCount: manufacturerAwareVariants.length,
+  });
+  logEvent('title_variant_generation_summary', {
+    rawTitle: sanitizeDiagnosticValue(rawTitle, 120),
+    normalizedTitle: sanitizeDiagnosticValue(normalizedTitle, 120),
+    manufacturer: sanitizeDiagnosticValue(manufacturer, 120),
+    titleVariantsUsed: baseTitleVariants.slice(0, 12),
+    titleVariantCount: baseTitleVariants.length,
+  });
   return {
     titleFamily,
     titleVariants: baseTitleVariants,
+    rawTitle,
+    normalizedTitle,
+    manufacturerAwareNormalizationApplied: !!(manufacturer && rawTitle),
     broadFirstQueries: queries.broadFirstQueries,
     officialQueries: queries.officialQueries,
     exactTitleQueries: queries.exactTitleQueries,
     fallbackQueries: queries.fallbackQueries,
     searchHints: (Array.isArray(searchHints) ? searchHints : []).slice(0, 3),
+    titleOnlyQueryCount: titleOnlyCount,
+    titleManufacturerQueryCount: manufacturerAndTitleCount,
   };
 }
 
@@ -1467,6 +1578,7 @@ async function discoverManualDocumentation({
     manufacturer,
     manufacturerProfile,
     searchHints,
+    logEvent,
   });
   const titleVariants = searchPlan.titleVariants;
   const { broadFirstQueries, officialQueries, exactTitleQueries, fallbackQueries } = searchPlan;
@@ -1526,6 +1638,8 @@ async function discoverManualDocumentation({
     officialCount: officialQueries.length,
     exactCount: exactTitleQueries.length,
     fallbackCount: fallbackQueries.length,
+    titleOnlyQueryCount: searchPlan.titleOnlyQueryCount || 0,
+    titleManufacturerQueryCount: searchPlan.titleManufacturerQueryCount || 0,
   });
   logEvent('title_variants_used', {
     variants: titleVariants.slice(0, 10),
@@ -1883,9 +1997,14 @@ async function discoverManualDocumentation({
     htmlFollowups: dedupeByUrl(followupPages).map((row) => row.url)
   });
   logEvent('run_summary', {
+    rawTitle: sanitizeDiagnosticValue(assetName, 140),
+    normalizedTitle: sanitizeDiagnosticValue(normalizedName || assetName, 140),
     title: sanitizeDiagnosticValue(title, 140),
     manufacturer: sanitizeDiagnosticValue(manufacturer, 120),
     titleVariantsUsed: titleVariants.slice(0, 10),
+    manufacturerAwareNormalizationApplied: searchPlan.manufacturerAwareNormalizationApplied === true,
+    titleOnlyQueryCount: searchPlan.titleOnlyQueryCount || 0,
+    titleManufacturerQueryCount: searchPlan.titleManufacturerQueryCount || 0,
     providerSequenceTried: Array.from(new Set(providerSequenceTried)),
     providerAttempts: providerAttemptCounts,
     providerZeroResults: providerZeroResultCounts,
@@ -1905,7 +2024,13 @@ async function discoverManualDocumentation({
     queriesTried: queries.map((entry) => entry.query),
     evidence: evidenceRows,
     diagnostics: {
+      rawTitle: sanitizeDiagnosticValue(assetName, 140),
+      normalizedTitle: sanitizeDiagnosticValue(normalizedName || assetName, 140),
+      manufacturer: sanitizeDiagnosticValue(manufacturer, 120),
       titleVariantsUsed: titleVariants.slice(0, 10),
+      manufacturerAwareNormalizationApplied: searchPlan.manufacturerAwareNormalizationApplied === true,
+      titleOnlyQueryCount: searchPlan.titleOnlyQueryCount || 0,
+      titleManufacturerQueryCount: searchPlan.titleManufacturerQueryCount || 0,
       searchTimeoutCount,
       searchNoResultsCount,
       providerAttempts: providerAttemptCounts,
