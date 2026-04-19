@@ -97,6 +97,12 @@ function createEnrichmentRunId() {
   return `enrich-${Date.now()}-${randomUUID().slice(0, 8)}`;
 }
 
+function fingerprintText(value = '') {
+  const text = `${value || ''}`.trim().toLowerCase();
+  if (!text) return '';
+  return require('node:crypto').createHash('sha1').update(text).digest('hex');
+}
+
 function buildRunMetadata({ runId = '', triggerSource = '', userId = '', callablePath = '', phase = 'started' } = {}) {
   return {
     enrichmentRunId: runId,
@@ -539,11 +545,16 @@ async function findReusableVerifiedManuals({ db, asset = {}, assetId = '', compa
   const assetMatchKey = normalizeAssetMatchKey(asset.name, asset.normalizedName);
   if (!db || !companyId || !normalizedManufacturer || !assetMatchKey) return [];
 
+  const titleFamily = resolveArcadeTitleFamily({
+    title: asset.normalizedName || asset.name || '',
+    manufacturer: matchedManufacturer || asset.manufacturer || '',
+  });
   const libraryHit = await findApprovedManualLibraryRecord({
     db,
-    canonicalTitle: asset.normalizedName || asset.name || '',
+    canonicalTitle: titleFamily.canonicalTitle || asset.normalizedName || asset.name || '',
     manufacturer: matchedManufacturer,
-    familyTitle: asset.family || asset.normalizedName || asset.name || '',
+    familyTitle: titleFamily.familyTitle || asset.family || asset.normalizedName || asset.name || '',
+    alternateTitles: titleFamily.alternateTitles || [],
   }).catch(() => null);
   const librarySuggestions = libraryHit ? [{
     title: libraryHit.filename || libraryHit.canonicalTitle || asset.name || libraryHit.storagePath,
@@ -1742,6 +1753,12 @@ async function runAuthoritativeAssetResearch({ db, settings, traceId, draftAsset
       manufacturerHint: `${draftAsset?.manufacturer || ''}`.trim(),
       assetId: `${draftAsset?.assetId || ''}`.trim(),
       runId: `${draftAsset?.runId || ''}`.trim(),
+      followupAnswer: `${draftAsset?.followupAnswer || ''}`.trim(),
+      followupQuestionKey: `${draftAsset?.followupQuestionKey || ''}`.trim(),
+      followupAnswerFingerprint: `${draftAsset?.followupAnswerFingerprint || ''}`.trim(),
+      consumedFollowupAnswerFingerprint: `${draftAsset?.consumedFollowupAnswerFingerprint || ''}`.trim(),
+      previousQueryPlanFingerprint: `${draftAsset?.previousQueryPlanFingerprint || ''}`.trim(),
+      previousCandidateFingerprint: `${draftAsset?.previousCandidateFingerprint || ''}`.trim(),
     }],
     includeInternalDocs: true,
     maxWebSources: Number(settings?.manualResearchMaxWebSources || 5),
@@ -1949,7 +1966,20 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       db,
       settings,
       traceId,
-      draftAsset: { ...asset, assetId, followupAnswer, runId, triggerSource, callablePath, startedBy: userId }
+      draftAsset: {
+        ...asset,
+        assetId,
+        followupAnswer,
+        followupQuestionKey: fingerprintText(asset.enrichmentFollowupQuestion || ''),
+        followupAnswerFingerprint: fingerprintText(asset.enrichmentFollowupAnswer || ''),
+        consumedFollowupAnswerFingerprint: fingerprintText(asset.enrichmentFollowupAnswer || ''),
+        previousQueryPlanFingerprint: `${asset?.manualMatchSummary?.pipelineMeta?.queryPlanFingerprint || ''}`.trim(),
+        previousCandidateFingerprint: `${asset?.manualMatchSummary?.pipelineMeta?.candidateFingerprint || ''}`.trim(),
+        runId,
+        triggerSource,
+        callablePath,
+        startedBy: userId
+      }
     }) || {};
     lastPipelineMeta = preview?.pipelineMeta || preview?.assetResearchSummary?.pipelineMeta || null;
     await assetRef.set(buildHeartbeatFields('research_complete'), { merge: true });
@@ -2185,7 +2215,10 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     if (followupAnswerText) {
       updatePayload.enrichmentFollowupAnswer = followupAnswerText;
       updatePayload.enrichmentFollowupAnsweredAt = admin.firestore.FieldValue.serverTimestamp();
+      updatePayload.enrichmentFollowupAnswerFingerprint = fingerprintText(followupAnswerText);
+      updatePayload.enrichmentFollowupConsumedAt = admin.firestore.FieldValue.serverTimestamp();
     }
+    updatePayload.enrichmentFollowupQuestionKey = fingerprintText(cleanedResult.enrichmentFollowupQuestion || asset.enrichmentFollowupQuestion || '');
 
     if (manufacturerSuggestion) updatePayload.manufacturerSuggestion = manufacturerSuggestion;
     updatePayload.supportResourcesSuggestion = cleanedResult.supportResourcesSuggestion;

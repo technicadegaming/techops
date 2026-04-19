@@ -11,6 +11,12 @@ function normalizePhrase(value = '') {
   return `${value || ''}`.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
 }
 
+function buildAliasKeys(values = []) {
+  return Array.from(new Set((Array.isArray(values) ? values : [])
+    .map((value) => normalizePhrase(value))
+    .filter((value) => value.length >= 3))).slice(0, 25);
+}
+
 function normalizeUrl(value = '') {
   const trimmed = `${value || ''}`.trim();
   if (!trimmed) return '';
@@ -64,31 +70,65 @@ async function findManualLibraryRecordBySha(db, sha256 = '') {
   return { id: doc.id, ...doc.data() };
 }
 
-async function findApprovedManualLibraryRecord({ db, canonicalTitle = '', manufacturer = '', familyTitle = '' } = {}) {
+async function findApprovedManualLibraryRecord({ db, canonicalTitle = '', manufacturer = '', familyTitle = '', alternateTitles = [] } = {}) {
   if (!db) return null;
   const normalizedTitle = normalizePhrase(canonicalTitle);
   const normalizedManufacturer = normalizePhrase(manufacturer);
   const normalizedFamily = normalizePhrase(familyTitle);
-  const snap = await db.collection(COLLECTION).limit(100).get().catch(() => ({ docs: [] }));
-  const rows = (snap.docs || []).map((doc) => ({ id: doc.id, ...doc.data() }));
+  const titleKeys = buildAliasKeys([canonicalTitle, familyTitle, ...(Array.isArray(alternateTitles) ? alternateTitles : [])]);
+  const tryQueries = [
+    normalizedTitle ? ['canonicalTitleNormalized', normalizedTitle] : null,
+    normalizedFamily ? ['familyTitleNormalized', normalizedFamily] : null,
+  ].filter(Boolean);
+
+  const rows = [];
+  for (const [field, value] of tryQueries) {
+    const snap = await db.collection(COLLECTION)
+      .where(field, '==', value)
+      .limit(25)
+      .get()
+      .catch(() => ({ docs: [] }));
+    rows.push(...(snap.docs || []).map((doc) => ({ id: doc.id, ...doc.data() })));
+  }
+  if (!rows.length) {
+    const snap = await db.collection(COLLECTION).limit(200).get().catch(() => ({ docs: [] }));
+    rows.push(...(snap.docs || []).map((doc) => ({ id: doc.id, ...doc.data() })));
+  }
   return rows.find((row) => {
     if (!(row.approved === true || row.approvalState === 'approved')) return false;
-    const rowTitle = normalizePhrase(row.canonicalTitle);
+    const rowTitle = normalizePhrase(row.canonicalTitleNormalized || row.canonicalTitle);
     const rowManufacturer = normalizePhrase(row.normalizedManufacturer || row.manufacturer);
-    const rowFamily = normalizePhrase(row.familyTitle);
-    return (!!normalizedTitle && rowTitle === normalizedTitle)
+    const rowFamily = normalizePhrase(row.familyTitleNormalized || row.familyTitle);
+    const rowAliases = buildAliasKeys([...(row.alternateTitleKeys || []), ...(row.aliasKeys || []), row.canonicalTitle, row.familyTitle]);
+    const titleMatch = (!!normalizedTitle && rowTitle === normalizedTitle)
+      || (!!normalizedTitle && rowAliases.includes(normalizedTitle))
+      || (!!normalizedFamily && rowAliases.includes(normalizedFamily))
+      || titleKeys.some((key) => rowAliases.includes(key));
+    return titleMatch
       && (!normalizedManufacturer || rowManufacturer === normalizedManufacturer)
-      && (!normalizedFamily || !rowFamily || rowFamily === normalizedFamily);
+      && (!normalizedFamily || !rowFamily || rowFamily === normalizedFamily || rowAliases.includes(normalizedFamily));
   }) || null;
 }
 
 async function writeManualLibraryRecord({ db, record = {}, manualLibraryId = '' } = {}) {
   const id = manualLibraryId || createManualLibraryId(record);
+  const aliasKeys = buildAliasKeys([
+    ...(Array.isArray(record.alternateTitleKeys) ? record.alternateTitleKeys : []),
+    ...(Array.isArray(record.aliasKeys) ? record.aliasKeys : []),
+    record.canonicalTitle,
+    record.familyTitle,
+    record.variant,
+  ]);
   const now = admin.firestore.FieldValue.serverTimestamp();
   await db.collection(COLLECTION).doc(id).set({
     approvalState: 'pending',
     approved: false,
     reviewRequired: true,
+    canonicalTitleNormalized: normalizePhrase(record.canonicalTitle || ''),
+    familyTitleNormalized: normalizePhrase(record.familyTitle || ''),
+    normalizedManufacturer: normalizePhrase(record.normalizedManufacturer || record.manufacturer || ''),
+    alternateTitleKeys: aliasKeys,
+    aliasKeys,
     createdAt: now,
     updatedAt: now,
     ...record,
@@ -103,6 +143,7 @@ module.exports = {
   findApprovedManualLibraryRecord,
   findManualLibraryRecordByDownloadUrl,
   findManualLibraryRecordBySha,
+  buildAliasKeys,
   normalizePhrase,
   normalizeUrl,
   writeManualLibraryRecord,

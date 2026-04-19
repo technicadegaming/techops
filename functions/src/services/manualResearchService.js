@@ -1,4 +1,5 @@
 const admin = require('firebase-admin');
+const { createHash } = require('node:crypto');
 const { HttpsError } = require('firebase-functions/v2/https');
 const {
   requestManualResearchFallback,
@@ -78,6 +79,12 @@ function normalizeUrl(value = '') {
 
 function normalizeErrorMessage(error, max = 220) {
   return normalizeString(error?.message || String(error || ''), max);
+}
+
+function fingerprint(value = '') {
+  const normalized = normalizeString(value, 500).toLowerCase();
+  if (!normalized) return '';
+  return createHash('sha1').update(normalized).digest('hex');
 }
 
 function createTimeoutError(message, code = 'deadline-exceeded') {
@@ -569,6 +576,12 @@ async function researchAssetTitles({
     const startedAt = Date.now();
     const logContext = buildResearchLogContext({ row, companyId, traceId });
     const originalTitle = normalizeString(row?.originalTitle || '', 160);
+    const followupQuestionKeyPrev = normalizeString(row?.followupQuestionKey || row?.previousFollowupQuestionKey || '', 120);
+    const consumedAnswerFingerprintPrev = normalizeString(row?.consumedFollowupAnswerFingerprint || row?.followupAnswerFingerprint || '', 120);
+    const followupAnswer = normalizeString(row?.followupAnswer || '', 500);
+    const followupAnswerFingerprint = fingerprint(followupAnswer);
+    const previousCandidateFingerprint = normalizeString(row?.previousCandidateFingerprint || '', 120);
+    const previousQueryPlanFingerprint = normalizeString(row?.previousQueryPlanFingerprint || '', 120);
     if (!originalTitle) continue;
     const stageOne = await runStageOneLookup({
       db,
@@ -908,6 +921,12 @@ async function researchAssetTitles({
               canonicalTitle: summary.canonicalTitle || stageOne.canonicalTitleFamily,
               normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
               familyTitle: stageOne.canonicalTitleFamily,
+              titleAliases: Array.from(new Set([
+                ...(stageOne.titleFamily?.alternateTitles || []),
+                originalTitle,
+                stageOne.normalizedTitle,
+                stageOne.canonicalTitleFamily,
+              ])).filter(Boolean),
               manufacturer: summary.manufacturer || stageOne.manufacturer,
               manufacturerProfile: stageOne.manufacturerProfile,
               manualSourceUrl: summary.manualSourceUrl,
@@ -981,6 +1000,33 @@ async function researchAssetTitles({
         manualUrl: '',
       };
     }
+    const queryPlanFingerprint = fingerprint([
+      stageOne.normalizedTitle,
+      stageOne.manufacturer,
+      ...((stageOne.titleFamily?.alternateTitles || []).slice(0, 8)),
+      stageOne.catalogMatch?.catalogEntryId || '',
+    ].join('|'));
+    const candidateFingerprint = fingerprint([
+      ...documentationSuggestions.map((entry) => `${entry?.url || ''}|${entry?.candidateBucket || ''}`),
+      ...supportResourcesSuggestion.map((entry) => `${entry?.url || ''}|${entry?.candidateBucket || ''}`),
+    ].join('|'));
+    const queryPlanChanged = !previousQueryPlanFingerprint || queryPlanFingerprint !== previousQueryPlanFingerprint;
+    const candidateDelta = !previousCandidateFingerprint || candidateFingerprint !== previousCandidateFingerprint;
+    const followupAnswerConsumed = !!(followupAnswer && followupAnswerFingerprint && consumedAnswerFingerprintPrev === followupAnswerFingerprint);
+    if (followupAnswerConsumed) {
+      logManualResearchEvent('followup_answer_consumed', { ...logContext, followupAnswerFingerprint });
+    }
+    logManualResearchEvent('followup_query_plan_changed', { ...logContext, changed: queryPlanChanged, queryPlanFingerprint });
+    logManualResearchEvent('followup_candidate_delta', { ...logContext, changed: candidateDelta, candidateFingerprint });
+    if (summary.status === 'followup_needed' && followupQuestionKeyPrev && followupAnswerConsumed && !queryPlanChanged && !candidateDelta) {
+      logManualResearchEvent('followup_question_repeated', { ...logContext, followupQuestionKey: followupQuestionKeyPrev });
+      summary = {
+        ...summary,
+        status: documentationSuggestions.length
+          ? 'review_needed'
+          : (supportResourcesSuggestion.length ? 'support_only' : 'no_match_yet'),
+      };
+    }
     logManualResearchEvent('ACQUISITION_RESULT', {
       ...logContext,
       title: originalTitle,
@@ -995,6 +1041,13 @@ async function researchAssetTitles({
     const terminalStateReason = summary.manualReady === true
       ? 'docs_found_after_durable_storage'
       : (acquisitionError ? `acquisition_failed:${acquisitionError}` : `no_durable_manual:${acquisitionState}`);
+    logManualResearchEvent('terminal_status_reason', {
+      ...logContext,
+      title: originalTitle,
+      normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+      manufacturer: summary.manufacturer || stageOne.manufacturer,
+      terminalStateReason,
+    });
     logManualResearchEvent('TERMINAL_STATUS_REASON', {
       ...logContext,
       title: originalTitle,
@@ -1052,6 +1105,13 @@ async function researchAssetTitles({
         selectedCandidate: stage2SelectedCandidate,
         stage2CandidateAudit,
         terminalStateReason,
+        followupQuestionKey: followupQuestionKeyPrev,
+        followupAnswerFingerprint,
+        followupAnswerConsumed,
+        queryPlanFingerprint,
+        queryPlanChanged,
+        candidateFingerprint,
+        candidateDelta,
       },
       locationId: normalizeString(locationId, 120),
       manualLibraryRef: summary.manualLibraryRef || '',

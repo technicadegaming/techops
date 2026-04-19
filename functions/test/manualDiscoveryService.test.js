@@ -358,6 +358,37 @@ test('discoverManualDocumentation extracts Quik Drop PDF from Betson title-speci
   assert.equal(result.supportResources.some((row) => /blog/.test(row.url)), false);
 });
 
+test('discoverManualDocumentation logs broad-first query execution order and recovers Raw Thrills-style candidates when official misses', async () => {
+  const events = [];
+  const profile = getManufacturerProfile('Raw Thrills', 'King Kong VR');
+  const result = await discoverManualDocumentation({
+    assetName: 'King Kong VR',
+    normalizedName: 'King Kong VR',
+    manufacturer: 'Raw Thrills',
+    manufacturerProfile: profile,
+    logger: { log: (event, payload) => events.push({ event, payload }) },
+    traceId: 'raw-thrills-broad-first',
+    searchProvider: async (query) => {
+      if (/site:rawthrills\.com/i.test(query)) return [];
+      if (/king kong/i.test(query)) {
+        return [{ title: 'King Kong Operator Manual PDF', url: 'https://cdn.example.com/king-kong-operator-manual.pdf' }];
+      }
+      return [];
+    },
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => 'application/pdf' },
+      text: async () => '',
+      arrayBuffer: async () => Buffer.from('%PDF-1.4')
+    })
+  });
+  assert.equal(result.documentationLinks.some((row) => /king-kong-operator-manual\.pdf/i.test(row.url)), true);
+  const orderEvent = events.find((entry) => entry.event === 'manualDiscovery:query_execution_order');
+  assert.ok(orderEvent);
+  assert.equal(orderEvent.payload?.order?.[0]?.mode, 'broad_first');
+});
+
 test('discoverManualDocumentation extracts real Bay Tek search results and follows title-specific result pages instead of chrome anchors', async () => {
   const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
   const fetchMock = async (url) => {

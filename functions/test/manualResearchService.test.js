@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 
 const { researchAssetTitles } = require('../src/services/manualResearchService');
 const { extractManualLinksFromHtmlPage } = require('../src/services/manualDiscoveryService');
@@ -367,6 +368,113 @@ test('researchAssetTitles emits explicit logs and backend validation can promote
   } finally {
     console.log = originalLog;
   }
+});
+
+test('researchAssetTitles persists/consumes answered follow-up fingerprints and avoids identical follow-up loop', async () => {
+  const followupAnswer = 'It says Deluxe on the marquee';
+  const followupFingerprint = createHash('sha1').update(followupAnswer.toLowerCase()).digest('hex');
+  const firstRun = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{
+      originalTitle: 'Unknown Racer DX',
+      manufacturerHint: 'Unknown',
+    }],
+    traceId: 'test-followup-consume',
+    fetchImpl: createFetchMock(),
+    storage: createStorageMock(),
+    researchFallback: async () => ({
+      normalizedTitle: 'Unknown Racer DX',
+      manufacturer: 'Unknown',
+      matchType: 'support_only',
+      manualReady: false,
+      reviewRequired: true,
+      manualUrl: '',
+      manualSourceUrl: '',
+      supportUrl: 'https://example.com/support/unknown-racer-dx',
+      confidence: 0.3,
+      candidates: [],
+      citations: [],
+      rawResearchSummary: 'no manual',
+    }),
+  });
+  const rerun = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{
+      originalTitle: 'Unknown Racer DX',
+      manufacturerHint: 'Unknown',
+      followupQuestionKey: firstRun.results[0].pipelineMeta.followupQuestionKey || 'same-question-key',
+      followupAnswer,
+      followupAnswerFingerprint: followupFingerprint,
+      consumedFollowupAnswerFingerprint: followupFingerprint,
+      previousQueryPlanFingerprint: firstRun.results[0].pipelineMeta.queryPlanFingerprint,
+      previousCandidateFingerprint: firstRun.results[0].pipelineMeta.candidateFingerprint,
+    }],
+    traceId: 'test-followup-consume-rerun',
+    fetchImpl: createFetchMock(),
+    storage: createStorageMock(),
+    researchFallback: async () => ({
+      normalizedTitle: 'Unknown Racer DX',
+      manufacturer: 'Unknown',
+      matchType: 'support_only',
+      manualReady: false,
+      reviewRequired: true,
+      manualUrl: '',
+      manualSourceUrl: '',
+      supportUrl: 'https://example.com/support/unknown-racer-dx',
+      confidence: 0.3,
+      candidates: [],
+      citations: [],
+      rawResearchSummary: 'no manual',
+    }),
+  });
+  assert.equal(rerun.results[0].status, 'support_only');
+  assert.equal(rerun.results[0].pipelineMeta.followupAnswerConsumed, true);
+  assert.equal(typeof rerun.results[0].pipelineMeta.followupAnswerFingerprint, 'string');
+});
+
+test('researchAssetTitles global-first reuses approved shared manual across alias title variants', async () => {
+  const manualLibrary = {
+    'shared-manual-1': {
+      canonicalTitle: 'King Kong of Skull Island VR',
+      canonicalTitleNormalized: 'king kong of skull island vr',
+      familyTitle: 'King Kong VR',
+      familyTitleNormalized: 'king kong vr',
+      normalizedManufacturer: 'raw thrills',
+      manufacturer: 'Raw Thrills',
+      aliasKeys: ['king kong vr', 'king kong'],
+      alternateTitleKeys: ['king kong vr', 'king kong'],
+      approved: true,
+      approvalState: 'approved',
+      storagePath: 'manual-library/raw-thrills/king-kong-of-skull-island-vr/reused.pdf',
+      sourcePageUrl: 'https://rawthrills.com/support/king-kong'
+    }
+  };
+  const result = await researchAssetTitles({
+    db: createDb({ manualLibrary }),
+    settings: { aiEnabled: true },
+    companyId: 'company-b',
+    titles: [{ originalTitle: 'King Kong VR', manufacturerHint: 'Raw Thrills' }],
+    traceId: 'test-shared-reuse',
+    fetchImpl: createFetchMock(),
+    storage: createStorageMock(),
+    researchFallback: async () => ({
+      normalizedTitle: 'King Kong VR',
+      manufacturer: 'Raw Thrills',
+      matchType: 'support_only',
+      manualReady: false,
+      manualUrl: '',
+      supportUrl: '',
+      candidates: [],
+      citations: [],
+      rawResearchSummary: 'fallback should not be needed for durable manual attach',
+    }),
+  });
+  assert.equal(result.results[0].manualLibraryRef, 'shared-manual-1');
+  assert.equal(result.results[0].manualStoragePath, 'manual-library/raw-thrills/king-kong-of-skull-island-vr/reused.pdf');
 });
 
 test('researchAssetTitles degrades stalled Quick Drop acquisition to terminal followup_needed', async () => {
