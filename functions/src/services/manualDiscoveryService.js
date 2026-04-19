@@ -448,6 +448,10 @@ function scoreManualCandidate(candidate = {}, { titleVariants = [], manufacturer
     && /\/wp-content\/uploads\//.test(path)
     && !fileNameHasPartNumber
     && !fileNameHasRevision;
+  const likelyInstallGuideGuess = isAdapterGuess
+    && /(install(?:ation)?[-_ ]?guide|install[-_ ]?manual)/.test(lowerUrl)
+    && !fileNameHasPartNumber
+    && !fileNameHasRevision;
   const preferredSourceAligned = (manufacturerProfile?.preferredSourceTokens || [])
     .some((token) => token && host.includes(`${token}`.toLowerCase().replace(/^www\./, '')));
   const hardNegativeDomain = isHardNegativeDomain(host);
@@ -475,6 +479,7 @@ function scoreManualCandidate(candidate = {}, { titleVariants = [], manufacturer
   if (fileNameHasPartNumber) add('manual_part_number_bonus', 22);
   if (fileNameHasRevision) add('manual_revision_bonus', 18);
   if (adapterSlugGuessLike) add('adapter_slug_guess_penalty', -26);
+  if (likelyInstallGuideGuess) add('adapter_install_guide_guess_penalty', -45);
   if (/support|service-support|downloads?\/?$/.test(path) && !isDirectPdf) add('support_page_penalty', -26);
   if (/brochure|spec|sell[-_ ]?sheet|catalog|install(?:ation)?-?sheet/.test(lowerUrl)) add('brochure_penalty', -26);
   if (sourceType === 'support') add('support_source_penalty', -10);

@@ -517,6 +517,106 @@ test('researchAssetTitles treats manufacturer-only follow-up replies as non-new 
   assert.notEqual(result.results[0].pipelineMeta.followupQuestionKey, firstRun.results[0].pipelineMeta.followupQuestionKey);
 });
 
+test('Virtual Rabbids dead selected candidate is excluded from candidate delta and refines follow-up instead of looping', async () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args);
+  const deadInstallGuideUrl = 'https://laigames.com/downloads/virtual-rabbids-the-big-ride-install-guide.pdf';
+  try {
+    const unresolvedFetch = async (url, options = {}) => {
+      if (String(url).toLowerCase().endsWith('.pdf')) {
+        return {
+          ok: false,
+          status: 404,
+          url,
+          headers: { get: () => 'application/pdf' },
+          arrayBuffer: async () => Buffer.from(''),
+          text: async () => '',
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        url,
+        headers: { get: () => 'text/html' },
+        text: async () => options.method === 'HEAD' ? '' : 'Support page only. No downloadable manual available.',
+      };
+    };
+    const firstRun = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true },
+      companyId: 'company-1',
+      titles: [{ originalTitle: 'Virtual Rabbids', manufacturerHint: 'LAI Games' }],
+      traceId: 'test-rabbids-dead-candidate-first',
+      fetchImpl: unresolvedFetch,
+      storage: createStorageMock(),
+      researchFallback: async () => ({
+        normalizedTitle: 'Virtual Rabbids: The Big Ride',
+        manufacturer: 'LAI Games',
+        matchType: 'support_only',
+        manualReady: false,
+        reviewRequired: true,
+        manualUrl: deadInstallGuideUrl,
+        manualSourceUrl: 'https://laigames.com/virtual-rabbids-the-big-ride/',
+        supportUrl: 'https://laigames.com/virtual-rabbids-the-big-ride/',
+        confidence: 0.41,
+        selectedCandidate: { bucket: 'likely_install_or_service_doc', url: deadInstallGuideUrl, title: 'Virtual Rabbids Install Guide' },
+        candidates: [{ bucket: 'likely_install_or_service_doc', url: deadInstallGuideUrl, title: 'Virtual Rabbids Install Guide', confidence: 0.62 }],
+        citations: [],
+        rawResearchSummary: 'Install guide URL surfaced but is dead.',
+      }),
+    });
+    const followupAnswer = 'LAI Games';
+    const followupFingerprint = createHash('sha1').update(followupAnswer.toLowerCase()).digest('hex');
+    const secondRun = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true },
+      companyId: 'company-1',
+      titles: [{
+        originalTitle: 'Virtual Rabbids',
+        manufacturerHint: 'LAI Games',
+        followupQuestionKey: firstRun.results[0].pipelineMeta.followupQuestionKey || 'same-followup-question',
+        followupAnswer,
+        followupAnswerFingerprint: followupFingerprint,
+        consumedFollowupAnswerFingerprint: followupFingerprint,
+        previousQueryPlanFingerprint: firstRun.results[0].pipelineMeta.queryPlanFingerprint,
+        previousCandidateFingerprint: firstRun.results[0].pipelineMeta.candidateFingerprint,
+        deadCandidateUrls: firstRun.results[0].pipelineMeta.deadCandidateUrls || [],
+      }],
+      traceId: 'test-rabbids-dead-candidate-followup',
+      fetchImpl: unresolvedFetch,
+      storage: createStorageMock(),
+      researchFallback: async () => ({
+        normalizedTitle: 'Virtual Rabbids: The Big Ride',
+        manufacturer: 'LAI Games',
+        matchType: 'support_only',
+        manualReady: false,
+        reviewRequired: true,
+        manualUrl: deadInstallGuideUrl,
+        manualSourceUrl: 'https://laigames.com/virtual-rabbids-the-big-ride/',
+        supportUrl: 'https://laigames.com/virtual-rabbids-the-big-ride/',
+        confidence: 0.41,
+        selectedCandidate: { bucket: 'likely_install_or_service_doc', url: deadInstallGuideUrl, title: 'Virtual Rabbids Install Guide' },
+        candidates: [{ bucket: 'likely_install_or_service_doc', url: deadInstallGuideUrl, title: 'Virtual Rabbids Install Guide', confidence: 0.62 }],
+        citations: [],
+        rawResearchSummary: 'Install guide URL surfaced but is dead.',
+      }),
+    });
+
+    assert.equal(firstRun.results[0].pipelineMeta.deadCandidateUrls.includes(deadInstallGuideUrl), true);
+    assert.equal(secondRun.results[0].pipelineMeta.followupAnswerConsumed, true);
+    assert.equal(secondRun.results[0].pipelineMeta.queryPlanChanged, false);
+    assert.equal(secondRun.results[0].pipelineMeta.candidateDelta, false);
+    assert.equal(secondRun.results[0].status, 'followup_needed');
+    assert.match(secondRun.results[0].pipelineMeta.followupQuestion, /exact model|title|version|nameplate/i);
+    assert.equal(secondRun.results[0].documentationSuggestions.some((entry) => entry.url === deadInstallGuideUrl), false);
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:followup_answer_manufacturer_only_no_new_evidence'), true);
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:followup_question_refined'), true);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
 test('researchAssetTitles global-first reuses approved shared manual across alias title variants', async () => {
   const manualLibrary = {
     'shared-manual-1': {
