@@ -439,6 +439,17 @@ test('researchAssetTitles persists/consumes answered follow-up fingerprints and 
 test('researchAssetTitles treats manufacturer-only follow-up replies as non-new evidence when manufacturer is already known', async () => {
   const followupAnswer = 'LAI Games';
   const followupFingerprint = createHash('sha1').update(followupAnswer.toLowerCase()).digest('hex');
+  const unresolvedFetch = async (url, options = {}) => {
+    if (String(url).toLowerCase().endsWith('.pdf')) {
+      return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+    }
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => 'text/html' },
+      text: async () => options.method === 'HEAD' ? '' : 'Support page only. No downloadable manual available.',
+    };
+  };
   const firstRun = await researchAssetTitles({
     db: createDb(),
     settings: { aiEnabled: true },
@@ -448,7 +459,7 @@ test('researchAssetTitles treats manufacturer-only follow-up replies as non-new 
       manufacturerHint: 'LAI Games',
     }],
     traceId: 'test-followup-manufacturer-only-first',
-    fetchImpl: createFetchMock(),
+    fetchImpl: unresolvedFetch,
     storage: createStorageMock(),
     researchFallback: async () => ({
       normalizedTitle: 'Virtual Rabbids: The Big Ride',
@@ -480,7 +491,7 @@ test('researchAssetTitles treats manufacturer-only follow-up replies as non-new 
       previousCandidateFingerprint: firstRun.results[0].pipelineMeta.candidateFingerprint,
     }],
     traceId: 'test-followup-manufacturer-only',
-    fetchImpl: createFetchMock(),
+    fetchImpl: unresolvedFetch,
     storage: createStorageMock(),
     researchFallback: async () => ({
       normalizedTitle: 'Virtual Rabbids: The Big Ride',
@@ -501,7 +512,9 @@ test('researchAssetTitles treats manufacturer-only follow-up replies as non-new 
   assert.equal(result.results[0].pipelineMeta.followupAnswerConsumed, true);
   assert.equal(result.results[0].pipelineMeta.queryPlanChanged, false);
   assert.equal(result.results[0].pipelineMeta.candidateDelta, false);
-  assert.notEqual(result.results[0].status, 'followup_needed');
+  assert.equal(result.results[0].status, 'followup_needed');
+  assert.match(result.results[0].pipelineMeta.followupQuestion, /exact model|title|version|nameplate/i);
+  assert.notEqual(result.results[0].pipelineMeta.followupQuestionKey, firstRun.results[0].pipelineMeta.followupQuestionKey);
 });
 
 test('researchAssetTitles global-first reuses approved shared manual across alias title variants', async () => {
@@ -947,9 +960,59 @@ test('OpenAI auth/config failures are logged and fall back to scraping without t
     const failureLog = logs.find((entry) => entry[0] === 'manualResearch:stage2_validation_failed');
     assert.ok(failureLog);
     assert.equal(failureLog[1]?.reasonCode, 'openai-auth-invalid');
+    const authFallbackLog = logs.find((entry) => entry[0] === 'manualResearch:stage2_auth_invalid_fallback');
+    assert.ok(authFallbackLog);
+    assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'openai-auth-invalid');
   } finally {
     console.log = originalLog;
   }
+});
+
+test('researchAssetTitles reports site_timeout terminal reason when fallback search providers time out', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{ originalTitle: 'King Kong VR', manufacturerHint: 'Raw Thrills' }],
+    traceId: 'test-fallback-site-timeout',
+    storage: createStorageMock(),
+    fetchImpl: async () => {
+      const error = new Error('aborted');
+      error.code = 'aborted';
+      throw error;
+    },
+    researchFallback: async () => {
+      const error = new Error('Responses API unavailable');
+      error.code = 'openai-temporary';
+      throw error;
+    },
+  });
+
+  assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'site_timeout');
+});
+
+test('researchAssetTitles reports no_results terminal reason when fallback search returns nothing', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{ originalTitle: 'King Kong VR', manufacturerHint: 'Raw Thrills' }],
+    traceId: 'test-fallback-no-results',
+    storage: createStorageMock(),
+    fetchImpl: async (url) => {
+      if (String(url).includes('/search?') || String(url).includes('duckduckgo.com') || String(url).includes('bing.com/search')) {
+        return { ok: true, status: 200, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+      }
+      return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+    },
+    researchFallback: async () => {
+      const error = new Error('Responses API unavailable');
+      error.code = 'openai-temporary';
+      throw error;
+    },
+  });
+
+  assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'no_results');
 });
 
 test('researchAssetTitles reuses previously approved company manuals before web fallback', async () => {

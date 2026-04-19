@@ -43,6 +43,7 @@ const CACHE_COLLECTION = 'assetTitleResearchCache';
 const MAX_TITLE_BATCH = 50;
 const CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const MANUAL_ACQUISITION_TIMEOUT_MS = 15000;
+const MANUFACTURER_ONLY_FOLLOWUP_QUESTION = 'Manufacturer is already confirmed. What exact model/title/version or cabinet nameplate text is printed on the game?';
 
 function logManualResearchEvent(event, payload = {}) {
   try {
@@ -108,6 +109,14 @@ function isManufacturerOnlyFollowupAnswer({ followupAnswer = '', knownManufactur
   const evidenceTokens = answerTokens.filter((token) => !ignored.has(token));
   if (!evidenceTokens.length) return false;
   return evidenceTokens.every((token) => manufacturerTokens.includes(token));
+}
+
+function classifyFallbackTerminalReason({ stage2ErrorCode = '', fallbackDiagnostics = {}, documentationCount = 0, supportCount = 0 } = {}) {
+  const reasonCode = normalizeString(stage2ErrorCode, 80).toLowerCase();
+  if (reasonCode === 'openai-auth-invalid') return 'openai-auth-invalid';
+  if (Number(fallbackDiagnostics?.searchTimeoutCount || 0) > 0) return 'site_timeout';
+  if (!documentationCount && !supportCount && Number(fallbackDiagnostics?.searchNoResultsCount || 0) > 0) return 'no_results';
+  return '';
 }
 
 function createTimeoutError(message, code = 'deadline-exceeded') {
@@ -450,6 +459,7 @@ async function runDiscoveryFallback({
       kind: 'support',
     }),
     searchEvidence: Array.isArray(discovered.evidence) ? discovered.evidence : [],
+    fallbackDiagnostics: discovered.diagnostics || {},
   };
 }
 
@@ -637,6 +647,8 @@ async function researchAssetTitles({
     const stage2CandidateAudit = [];
     let stage2ReturnedCandidates = [];
     let stage2SelectedCandidate = null;
+    let stage2ErrorCode = '';
+    let fallbackDiagnostics = {};
 
     logManualResearchEvent('stage1_result', {
       ...logContext,
@@ -667,6 +679,7 @@ async function researchAssetTitles({
       researchFallback,
     }).catch((error) => {
       const reasonCode = normalizeString(error?.code || '', 80);
+      stage2ErrorCode = reasonCode;
       logManualResearchEvent('stage2_validation_failed', {
         ...logContext,
         title: originalTitle,
@@ -677,6 +690,16 @@ async function researchAssetTitles({
         reason: normalizeString(error?.message || String(error), 220),
         reasonCode,
       });
+      if (reasonCode === 'openai-auth-invalid') {
+        logManualResearchEvent('stage2_auth_invalid_fallback', {
+          ...logContext,
+          title: originalTitle,
+          normalizedTitle: stageOne.normalizedTitle,
+          manufacturer: stageOne.manufacturer,
+          reasonCode,
+          guidance: 'Verify OPENAI_API_KEY secret binding for Cloud Functions runtime.',
+        });
+      }
       return null;
     });
     let shouldFallbackToScraping = true;
@@ -883,6 +906,7 @@ async function researchAssetTitles({
         kind: 'support',
       }).map(withSuggestionBucket);
       stageOne.searchEvidence = discoveredFallback.searchEvidence;
+      fallbackDiagnostics = discoveredFallback.fallbackDiagnostics || {};
     }
 
     if (documentationSuggestions.length) {
@@ -1053,14 +1077,26 @@ async function researchAssetTitles({
           knownManufacturer,
           followupAnswerFingerprint,
         });
+        summary = {
+          ...summary,
+          followupQuestion: MANUFACTURER_ONLY_FOLLOWUP_QUESTION,
+        };
       }
       logManualResearchEvent('followup_question_repeated', { ...logContext, followupQuestionKey: followupQuestionKeyPrev });
-      summary = {
-        ...summary,
-        status: documentationSuggestions.length
-          ? 'review_needed'
-          : (supportResourcesSuggestion.length ? 'support_only' : 'no_match_yet'),
-      };
+      if (manufacturerOnlyFollowup) {
+        logManualResearchEvent('followup_question_refined', {
+          ...logContext,
+          followupQuestionKeyPrev,
+          strategy: 'manufacturer_already_known_request_exact_model_text',
+        });
+      } else {
+        summary = {
+          ...summary,
+          status: documentationSuggestions.length
+            ? 'review_needed'
+            : (supportResourcesSuggestion.length ? 'support_only' : 'no_match_yet'),
+        };
+      }
     }
     logManualResearchEvent('ACQUISITION_RESULT', {
       ...logContext,
@@ -1073,9 +1109,16 @@ async function researchAssetTitles({
       manualStoragePath: summary.manualStoragePath || '',
       acquisitionError,
     });
-    const terminalStateReason = summary.manualReady === true
+    const fallbackTerminalReason = classifyFallbackTerminalReason({
+      stage2ErrorCode,
+      fallbackDiagnostics,
+      documentationCount: documentationSuggestions.length,
+      supportCount: supportResourcesSuggestion.length,
+    });
+    const terminalStateReason = fallbackTerminalReason
+      || (summary.manualReady === true
       ? 'docs_found_after_durable_storage'
-      : (acquisitionError ? `acquisition_failed:${acquisitionError}` : `no_durable_manual:${acquisitionState}`);
+      : (acquisitionError ? `acquisition_failed:${acquisitionError}` : `no_durable_manual:${acquisitionState}`));
     logManualResearchEvent('terminal_status_reason', {
       ...logContext,
       title: originalTitle,
@@ -1140,7 +1183,8 @@ async function researchAssetTitles({
         selectedCandidate: stage2SelectedCandidate,
         stage2CandidateAudit,
         terminalStateReason,
-        followupQuestionKey: followupQuestionKeyPrev,
+        followupQuestionKey: summary.followupQuestion ? fingerprint(summary.followupQuestion) : followupQuestionKeyPrev,
+        followupQuestion: normalizeString(summary.followupQuestion || '', 220),
         followupAnswerFingerprint,
         followupAnswerConsumed,
         queryPlanFingerprint,
