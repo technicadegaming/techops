@@ -13,6 +13,7 @@ const {
 
 const ALLOWED_EXTENSIONS = new Set(['pdf', 'doc', 'docx']);
 const DOWNLOAD_TIMEOUT_MS = 10000;
+const DEAD_LINK_STATUSES = new Set([404, 410]);
 
 function isAbortLikeError(error) {
   const code = `${error?.code || ''}`.toLowerCase();
@@ -41,6 +42,11 @@ function isDocumentLike({ contentType = '', extension = '', buffer = Buffer.allo
   if (ext === 'pdf') return buffer.slice(0, 5).toString('utf8').startsWith('%PDF-');
   if (['doc', 'docx'].includes(ext)) return true;
   return lowerType.includes('pdf') || lowerType.includes('msword') || lowerType.includes('officedocument');
+}
+
+function isDeadLinkStatus(status = 0) {
+  const code = Number(status || 0) || 0;
+  return DEAD_LINK_STATUSES.has(code) || code >= 500;
 }
 
 async function downloadManualCandidate(url, fetchImpl = fetch, timeoutMs = DOWNLOAD_TIMEOUT_MS) {
@@ -139,11 +145,12 @@ async function acquireManualToLibrary({
     const download = await downloadManualCandidate(normalizedCandidateUrl, fetchImpl, context.downloadTimeoutMs).catch((error) => {
       logEvent('download_candidate_rejected', { canonicalTitle, originalDownloadUrl: normalizedCandidateUrl, rejectionReasons: [error.message] });
       const httpStatus = Number(error?.httpStatus || 0) || 0;
+      const deadLink = isDeadLinkStatus(httpStatus);
       failedCandidates.push({
         url: normalizedCandidateUrl,
-        status: httpStatus === 404 ? 'dead_link' : 'download_failed',
+        status: deadLink ? 'dead_link' : 'download_failed',
         reason: normalizePhrase(error?.message || '') || 'download_failed',
-        deadLink: httpStatus === 404,
+        deadLink,
         httpStatus,
       });
       return null;

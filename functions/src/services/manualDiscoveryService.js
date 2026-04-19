@@ -148,6 +148,7 @@ const GENERIC_DEAD_LINK_BASENAMES = new Set([
 const MANUAL_FILENAME_TOKENS = /(manual|operator|service|install(?:ation)?|owners?|operations?)/i;
 const MANUAL_PART_NUMBER_PATTERN = /\b\d{2,4}-\d{4,6}(?:-\d{2,4})?\b/i;
 const MANUAL_REVISION_PATTERN = /\b(?:rev(?:ision)?)[\s._-]*\d+[a-z]?\b/i;
+const DEAD_LINK_HTTP_STATUSES = new Set([404, 410]);
 
 function buildExactTitleVariants(title, normalizedTitle) {
   return expandArcadeTitleAliases([title, normalizedTitle])
@@ -320,9 +321,15 @@ function buildManufacturerQueryTerms(manufacturer, manufacturerProfile) {
 
 function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) {
   const titleFamily = resolveArcadeTitleFamily({ title, manufacturer });
-  const cleanTitle = `${titleFamily.canonicalTitle || title || ''}`.trim();
+  const typedTitle = `${title || ''}`.trim();
+  const cleanTitle = `${titleFamily.canonicalTitle || typedTitle}`.trim();
   if (!cleanTitle) return { officialQueries: [], exactTitleQueries: [], fallbackQueries: [] };
-  const titleQueryVariants = expandArcadeTitleAliases([cleanTitle, ...(titleFamily.alternateTitles || [])]).slice(0, 4);
+  const titleQueryVariants = expandArcadeTitleAliases([
+    typedTitle,
+    cleanTitle,
+    titleFamily.familyTitle || '',
+    ...(titleFamily.alternateTitles || []),
+  ]).slice(0, 8);
   const preferredDomains = manufacturerProfile?.preferredSourceTokens?.length
     ? manufacturerProfile.preferredSourceTokens
     : (manufacturerProfile?.sourceTokens || []).slice(0, 2);
@@ -333,7 +340,16 @@ function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) 
 
   const primaryTitleVariant = titleQueryVariants[0] || cleanTitle;
   const primaryManufacturerTerm = manufacturerTerms[0] || `${manufacturer || ''}`.trim();
+  const deterministicBaselineQueries = titleQueryVariants.flatMap((titleVariant) => ([
+    `"${titleVariant}" arcade manual`,
+    primaryManufacturerTerm ? `"${primaryManufacturerTerm}" "${titleVariant}" arcade manual` : '',
+    `"${titleVariant}" operator manual`,
+    `"${titleVariant}" service manual`,
+    `"${titleVariant}" install guide`,
+    `"${titleVariant}" pdf`,
+  ]));
   const broadFirstQueries = Array.from(new Set([
+    ...deterministicBaselineQueries,
     `"${primaryTitleVariant}" arcade manual pdf`,
     primaryManufacturerTerm ? `"${primaryTitleVariant}" "${primaryManufacturerTerm}" manual pdf` : '',
     primaryManufacturerTerm ? `filetype:pdf ${primaryTitleVariant} ${primaryManufacturerTerm}`.replace(/\s+/g, ' ').trim() : '',
@@ -411,6 +427,21 @@ function buildManualSearchQueries({ manufacturer, title, manufacturerProfile }) 
     exactTitleQueries: Array.from(new Set([...exactTitleQueries, ...globalQueries, ...broadQueries])).filter(Boolean),
     fallbackQueries: Array.from(new Set([...fallbackQueries, ...dealerQueries])).filter(Boolean)
   };
+}
+
+function hasUsableSearchResults(results = []) {
+  return (Array.isArray(results) ? results : []).some((row = {}) => {
+    const url = normalizeSearchResultUrl(row.url || '');
+    if (!url) return false;
+    try {
+      const parsed = new URL(url);
+      if (isHardNegativeDomain(parsed.hostname)) return false;
+      if (isSearchWrapperOrJunkDomain(parsed.hostname)) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 function tokenizeForMatch(value = '') {
@@ -1402,6 +1433,9 @@ async function discoverManualDocumentation({
   const evidenceRows = [];
   let searchTimeoutCount = 0;
   let searchNoResultsCount = 0;
+  const providerAttemptCounts = {};
+  const providerZeroResultCounts = {};
+  let providerFallbackInvoked = false;
   const recordEvidence = (entry = {}) => {
     if (evidenceRows.length >= 60) return;
     const url = `${entry.url || ''}`.trim();
@@ -1475,6 +1509,7 @@ async function discoverManualDocumentation({
     let results = [];
     for (let attempt = 0; attempt < providerPlan.length; attempt += 1) {
       const provider = providerPlan[attempt];
+      providerAttemptCounts[provider.name] = Number(providerAttemptCounts[provider.name] || 0) + 1;
       logEvent('search_provider_attempt', {
         mode,
         query: sanitizeDiagnosticValue(query, 160),
@@ -1493,15 +1528,47 @@ async function discoverManualDocumentation({
         return null;
       });
       if (Array.isArray(providerResults)) {
-        results = providerResults;
-        providerUsed = provider.name;
+        const usable = hasUsableSearchResults(providerResults);
         queryExecutionOrder.push({
           mode,
           provider: provider.name,
           query: sanitizeDiagnosticValue(query, 160),
           resultCount: providerResults.length,
+          usableResultCount: usable ? providerResults.length : 0,
         });
-        break;
+        if (providerResults.length <= 0 || !usable) {
+          providerZeroResultCounts[provider.name] = Number(providerZeroResultCounts[provider.name] || 0) + 1;
+          logEvent('provider_zero_results', {
+            mode,
+            query: sanitizeDiagnosticValue(query, 160),
+            provider: provider.name,
+            attempt: attempt + 1,
+            resultCount: providerResults.length,
+            unusable: !usable,
+          });
+          if (attempt + 1 < providerPlan.length) {
+            providerFallbackInvoked = true;
+            logEvent('provider_fallback_invoked', {
+              mode,
+              query: sanitizeDiagnosticValue(query, 160),
+              fromProvider: provider.name,
+              toProvider: providerPlan[attempt + 1].name,
+            });
+            continue;
+          }
+        } else {
+          results = providerResults;
+          providerUsed = provider.name;
+          if (attempt > 0) {
+            logEvent('provider_fallback_completed', {
+              mode,
+              query: sanitizeDiagnosticValue(query, 160),
+              provider: provider.name,
+              resultCount: providerResults.length,
+            });
+          }
+          break;
+        }
       }
     }
 
@@ -1688,7 +1755,7 @@ async function discoverManualDocumentation({
         });
         continue;
       }
-      if (response.status !== 404) continue;
+      if (!DEAD_LINK_HTTP_STATUSES.has(Number(response.status || 0))) continue;
       deadManualUrls.add(candidate.url.toLowerCase());
       const deadLinkQueries = buildDeadLinkQueries({ title, manufacturer, failedUrl: candidate.url });
       logEvent('RECOVERY_SEARCH_STARTED', { url: candidate.url, status: response.status, fileName: extractFileNameFromUrl(candidate.url), queries: deadLinkQueries });
@@ -1740,6 +1807,13 @@ async function discoverManualDocumentation({
     supportResources: supportResources.map((row) => row.url),
     htmlFollowups: dedupeByUrl(followupPages).map((row) => row.url)
   });
+  logEvent('run_summary', {
+    providerAttempts: providerAttemptCounts,
+    providerZeroResults: providerZeroResultCounts,
+    fallbackInvoked: providerFallbackInvoked,
+    searchTimeoutCount,
+    searchNoResultsCount,
+  });
 
   return {
     documentationLinks,
@@ -1749,6 +1823,9 @@ async function discoverManualDocumentation({
     diagnostics: {
       searchTimeoutCount,
       searchNoResultsCount,
+      providerAttempts: providerAttemptCounts,
+      providerZeroResultCounts: providerZeroResultCounts,
+      providerFallbackInvoked,
     },
   };
 }

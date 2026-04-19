@@ -23,7 +23,13 @@ test('buildManualSearchQueries prioritizes official domains for known manufactur
   });
 
   assert.match(queries.officialQueries[0], /site:parts\.baytekent\.com/i);
-  assert.match(queries.exactTitleQueries[0], /"Bay Tek(?: Games)?" "Quik Drop" "service manual" pdf/);
+  assert.ok(queries.broadFirstQueries.some((query) => query === '"Quik Drop" arcade manual'));
+  assert.ok(queries.broadFirstQueries.some((query) => /"Bay Tek(?: Games)?" "Quik Drop" arcade manual/i.test(query)));
+  assert.ok(queries.broadFirstQueries.some((query) => query === '"Quik Drop" operator manual'));
+  assert.ok(queries.broadFirstQueries.some((query) => query === '"Quik Drop" service manual'));
+  assert.ok(queries.broadFirstQueries.some((query) => query === '"Quik Drop" install guide'));
+  assert.ok(queries.broadFirstQueries.some((query) => query === '"Quik Drop" pdf'));
+  assert.ok(queries.exactTitleQueries.some((query) => /"Bay Tek(?: Games)?" "Quik Drop" "service manual" pdf/.test(query)));
   assert.match(queries.fallbackQueries[0], /site:betson\.com/i);
   assert.ok(queries.exactTitleQueries.some((query) => /"Quik Drop" manual pdf/i.test(query)));
   assert.ok(queries.exactTitleQueries.some((query) => /"Quik Drop" operator manual pdf/i.test(query)));
@@ -685,7 +691,7 @@ test('discoverManualDocumentation prefers discovered numbered/revisioned Raw Thr
   });
 
   assert.equal(result.documentationLinks[0]?.url, 'https://rawthrills.com/wp-content/uploads/040-00078-01_King_Kong_of_Skull_Island_Manual_REV6.pdf');
-  assert.equal(result.documentationLinks[0]?.discoverySource, 'official');
+  assert.ok(['official', 'broad_first', 'exact_pdf'].includes(result.documentationLinks[0]?.discoverySource));
   assert.equal(logs.some((entry) => entry[0] === 'manualDiscovery:candidate_preference'), true);
   assert.equal(logs.some((entry) => entry[0] === 'manualDiscovery:candidate_scoring'), true);
 });
@@ -972,6 +978,38 @@ test('discoverManualDocumentation retries provider chain and falls back when pri
 
   assert.equal(result.documentationLinks.some((row) => /jurassic-park-arcade-operator-manual\.pdf$/i.test(row.url)), true);
   assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:search_retry' && entry[1]?.provider === 'bing_html'), true);
+});
+
+test('discoverManualDocumentation invokes provider fallback when primary provider returns all-zero results', async () => {
+  const profile = getManufacturerProfile('Raw Thrills', 'King Kong of Skull Island VR');
+  const events = [];
+  const fetchMock = async (url, options = {}) => {
+    const method = `${options.method || 'GET'}`.toUpperCase();
+    if (method === 'HEAD') return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+    if (url.startsWith('https://www.bing.com/search?')) return { ok: true, status: 200, text: async () => '<html></html>' };
+    if (url.startsWith('https://duckduckgo.com/html/?q=')) {
+      return {
+        ok: true,
+        text: async () => `<a class="result__a" href="${'https://rawthrills.com/wp-content/uploads/king-kong-vr-1-2-12345-rev2.pdf'}">King Kong VR Service Manual</a>`
+      };
+    }
+    return { ok: true, status: 200, text: async () => '' };
+  };
+
+  const result = await discoverManualDocumentation({
+    assetName: 'King Kong VR',
+    normalizedName: 'King Kong of Skull Island VR',
+    manufacturer: 'Raw Thrills',
+    manufacturerProfile: profile,
+    fetchImpl: fetchMock,
+    logger: { log: (...args) => events.push(args) },
+    searchProviderOptions: { primarySearchProvider: 'bing_html' },
+  });
+
+  assert.equal(result.documentationLinks.some((row) => /king-kong-vr-1-2-12345-rev2\.pdf$/i.test(row.url)), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:provider_zero_results' && entry[1]?.provider === 'bing_html'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:provider_fallback_invoked'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:provider_fallback_completed' && entry[1]?.provider === 'duckduckgo_html'), true);
 });
 
 test('discoverManualDocumentation performs dead-link recovery using filename mirror search', async () => {

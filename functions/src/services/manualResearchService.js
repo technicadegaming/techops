@@ -117,10 +117,24 @@ function isManufacturerOnlyFollowupAnswer({ followupAnswer = '', knownManufactur
 
 function classifyFallbackTerminalReason({ stage2ErrorCode = '', fallbackDiagnostics = {}, documentationCount = 0, supportCount = 0 } = {}) {
   const reasonCode = normalizeString(stage2ErrorCode, 80).toLowerCase();
-  if (reasonCode === 'openai-auth-invalid') return 'openai-auth-invalid';
   if (Number(fallbackDiagnostics?.searchTimeoutCount || 0) > 0) return 'site_timeout';
-  if (!documentationCount && !supportCount && Number(fallbackDiagnostics?.searchNoResultsCount || 0) > 0) return 'no_results';
+  if (!documentationCount && !supportCount && Number(fallbackDiagnostics?.searchNoResultsCount || 0) > 0) return 'deterministic-search-no-results';
+  if ((reasonCode === 'openai-config-missing' || reasonCode === 'openai-auth-invalid') && !documentationCount && !supportCount) return '';
   return '';
+}
+
+function buildCandidateValidationTier(entry = {}) {
+  const source = normalizeString(entry?.discoverySource || '', 80);
+  if (`${entry?.cachedManual || ''}` === 'true' || `${entry?.manualLibraryRef || ''}`.trim()) return 'A_shared_library_reuse';
+  if (entry?.verified === true && entry?.exactManualMatch === true) return 'B_validated_direct_manual';
+  if (entry?.verified === true) return 'C_validated_support_manual_evidence';
+  if (source.startsWith('adapter:')) return 'D_generated_vendor_guess';
+  return 'C_unvalidated_search_candidate';
+}
+
+function isDeadCandidateStatus(status = 0) {
+  const code = Number(status || 0) || 0;
+  return code === 404 || code === 410 || code >= 500;
 }
 
 function createTimeoutError(message, code = 'deadline-exceeded') {
@@ -708,6 +722,14 @@ async function researchAssetTitles({
           reasonCode,
           guidance: 'Verify OPENAI_API_KEY secret binding for Cloud Functions runtime.',
         });
+      } else if (reasonCode === 'openai-config-missing') {
+        logManualResearchEvent('openai-config-missing', {
+          ...logContext,
+          title: originalTitle,
+          normalizedTitle: stageOne.normalizedTitle,
+          manufacturer: stageOne.manufacturer,
+          reasonCode,
+        });
       }
       return null;
     });
@@ -944,6 +966,29 @@ async function researchAssetTitles({
     let lastFailureState = '';
     let lastFailureError = '';
     const deadCandidateUrls = new Set([...persistedDeadCandidateUrls]);
+    documentationSuggestions = documentationSuggestions.filter((candidate) => {
+      const tier = buildCandidateValidationTier(candidate);
+      logManualResearchEvent('candidate_validation_tier', {
+        ...logContext,
+        title: originalTitle,
+        normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+        manufacturer: summary.manufacturer || stageOne.manufacturer,
+        candidateUrl: candidate?.url || '',
+        candidateTier: tier,
+      });
+      if (tier === 'D_generated_vendor_guess' && candidate?.verified !== true) {
+        logManualResearchEvent('guessed_candidate_rejected_unvalidated', {
+          ...logContext,
+          title: originalTitle,
+          normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+          manufacturer: summary.manufacturer || stageOne.manufacturer,
+          candidateUrl: candidate?.url || '',
+          discoverySource: normalizeString(candidate?.discoverySource || '', 80),
+        });
+        return false;
+      }
+      return true;
+    });
     if (documentationSuggestions.length) {
       acquisitionState = 'started';
       for (let index = 0; index < documentationSuggestions.length; index += 1) {
@@ -1035,7 +1080,8 @@ async function researchAssetTitles({
           : [];
         failedCandidates.forEach((failed) => {
           const failedUrlKey = normalizeUrlKey(failed?.url || '');
-          if (!failedUrlKey || failed?.deadLink !== true || Number(failed?.httpStatus || 0) !== 404) return;
+          const httpStatus = Number(failed?.httpStatus || 0) || 0;
+          if (!failedUrlKey || failed?.deadLink !== true || !isDeadCandidateStatus(httpStatus)) return;
           deadCandidateUrls.add(failedUrlKey);
           logManualResearchEvent('candidate_marked_dead', {
             ...logContext,
@@ -1043,7 +1089,7 @@ async function researchAssetTitles({
             normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
             manufacturer: summary.manufacturer || stageOne.manufacturer,
             candidateUrl: failed.url || '',
-            httpStatus: 404,
+            httpStatus,
           });
         });
         if (!lastFailureState) acquisitionState = 'no_manual';
@@ -1088,6 +1134,15 @@ async function researchAssetTitles({
     documentationSuggestions = documentationSuggestions
       .filter((entry) => {
         const key = normalizeUrlKey(entry?.url || '');
+        if (key && deadCandidateUrls.has(key)) {
+          logManualResearchEvent('dead_candidate_suppressed', {
+            ...logContext,
+            title: originalTitle,
+            normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+            manufacturer: summary.manufacturer || stageOne.manufacturer,
+            candidateUrl: entry?.url || '',
+          });
+        }
         return !(key && deadCandidateUrls.has(key));
       })
       .map(withSuggestionBucket);
@@ -1120,6 +1175,11 @@ async function researchAssetTitles({
     }
     logManualResearchEvent('followup_query_plan_changed', { ...logContext, changed: queryPlanChanged, queryPlanFingerprint });
     logManualResearchEvent('followup_candidate_delta', { ...logContext, changed: candidateDelta, candidateFingerprint });
+    logManualResearchEvent('followup_candidate_delta', {
+      ...logContext,
+      candidateDelta,
+      deadCandidatesSuppressedCount: deadCandidateUrls.size,
+    });
     if (summary.status === 'followup_needed' && followupQuestionKeyPrev && followupAnswerConsumed && !queryPlanChanged && !candidateDelta) {
       if (knownManufacturer && manufacturerOnlyFollowup) {
         logManualResearchEvent('followup_answer_manufacturer_only_no_new_evidence', {
@@ -1203,6 +1263,17 @@ async function researchAssetTitles({
       acquisitionState,
       terminalStateReason,
       elapsedMs: Date.now() - startedAt,
+    });
+    logManualResearchEvent('run_summary', {
+      ...logContext,
+      providerAttempts: fallbackDiagnostics.providerAttempts || {},
+      providerZeroResults: fallbackDiagnostics.providerZeroResultCounts || {},
+      providerFallbackInvoked: fallbackDiagnostics.providerFallbackInvoked === true,
+      reusableHit: documentationSuggestions.some((entry) => !!`${entry?.manualLibraryRef || ''}`.trim()),
+      selectedCandidateTier: buildCandidateValidationTier(documentationSuggestions[0] || {}),
+      deadCandidatesSuppressedCount: deadCandidateUrls.size,
+      acquisitionState,
+      terminalReason: terminalStateReason,
     });
 
     results.push({
