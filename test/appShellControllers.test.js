@@ -166,12 +166,24 @@ test('asset manual links resolve stored manual paths through Firebase Storage ge
 test('asset manual links open popup-safe placeholder before SDK URL resolution', async () => {
   const { openStoredManualPath } = await loadAssetsHelpers();
   const calls = [];
-  const openedWindow = { location: { href: 'about:blank' }, close: () => calls.push('close') };
+  const openedWindow = {
+    opener: { active: true },
+    location: {
+      href: '',
+      replace: (value) => {
+        calls.push(`replace:${value}`);
+        openedWindow.location.href = value;
+      }
+    },
+    close: () => calls.push('close')
+  };
   const originalWindow = global.window;
+  const originalConsoleDebug = console.debug;
   try {
+    console.debug = () => {};
     global.window = {
       open: (...args) => {
-        calls.push(`open:${args[0]}`);
+        calls.push(`open:${args[0]}:${args[1]}`);
         return openedWindow;
       }
     };
@@ -191,9 +203,12 @@ test('asset manual links open popup-safe placeholder before SDK URL resolution',
         },
       }
     });
-    assert.deepEqual(calls.slice(0, 3), ['open:about:blank', 'storageRef', 'getDownloadURL']);
+    assert.deepEqual(calls.slice(0, 3), ['open::_blank', 'storageRef', 'getDownloadURL']);
+    assert.equal(openedWindow.opener, null);
+    assert.match(calls[3], /^replace:https:\/\/cdn\.example\/manual\.pdf$/);
     assert.equal(openedWindow.location.href, 'https://cdn.example/manual.pdf');
   } finally {
+    console.debug = originalConsoleDebug;
     global.window = originalWindow;
   }
 });
@@ -211,7 +226,9 @@ test('asset manual links show inline error feedback when SDK URL resolution fail
     }
   };
   const openedWindow = { closeCalled: false, close() { this.closeCalled = true; } };
+  const originalConsoleDebug = console.debug;
   try {
+    console.debug = () => {};
     global.window = {
       open: () => openedWindow
     };
@@ -231,6 +248,52 @@ test('asset manual links show inline error feedback when SDK URL resolution fail
     assert.equal(openedWindow.closeCalled, true);
     assert.match(feedbackHolder.innerHTML, /Unable to open this manual right now/i);
   } finally {
+    console.debug = originalConsoleDebug;
+    global.window = originalWindow;
+    global.document = originalDocument;
+  }
+});
+
+test('asset manual links show inline feedback when placeholder window is blocked and do not open a dead tab', async () => {
+  const { openStoredManualPath } = await loadAssetsHelpers();
+  const originalWindow = global.window;
+  const originalDocument = global.document;
+  const originalConsoleDebug = console.debug;
+  const feedbackHolder = {
+    innerHTML: '',
+    firstChild: null,
+    querySelector: () => null,
+    insertBefore(node) {
+      this.innerHTML = node.innerHTML;
+    }
+  };
+  const calls = [];
+  try {
+    console.debug = () => {};
+    global.window = {
+      open: (...args) => {
+        calls.push(args);
+        return null;
+      }
+    };
+    global.document = {
+      createElement: () => ({ dataset: {}, innerHTML: '' })
+    };
+    await openStoredManualPath({
+      dataset: { manualStoragePath: encodeURIComponent('manual-library/raw-thrills/king-kong/manual.pdf') },
+      closest: () => feedbackHolder,
+    }, {
+      storageRuntime: {
+        storage: { id: 'storage' },
+        storageRef: () => ({ path: 'manual-library/raw-thrills/king-kong/manual.pdf' }),
+        getDownloadURL: async () => 'https://cdn.example/manual.pdf',
+      }
+    });
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0], ['', '_blank']);
+    assert.match(feedbackHolder.innerHTML, /Popup was blocked before the manual was ready/i);
+  } finally {
+    console.debug = originalConsoleDebug;
     global.window = originalWindow;
     global.document = originalDocument;
   }

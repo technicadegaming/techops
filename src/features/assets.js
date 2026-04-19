@@ -216,7 +216,15 @@ function setManualOpenFeedback({ link, message = '', tone = 'error' } = {}) {
 
 function openPlaceholderManualWindow() {
   try {
-    return window.open('about:blank', '_blank', 'noopener');
+    const manualWindow = window.open('', '_blank');
+    if (manualWindow) {
+      try {
+        manualWindow.opener = null;
+      } catch {
+        // noop
+      }
+    }
+    return manualWindow || null;
   } catch {
     return null;
   }
@@ -227,16 +235,54 @@ async function openStoredManualPath(link, state = {}) {
   if (!storagePath) return;
   setManualOpenFeedback({ link, message: '' });
   const manualWindow = openPlaceholderManualWindow();
+  let redirectAttempted = false;
+  console.debug('[manual_open]', {
+    storagePath,
+    placeholderWindowObtained: !!manualWindow,
+    resolvedDownloadUrlNonEmpty: false,
+    redirectAttempted
+  });
   const resolved = await resolveStoredManualDownloadUrl(storagePath, state.storageRuntime || {});
+  const resolvedDownloadUrlNonEmpty = !!resolved;
+  console.debug('[manual_open]', {
+    storagePath,
+    placeholderWindowObtained: !!manualWindow,
+    resolvedDownloadUrlNonEmpty,
+    redirectAttempted
+  });
   if (resolved && manualWindow) {
-    manualWindow.location.href = resolved;
+    redirectAttempted = true;
+    console.debug('[manual_open]', {
+      storagePath,
+      placeholderWindowObtained: !!manualWindow,
+      resolvedDownloadUrlNonEmpty,
+      redirectAttempted
+    });
+    if (typeof manualWindow.location?.replace === 'function') manualWindow.location.replace(resolved);
+    else manualWindow.location.href = resolved;
     return;
   }
   if (resolved) {
-    window.open(resolved, '_blank', 'noopener');
+    console.debug('[manual_open]', {
+      storagePath,
+      placeholderWindowObtained: !!manualWindow,
+      resolvedDownloadUrlNonEmpty,
+      redirectAttempted
+    });
+    setManualOpenFeedback({
+      link,
+      message: 'Popup was blocked before the manual was ready. Please allow popups and retry.',
+      tone: 'error'
+    });
     return;
   }
   try { manualWindow?.close?.(); } catch { /* noop */ }
+  console.debug('[manual_open]', {
+    storagePath,
+    placeholderWindowObtained: !!manualWindow,
+    resolvedDownloadUrlNonEmpty,
+    redirectAttempted
+  });
   setManualOpenFeedback({
     link,
     message: 'Unable to open this manual right now. Please retry or run manual lookup again.',
