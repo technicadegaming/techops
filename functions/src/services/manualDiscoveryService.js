@@ -1305,6 +1305,7 @@ async function discoverManualDocumentation({
   const manualRows = [];
   const supportRows = [];
   const followupPages = [];
+  const queryExecutionOrder = [];
   const evidenceRows = [];
   const recordEvidence = (entry = {}) => {
     if (evidenceRows.length >= 60) return;
@@ -1398,6 +1399,12 @@ async function discoverManualDocumentation({
       if (Array.isArray(providerResults)) {
         results = providerResults;
         providerUsed = provider.name;
+        queryExecutionOrder.push({
+          mode,
+          provider: provider.name,
+          query: sanitizeDiagnosticValue(query, 160),
+          resultCount: providerResults.length,
+        });
         break;
       }
     }
@@ -1491,6 +1498,7 @@ async function discoverManualDocumentation({
     }
     if (manualRows.length >= 2 && mode === 'official') break;
   }
+  logEvent('query_execution_order', { order: queryExecutionOrder });
 
   const followupPlan = buildFollowupExecutionPlan(followupPages);
   logEvent('followup_plan', {

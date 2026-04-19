@@ -163,6 +163,79 @@ test('asset manual links resolve stored manual paths through Firebase Storage ge
   assert.equal(resolved.includes('/v0/b/'), false);
 });
 
+test('asset manual links open popup-safe placeholder before SDK URL resolution', async () => {
+  const { openStoredManualPath } = await loadAssetsHelpers();
+  const calls = [];
+  const openedWindow = { location: { href: 'about:blank' }, close: () => calls.push('close') };
+  const originalWindow = global.window;
+  try {
+    global.window = {
+      open: (...args) => {
+        calls.push(`open:${args[0]}`);
+        return openedWindow;
+      }
+    };
+    await openStoredManualPath({
+      dataset: { manualStoragePath: encodeURIComponent('manual-library/raw-thrills/king-kong/manual.pdf') },
+      closest: () => null,
+    }, {
+      storageRuntime: {
+        storage: { id: 'storage' },
+        storageRef: () => {
+          calls.push('storageRef');
+          return { path: 'manual-library/raw-thrills/king-kong/manual.pdf' };
+        },
+        getDownloadURL: async () => {
+          calls.push('getDownloadURL');
+          return 'https://cdn.example/manual.pdf';
+        },
+      }
+    });
+    assert.deepEqual(calls.slice(0, 3), ['open:about:blank', 'storageRef', 'getDownloadURL']);
+    assert.equal(openedWindow.location.href, 'https://cdn.example/manual.pdf');
+  } finally {
+    global.window = originalWindow;
+  }
+});
+
+test('asset manual links show inline error feedback when SDK URL resolution fails', async () => {
+  const { openStoredManualPath } = await loadAssetsHelpers();
+  const originalWindow = global.window;
+  const originalDocument = global.document;
+  const feedbackHolder = {
+    innerHTML: '',
+    firstChild: null,
+    querySelector: () => null,
+    insertBefore(node) {
+      this.innerHTML = node.innerHTML;
+    }
+  };
+  const openedWindow = { closeCalled: false, close() { this.closeCalled = true; } };
+  try {
+    global.window = {
+      open: () => openedWindow
+    };
+    global.document = {
+      createElement: () => ({ dataset: {}, innerHTML: '' })
+    };
+    await openStoredManualPath({
+      dataset: { manualStoragePath: encodeURIComponent('manual-library/raw-thrills/king-kong/manual.pdf') },
+      closest: () => feedbackHolder,
+    }, {
+      storageRuntime: {
+        storage: { id: 'storage' },
+        storageRef: () => ({ path: 'manual-library/raw-thrills/king-kong/manual.pdf' }),
+        getDownloadURL: async () => { throw new Error('not found'); },
+      }
+    });
+    assert.equal(openedWindow.closeCalled, true);
+    assert.match(feedbackHolder.innerHTML, /Unable to open this manual right now/i);
+  } finally {
+    global.window = originalWindow;
+    global.document = originalDocument;
+  }
+});
+
 test('asset helpers downgrade stale in-progress runs without heartbeat to retry_needed', async () => {
   const { getEffectiveEnrichmentStatus } = await loadAssetsHelpers();
   const staleAsset = {

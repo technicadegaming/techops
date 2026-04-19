@@ -202,6 +202,48 @@ async function resolveStoredManualDownloadUrl(value = '', { storage = null, stor
   return `${resolved || ''}`.trim();
 }
 
+function setManualOpenFeedback({ link, message = '', tone = 'error' } = {}) {
+  const card = link?.closest?.('.item');
+  if (!card) return;
+  const existing = card.querySelector('[data-manual-open-feedback]');
+  if (existing) existing.remove();
+  if (!message) return;
+  const wrapper = document.createElement('div');
+  wrapper.dataset.manualOpenFeedback = '1';
+  wrapper.innerHTML = renderInlineFeedback(message, tone);
+  card.insertBefore(wrapper, card.firstChild);
+}
+
+function openPlaceholderManualWindow() {
+  try {
+    return window.open('about:blank', '_blank', 'noopener');
+  } catch {
+    return null;
+  }
+}
+
+async function openStoredManualPath(link, state = {}) {
+  const storagePath = decodeURIComponent(link?.dataset?.manualStoragePath || '');
+  if (!storagePath) return;
+  setManualOpenFeedback({ link, message: '' });
+  const manualWindow = openPlaceholderManualWindow();
+  const resolved = await resolveStoredManualDownloadUrl(storagePath, state.storageRuntime || {});
+  if (resolved && manualWindow) {
+    manualWindow.location.href = resolved;
+    return;
+  }
+  if (resolved) {
+    window.open(resolved, '_blank', 'noopener');
+    return;
+  }
+  try { manualWindow?.close?.(); } catch { /* noop */ }
+  setManualOpenFeedback({
+    link,
+    message: 'Unable to open this manual right now. Please retry or run manual lookup again.',
+    tone: 'error'
+  });
+}
+
 function getReviewableManualCandidateCount(asset = {}) {
   return getReviewableDocumentationSuggestions(asset).length;
 }
@@ -802,9 +844,7 @@ export function renderAssets(el, state, actions) {
   el.querySelectorAll('[data-remove-manual]').forEach((button) => button.addEventListener('click', () => actions.removeManualLink(button.dataset.removeManual, decodeURIComponent(button.dataset.url || ''))));
   el.querySelectorAll('[data-manual-storage-path]').forEach((link) => link.addEventListener('click', async (event) => {
     event.preventDefault();
-    const storagePath = decodeURIComponent(link.dataset.manualStoragePath || '');
-    const resolved = await resolveStoredManualDownloadUrl(storagePath, state.storageRuntime || {});
-    if (resolved) window.open(resolved, '_blank', 'noopener');
+    await openStoredManualPath(link, state);
   }));
   el.querySelectorAll('[data-remove-support]').forEach((button) => button.addEventListener('click', () => actions.removeSupportLink(button.dataset.removeSupport, decodeURIComponent(button.dataset.url || ''))));
   el.querySelectorAll('[data-remove-all-manuals]').forEach((button) => button.addEventListener('click', () => actions.removeAllManualLinks(button.dataset.removeAllManuals)));
@@ -825,5 +865,6 @@ export {
   isEnrichmentStale,
   getDocumentationSuggestionBuckets,
   buildStoredManualDownloadUrl,
-  resolveStoredManualDownloadUrl
+  resolveStoredManualDownloadUrl,
+  openStoredManualPath
 };
