@@ -330,6 +330,34 @@ test('storage: manuals path allows same-company access and blocks cross-company 
   await assertFails(uploadString(ref(staffBStorage, 'companies/company-a/manuals/asset-1/manual-2/source.pdf'), 'blocked'));
 });
 
+test('storage: shared manual-library path allows enabled signed-in reads but blocks writes', async () => {
+  await seedMembership({ uid: 'staff-a', companyId: 'company-a', role: 'staff' });
+  const testEnv = await rulesTestEnvPromise;
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await uploadString(ref(context.storage(), 'manual-library/bay-tek/quik-drop/manual.pdf'), 'manual-pdf');
+  });
+
+  const staffStorage = testEnv.authenticatedContext('staff-a').storage();
+  await assertSucceeds(getBytes(ref(staffStorage, 'manual-library/bay-tek/quik-drop/manual.pdf')));
+  await assertFails(uploadString(ref(staffStorage, 'manual-library/bay-tek/quik-drop/manual-v2.pdf'), 'blocked'));
+});
+
+test('storage: manual-library read access does not grant access to unrelated company evidence paths', async () => {
+  await seedMembership({ uid: 'staff-a', companyId: 'company-a', role: 'staff' });
+  await seedMembership({ uid: 'staff-b', companyId: 'company-b', role: 'staff' });
+  const testEnv = await rulesTestEnvPromise;
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await uploadString(ref(context.storage(), 'companies/company-a/evidence/protected.jpg'), 'sensitive');
+    await uploadString(ref(context.storage(), 'manual-library/shared/manual.pdf'), 'manual');
+  });
+
+  const staffBStorage = testEnv.authenticatedContext('staff-b').storage();
+  await assertSucceeds(getBytes(ref(staffBStorage, 'manual-library/shared/manual.pdf')));
+  await assertFails(getBytes(ref(staffBStorage, 'companies/company-a/evidence/protected.jpg')));
+});
+
 test('storage: legacy root paths are denied for regular members and allowed for global admins', async () => {
   await seedMembership({ uid: 'staff-a', companyId: 'company-a', role: 'staff' });
   await seedMembership({ uid: 'global-admin', companyId: 'company-a', role: 'staff', userRole: 'admin' });

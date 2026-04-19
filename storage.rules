@@ -72,6 +72,10 @@ service firebase.storage {
         );
     }
 
+    function canReadManualLibrary() {
+      return hasEnabledUserRecord();
+    }
+
     match /companies/{companyId}/evidence/{allPaths=**} {
       allow read, write: if canAccessCompanyEvidence(companyId);
       allow delete: if isGlobalAdmin()
@@ -92,6 +96,11 @@ service firebase.storage {
           isActiveCompanyMember(companyId)
           && companyRole(companyId) in ['owner', 'admin', 'manager']
         );
+    }
+
+    // Shared manual library assets are durable references and read-only for enabled signed-in users.
+    match /manual-library/{allPaths=**} {
+      allow read: if canReadManualLibrary();
     }
 
     // Legacy root-level locations are admin-only to support controlled cleanup/migration.
