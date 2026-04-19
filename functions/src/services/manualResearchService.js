@@ -132,6 +132,66 @@ function buildCandidateValidationTier(entry = {}) {
   return 'C_unvalidated_search_candidate';
 }
 
+function candidateTierRank(tier = '') {
+  if (tier === 'A_shared_library_reuse') return 0;
+  if (tier === 'B_validated_direct_manual') return 1;
+  if (tier === 'C_validated_support_manual_evidence' || tier === 'C_unvalidated_search_candidate') return 2;
+  if (tier === 'D_generated_vendor_guess') return 3;
+  return 4;
+}
+
+function prioritizeDocumentationSuggestions({
+  documentationSuggestions = [],
+  deadCandidateUrls = new Set(),
+  logContext = {},
+  logEvent = () => {},
+} = {}) {
+  const deadSet = deadCandidateUrls instanceof Set ? deadCandidateUrls : new Set();
+  const rows = (Array.isArray(documentationSuggestions) ? documentationSuggestions : []).map((entry, index) => {
+    const tier = buildCandidateValidationTier(entry);
+    const urlKey = normalizeUrlKey(entry?.url || '');
+    return { entry, index, tier, urlKey, tierRank: candidateTierRank(tier) };
+  });
+  rows.sort((a, b) => {
+    const aDead = !!(a.urlKey && deadSet.has(a.urlKey));
+    const bDead = !!(b.urlKey && deadSet.has(b.urlKey));
+    if (aDead !== bDead) return aDead ? 1 : -1;
+    if (a.tierRank !== b.tierRank) return a.tierRank - b.tierRank;
+    const aScore = Number(a.entry?.discoveryCandidateScore || a.entry?.matchScore || 0);
+    const bScore = Number(b.entry?.discoveryCandidateScore || b.entry?.matchScore || 0);
+    return bScore - aScore || a.index - b.index;
+  });
+  const bestDiscovered = rows.find((row) => row.tierRank <= 2
+    && !`${row.entry?.discoverySource || ''}`.startsWith('adapter:')
+    && !(row.urlKey && deadSet.has(row.urlKey)));
+  const bestGuessed = rows.find((row) => row.tierRank === 3 || `${row.entry?.discoverySource || ''}`.startsWith('adapter:'));
+  const deadGuessed = rows.find((row) => row.urlKey && deadSet.has(row.urlKey));
+  if (bestDiscovered && bestGuessed && bestDiscovered.index !== bestGuessed.index) {
+    logEvent('discovered_candidate_preferred_over_guessed', {
+      ...logContext,
+      selectedCandidateUrl: bestDiscovered.entry?.url || '',
+      demotedCandidateUrl: bestGuessed.entry?.url || '',
+      selectedTier: bestDiscovered.tier,
+      demotedTier: bestGuessed.tier,
+    });
+  }
+  if (deadGuessed && bestDiscovered && bestDiscovered.urlKey !== deadGuessed.urlKey) {
+    logEvent('dead_vendor_candidate_demoted', {
+      ...logContext,
+      deadCandidateUrl: deadGuessed.entry?.url || '',
+      replacementCandidateUrl: bestDiscovered.entry?.url || '',
+      deadCandidateTier: deadGuessed.tier,
+      replacementTier: bestDiscovered.tier,
+    });
+    logEvent('selected_candidate_replaced_by_discovered_hit', {
+      ...logContext,
+      previousSelectedCandidateUrl: deadGuessed.entry?.url || '',
+      selectedCandidateUrl: bestDiscovered.entry?.url || '',
+    });
+  }
+  return rows.map((row) => row.entry);
+}
+
 function isDeadCandidateStatus(status = 0) {
   const code = Number(status || 0) || 0;
   return code === 404 || code === 410 || code >= 500;
@@ -632,6 +692,7 @@ async function researchAssetTitles({
     const followupAnswer = normalizeString(row?.followupAnswer || '', 500);
     const followupAnswerFingerprint = fingerprint(followupAnswer);
     const previousCandidateFingerprint = normalizeString(row?.previousCandidateFingerprint || '', 120);
+    const previousRawCandidateFingerprint = normalizeString(row?.previousRawCandidateFingerprint || '', 120);
     const previousQueryPlanFingerprint = normalizeString(row?.previousQueryPlanFingerprint || '', 120);
     const persistedDeadCandidateUrls = new Set(
       (Array.isArray(row?.deadCandidateUrls) ? row.deadCandidateUrls : [])
@@ -940,6 +1001,13 @@ async function researchAssetTitles({
       fallbackDiagnostics = discoveredFallback.fallbackDiagnostics || {};
     }
 
+    const deadCandidateUrls = new Set([...persistedDeadCandidateUrls]);
+    documentationSuggestions = prioritizeDocumentationSuggestions({
+      documentationSuggestions,
+      deadCandidateUrls,
+      logContext,
+      logEvent: logManualResearchEvent,
+    });
     if (documentationSuggestions.length) {
       const selectedSuggestion = documentationSuggestions[0];
       const selectedSource = normalizeString(selectedSuggestion?.discoverySource || '', 80) || 'stage2_or_catalog';
@@ -970,7 +1038,6 @@ async function researchAssetTitles({
     let acquisitionError = '';
     let lastFailureState = '';
     let lastFailureError = '';
-    const deadCandidateUrls = new Set([...persistedDeadCandidateUrls]);
     documentationSuggestions = documentationSuggestions.filter((candidate) => {
       const tier = buildCandidateValidationTier(candidate);
       logManualResearchEvent('candidate_validation_tier', {
@@ -1173,7 +1240,7 @@ async function researchAssetTitles({
     ].join('|'));
     const queryPlanChanged = !previousQueryPlanFingerprint || queryPlanFingerprint !== previousQueryPlanFingerprint;
     const candidateDelta = !previousCandidateFingerprint || candidateFingerprint !== previousCandidateFingerprint;
-    const rawCandidateDelta = !previousCandidateFingerprint || rawCandidateFingerprint !== previousCandidateFingerprint;
+    const rawCandidateDelta = !previousRawCandidateFingerprint || rawCandidateFingerprint !== previousRawCandidateFingerprint;
     const deadCandidatesIgnoredForDelta = rawCandidateDelta && !candidateDelta && deadCandidateUrls.size > 0;
     const followupAnswerConsumed = !!(followupAnswer && followupAnswerFingerprint && consumedAnswerFingerprintPrev === followupAnswerFingerprint);
     const knownManufacturer = normalizeManufacturerName(row?.manufacturerHint || stageOne.manufacturer || '');
@@ -1299,14 +1366,20 @@ async function researchAssetTitles({
     });
     logManualResearchEvent('run_summary', {
       ...logContext,
+      rawTitle: originalTitle,
+      normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
       title: originalTitle,
       manufacturer: summary.manufacturer || stageOne.manufacturer,
       titleVariantsUsed: fallbackDiagnostics.titleVariantsUsed || [],
+      manufacturerAwareNormalizationApplied: fallbackDiagnostics.manufacturerAwareNormalizationApplied === true,
+      titleOnlyQueryCount: Number(fallbackDiagnostics.titleOnlyQueryCount || 0),
+      titleManufacturerQueryCount: Number(fallbackDiagnostics.titleManufacturerQueryCount || 0),
       providerSequenceTried: fallbackDiagnostics.providerSequenceTried || [],
       providerAttempts: fallbackDiagnostics.providerAttempts || {},
       providerZeroResults: fallbackDiagnostics.providerZeroResultCounts || {},
       providerFallbackInvoked: fallbackDiagnostics.providerFallbackInvoked === true,
       reusableHit: documentationSuggestions.some((entry) => !!`${entry?.manualLibraryRef || ''}`.trim()),
+      selectedCandidateUrl: documentationSuggestions[0]?.url || '',
       selectedCandidateTier: buildCandidateValidationTier(documentationSuggestions[0] || {}),
       deadCandidatesSuppressedCount: deadCandidateUrls.size,
       acquisitionState,
@@ -1349,9 +1422,13 @@ async function researchAssetTitles({
         queryPlanFingerprint,
         queryPlanChanged,
         candidateFingerprint,
+        rawCandidateFingerprint,
         candidateDelta,
       },
       locationId: normalizeString(locationId, 120),
+      previousQueryPlanFingerprint: queryPlanFingerprint,
+      previousCandidateFingerprint: candidateFingerprint,
+      previousRawCandidateFingerprint: rawCandidateFingerprint,
       manualLibraryRef: summary.manualLibraryRef || '',
       manualVariant: summary.manualVariant || '',
       manualStoragePath: summary.manualStoragePath || '',

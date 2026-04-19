@@ -623,6 +623,72 @@ test('Virtual Rabbids dead selected candidate is excluded from candidate delta a
   }
 });
 
+test('researchAssetTitles prefers discovered validated candidate over persisted dead guessed vendor url', async () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => { logs.push(args); };
+  try {
+    const deadGuessedUrl = 'https://laigames.com/downloads/virtual-rabbids-the-big-ride-install-guide.pdf';
+    const discoveredUrl = 'https://manuals.example.com/lai-games/virtual-rabbids-operator-manual.pdf';
+    const result = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true },
+      companyId: 'company-1',
+      titles: [{
+        originalTitle: 'Virtual Rabbids',
+        manufacturerHint: 'LAI Games',
+        deadCandidateUrls: [deadGuessedUrl],
+      }],
+      traceId: 'test-dead-guessed-demotion',
+      storage: createStorageMock(),
+      fetchImpl: async (url, options = {}) => {
+        const method = options?.method || 'GET';
+        if (url === deadGuessedUrl) {
+          return { ok: false, status: 404, url, headers: { get: () => 'application/pdf' }, text: async () => '' };
+        }
+        if (url === discoveredUrl) {
+          if (method === 'HEAD') return { ok: true, status: 200, url, headers: { get: () => 'application/pdf' } };
+          return {
+            ok: true,
+            status: 200,
+            url,
+            headers: { get: () => 'application/pdf' },
+            text: async () => '',
+            arrayBuffer: async () => Buffer.from('%PDF-1.4\nmanual'),
+          };
+        }
+        return { ok: true, status: 200, url, headers: { get: () => 'text/html' }, text: async () => '' };
+      },
+      researchFallback: async () => ({
+        normalizedTitle: 'Virtual Rabbids: The Big Ride',
+        manufacturer: 'LAI Games',
+        manufacturerInferred: false,
+        matchType: 'support_only',
+        manualReady: false,
+        reviewRequired: true,
+        manualUrl: deadGuessedUrl,
+        manualSourceUrl: 'https://laigames.com/virtual-rabbids-the-big-ride/',
+        supportUrl: 'https://laigames.com/virtual-rabbids-the-big-ride/',
+        confidence: 0.72,
+        selectedCandidate: { bucket: 'verified_pdf_candidate', url: deadGuessedUrl, title: 'Virtual Rabbids Install Guide' },
+        candidates: [
+          { bucket: 'verified_pdf_candidate', url: deadGuessedUrl, title: 'Virtual Rabbids Install Guide', confidence: 0.95 },
+          { bucket: 'verified_pdf_candidate', url: discoveredUrl, title: 'Virtual Rabbids Operator Manual', confidence: 0.87 },
+        ],
+        citations: [],
+        rawResearchSummary: 'Discovered stronger third-party manual candidate.',
+      }),
+    });
+
+    assert.equal(result.results[0].manualReady, true);
+    assert.equal(result.results[0].documentationSuggestions[0]?.url, result.results[0].manualUrl);
+    assert.equal(result.results[0].documentationSuggestions.some((entry) => entry.url === deadGuessedUrl), false);
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:dead_vendor_candidate_demoted'), true);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
 test('researchAssetTitles global-first reuses approved shared manual across alias title variants', async () => {
   const manualLibrary = {
     'shared-manual-1': {
