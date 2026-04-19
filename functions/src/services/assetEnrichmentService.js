@@ -1770,6 +1770,7 @@ async function runAuthoritativeAssetResearch({ db, settings, traceId, draftAsset
       consumedFollowupAnswerFingerprint: `${draftAsset?.consumedFollowupAnswerFingerprint || ''}`.trim(),
       previousQueryPlanFingerprint: `${draftAsset?.previousQueryPlanFingerprint || ''}`.trim(),
       previousCandidateFingerprint: `${draftAsset?.previousCandidateFingerprint || ''}`.trim(),
+      deadCandidateUrls: Array.isArray(draftAsset?.deadCandidateUrls) ? draftAsset.deadCandidateUrls : [],
     }],
     includeInternalDocs: true,
     maxWebSources: Number(settings?.manualResearchMaxWebSources || 5),
@@ -1986,6 +1987,9 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
         consumedFollowupAnswerFingerprint: fingerprintText(asset.enrichmentFollowupAnswer || ''),
         previousQueryPlanFingerprint: `${asset?.manualMatchSummary?.pipelineMeta?.queryPlanFingerprint || ''}`.trim(),
         previousCandidateFingerprint: `${asset?.manualMatchSummary?.pipelineMeta?.candidateFingerprint || ''}`.trim(),
+        deadCandidateUrls: Array.isArray(asset?.manualMatchSummary?.pipelineMeta?.deadCandidateUrls)
+          ? asset.manualMatchSummary.pipelineMeta.deadCandidateUrls
+          : [],
         runId,
         triggerSource,
         callablePath,

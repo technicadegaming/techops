@@ -82,6 +82,10 @@ function normalizeErrorMessage(error, max = 220) {
   return normalizeString(error?.message || String(error || ''), max);
 }
 
+function normalizeUrlKey(value = '') {
+  return normalizeUrl(value).toLowerCase();
+}
+
 function fingerprint(value = '') {
   const normalized = normalizeString(value, 500).toLowerCase();
   if (!normalized) return '';
@@ -615,6 +619,11 @@ async function researchAssetTitles({
     const followupAnswerFingerprint = fingerprint(followupAnswer);
     const previousCandidateFingerprint = normalizeString(row?.previousCandidateFingerprint || '', 120);
     const previousQueryPlanFingerprint = normalizeString(row?.previousQueryPlanFingerprint || '', 120);
+    const persistedDeadCandidateUrls = new Set(
+      (Array.isArray(row?.deadCandidateUrls) ? row.deadCandidateUrls : [])
+        .map((value) => normalizeUrlKey(value))
+        .filter(Boolean),
+    );
     if (!originalTitle) continue;
     const stageOne = await runStageOneLookup({
       db,
@@ -934,10 +943,23 @@ async function researchAssetTitles({
     let acquisitionError = '';
     let lastFailureState = '';
     let lastFailureError = '';
+    const deadCandidateUrls = new Set([...persistedDeadCandidateUrls]);
     if (documentationSuggestions.length) {
       acquisitionState = 'started';
       for (let index = 0; index < documentationSuggestions.length; index += 1) {
         const candidate = documentationSuggestions[index];
+        const candidateUrlKey = normalizeUrlKey(candidate?.url || '');
+        if (candidateUrlKey && deadCandidateUrls.has(candidateUrlKey)) {
+          logManualResearchEvent('candidate_rejected', {
+            ...logContext,
+            title: originalTitle,
+            normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+            manufacturer: summary.manufacturer || stageOne.manufacturer,
+            candidateUrl: candidate?.url || '',
+            reason: 'persisted_dead_link_candidate',
+          });
+          continue;
+        }
         if (index > 0) {
           logManualResearchEvent('CANDIDATE_RETRY', {
             ...logContext,
@@ -1008,6 +1030,22 @@ async function researchAssetTitles({
           acquisitionState = 'succeeded';
           break;
         }
+        const failedCandidates = Array.isArray(manualLibraryAcquisition?.failedCandidates)
+          ? manualLibraryAcquisition.failedCandidates
+          : [];
+        failedCandidates.forEach((failed) => {
+          const failedUrlKey = normalizeUrlKey(failed?.url || '');
+          if (!failedUrlKey || failed?.deadLink !== true || Number(failed?.httpStatus || 0) !== 404) return;
+          deadCandidateUrls.add(failedUrlKey);
+          logManualResearchEvent('candidate_marked_dead', {
+            ...logContext,
+            title: originalTitle,
+            normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+            manufacturer: summary.manufacturer || stageOne.manufacturer,
+            candidateUrl: failed.url || '',
+            httpStatus: 404,
+          });
+        });
         if (!lastFailureState) acquisitionState = 'no_manual';
       }
       if (!manualLibraryAcquisition?.manualReady && lastFailureState) {
@@ -1047,6 +1085,18 @@ async function researchAssetTitles({
         manualUrl: '',
       };
     }
+    documentationSuggestions = documentationSuggestions
+      .filter((entry) => {
+        const key = normalizeUrlKey(entry?.url || '');
+        return !(key && deadCandidateUrls.has(key));
+      })
+      .map(withSuggestionBucket);
+    supportResourcesSuggestion = supportResourcesSuggestion
+      .filter((entry) => {
+        const key = normalizeUrlKey(entry?.url || '');
+        return !(key && deadCandidateUrls.has(key));
+      })
+      .map(withSuggestionBucket);
     const queryPlanFingerprint = fingerprint([
       stageOne.normalizedTitle,
       stageOne.manufacturer,
@@ -1179,6 +1229,7 @@ async function researchAssetTitles({
         manualLibraryRef: summary.manualLibraryRef || '',
         manualStoragePath: summary.manualStoragePath || '',
         searchEvidence: Array.isArray(stageOne.searchEvidence) ? stageOne.searchEvidence : [],
+        deadCandidateUrls: Array.from(deadCandidateUrls).slice(0, 40),
         returnedCandidates: stage2ReturnedCandidates,
         selectedCandidate: stage2SelectedCandidate,
         stage2CandidateAudit,

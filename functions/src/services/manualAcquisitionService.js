@@ -58,7 +58,12 @@ async function downloadManualCandidate(url, fetchImpl = fetch, timeoutMs = DOWNL
   } finally {
     clearTimeout(timeout);
   }
-  if (!response.ok) throw new Error(`Manual download failed with status ${response.status}`);
+  if (!response.ok) {
+    const error = new Error(`Manual download failed with status ${response.status}`);
+    error.code = 'manual-download-http-error';
+    error.httpStatus = Number(response.status || 0) || 0;
+    throw error;
+  }
   const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
   const contentType = `${response.headers.get('content-type') || ''}`.toLowerCase();
@@ -95,6 +100,7 @@ async function acquireManualToLibrary({
   }
 
   let candidates = [];
+  const failedCandidates = [];
   if (directManualUrl) candidates.push({ url: directManualUrl, sourcePageUrl, title: candidate.title || context.originalTitle || canonicalTitle });
   if (!candidates.length && sourcePageUrl) {
     logEvent('source_page_fetch', { canonicalTitle, manufacturer, sourcePageUrl });
@@ -116,6 +122,12 @@ async function acquireManualToLibrary({
     const normalizedCandidateUrl = normalizeUrl(candidateLink.url);
     if (!normalizedCandidateUrl) {
       logEvent('download_candidate_rejected', { canonicalTitle, rejectionReasons: ['invalid_url'] });
+      failedCandidates.push({
+        url: `${candidateLink.url || ''}`.trim(),
+        status: 'unusable',
+        reason: 'invalid_url',
+        deadLink: false,
+      });
       continue;
     }
     const existingByUrl = await findManualLibraryRecordByDownloadUrl(db, normalizedCandidateUrl);
@@ -126,11 +138,25 @@ async function acquireManualToLibrary({
     logEvent('download_candidate_found', { canonicalTitle, manufacturer, sourcePageUrl, originalDownloadUrl: normalizedCandidateUrl, candidateCount: candidates.length });
     const download = await downloadManualCandidate(normalizedCandidateUrl, fetchImpl, context.downloadTimeoutMs).catch((error) => {
       logEvent('download_candidate_rejected', { canonicalTitle, originalDownloadUrl: normalizedCandidateUrl, rejectionReasons: [error.message] });
+      const httpStatus = Number(error?.httpStatus || 0) || 0;
+      failedCandidates.push({
+        url: normalizedCandidateUrl,
+        status: httpStatus === 404 ? 'dead_link' : 'download_failed',
+        reason: normalizePhrase(error?.message || '') || 'download_failed',
+        deadLink: httpStatus === 404,
+        httpStatus,
+      });
       return null;
     });
     if (!download) continue;
     if (!ALLOWED_EXTENSIONS.has(download.extension) || !isDocumentLike(download)) {
       logEvent('download_candidate_rejected', { canonicalTitle, originalDownloadUrl: normalizedCandidateUrl, resolvedDownloadUrl: download.resolvedDownloadUrl, rejectionReasons: ['not_a_manual_document'] });
+      failedCandidates.push({
+        url: normalizedCandidateUrl,
+        status: 'unusable',
+        reason: 'not_a_manual_document',
+        deadLink: false,
+      });
       continue;
     }
     acceptedCount += 1;
@@ -139,7 +165,7 @@ async function acquireManualToLibrary({
     const existingByHash = await findManualLibraryRecordBySha(db, sha256);
     if (existingByHash) {
       logEvent('file_reused_by_hash', { canonicalTitle, resolvedDownloadUrl: download.resolvedDownloadUrl, sha256, storagePath: existingByHash.storagePath, reusedExisting: true });
-      return { manualReady: true, reusedExisting: true, manualLibrary: existingByHash, manualUrl: existingByHash.storagePath, manualSourceUrl: existingByHash.sourcePageUrl || sourcePageUrl };
+      return { manualReady: true, reusedExisting: true, manualLibrary: existingByHash, manualUrl: existingByHash.storagePath, manualSourceUrl: existingByHash.sourcePageUrl || sourcePageUrl, failedCandidates };
     }
     const storagePath = buildManualLibraryStoragePath({ normalizedManufacturer, canonicalTitle, sha256, extension: download.extension });
     await storage.bucket().file(storagePath).save(download.buffer, {
@@ -188,11 +214,11 @@ async function acquireManualToLibrary({
     });
     logEvent('library_record_written', { canonicalTitle, storagePath, sha256, manualLibraryId: record.id });
     logEvent('final_result', { canonicalTitle, manufacturer, sourcePageUrl, resolvedDownloadUrl: download.resolvedDownloadUrl, acceptedCandidateCount: acceptedCount, sha256, storagePath, reusedExisting: false, finalManualReady: true, elapsedMs: Date.now() - startedAt });
-    return { manualReady: true, reusedExisting: false, manualLibrary: record, manualUrl: storagePath, manualSourceUrl: sourcePageUrl };
+    return { manualReady: true, reusedExisting: false, manualLibrary: record, manualUrl: storagePath, manualSourceUrl: sourcePageUrl, failedCandidates };
   }
 
   logEvent('final_result', { canonicalTitle, manufacturer, sourcePageUrl, candidateCount: candidates.length, acceptedCandidateCount: acceptedCount, finalManualReady: false, elapsedMs: Date.now() - startedAt });
-  return { manualReady: false, manualLibrary: null, manualUrl: '', manualSourceUrl: sourcePageUrl };
+  return { manualReady: false, manualLibrary: null, manualUrl: '', manualSourceUrl: sourcePageUrl, failedCandidates };
 }
 
 module.exports = { acquireManualToLibrary, downloadManualCandidate, isDocumentLike, getExtension };
