@@ -124,16 +124,43 @@ test('asset helpers prefer authoritative manual attachment fields over legacy se
   assert.deepEqual(fallback.manualLinks, []);
 });
 
-test('asset manual links resolve storage paths to Firebase Storage downloads instead of site-relative GitHub Pages paths', async () => {
+test('asset manual links do not render raw Firebase Storage REST URLs from storage paths', async () => {
   const { buildStoredManualDownloadUrl } = await loadAssetsHelpers();
   const storagePath = 'manual-library/bay-tek/quik-drop/existing.pdf';
   const resolved = buildStoredManualDownloadUrl(storagePath);
-  assert.match(resolved, /^https:\/\/firebasestorage\.googleapis\.com\/v0\/b\/[^/]+\/o\/manual-library%2Fbay-tek%2Fquik-drop%2Fexisting\.pdf\?alt=media$/);
+  assert.equal(resolved, '#');
   assert.equal(resolved.startsWith('https://wow.technicade.tech/manual-library/'), false);
-  assert.equal(resolved.includes('/manual-library/bay-tek/quik-drop/existing.pdf?alt=media'), false);
+  assert.equal(resolved.includes('/v0/b/'), false);
+  assert.equal(resolved.includes('firebasestorage.googleapis.com'), false);
   const tenantPath = 'companies/company-a/manuals/asset-1/manual-1/source.pdf';
   const tenantResolved = buildStoredManualDownloadUrl(tenantPath);
-  assert.match(tenantResolved, /^https:\/\/firebasestorage\.googleapis\.com\/v0\/b\/[^/]+\/o\/companies%2Fcompany-a%2Fmanuals%2Fasset-1%2Fmanual-1%2Fsource\.pdf\?alt=media$/);
+  assert.equal(tenantResolved, '#');
+});
+
+test('asset manual links resolve stored manual paths through Firebase Storage getDownloadURL flow', async () => {
+  const { resolveStoredManualDownloadUrl } = await loadAssetsHelpers();
+  const storagePath = 'manual-library/bay-tek/quik-drop/existing.pdf';
+  const storageInstance = { kind: 'storage' };
+  const calls = [];
+  const resolved = await resolveStoredManualDownloadUrl(storagePath, {
+    storage: storageInstance,
+    storageRef: (storageArg, pathArg) => {
+      calls.push({ step: 'ref', storageArg, pathArg });
+      return { storageArg, pathArg };
+    },
+    getDownloadURL: async (manualRef) => {
+      calls.push({ step: 'download', manualRef });
+      return `https://download.example/${encodeURIComponent(manualRef.pathArg)}`;
+    }
+  });
+  assert.equal(resolved, 'https://download.example/manual-library%2Fbay-tek%2Fquik-drop%2Fexisting.pdf');
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].step, 'ref');
+  assert.equal(calls[0].storageArg, storageInstance);
+  assert.equal(calls[0].pathArg, storagePath);
+  assert.equal(calls[1].step, 'download');
+  assert.equal(calls[1].manualRef.pathArg, storagePath);
+  assert.equal(resolved.includes('/v0/b/'), false);
 });
 
 test('asset helpers downgrade stale in-progress runs without heartbeat to retry_needed', async () => {

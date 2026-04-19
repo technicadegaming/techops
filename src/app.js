@@ -209,6 +209,7 @@ function downloadJson(filename, payload) {
 }
 
 async function render() {
+  state.storageRuntime = { storage, storageRef, getDownloadURL };
   navigationController.renderTabs();
   contextSwitcherController.renderHeaderContext();
   notificationController.renderNotificationCenter();

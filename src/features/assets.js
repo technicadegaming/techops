@@ -159,11 +159,11 @@ function renderAssetScanChips(asset, { openTasks = [], overduePm = [] } = {}) {
   return `<div style="display:flex; gap:6px; flex-wrap:wrap;">${chips.join('')}</div>`;
 }
 
-function renderLinkChip(url, { label = '', linkUrl = '', removeAttr = '', removable = false } = {}) {
+function renderLinkChip(url, { label = '', linkUrl = '', linkAttrs = '', removeAttr = '', removable = false } = {}) {
   const text = label || url;
   const href = linkUrl || url;
   return `<span style="display:inline-flex; align-items:center; gap:6px; border:1px solid #d1d5db; border-radius:999px; padding:2px 8px; margin:2px 4px 2px 0;">
-    <a href="${href}" target="_blank" rel="noopener" class="tiny">${text}</a>
+    <a href="${href}" target="_blank" rel="noopener" class="tiny" ${linkAttrs}>${text}</a>
     ${removable ? `<button type="button" ${removeAttr} style="border:none; background:transparent; padding:0 2px; font-size:11px; line-height:1; cursor:pointer;" aria-label="Remove link">x</button>` : ''}
   </span>`;
 }
@@ -190,10 +190,16 @@ function isStoredManualUrl(value = '') {
 function buildStoredManualDownloadUrl(value = '') {
   const storagePath = `${value || ''}`.trim();
   if (!isStoredManualUrl(storagePath)) return storagePath;
-  const runtimeBucket = `${globalThis?.__APP_CONFIG__?.firebase?.storageBucket || ''}`.trim();
-  const storageBucket = runtimeBucket || 'scootbusiness-d3112.firebasestorage.app';
-  if (!storageBucket) return storagePath;
-  return `https://firebasestorage.googleapis.com/v0/b/${storageBucket}/o/${encodeURIComponent(storagePath)}?alt=media`;
+  return '#';
+}
+
+async function resolveStoredManualDownloadUrl(value = '', { storage = null, storageRef = null, getDownloadURL = null } = {}) {
+  const storagePath = `${value || ''}`.trim();
+  if (!isStoredManualUrl(storagePath)) return storagePath;
+  if (!storage || typeof storageRef !== 'function' || typeof getDownloadURL !== 'function') return '';
+  const manualRef = storageRef(storage, storagePath);
+  const resolved = await getDownloadURL(manualRef).catch(() => '');
+  return `${resolved || ''}`.trim();
 }
 
 function getReviewableManualCandidateCount(asset = {}) {
@@ -623,7 +629,12 @@ export function renderAssets(el, state, actions) {
           <details><summary>Documentation / AI status (${docsStatus})</summary>
             <div class="tiny" style="margin:8px 0;"><b>Manual status:</b> ${deriveAssetManualStatus(asset).replace('_', ' ')}</div>
             <div class="tiny" style="margin:4px 0;">Attached manual:</div>
-            <div style="margin:4px 0 8px;">${manualState.manualLinks.length ? manualState.manualLinks.map((url) => renderLinkChip(url, { linkUrl: buildStoredManualDownloadUrl(url), removable: manager, removeAttr: `data-remove-manual="${asset.id}" data-url="${encodeURIComponent(url)}"` })).join('') : (manualState.manualLibraryRef ? renderInlineFeedback(`Shared manual attached via library ref ${manualState.manualLibraryRef}.`, 'success') : renderInlineFeedback('No attached manual yet. Run lookup or approve a suggested manual below.', 'info'))}</div>
+            <div style="margin:4px 0 8px;">${manualState.manualLinks.length ? manualState.manualLinks.map((url) => renderLinkChip(url, {
+          linkUrl: buildStoredManualDownloadUrl(url),
+          linkAttrs: isStoredManualUrl(url) ? `data-manual-storage-path="${encodeURIComponent(url)}"` : '',
+          removable: manager,
+          removeAttr: `data-remove-manual="${asset.id}" data-url="${encodeURIComponent(url)}"`
+        })).join('') : (manualState.manualLibraryRef ? renderInlineFeedback(`Shared manual attached via library ref ${manualState.manualLibraryRef}.`, 'success') : renderInlineFeedback('No attached manual yet. Run lookup or approve a suggested manual below.', 'info'))}</div>
             <div class="tiny" style="margin:4px 0;">Linked support links:</div>
             <div style="margin:4px 0 8px;">${(asset.supportResourcesSuggestion || []).length ? (asset.supportResourcesSuggestion || []).map((entry) => {
           const url = entry?.url || entry;
@@ -789,6 +800,12 @@ export function renderAssets(el, state, actions) {
   el.querySelectorAll('[data-apply-doc-item]').forEach((button) => button.addEventListener('click', () => actions.applySingleDocSuggestion(button.dataset.applyDocItem, Number(button.dataset.docIndex))));
   el.querySelectorAll('[data-apply-support-item]').forEach((button) => button.addEventListener('click', () => actions.applySingleSupportSuggestion(button.dataset.applySupportItem, Number(button.dataset.supportIndex))));
   el.querySelectorAll('[data-remove-manual]').forEach((button) => button.addEventListener('click', () => actions.removeManualLink(button.dataset.removeManual, decodeURIComponent(button.dataset.url || ''))));
+  el.querySelectorAll('[data-manual-storage-path]').forEach((link) => link.addEventListener('click', async (event) => {
+    event.preventDefault();
+    const storagePath = decodeURIComponent(link.dataset.manualStoragePath || '');
+    const resolved = await resolveStoredManualDownloadUrl(storagePath, state.storageRuntime || {});
+    if (resolved) window.open(resolved, '_blank', 'noopener');
+  }));
   el.querySelectorAll('[data-remove-support]').forEach((button) => button.addEventListener('click', () => actions.removeSupportLink(button.dataset.removeSupport, decodeURIComponent(button.dataset.url || ''))));
   el.querySelectorAll('[data-remove-all-manuals]').forEach((button) => button.addEventListener('click', () => actions.removeAllManualLinks(button.dataset.removeAllManuals)));
   el.querySelectorAll('[data-remove-all-support]').forEach((button) => button.addEventListener('click', () => actions.removeAllSupportLinks(button.dataset.removeAllSupport)));
@@ -801,4 +818,12 @@ export function renderAssets(el, state, actions) {
   }));
 }
 
-export { deriveAssetManualStatus, getAuthoritativeManualState, getEffectiveEnrichmentStatus, isEnrichmentStale, getDocumentationSuggestionBuckets, buildStoredManualDownloadUrl };
+export {
+  deriveAssetManualStatus,
+  getAuthoritativeManualState,
+  getEffectiveEnrichmentStatus,
+  isEnrichmentStale,
+  getDocumentationSuggestionBuckets,
+  buildStoredManualDownloadUrl,
+  resolveStoredManualDownloadUrl
+};
