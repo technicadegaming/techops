@@ -2923,6 +2923,53 @@ test('enrichAssetDocumentation marks follow-up-plus-support cases as followup_ne
   assert.equal(assetWrites.at(-1).payload.reviewState, 'followup_needed');
 });
 
+test('enrichAssetDocumentation refines repeated follow-up when answer only repeats known manufacturer', async () => {
+  const repeatedQuestion = 'What exact cabinet nameplate text appears under/near the game logo (including subtitle/version/model)?';
+  const { db, assetState } = createEnrichmentDb({
+    name: 'Virtual Rabbids',
+    manufacturer: 'LAI Games',
+    companyId: 'company-1',
+    enrichmentFollowupQuestion: repeatedQuestion,
+    enrichmentFollowupAnswer: 'LAI Games',
+  });
+
+  const result = await enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'manual',
+    followupAnswer: 'LAI Games',
+    traceId: 'trace-virtual-rabbids-followup-refine',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.42,
+        normalizedName: 'Virtual Rabbids',
+        likelyManufacturer: 'LAI Games',
+        documentationSuggestions: [],
+        supportResourcesSuggestion: [{ title: 'Virtual Rabbids support', url: 'https://laigames.com/virtual-rabbids-the-big-ride/', sourceType: 'support', matchScore: 56 }],
+        supportContactsSuggestion: [],
+        alternateNames: [],
+        searchHints: [],
+        oneFollowupQuestion: repeatedQuestion,
+        likelyCategory: 'video',
+        topMatchReason: '',
+        pipelineMeta: {
+          followupAnswerConsumed: true,
+          queryPlanChanged: false,
+          candidateDelta: false,
+        },
+      }),
+      findReusableVerifiedManuals: async () => [],
+      verifyDocumentationSuggestions: async () => []
+    }
+  });
+
+  assert.equal(result.status, 'followup_needed');
+  assert.notEqual(assetState.enrichmentFollowupQuestion, repeatedQuestion);
+  assert.match(assetState.enrichmentFollowupQuestion, /model|subtitle|version|nameplate/i);
+});
+
 test('enrichAssetDocumentation keeps Break the Plate unresolved results out of lookup_failed', async () => {
   const { db, assetWrites } = createEnrichmentDb({ name: 'Break the Plate', companyId: 'company-1' });
 
