@@ -21,6 +21,19 @@ const HARD_NEGATIVE_DOMAINS = [
   'virtualdj.com',
   'zhihu.com',
 ];
+const SEARCH_WRAPPER_OR_JUNK_DOMAINS = [
+  'bing.com',
+  'r.bing.com',
+  'go.microsoft.com',
+  'facebook.com',
+  'instagram.com',
+  'linkedin.com',
+  'pinterest.com',
+  'youtube.com',
+  'tiktok.com',
+  'reddit.com',
+  'wikipedia.org',
+];
 const JUNK_PATH_PATTERNS = [
   /\/consultative-services(\/|$)/,
   /\/financial-services(\/|$)/,
@@ -203,6 +216,31 @@ function isHardNegativeDomain(host = '') {
   return HARD_NEGATIVE_DOMAINS.some((domain) => lowerHost === domain || lowerHost.endsWith(`.${domain}`));
 }
 
+function isSearchWrapperOrJunkDomain(host = '') {
+  const lowerHost = `${host || ''}`.toLowerCase();
+  return SEARCH_WRAPPER_OR_JUNK_DOMAINS.some((domain) => lowerHost === domain || lowerHost.endsWith(`.${domain}`));
+}
+
+function normalizeSearchResultUrl(url = '') {
+  const unwrapped = unwrapSearchProviderRedirect(url);
+  if (!unwrapped) return '';
+  try {
+    const parsed = new URL(unwrapped);
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    if (isHardNegativeDomain(host)) return '';
+    if (isSearchWrapperOrJunkDomain(host)) {
+      if (/(^|\.)bing\.com$/.test(host) && !/^\/(search|images|videos|news|maps|travel|shop)\b/.test(path)) {
+        return parsed.toString();
+      }
+      return '';
+    }
+    return parsed.toString();
+  } catch {
+    return '';
+  }
+}
+
 function unwrapSearchProviderRedirect(url = '') {
   let current = `${url || ''}`.trim();
   for (let depth = 0; depth < 2; depth += 1) {
@@ -238,7 +276,7 @@ function extractDuckDuckGoAnchors(html) {
     const looksLikeResultAnchor = /result__a|result-link|result__url|result-title-a/.test(className)
       || rel.includes('nofollow');
     if (!looksLikeResultAnchor || !href || !title) continue;
-    const url = extractHref(href);
+    const url = normalizeSearchResultUrl(extractHref(href));
     if (!url) continue;
     const key = `${url}::${title}`.toLowerCase();
     if (seen.has(key)) continue;
@@ -413,6 +451,9 @@ function scoreManualCandidate(candidate = {}, { titleVariants = [], manufacturer
   const preferredSourceAligned = (manufacturerProfile?.preferredSourceTokens || [])
     .some((token) => token && host.includes(`${token}`.toLowerCase().replace(/^www\./, '')));
   const hardNegativeDomain = isHardNegativeDomain(host);
+  const wrapperOrJunkDomain = isSearchWrapperOrJunkDomain(host);
+
+  if (hardNegativeDomain || wrapperOrJunkDomain) return null;
 
   let score = 0;
   const contributions = [];
@@ -437,7 +478,7 @@ function scoreManualCandidate(candidate = {}, { titleVariants = [], manufacturer
   if (/support|service-support|downloads?\/?$/.test(path) && !isDirectPdf) add('support_page_penalty', -26);
   if (/brochure|spec|sell[-_ ]?sheet|catalog|install(?:ation)?-?sheet/.test(lowerUrl)) add('brochure_penalty', -26);
   if (sourceType === 'support') add('support_source_penalty', -10);
-  if (hardNegativeDomain) add('hard_negative_domain_penalty', -140);
+  if (hardNegativeDomain) add('hard_negative_domain_penalty', -400);
 
   return {
     ...candidate,
@@ -536,17 +577,8 @@ function extractBingAnchors(html = '') {
     if (!anchorMatch) continue;
     const href = escapeHtml(anchorMatch[2] || anchorMatch[3] || anchorMatch[4] || '').trim();
     const title = escapeHtml(anchorMatch[5] || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    const url = unwrapSearchProviderRedirect(extractHref(href));
+    const url = normalizeSearchResultUrl(extractHref(href));
     if (!url || !title) continue;
-    try {
-      const parsed = new URL(url);
-      const host = parsed.hostname.toLowerCase();
-      const path = parsed.pathname.toLowerCase();
-      if (isHardNegativeDomain(host)) continue;
-      if (/(^|\.)bing\.com$/.test(host) && /^\/(search|images|videos|news|maps|travel|shop)\b/.test(path)) continue;
-    } catch {
-      continue;
-    }
     const key = `${url}::${title}`.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -575,7 +607,7 @@ async function searchSerpApi(query, fetchImpl = fetch, options = {}) {
   return organic
     .map((item) => ({
       title: `${item?.title || ''}`.trim(),
-      url: `${item?.link || ''}`.trim(),
+      url: normalizeSearchResultUrl(`${item?.link || ''}`.trim()),
     }))
     .filter((item) => item.title && item.url)
     .slice(0, MAX_SEARCH_RESULTS_PER_QUERY);
@@ -598,7 +630,7 @@ async function searchBingApi(query, fetchImpl = fetch, options = {}) {
   return values
     .map((item) => ({
       title: `${item?.name || ''}`.trim(),
-      url: `${item?.url || ''}`.trim(),
+      url: normalizeSearchResultUrl(`${item?.url || ''}`.trim()),
     }))
     .filter((item) => item.title && item.url)
     .slice(0, MAX_SEARCH_RESULTS_PER_QUERY);
@@ -1363,6 +1395,8 @@ async function discoverManualDocumentation({
   const followupPages = [];
   const queryExecutionOrder = [];
   const evidenceRows = [];
+  let searchTimeoutCount = 0;
+  let searchNoResultsCount = 0;
   const recordEvidence = (entry = {}) => {
     if (evidenceRows.length >= 60) return;
     const url = `${entry.url || ''}`.trim();
@@ -1443,6 +1477,7 @@ async function discoverManualDocumentation({
         attempt: attempt + 1,
       });
       const providerResults = await provider.fn(query, fetchImpl, searchProviderOptions).catch((error) => {
+        if (isAbortLikeError(error)) searchTimeoutCount += 1;
         logEvent('search_retry', {
           provider: provider.name,
           mode,
@@ -1475,6 +1510,7 @@ async function discoverManualDocumentation({
       }))
     });
     if (!results.length) {
+      searchNoResultsCount += 1;
       logEvent('result_classification', {
         mode,
         title: '',
@@ -1705,6 +1741,10 @@ async function discoverManualDocumentation({
     supportResources,
     queriesTried: queries.map((entry) => entry.query),
     evidence: evidenceRows,
+    diagnostics: {
+      searchTimeoutCount,
+      searchNoResultsCount,
+    },
   };
 }
 

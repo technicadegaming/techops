@@ -196,6 +196,12 @@ test('extractBingAnchors unwraps Bing redirects and drops hard-negative domains 
     <li class="b_algo">
       <h2><a href="https://www.zhihu.com/question/12345">Virtual Rabbids question</a></h2>
     </li>
+    <li class="b_algo">
+      <h2><a href="https://www.virtualdj.com/forums/12345/arcade.html">Virtual Rabbids forum</a></h2>
+    </li>
+    <li class="b_algo">
+      <h2><a href="https://www.bing.com/search?q=virtual+rabbids">Bing search wrapper</a></h2>
+    </li>
   `);
 
   assert.equal(rows.length, 1);
