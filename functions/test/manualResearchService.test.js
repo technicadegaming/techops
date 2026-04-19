@@ -436,6 +436,74 @@ test('researchAssetTitles persists/consumes answered follow-up fingerprints and 
   assert.equal(typeof rerun.results[0].pipelineMeta.followupAnswerFingerprint, 'string');
 });
 
+test('researchAssetTitles treats manufacturer-only follow-up replies as non-new evidence when manufacturer is already known', async () => {
+  const followupAnswer = 'LAI Games';
+  const followupFingerprint = createHash('sha1').update(followupAnswer.toLowerCase()).digest('hex');
+  const firstRun = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{
+      originalTitle: 'Virtual Rabbids',
+      manufacturerHint: 'LAI Games',
+    }],
+    traceId: 'test-followup-manufacturer-only-first',
+    fetchImpl: createFetchMock(),
+    storage: createStorageMock(),
+    researchFallback: async () => ({
+      normalizedTitle: 'Virtual Rabbids: The Big Ride',
+      manufacturer: 'LAI Games',
+      matchType: 'support_only',
+      manualReady: false,
+      reviewRequired: true,
+      manualUrl: '',
+      manualSourceUrl: '',
+      supportUrl: 'https://laigames.com/virtual-rabbids-the-big-ride/',
+      confidence: 0.41,
+      candidates: [],
+      citations: [],
+      rawResearchSummary: 'No downloadable manual found.',
+    }),
+  });
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{
+      originalTitle: 'Virtual Rabbids',
+      manufacturerHint: 'LAI Games',
+      followupQuestionKey: firstRun.results[0].pipelineMeta.followupQuestionKey || 'same-followup-question',
+      followupAnswer,
+      followupAnswerFingerprint: followupFingerprint,
+      consumedFollowupAnswerFingerprint: followupFingerprint,
+      previousQueryPlanFingerprint: firstRun.results[0].pipelineMeta.queryPlanFingerprint,
+      previousCandidateFingerprint: firstRun.results[0].pipelineMeta.candidateFingerprint,
+    }],
+    traceId: 'test-followup-manufacturer-only',
+    fetchImpl: createFetchMock(),
+    storage: createStorageMock(),
+    researchFallback: async () => ({
+      normalizedTitle: 'Virtual Rabbids: The Big Ride',
+      manufacturer: 'LAI Games',
+      matchType: 'support_only',
+      manualReady: false,
+      reviewRequired: true,
+      manualUrl: '',
+      manualSourceUrl: '',
+      supportUrl: 'https://laigames.com/virtual-rabbids-the-big-ride/',
+      confidence: 0.41,
+      candidates: [],
+      citations: [],
+      rawResearchSummary: 'No downloadable manual found.',
+    }),
+  });
+
+  assert.equal(result.results[0].pipelineMeta.followupAnswerConsumed, true);
+  assert.equal(result.results[0].pipelineMeta.queryPlanChanged, false);
+  assert.equal(result.results[0].pipelineMeta.candidateDelta, false);
+  assert.notEqual(result.results[0].status, 'followup_needed');
+});
+
 test('researchAssetTitles global-first reuses approved shared manual across alias title variants', async () => {
   const manualLibrary = {
     'shared-manual-1': {

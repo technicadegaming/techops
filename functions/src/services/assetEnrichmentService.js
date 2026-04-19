@@ -732,6 +732,17 @@ function buildFollowupQuestion({ parsedQuestion, profile, likelyCategory, hasOnl
   return 'What exact cabinet nameplate text appears under/near the game logo (including subtitle/version/model)?';
 }
 
+function isManufacturerOnlyFollowupAnswer({ followupAnswer = '', knownManufacturer = '' } = {}) {
+  const manufacturerTokens = normalizePhrase(knownManufacturer).split(' ').filter(Boolean);
+  if (!manufacturerTokens.length) return false;
+  const answerTokens = normalizePhrase(followupAnswer).split(' ').filter(Boolean);
+  if (!answerTokens.length) return false;
+  const ignored = new Set(['it', 'is', 'its', 'the', 'a', 'an', 'manufacturer', 'maker', 'made', 'by', 'brand']);
+  const evidenceTokens = answerTokens.filter((token) => !ignored.has(token));
+  if (!evidenceTokens.length) return false;
+  return evidenceTokens.every((token) => manufacturerTokens.includes(token));
+}
+
 function normalizeSuggestionSourceType(sourceType, { lowerHost, lowTrustSourceMatch }) {
   const raw = `${sourceType || 'other'}`.trim().toLowerCase() || 'other';
   if (lowTrustSourceMatch && /manufacturer|official_site|support|parts/.test(raw)) return 'distributor';
@@ -2126,6 +2137,21 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
               likelyCategory: preview?.likelyCategory,
               hasOnlyFailedVerification
             }))));
+    const knownManufacturer = `${asset.manufacturer || manufacturerSuggestion || ''}`.trim();
+    const followupAnswerText = `${followupAnswer || asset.enrichmentFollowupAnswer || ''}`.trim();
+    const previousQuestion = `${asset.enrichmentFollowupQuestion || ''}`.trim();
+    const followupFingerprintStable = pipelineMeta.followupAnswerConsumed === true
+      && pipelineMeta.queryPlanChanged === false
+      && pipelineMeta.candidateDelta === false;
+    const repeatedQuestionFingerprint = previousQuestion
+      && followupQuestion
+      && fingerprintText(previousQuestion) === fingerprintText(followupQuestion);
+    const manufacturerOnlyRepeat = !!knownManufacturer
+      && isManufacturerOnlyFollowupAnswer({ followupAnswer: followupAnswerText, knownManufacturer });
+    const refinedFollowupQuestion = 'Thanks — manufacturer is already confirmed. What exact model/title/version text is printed on the cabinet nameplate?';
+    const nextFollowupQuestion = (followupFingerprintStable && repeatedQuestionFingerprint && manufacturerOnlyRepeat)
+      ? refinedFollowupQuestion
+      : followupQuestion;
     const shouldSetManufacturer = !asset.manufacturer && confidence >= Math.max(0.75, confidenceThreshold) && manufacturerSuggestion;
 
     const cleanedResult = cleanFinalEnrichmentResult({
@@ -2140,7 +2166,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       supportContactsSuggestion: preview.supportContactsSuggestion || [],
       documentationSuggestions: suggestions,
       supportResourcesSuggestion: preview.supportResourcesSuggestion || [],
-      enrichmentFollowupQuestion: followupQuestion
+      enrichmentFollowupQuestion: nextFollowupQuestion
     });
     const status = resolveTerminalEnrichmentStatus({
       documentationSuggestions: cleanedResult.documentationSuggestions,
@@ -2211,7 +2237,6 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       updatedBy: userId
     };
 
-    const followupAnswerText = `${followupAnswer || asset.enrichmentFollowupAnswer || ''}`.trim();
     if (followupAnswerText) {
       updatePayload.enrichmentFollowupAnswer = followupAnswerText;
       updatePayload.enrichmentFollowupAnsweredAt = admin.firestore.FieldValue.serverTimestamp();

@@ -6,6 +6,7 @@ const {
   buildManufacturerDiscoverySeedPages,
   buildManufacturerDiscoveryAdapters,
   classifyManualCandidate,
+  extractBingAnchors,
   extractAnchorCandidates,
   extractManualLinksFromHtmlPage,
   discoverManualDocumentation,
@@ -170,6 +171,35 @@ test('classifyManualCandidate rejects Google Play and App Store URLs as non-manu
   assert.equal(appleStore.includeManual, false);
   assert.equal(appleStore.includeSupport, false);
   assert.ok(appleStore.rejectionReasons.includes('non_manual_app_store_url'));
+});
+
+test('classifyManualCandidate hard-rejects known irrelevant hard-negative domains for manual lookups', () => {
+  const profile = getManufacturerProfile('LAI Games', 'Virtual Rabbids');
+  const irrelevant = classifyManualCandidate({
+    title: 'Virtual Rabbids manual',
+    url: 'https://www.virtualdj.com/forums/123456/Virtual-Rabbids.html',
+    manufacturer: 'LAI Games',
+    titleVariants: ['virtual rabbids'],
+    manufacturerProfile: profile,
+  });
+
+  assert.equal(irrelevant.includeManual, false);
+  assert.equal(irrelevant.includeSupport, false);
+  assert.ok(irrelevant.rejectionReasons.includes('hard_negative_domain'));
+});
+
+test('extractBingAnchors unwraps Bing redirects and drops hard-negative domains early', () => {
+  const rows = extractBingAnchors(`
+    <li class="b_algo">
+      <h2><a href="https://www.bing.com/ck/a?!&&p=abc&u=${encodeURIComponent('https://laigames.com/virtual-rabbids-the-big-ride/')}">Virtual Rabbids | LAI Games</a></h2>
+    </li>
+    <li class="b_algo">
+      <h2><a href="https://www.zhihu.com/question/12345">Virtual Rabbids question</a></h2>
+    </li>
+  `);
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].url, 'https://laigames.com/virtual-rabbids-the-big-ride/');
 });
 
 test('extractManualLinksFromHtmlPage pulls direct manual links from title-specific support pages', async () => {

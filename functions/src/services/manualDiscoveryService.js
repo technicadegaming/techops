@@ -17,6 +17,10 @@ const KNOWN_DISTRIBUTOR_DOMAINS = [
   'appleindustries.com',
   'sureshotredemption.com',
 ];
+const HARD_NEGATIVE_DOMAINS = [
+  'virtualdj.com',
+  'zhihu.com',
+];
 const JUNK_PATH_PATTERNS = [
   /\/consultative-services(\/|$)/,
   /\/financial-services(\/|$)/,
@@ -194,6 +198,33 @@ function extractHref(rawHref) {
   return '';
 }
 
+function isHardNegativeDomain(host = '') {
+  const lowerHost = `${host || ''}`.toLowerCase();
+  return HARD_NEGATIVE_DOMAINS.some((domain) => lowerHost === domain || lowerHost.endsWith(`.${domain}`));
+}
+
+function unwrapSearchProviderRedirect(url = '') {
+  let current = `${url || ''}`.trim();
+  for (let depth = 0; depth < 2; depth += 1) {
+    try {
+      const parsed = new URL(current);
+      const host = parsed.hostname.toLowerCase();
+      const path = parsed.pathname.toLowerCase();
+      if (!/(^|\.)bing\.com$/.test(host)) return current;
+      if (!/^\/(ck\/a|aclick|link|fwlink|redirect)/.test(path)) return current;
+      const redirected = parsed.searchParams.get('url')
+        || parsed.searchParams.get('u')
+        || parsed.searchParams.get('target')
+        || parsed.searchParams.get('r');
+      if (!redirected) return current;
+      current = decodeURIComponent(redirected);
+    } catch {
+      return '';
+    }
+  }
+  return current;
+}
+
 function extractDuckDuckGoAnchors(html) {
   const anchorPattern = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
   const rows = [];
@@ -348,7 +379,7 @@ function tokenizeForMatch(value = '') {
   return normalizePhrase(value).split(' ').filter((token) => token.length >= 3);
 }
 
-function scoreManualCandidate(candidate = {}, { titleVariants = [], manufacturerTerms = [] } = {}) {
+function scoreManualCandidate(candidate = {}, { titleVariants = [], manufacturerTerms = [], manufacturerProfile = null } = {}) {
   const url = `${candidate.url || ''}`.trim();
   if (!url) return null;
   let parsed;
@@ -379,6 +410,9 @@ function scoreManualCandidate(candidate = {}, { titleVariants = [], manufacturer
     && /\/wp-content\/uploads\//.test(path)
     && !fileNameHasPartNumber
     && !fileNameHasRevision;
+  const preferredSourceAligned = (manufacturerProfile?.preferredSourceTokens || [])
+    .some((token) => token && host.includes(`${token}`.toLowerCase().replace(/^www\./, '')));
+  const hardNegativeDomain = isHardNegativeDomain(host);
 
   let score = 0;
   const contributions = [];
@@ -393,6 +427,7 @@ function scoreManualCandidate(candidate = {}, { titleVariants = [], manufacturer
   if (!isDirectPdf) add('non_pdf_penalty', -20);
   if (isDirectPdf && /\/(?:uploads?|wp-content)\//.test(path)) add('direct_pdf_upload_path_bonus', 18);
   if (manufacturerAligned) add('manufacturer_alignment_bonus', 14);
+  if (preferredSourceAligned) add('preferred_source_alignment_bonus', 26);
   if (hasStrongTitleFamilyMatch) add('title_family_exact_bonus', 20);
   if (hasPartialTitleFamilyMatch) add('title_family_partial_bonus', 10);
   if (fileNameHasManualIntent) add('manual_filename_bonus', 10);
@@ -402,6 +437,7 @@ function scoreManualCandidate(candidate = {}, { titleVariants = [], manufacturer
   if (/support|service-support|downloads?\/?$/.test(path) && !isDirectPdf) add('support_page_penalty', -26);
   if (/brochure|spec|sell[-_ ]?sheet|catalog|install(?:ation)?-?sheet/.test(lowerUrl)) add('brochure_penalty', -26);
   if (sourceType === 'support') add('support_source_penalty', -10);
+  if (hardNegativeDomain) add('hard_negative_domain_penalty', -140);
 
   return {
     ...candidate,
@@ -419,6 +455,8 @@ function scoreManualCandidate(candidate = {}, { titleVariants = [], manufacturer
       fileNameHasPartNumber,
       fileNameHasRevision,
       adapterSlugGuessLike,
+      preferredSourceAligned,
+      hardNegativeDomain,
     }
   };
 }
@@ -498,8 +536,17 @@ function extractBingAnchors(html = '') {
     if (!anchorMatch) continue;
     const href = escapeHtml(anchorMatch[2] || anchorMatch[3] || anchorMatch[4] || '').trim();
     const title = escapeHtml(anchorMatch[5] || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-    const url = extractHref(href);
+    const url = unwrapSearchProviderRedirect(extractHref(href));
     if (!url || !title) continue;
+    try {
+      const parsed = new URL(url);
+      const host = parsed.hostname.toLowerCase();
+      const path = parsed.pathname.toLowerCase();
+      if (isHardNegativeDomain(host)) continue;
+      if (/(^|\.)bing\.com$/.test(host) && /^\/(search|images|videos|news|maps|travel|shop)\b/.test(path)) continue;
+    } catch {
+      continue;
+    }
     const key = `${url}::${title}`.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -681,6 +728,7 @@ function hasJunkManualCandidateUrl(url = '') {
     const host = parsed.hostname.toLowerCase();
     const path = parsed.pathname.toLowerCase();
     const combinedPath = `${path}${parsed.search || ''}`.toLowerCase();
+    if (isHardNegativeDomain(host)) return true;
     if (/(^|\.)play\.google\.com$/.test(host) || /(^|\.)apps\.apple\.com$/.test(host)) return true;
     if (/\/(app|apps)\//.test(path) || /\/details\/?$/.test(path)) return true;
     if (/\/(install|installation|service-hub|servicehub|download-center|app-detail)\b/.test(path)) return true;
@@ -695,6 +743,9 @@ function classifyNonManualUrl(parsed) {
   const path = parsed.pathname.toLowerCase();
   const combined = `${path}${parsed.search || ''}`.toLowerCase();
 
+  if (isHardNegativeDomain(host)) {
+    return { reason: 'hard_negative_domain', allowSupport: false };
+  }
   if (/(^|\.)play\.google\.com$/.test(host) || /(^|\.)apps\.apple\.com$/.test(host)) {
     return { reason: 'non_manual_app_store_url', allowSupport: false };
   }
@@ -764,6 +815,7 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
   const sourceType = detectSourceType(url, manufacturerProfile);
   const resourceType = detectResourceType(url, manufacturerProfile);
   const nonManualUrlClass = classifyNonManualUrl(parsed);
+  const hardNegativeDomain = isHardNegativeDomain(host);
   const bayTekDomain = isBayTekDomain(host);
   const bayTekUtility = isBayTekProfile(manufacturerProfile) && bayTekDomain && isBayTekUtilityPath(path);
   const bayTekTitleSpecificPath = isBayTekProfile(manufacturerProfile) && bayTekDomain && hasBayTekTitleSpecificPath(path, titleVariants);
@@ -795,6 +847,7 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
   const genericSupport = isGenericSupportPath(path, titleVariants) || bayTekUtility || betsonUtility;
   const includeManual = titleMatch
     && manufacturerMatch
+    && !hardNegativeDomain
     && !nonManualUrlClass
     && !junkPath
     && !likelyChromeLink
@@ -803,6 +856,7 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
     && !betsonUtility
     && (directFile || strongManualIntent || explicitManualBearingHtml || hostManualIntent || (betsonDomain && /\/wp-content\/uploads\//.test(path)));
   const includeSupport = !junkPath
+    && !hardNegativeDomain
     && !likelyChromeLink
     && !bayTekUtility
     && !betsonUtility
@@ -816,6 +870,7 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
   if (nonManualUrlClass?.reason) rejectionReasons.push(nonManualUrlClass.reason);
   if (genericSupport) rejectionReasons.push('generic_support_page');
   if (junkPath) rejectionReasons.push('junk_path');
+  if (hardNegativeDomain) rejectionReasons.push('hard_negative_domain');
   if (likelyChromeLink) rejectionReasons.push('chrome_or_nav_link');
   if (bayTekUtility) rejectionReasons.push('bay_tek_utility_link');
   if (betsonUtility) rejectionReasons.push('betson_utility_link');
@@ -833,6 +888,7 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
     directPdf,
     strongManualIntent,
     genericSupport,
+    hardNegativeDomain,
     rejectionReasons
   };
 }
@@ -1538,7 +1594,7 @@ async function discoverManualDocumentation({
   const recoveryRows = [];
   const deadManualUrls = new Set();
   const rankedManualRows = consolidateByUrlWithSourcePreference([...manualRows, ...followedRows])
-    .map((candidate) => scoreManualCandidate(candidate, { titleVariants, manufacturerTerms }))
+    .map((candidate) => scoreManualCandidate(candidate, { titleVariants, manufacturerTerms, manufacturerProfile }))
     .filter(Boolean)
     .sort((a, b) => {
       const aDiscoveredDirectPdf = !`${a.discoverySource || ''}`.startsWith('adapter:') && a.candidateScoringFlags?.isDirectPdf;
@@ -1632,7 +1688,7 @@ async function discoverManualDocumentation({
     ...recoveryRows,
     ...candidateManualRows.filter((row) => !deadManualUrls.has(`${row.url || ''}`.toLowerCase()))
   ])
-    .map((candidate) => scoreManualCandidate(candidate, { titleVariants, manufacturerTerms }))
+    .map((candidate) => scoreManualCandidate(candidate, { titleVariants, manufacturerTerms, manufacturerProfile }))
     .filter(Boolean)
     .sort((a, b) => b.candidateScore - a.candidateScore || `${a.url || ''}`.localeCompare(`${b.url || ''}`))
     .slice(0, MAX_DISCOVERY_RESULTS);
@@ -1659,6 +1715,7 @@ module.exports = {
   buildManufacturerDiscoverySeedPages,
   buildManufacturerDiscoveryAdapters,
   searchDuckDuckGoHtml,
+  extractBingAnchors,
   classifyManualCandidate,
   extractAnchorCandidates,
   extractManualLinksFromHtmlPage,

@@ -87,6 +87,29 @@ function fingerprint(value = '') {
   return createHash('sha1').update(normalized).digest('hex');
 }
 
+function isManufacturerOnlyFollowupAnswer({ followupAnswer = '', knownManufacturer = '' } = {}) {
+  const manufacturerNorm = normalizeManufacturerName(knownManufacturer || '');
+  if (!manufacturerNorm) return false;
+  const manufacturerTokens = normalizeString(manufacturerNorm, 180)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(' ')
+    .filter(Boolean);
+  if (!manufacturerTokens.length) return false;
+
+  const answerTokens = normalizeString(followupAnswer, 240)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(' ')
+    .filter(Boolean);
+  if (!answerTokens.length) return false;
+
+  const ignored = new Set(['it', 'its', 'is', 'the', 'a', 'an', 'maker', 'manufacturer', 'made', 'by', 'from', 'brand']);
+  const evidenceTokens = answerTokens.filter((token) => !ignored.has(token));
+  if (!evidenceTokens.length) return false;
+  return evidenceTokens.every((token) => manufacturerTokens.includes(token));
+}
+
 function createTimeoutError(message, code = 'deadline-exceeded') {
   const error = new Error(message);
   error.code = code;
@@ -1013,12 +1036,24 @@ async function researchAssetTitles({
     const queryPlanChanged = !previousQueryPlanFingerprint || queryPlanFingerprint !== previousQueryPlanFingerprint;
     const candidateDelta = !previousCandidateFingerprint || candidateFingerprint !== previousCandidateFingerprint;
     const followupAnswerConsumed = !!(followupAnswer && followupAnswerFingerprint && consumedAnswerFingerprintPrev === followupAnswerFingerprint);
+    const knownManufacturer = normalizeManufacturerName(row?.manufacturerHint || stageOne.manufacturer || '');
+    const manufacturerOnlyFollowup = isManufacturerOnlyFollowupAnswer({
+      followupAnswer,
+      knownManufacturer,
+    });
     if (followupAnswerConsumed) {
       logManualResearchEvent('followup_answer_consumed', { ...logContext, followupAnswerFingerprint });
     }
     logManualResearchEvent('followup_query_plan_changed', { ...logContext, changed: queryPlanChanged, queryPlanFingerprint });
     logManualResearchEvent('followup_candidate_delta', { ...logContext, changed: candidateDelta, candidateFingerprint });
     if (summary.status === 'followup_needed' && followupQuestionKeyPrev && followupAnswerConsumed && !queryPlanChanged && !candidateDelta) {
+      if (knownManufacturer && manufacturerOnlyFollowup) {
+        logManualResearchEvent('followup_answer_manufacturer_only_no_new_evidence', {
+          ...logContext,
+          knownManufacturer,
+          followupAnswerFingerprint,
+        });
+      }
       logManualResearchEvent('followup_question_repeated', { ...logContext, followupQuestionKey: followupQuestionKeyPrev });
       summary = {
         ...summary,
