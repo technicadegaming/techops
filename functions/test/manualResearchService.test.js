@@ -612,6 +612,12 @@ test('Virtual Rabbids dead selected candidate is excluded from candidate delta a
     assert.equal(secondRun.results[0].documentationSuggestions.some((entry) => entry.url === deadInstallGuideUrl), false);
     assert.equal(logs.some((entry) => entry[0] === 'manualResearch:followup_answer_manufacturer_only_no_new_evidence'), true);
     assert.equal(logs.some((entry) => entry[0] === 'manualResearch:followup_question_refined'), true);
+    assert.equal(
+      logs.some((entry) => entry[0] === 'manualResearch:selected_candidate_rejected_unvalidated')
+      || logs.some((entry) => entry[0] === 'manualResearch:candidate_validation_tier'),
+      true
+    );
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:followup_delta_dead_candidates_ignored'), true);
   } finally {
     console.log = originalLog;
   }

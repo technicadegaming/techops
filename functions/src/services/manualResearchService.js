@@ -944,6 +944,11 @@ async function researchAssetTitles({
       const selectedSuggestion = documentationSuggestions[0];
       const selectedSource = normalizeString(selectedSuggestion?.discoverySource || '', 80) || 'stage2_or_catalog';
       const selectedOrigin = selectedSource.startsWith('adapter:') ? 'generated_adapter_guess' : 'discovered_source';
+      logManualResearchEvent('selected_candidate_final_tier', {
+        ...logContext,
+        candidateUrl: selectedSuggestion?.url || '',
+        candidateTier: buildCandidateValidationTier(selectedSuggestion),
+      });
       logManualResearchEvent('selected_candidate_origin', {
         ...logContext,
         title: originalTitle,
@@ -977,7 +982,7 @@ async function researchAssetTitles({
         candidateTier: tier,
       });
       if (tier === 'D_generated_vendor_guess' && candidate?.verified !== true) {
-        logManualResearchEvent('guessed_candidate_rejected_unvalidated', {
+        logManualResearchEvent('selected_candidate_rejected_unvalidated', {
           ...logContext,
           title: originalTitle,
           normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
@@ -1162,8 +1167,14 @@ async function researchAssetTitles({
       ...documentationSuggestions.map((entry) => `${entry?.url || ''}|${entry?.candidateBucket || ''}`),
       ...supportResourcesSuggestion.map((entry) => `${entry?.url || ''}|${entry?.candidateBucket || ''}`),
     ].join('|'));
+    const rawCandidateFingerprint = fingerprint([
+      ...(Array.isArray(stage2ReturnedCandidates) ? stage2ReturnedCandidates.map((entry) => `${entry?.url || ''}|${entry?.bucket || ''}`) : []),
+      ...((Array.isArray(stageOne.searchEvidence) ? stageOne.searchEvidence : []).map((entry) => `${entry?.url || ''}|${entry?.classification || ''}`)),
+    ].join('|'));
     const queryPlanChanged = !previousQueryPlanFingerprint || queryPlanFingerprint !== previousQueryPlanFingerprint;
     const candidateDelta = !previousCandidateFingerprint || candidateFingerprint !== previousCandidateFingerprint;
+    const rawCandidateDelta = !previousCandidateFingerprint || rawCandidateFingerprint !== previousCandidateFingerprint;
+    const deadCandidatesIgnoredForDelta = rawCandidateDelta && !candidateDelta && deadCandidateUrls.size > 0;
     const followupAnswerConsumed = !!(followupAnswer && followupAnswerFingerprint && consumedAnswerFingerprintPrev === followupAnswerFingerprint);
     const knownManufacturer = normalizeManufacturerName(row?.manufacturerHint || stageOne.manufacturer || '');
     const manufacturerOnlyFollowup = isManufacturerOnlyFollowupAnswer({
@@ -1178,6 +1189,11 @@ async function researchAssetTitles({
     logManualResearchEvent('followup_candidate_delta', {
       ...logContext,
       candidateDelta,
+      deadCandidatesSuppressedCount: deadCandidateUrls.size,
+    });
+    logManualResearchEvent('followup_delta_dead_candidates_ignored', {
+      ...logContext,
+      ignored: deadCandidatesIgnoredForDelta,
       deadCandidatesSuppressedCount: deadCandidateUrls.size,
     });
     if (summary.status === 'followup_needed' && followupQuestionKeyPrev && followupAnswerConsumed && !queryPlanChanged && !candidateDelta) {
@@ -1228,7 +1244,24 @@ async function researchAssetTitles({
     const terminalStateReason = fallbackTerminalReason
       || (summary.manualReady === true
       ? 'docs_found_after_durable_storage'
-      : (acquisitionError ? `acquisition_failed:${acquisitionError}` : `no_durable_manual:${acquisitionState}`));
+      : (acquisitionError ? 'acquisition-failed' : (deadCandidateUrls.size > 0 ? 'dead-candidate-only' : `no_durable_manual:${acquisitionState}`)));
+    if (stage2ErrorCode === 'openai-config-missing' || stage2ErrorCode === 'openai-auth-invalid') {
+      logManualResearchEvent(stage2ErrorCode, {
+        ...logContext,
+        title: originalTitle,
+        normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+        manufacturer: summary.manufacturer || stageOne.manufacturer,
+      });
+    }
+    if (terminalStateReason === 'docs_found_after_durable_storage') {
+      logManualResearchEvent('docs_found_after_durable_storage', { ...logContext });
+    } else if (terminalStateReason === 'acquisition-failed') {
+      logManualResearchEvent('acquisition-failed', { ...logContext, reason: acquisitionError });
+    } else if (terminalStateReason === 'dead-candidate-only') {
+      logManualResearchEvent('dead-candidate-only', { ...logContext, deadCandidatesSuppressedCount: deadCandidateUrls.size });
+    } else if (terminalStateReason === 'deterministic-search-no-results') {
+      logManualResearchEvent('deterministic-search-no-results', { ...logContext });
+    }
     logManualResearchEvent('terminal_status_reason', {
       ...logContext,
       title: originalTitle,
@@ -1266,6 +1299,10 @@ async function researchAssetTitles({
     });
     logManualResearchEvent('run_summary', {
       ...logContext,
+      title: originalTitle,
+      manufacturer: summary.manufacturer || stageOne.manufacturer,
+      titleVariantsUsed: fallbackDiagnostics.titleVariantsUsed || [],
+      providerSequenceTried: fallbackDiagnostics.providerSequenceTried || [],
       providerAttempts: fallbackDiagnostics.providerAttempts || {},
       providerZeroResults: fallbackDiagnostics.providerZeroResultCounts || {},
       providerFallbackInvoked: fallbackDiagnostics.providerFallbackInvoked === true,
