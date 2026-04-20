@@ -25,6 +25,9 @@ const {
   DEFAULT_CONFIDENCE_THRESHOLD: TRUSTED_CATALOG_DEFAULT_CONFIDENCE_THRESHOLD,
 } = require('./trustedManualCatalogService');
 const {
+  findManualLookupReferenceHints,
+} = require('./manualLookupReferenceService');
+const {
   resolveArcadeTitleFamily,
   normalizeManufacturerName,
   expandArcadeTitleAliases,
@@ -452,6 +455,7 @@ async function saveCachedResearchResult({ db, companyId, normalizedTitle, manufa
 
 async function runStageOneLookup({
   db,
+  settings = {},
   input,
   fetchImpl = fetch,
   companyId = '',
@@ -464,6 +468,58 @@ async function runStageOneLookup({
   const normalizedTitle = titleFamily.canonicalTitle || input.originalTitle;
   const manufacturer = normalizeManufacturerName(titleFamily.manufacturer || input.manufacturerHint || '');
   const manufacturerProfile = getManufacturerProfile(input.manufacturerHint || manufacturer, normalizedTitle);
+  const trustedCatalogEnabled = settings.manualResearchEnableTrustedCatalogShortCircuit === true;
+
+  logManualResearchEvent('reference_hint_lookup_started', {
+    ...logContext,
+    title: input.originalTitle,
+    normalizedTitle,
+    manufacturer,
+  });
+  const referenceLookup = await findManualLookupReferenceHints({
+    db,
+    assetName: input.originalTitle,
+    normalizedName: normalizedTitle,
+    originalTitle: input.originalTitle,
+    manufacturer,
+    alternateNames: titleFamily.alternateTitles || [],
+  });
+  const referenceHints = referenceLookup?.hints || null;
+  if (referenceHints) {
+    logManualResearchEvent('reference_hint_hit', {
+      ...logContext,
+      title: input.originalTitle,
+      normalizedTitle,
+      manufacturer,
+      rowsMatched: Number(referenceHints.lookupRowsUsed || 0),
+      aliasesMatched: (referenceHints.aliases || []).slice(0, 8),
+    });
+    logManualResearchEvent('reference_variants_added', {
+      ...logContext,
+      title: input.originalTitle,
+      normalizedTitle,
+      manufacturer,
+      variantCount: (referenceHints.aliases || []).length + (referenceHints.familyTitles || []).length,
+    });
+    if (Array.isArray(referenceHints.likelySlugPatterns) && referenceHints.likelySlugPatterns.length) {
+      logManualResearchEvent('reference_adapter_paths_added', {
+        ...logContext,
+        title: input.originalTitle,
+        normalizedTitle,
+        manufacturer,
+        slugCount: referenceHints.likelySlugPatterns.length,
+      });
+    }
+    if (Array.isArray(referenceHints.preferredManufacturerDomains) && referenceHints.preferredManufacturerDomains.length) {
+      logManualResearchEvent('reference_domain_boost_applied', {
+        ...logContext,
+        title: input.originalTitle,
+        normalizedTitle,
+        manufacturer,
+        domains: referenceHints.preferredManufacturerDomains.slice(0, 6),
+      });
+    }
+  }
 
   logManualResearchEvent('trusted_catalog_lookup_started', {
     ...logContext,
@@ -471,15 +527,32 @@ async function runStageOneLookup({
     normalizedTitle,
     manufacturer,
   });
-  const trustedCatalogMatch = await findTrustedCatalogManualMatch({
-    db,
-    assetName: input.originalTitle,
-    normalizedName: normalizedTitle,
-    originalTitle: input.originalTitle,
-    manufacturer,
-    minConfidence: TRUSTED_CATALOG_MIN_CONFIDENCE,
-    alternateNames: titleFamily.alternateTitles || [],
-  });
+  let trustedCatalogMatch = null;
+  if (!trustedCatalogEnabled) {
+    logManualResearchEvent('trusted_catalog_disabled_by_default', {
+      ...logContext,
+      title: input.originalTitle,
+      normalizedTitle,
+      manufacturer,
+    });
+    logManualResearchEvent('trusted_catalog_lookup_skipped', {
+      ...logContext,
+      title: input.originalTitle,
+      normalizedTitle,
+      manufacturer,
+      reason: 'feature_flag_disabled',
+    });
+  } else {
+    trustedCatalogMatch = await findTrustedCatalogManualMatch({
+      db,
+      assetName: input.originalTitle,
+      normalizedName: normalizedTitle,
+      originalTitle: input.originalTitle,
+      manufacturer,
+      minConfidence: TRUSTED_CATALOG_MIN_CONFIDENCE,
+      alternateNames: titleFamily.alternateTitles || [],
+    });
+  }
 
   if (trustedCatalogMatch?.row) {
     logManualResearchEvent('trusted_catalog_match_found', {
@@ -504,7 +577,7 @@ async function runStageOneLookup({
   const trustedCatalogSuggestion = trustedCatalogMatch?.row
     ? toTrustedCatalogSuggestion(trustedCatalogMatch.row)
     : null;
-  const trustedCatalogDocs = trustedCatalogSuggestion
+  const trustedCatalogDocs = trustedCatalogEnabled && trustedCatalogSuggestion
     ? normalizeDocumentationSuggestions({
       links: trustedCatalogSuggestion.documentationSuggestions,
       confidence: Math.max(0.7, Number(trustedCatalogSuggestion.confidence || trustedCatalogMatch.row.matchConfidence || 0)),
@@ -609,7 +682,8 @@ async function runStageOneLookup({
     trustedCatalogMatch,
     trustedCatalogSelected,
     trustedCatalogSuggestion,
-    discoverySkippedBecauseTrustedCatalogMatched: trustedCatalogSelected,
+    referenceHints,
+    discoverySkippedBecauseTrustedCatalogMatched: trustedCatalogEnabled && trustedCatalogSelected,
     searchEvidence: [],
     stage: 'stage1',
   };
@@ -627,7 +701,10 @@ async function runDiscoveryFallback({
     normalizedName: stageOne.normalizedTitle,
     manufacturer: stageOne.manufacturer,
     manufacturerProfile: stageOne.manufacturerProfile,
-    searchHints: [],
+    searchHints: [
+      ...((stageOne.referenceHints?.preferredManufacturerDomains || []).map((domain) => `site:${domain}`)),
+      ...(stageOne.referenceHints?.likelyManualFilenamePatterns || []),
+    ],
     searchProviderOptions: {
       primarySearchProvider: settings.manualResearchPrimarySearchProvider || '',
       serpApiKey: settings.manualResearchSerpApiKey || process.env.SERPAPI_API_KEY || '',
@@ -637,6 +714,7 @@ async function runDiscoveryFallback({
     logger: console,
     traceId: `manual-research-fallback-${Date.now()}`,
     fetchImpl,
+    referenceHints: stageOne.referenceHints || null,
   });
   return {
     documentationSuggestions: normalizeDocumentationSuggestions({
@@ -914,16 +992,6 @@ async function researchAssetTitles({
           });
         }
         return null;
-      });
-    } else {
-      logManualResearchEvent('trusted_catalog_match_selected', {
-        ...logContext,
-        title: originalTitle,
-        normalizedTitle: stageOne.normalizedTitle,
-        manufacturer: stageOne.manufacturer,
-        trustedCatalogSourceRowId: stageOne.trustedCatalogMatch?.row?.sourceRowId || stageOne.trustedCatalogMatch?.row?.id || '',
-        trustedCatalogCandidateUrl: stageOne.trustedCatalogMatch?.row?.manualUrl || '',
-        trustedCatalogConfidence: Number(stageOne.trustedCatalogMatch?.row?.matchConfidence || 0),
       });
     }
     let shouldFallbackToScraping = stage2Planned;

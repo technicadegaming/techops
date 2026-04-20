@@ -9,7 +9,8 @@
   "scripts": {
     "test": "node --test",
     "manual-catalog:import": "node scripts/importManualLookupWorkbook.js",
-    "manual-catalog:import-trusted": "node scripts/importTrustedManualCatalog.js"
+    "manual-catalog:import-trusted": "node scripts/importTrustedManualCatalog.js",
+    "manual-catalog:extract-reference": "node scripts/extractManualLookupReferenceHints.js"
   },
   "dependencies": {
     "firebase-admin": "^12.5.0",

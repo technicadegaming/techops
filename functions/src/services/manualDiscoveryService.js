@@ -556,6 +556,7 @@ function buildDeterministicSearchPlan({
   manufacturer,
   manufacturerProfile,
   searchHints = [],
+  referenceHints = null,
   logEvent = () => {},
 }) {
   const rawTitle = `${assetName || ''}`.trim();
@@ -583,11 +584,23 @@ function buildDeterministicSearchPlan({
     .map((value) => `${value || ''}`.trim())
     .filter(Boolean)
     .slice(0, 12);
+  const referenceVariants = Array.from(new Set([
+    ...(Array.isArray(referenceHints?.canonicalTitleHints) ? referenceHints.canonicalTitleHints : []),
+    ...(Array.isArray(referenceHints?.aliases) ? referenceHints.aliases : []),
+    ...(Array.isArray(referenceHints?.familyTitles) ? referenceHints.familyTitles : []),
+  ].map((value) => `${value || ''}`.trim()).filter(Boolean))).slice(0, 10);
+  const combinedTitleVariants = Array.from(new Set([...baseTitleVariants, ...referenceVariants])).slice(0, 20);
+  if (referenceVariants.length) {
+    logEvent('reference_variants_added', {
+      referenceVariantCount: referenceVariants.length,
+      referenceVariants: referenceVariants.slice(0, 8),
+    });
+  }
   const queries = buildManualSearchQueries({
     manufacturer,
     title: normalizedTitle,
     manufacturerProfile,
-    titleVariants: baseTitleVariants,
+    titleVariants: combinedTitleVariants,
     titleFamily,
   });
   const titleOnlyCount = queries.broadFirstQueries.filter((query) => !/"[^"]+"\s+"[^"]+"/.test(query)).length;
@@ -603,12 +616,12 @@ function buildDeterministicSearchPlan({
     rawTitle: sanitizeDiagnosticValue(rawTitle, 120),
     normalizedTitle: sanitizeDiagnosticValue(normalizedTitle, 120),
     manufacturer: sanitizeDiagnosticValue(manufacturer, 120),
-    titleVariantsUsed: baseTitleVariants.slice(0, 12),
-    titleVariantCount: baseTitleVariants.length,
+    titleVariantsUsed: combinedTitleVariants.slice(0, 12),
+    titleVariantCount: combinedTitleVariants.length,
   });
   return {
     titleFamily,
-    titleVariants: baseTitleVariants,
+    titleVariants: combinedTitleVariants,
     rawTitle,
     normalizedTitle,
     manufacturerAwareNormalizationApplied: !!(manufacturer && rawTitle),
@@ -616,7 +629,11 @@ function buildDeterministicSearchPlan({
     officialQueries: queries.officialQueries,
     exactTitleQueries: queries.exactTitleQueries,
     fallbackQueries: queries.fallbackQueries,
-    searchHints: (Array.isArray(searchHints) ? searchHints : []).slice(0, 3),
+    searchHints: Array.from(new Set([
+      ...(Array.isArray(searchHints) ? searchHints : []),
+      ...(Array.isArray(referenceHints?.preferredManufacturerDomains) ? referenceHints.preferredManufacturerDomains.map((domain) => `site:${domain}`) : []),
+      ...(Array.isArray(referenceHints?.likelyManualFilenamePatterns) ? referenceHints.likelyManualFilenamePatterns : []),
+    ])).filter(Boolean).slice(0, 6),
     titleOnlyQueryCount: titleOnlyCount,
     titleManufacturerQueryCount: manufacturerAndTitleCount,
   };
@@ -1474,7 +1491,7 @@ async function crawlManufacturerSeedPages({ candidates, manufacturer, titleVaria
   }
 }
 
-function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleVariants = [] }) {
+function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleVariants = [], referenceHints = null }) {
   const adapterTitleVariants = (Array.isArray(titleVariants) && titleVariants.length
     ? titleVariants
     : expandArcadeTitleAliases(title)).slice(0, 4);
@@ -1719,7 +1736,27 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleV
     }),
   };
 
-  return dedupeByUrl(adapters[manufacturerProfile.key] || []);
+  const seeded = dedupeByUrl(adapters[manufacturerProfile.key] || []);
+  const preferredDomain = (referenceHints?.preferredManufacturerDomains || [])[0] || '';
+  const slugHints = Array.isArray(referenceHints?.likelySlugPatterns) ? referenceHints.likelySlugPatterns.slice(0, 6) : [];
+  const referenceAdapterRows = [];
+  if (preferredDomain && slugHints.length) {
+    slugHints.forEach((slug) => {
+      referenceAdapterRows.push({
+        adapter: 'reference_hint',
+        type: 'support_page',
+        label: `${slug} reference support`,
+        url: `https://${preferredDomain}/${slug}/`
+      });
+      referenceAdapterRows.push({
+        adapter: 'reference_hint',
+        type: 'direct_pdf',
+        label: `${slug} reference manual`,
+        url: `https://${preferredDomain}/wp-content/uploads/${slug}-manual.pdf`
+      });
+    });
+  }
+  return dedupeByUrl([...seeded, ...referenceAdapterRows]);
 }
 
 async function probeAdapterCandidates({ candidates, manufacturer, titleVariants, manufacturerProfile, fetchImpl, manualRows, supportRows, followupPages, logEvent }) {
@@ -1815,6 +1852,7 @@ async function discoverManualDocumentation({
   manufacturer,
   manufacturerProfile,
   searchHints = [],
+  referenceHints = null,
   searchProvider = null,
   searchProviderOptions = {},
   fetchImpl = fetch,
@@ -1832,6 +1870,7 @@ async function discoverManualDocumentation({
     manufacturer,
     manufacturerProfile,
     searchHints,
+    referenceHints,
     logEvent,
   });
   const titleVariants = searchPlan.titleVariants;
@@ -1872,7 +1911,7 @@ async function discoverManualDocumentation({
       rejectionReasons: Array.isArray(entry.rejectionReasons) ? entry.rejectionReasons.slice(0, 6) : [],
     });
   };
-  const adapterCandidates = buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleVariants });
+  const adapterCandidates = buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleVariants, referenceHints });
   const seedPages = buildManufacturerDiscoverySeedPages({ title, manufacturerProfile, titleVariants });
   const providerPlan = searchProvider
     ? [{ name: searchProvider?.name || 'custom_search_provider', fn: searchProvider }]
