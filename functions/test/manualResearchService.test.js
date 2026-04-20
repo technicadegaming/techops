@@ -219,7 +219,11 @@ for (const matchType of ['title_specific_source', 'support_only', 'family_match_
       }),
       settings: { aiEnabled: true },
       companyId: 'company-1',
-      titles: [{ originalTitle: 'Virtual Rabbids', manufacturerHint: 'LAI Games' }],
+      titles: [{
+        originalTitle: 'Virtual Rabbids',
+        manufacturerHint: 'LAI Games',
+        deadCandidateUrls: ['https://laigames.com/downloads/virtual-rabbids-the-big-ride-install-guide.pdf'],
+      }],
       traceId: `test-${matchType}`,
       storage: createStorageMock(),
       fetchImpl: async () => ({

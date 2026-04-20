@@ -408,12 +408,27 @@ function renderPreviewPanel(state) {
 
   const docs = sortDocumentationSuggestions(preview?.documentationSuggestions || []).slice(0, 3);
   const support = (preview?.supportResourcesSuggestion || []).slice(0, 3);
+  const rawTitle = `${state.assetDraft?.name || ''}`.trim();
+  const normalizedTitle = `${preview?.normalizedName || state.assetDraft?.normalizedName || ''}`.trim();
+  const manufacturer = `${state.assetDraft?.manufacturer || preview?.likelyManufacturer || ''}`.trim();
+  const titleVariantsPreview = [...new Set([
+    rawTitle,
+    normalizedTitle,
+    rawTitle ? rawTitle.replace(/[-_/]+/g, ' ').replace(/\s+/g, ' ').trim() : '',
+    normalizedTitle ? normalizedTitle.replace(/[-_/]+/g, ' ').replace(/\s+/g, ' ').trim() : '',
+  ].filter(Boolean))].slice(0, 5);
+  const weakTitle = rawTitle.length < 4 || rawTitle.split(/\s+/).filter(Boolean).length <= 1;
+  const lookupPreviewCount = Number(preview?.previewDocumentationSuggestions || preview?.documentationSuggestions?.length || 0) || 0;
   const statusTone = docs.length || support.length ? 'success' : 'info';
   return `
     ${renderInlineFeedback(`Preview status: ${status}${docs.length || support.length ? ' with suggestions ready to apply.' : ' with no strong links yet.'}`, statusTone)}
     <div class="tiny">Context: ${buildAssetDraftContextDebug(context)}</div>
     <div class="tiny">Best match: ${preview?.normalizedName || 'n/a'} (${Math.round(Number(preview?.confidence || 0) * 100)}%)</div>
     <div class="tiny">Suggested manufacturer: ${preview?.likelyManufacturer || 'n/a'} | Category: ${preview?.likelyCategory || 'n/a'}</div>
+    <div class="tiny">Normalized title: ${normalizedTitle || 'n/a'} | Manufacturer: ${manufacturer || 'n/a'}</div>
+    <div class="tiny">Title variants preview: ${titleVariantsPreview.join(' | ') || 'none'}</div>
+    <div class="tiny">Lookup quality preview: ${lookupPreviewCount} documentation suggestion${lookupPreviewCount === 1 ? '' : 's'} detected</div>
+    ${weakTitle ? renderInlineFeedback('Title looks weak or ambiguous. Add cabinet/model words before saving to improve lookup quality.', 'info') : ''}
     <div class="tiny">Manual/docs: ${docs.map((entry) => `<a href="${entry.url}" target="_blank" rel="noopener">${entry.title || entry.url}</a>`).join(' | ') || 'none'}</div>
     <div class="tiny">Support links: ${support.map((entry) => `<a href="${entry.url}" target="_blank" rel="noopener">${entry.label || entry.title || entry.url}</a>`).join(' | ') || 'none'}</div>
     <div style="display:flex; gap:6px; flex-wrap:wrap; margin:6px 0;">
