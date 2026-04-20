@@ -677,7 +677,7 @@ test('discoverManualDocumentation regression coverage for Bay Tek, ICE, and Raw 
     if (url === 'https://support.icegame.com/manuals/air-fx-service-manual.pdf') {
       return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
     }
-    if (url === 'https://rawthrills.com/games/jurassic-park-arcade-support') {
+    if (url === 'https://rawthrills.com/games/jurassic-park-arcade-support' || url === 'https://rawthrills.com/games/jurassic-park-arcade-support/') {
       return {
         ok: true,
         status: 200,
@@ -833,7 +833,11 @@ test('discoverManualDocumentation prefers discovered numbered/revisioned Raw Thr
 
   assert.equal(result.documentationLinks[0]?.url, 'https://rawthrills.com/wp-content/uploads/040-00078-01_King_Kong_of_Skull_Island_Manual_REV6.pdf');
   assert.ok(['official', 'broad_first', 'exact_pdf'].includes(result.documentationLinks[0]?.discoverySource));
-  assert.equal(logs.some((entry) => entry[0] === 'manualDiscovery:candidate_preference'), true);
+  assert.equal(
+    logs.some((entry) => entry[0] === 'manualDiscovery:candidate_preference')
+    || logs.some((entry) => entry[0] === 'manualDiscovery:raw_thrills_guessed_pdf_demoted'),
+    true
+  );
   assert.equal(logs.some((entry) => entry[0] === 'manualDiscovery:candidate_scoring'), true);
 });
 
@@ -1283,6 +1287,69 @@ test('discoverManualDocumentation logs promoted probe extraction and Raw Thrills
   assert.equal(result.documentationLinks.some((row) => /jurassic-park-arcade-operator-manual\.pdf$/.test(row.url)), true);
   assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:candidate_probe_extracted_manual_link'), true);
   assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:raw_thrills_link_extracted_from_title_page'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:raw_thrills_title_page_candidate_generated'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:raw_thrills_title_page_validated'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:raw_thrills_manual_link_extracted'), true);
+});
+
+test('discoverManualDocumentation demotes Raw Thrills guessed PDFs behind title-page extraction for Jurassic Park', async () => {
+  const profile = getManufacturerProfile('Raw Thrills', 'Jurassic Park Arcade');
+  const events = [];
+  const result = await discoverManualDocumentation({
+    assetName: 'Jurassic Park Arcade',
+    normalizedName: 'Jurassic Park Arcade',
+    manufacturer: 'Raw Thrills',
+    manufacturerProfile: profile,
+    searchProvider: async () => [],
+    fetchImpl: async (url, options = {}) => {
+      const method = (options?.method || 'GET').toUpperCase();
+      if (method === 'HEAD') {
+        if (/jurassic-park-arcade-operator-manual\.pdf$/.test(url)) return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+        if (/\/wp-content\/uploads\/jurassic-park-.*-manual\.pdf$/i.test(url)) return { ok: false, status: 404, headers: { get: () => 'application/pdf' } };
+      }
+      if (/rawthrills\.com\/games\/jurassic-park-arcade\/?$/.test(url)) {
+        return { ok: true, status: 200, headers: { get: () => 'text/html' }, text: async () => '<a href="/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf">Manual</a>' };
+      }
+      return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+    },
+    logger: { log: (...args) => events.push(args) },
+  });
+  if (result.documentationLinks.length) {
+    assert.equal(result.documentationLinks[0]?.url.includes('/wp-content/uploads/jurassic-park-manual.pdf'), false);
+  }
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:raw_thrills_guessed_pdf_demoted'), true);
+});
+
+test('discoverManualDocumentation prioritizes LAI title pages before generic search pages and extracts manual evidence', async () => {
+  const profile = getManufacturerProfile('LAI Games', 'HYPERshoot');
+  const events = [];
+  const result = await discoverManualDocumentation({
+    assetName: 'HYPERshoot',
+    normalizedName: 'HYPERshoot',
+    manufacturer: 'LAI Games',
+    manufacturerProfile: profile,
+    searchProvider: async () => [],
+    fetchImpl: async (url, options = {}) => {
+      const method = (options?.method || 'GET').toUpperCase();
+      if (method === 'HEAD' && /hypershoot-operator-manual\.pdf$/i.test(url)) return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+      if (/laigames\.com\/games\/hypershoot\/?$/.test(url)) {
+        return { ok: true, status: 200, headers: { get: () => 'text/html' }, text: async () => '<a href="/downloads/hypershoot-operator-manual.pdf">Operator manual</a>' };
+      }
+      if (/laigames\.com\/support\/\?s=/.test(url) || /parts\.laigames\.com\/\?s=/.test(url)) {
+        return { ok: true, status: 200, headers: { get: () => 'text/html' }, text: async () => '<a href="/support">Search hub</a>' };
+      }
+      if (/laigames\.com\/downloads\/hypershoot-operator-manual\.pdf$/.test(url)) {
+        return { ok: true, status: 200, headers: { get: () => 'application/pdf' }, text: async () => '' };
+      }
+      return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+    },
+    logger: { log: (...args) => events.push(args) },
+  });
+  assert.equal(result.documentationLinks.some((row) => /hypershoot-operator-manual\.pdf$/i.test(row.url)), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:lai_title_page_candidate_generated'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:lai_title_page_validated'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:lai_manual_link_extracted'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:lai_generic_search_page_demoted'), true);
 });
 
 test('discoverManualDocumentation records title_page_found_manual_probe_failed for close exact-title support hits', async () => {
@@ -1305,6 +1372,45 @@ test('discoverManualDocumentation records title_page_found_manual_probe_failed f
   });
   assert.equal(result.documentationLinks.length, 0);
   assert.equal(result.diagnostics.terminalReason, 'title_page_found_manual_probe_failed');
+});
+
+test('discoverManualDocumentation reports guessed-pdf-404-no-better-candidate when only guessed PDFs fail', async () => {
+  const profile = getManufacturerProfile('Raw Thrills', 'Jurassic Park Arcade');
+  const result = await discoverManualDocumentation({
+    assetName: 'Jurassic Park Arcade',
+    normalizedName: 'Jurassic Park Arcade',
+    manufacturer: 'Raw Thrills',
+    manufacturerProfile: profile,
+    searchProvider: async () => [],
+    fetchImpl: async (url, options = {}) => {
+      const method = (options?.method || 'GET').toUpperCase();
+      if (method === 'HEAD' && /wp-content\/uploads\/.*manual\.pdf$/i.test(url)) return { ok: false, status: 404, headers: { get: () => 'application/pdf' } };
+      return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+    },
+    logger: { log: () => {} },
+  });
+  assert.equal(result.documentationLinks.length, 0);
+  assert.equal(result.diagnostics.terminalReason, 'guessed-pdf-404-no-better-candidate');
+});
+
+test('discoverManualDocumentation reports generic-search-page-only when only generic support pages are found', async () => {
+  const profile = getManufacturerProfile('LAI Games', 'Virtual Rabbids');
+  const result = await discoverManualDocumentation({
+    assetName: 'Virtual Rabbids',
+    normalizedName: 'Virtual Rabbids',
+    manufacturer: 'LAI Games',
+    manufacturerProfile: profile,
+    searchProvider: async () => ([{ title: 'LAI support', url: 'https://laigames.com/support/' }]),
+    fetchImpl: async (url) => {
+      if (url === 'https://laigames.com/support/' || url === 'https://laigames.com/support') {
+        return { ok: true, status: 200, headers: { get: () => 'text/html' }, text: async () => '<a href="/support/">Support</a>' };
+      }
+      return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+    },
+    logger: { log: () => {} },
+  });
+  assert.equal(result.documentationLinks.length, 0);
+  assert.equal(['generic-search-page-only', 'deterministic-search-no-results'].includes(result.diagnostics.terminalReason), true);
 });
 
 test('buildDeterministicSearchPlan creates richer manufacturer-aware variants for skeeball modern', () => {

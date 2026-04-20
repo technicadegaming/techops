@@ -1159,6 +1159,59 @@ test('asset actions block save before Firestore write when company context is un
   assert.ok(renders >= 1);
 });
 
+test('asset actions surface weak lookup warning before save for ambiguous add/edit titles', async () => {
+  const { createAssetActions } = await loadAssetActions();
+  const state = {
+    assetDraft: {
+      name: 'VR',
+      manufacturer: 'LAI',
+      locationId: '',
+      locationName: '',
+      preview: null,
+      previewContext: null,
+      previewStatus: 'idle',
+      previewMeta: { inFlightQuery: '', lastCompletedQuery: '' }
+    },
+    assets: [],
+    companyLocations: [],
+    permissions: { companyRole: 'owner', role: 'owner' },
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    user: { uid: 'user-1' },
+    assetUi: {}
+  };
+  const actions = createAssetActions({
+    state,
+    onLocationFilter: () => {},
+    render: () => {},
+    refreshData: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    deleteEntity: async () => {},
+    approveAssetManual: async () => {},
+    enrichAssetDocumentation: async () => {},
+    previewAssetDocumentationLookup: async () => ({}),
+    researchAssetTitles: async () => ({}),
+    markAssetEnrichmentFailure: async () => ({}),
+    normalizeAssetId: (name) => `asset-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+    pickUniqueAssetId: (id) => id,
+    createEmptyAssetDraft: () => ({ previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } }),
+    withTimeout: async (promise) => promise,
+    normalizeSupportEntries: (entries) => entries,
+    canDelete: () => false,
+    isAdmin: () => true,
+    isManager: () => true,
+    buildAssetSaveErrorMessage: () => 'error',
+    buildAssetSaveDebugContext: () => ({ companyId: 'company-a', companyRole: 'owner' }),
+    isPermissionRelatedError: () => false,
+    buildPreviewQueryKey: () => ''
+  });
+
+  await actions.saveAsset('', { name: 'VR', manufacturer: 'LAI' });
+
+  assert.match(state.assetDraft.saveSecondaryFeedback || '', /look weak for manual lookup/i);
+});
+
 test('admin source no longer exposes a duplicate asset documentation review section', () => {
   const source = loadAdminSource();
   assert.doesNotMatch(source, /asset_review/);

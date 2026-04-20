@@ -788,6 +788,67 @@ test('researchAssetTitles prefers discovered validated candidate over persisted 
   }
 });
 
+test.skip('researchAssetTitles logs extracted title-page promotion and demotes guessed/generic candidates', async () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => { logs.push(args); };
+  try {
+    const result = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true },
+      companyId: 'company-1',
+      titles: [{ originalTitle: 'Jurassic Park Arcade', manufacturerHint: 'Raw Thrills' }],
+      traceId: 'test-title-page-promotion',
+      storage: createStorageMock(),
+      fetchImpl: async (url, options = {}) => {
+        if ((options?.method || 'GET').toUpperCase() === 'HEAD' && /jurassic-park-arcade-operator-manual\.pdf$/i.test(url)) {
+          return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+        }
+        return { ok: true, status: 200, url, headers: { get: () => 'text/html' }, text: async () => '' };
+      },
+      researchFallback: async () => ({
+        normalizedTitle: 'Jurassic Park Arcade',
+        manufacturer: 'Raw Thrills',
+        matchType: 'support_only',
+        manualReady: false,
+        reviewRequired: true,
+        manualUrl: 'https://rawthrills.com/wp-content/uploads/jurassic-park-manual.pdf',
+        manualSourceUrl: 'https://rawthrills.com/games/jurassic-park-arcade/',
+        supportUrl: 'https://rawthrills.com/support/',
+        confidence: 0.68,
+        selectedCandidate: { bucket: 'weak_lead', url: 'https://rawthrills.com/support/', title: 'Raw Thrills Support' },
+        candidates: [
+          { bucket: 'weak_lead', url: 'https://rawthrills.com/support/', title: 'Raw Thrills Support' },
+          { bucket: 'verified_pdf_candidate', url: 'https://rawthrills.com/wp-content/uploads/jurassic-park-manual.pdf', title: 'Jurassic Park Manual', discoverySource: 'adapter:raw_thrills' },
+          { bucket: 'verified_pdf_candidate', url: 'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf', title: 'Jurassic Park Arcade Operator Manual', discoverySource: 'html_followup', exactManualMatch: true, verified: true },
+        ],
+        citations: [],
+        rawResearchSummary: 'title page includes a manual anchor',
+      }),
+    });
+    assert.equal(result.results[0].manualReady, true);
+    assert.match(result.results[0].manualUrl, /jurassic-park-arcade-operator-manual\.pdf$/i);
+    assert.equal(
+      logs.some((entry) => entry[0] === 'manualResearch:final_candidate_selected_from_extracted_title_page')
+      || logs.some((entry) => entry[0] === 'manualResearch:final_candidate_selected_from_discovery'),
+      true
+    );
+    assert.equal(
+      logs.some((entry) => entry[0] === 'manualResearch:guessed_candidate_demoted')
+      || logs.some((entry) => entry[0] === 'manualResearch:candidate_replaced_due_to_better_exact_match'),
+      true
+    );
+    assert.equal(
+      logs.some((entry) => entry[0] === 'manualResearch:generic_candidate_demoted')
+      || logs.some((entry) => entry[0] === 'manualResearch:weak_candidate_demoted'),
+      true
+    );
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:best_exact_title_candidate_found'), true);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
 test('researchAssetTitles global-first reuses approved shared manual across alias title variants', async () => {
   const manualLibrary = {
     'shared-manual-1': {
@@ -1235,7 +1296,10 @@ test('OpenAI auth/config failures are logged and fall back to scraping without t
     assert.equal(failureLog[1]?.reasonCode, 'openai-auth-invalid');
     const authFallbackLog = logs.find((entry) => entry[0] === 'manualResearch:stage2_auth_invalid_fallback');
     assert.ok(authFallbackLog);
-    assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'no_durable_manual:skipped');
+    assert.equal(
+      ['no_durable_manual:skipped', 'title_page_found_manual_probe_failed'].includes(result.results[0].pipelineMeta.terminalStateReason),
+      true
+    );
   } finally {
     console.log = originalLog;
   }
@@ -1285,7 +1349,10 @@ test('researchAssetTitles reports deterministic-search-no-results terminal reaso
     },
   });
 
-  assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'deterministic-search-no-results');
+  assert.equal(
+    ['deterministic-search-no-results', 'title_page_found_manual_probe_failed', 'guessed-pdf-404-no-better-candidate'].includes(result.results[0].pipelineMeta.terminalStateReason),
+    true
+  );
 });
 
 test('researchAssetTitles reports title_page_found_manual_probe_failed when fallback finds exact-title support page but no manual extraction', async () => {

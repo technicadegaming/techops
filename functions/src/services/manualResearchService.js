@@ -134,6 +134,8 @@ function classifyFallbackTerminalReason({ stage2ErrorCode = '', fallbackDiagnost
   if (discoveryTerminalReason === 'close_title_specific_hit_no_manual_extracted') return 'close_title_specific_hit_no_manual_extracted';
   if (discoveryTerminalReason === 'title_page_found_manual_probe_failed') return 'title_page_found_manual_probe_failed';
   if (discoveryTerminalReason === 'candidate_found_but_not_durable') return 'candidate_found_but_not_durable';
+  if (discoveryTerminalReason === 'generic-search-page-only') return 'generic-search-page-only';
+  if (discoveryTerminalReason === 'guessed-pdf-404-no-better-candidate') return 'guessed-pdf-404-no-better-candidate';
   if (!documentationCount && !supportCount && Number(fallbackDiagnostics?.searchNoResultsCount || 0) > 0) return 'deterministic-search-no-results';
   if ((reasonCode === 'openai-config-missing' || reasonCode === 'openai-auth-invalid') && !documentationCount && !supportCount) return '';
   return '';
@@ -170,6 +172,10 @@ function prioritizeDocumentationSuggestions({
       candidateTier: bestDiscovered.tier,
     });
   }
+  const bestExtractedTitlePage = rows.find((row) => {
+    const source = `${row.candidate?.discoverySource || ''}`.toLowerCase();
+    return row.exactTitle && source === 'html_followup';
+  });
   if (bestDiscovered && top && compareRankedCandidates(top, bestDiscovered) > 0) {
     logEvent('final_selected_weaker_than_best_discovered', {
       ...logContext,
@@ -200,6 +206,13 @@ function prioritizeDocumentationSuggestions({
   } else if (top) {
     logEvent('final_candidate_selected_from_research', { ...logContext, selectedCandidateUrl: top.candidate?.url || '', selectedTier: top.tier });
   }
+  if (top && `${top.candidate?.discoverySource || ''}`.toLowerCase() === 'html_followup') {
+    logEvent('final_candidate_selected_from_extracted_title_page', {
+      ...logContext,
+      selectedCandidateUrl: top.candidate?.url || '',
+      selectedTier: top.tier,
+    });
+  }
   if (bestDiscovered && top && bestDiscovered.urlKey !== top.urlKey && compareRankedCandidates(bestDiscovered, top) < 0) {
     logEvent('candidate_replaced_due_to_better_exact_match', {
       ...logContext,
@@ -222,12 +235,30 @@ function prioritizeDocumentationSuggestions({
       demotedTier: bestWeak.tier,
       selectedTier: bestDiscovered.tier,
     });
+    logEvent('generic_candidate_demoted', {
+      ...logContext,
+      demotedCandidateUrl: bestWeak.candidate?.url || '',
+      selectedCandidateUrl: bestDiscovered.candidate?.url || '',
+    });
   }
   if (deadGuessed && top && deadGuessed.urlKey !== top.urlKey) {
     logEvent('candidate_replaced_due_to_better_exact_match', {
       ...logContext,
       previousSelectedCandidateUrl: deadGuessed.candidate?.url || '',
       selectedCandidateUrl: top.candidate?.url || '',
+    });
+    logEvent('guessed_candidate_demoted', {
+      ...logContext,
+      demotedCandidateUrl: deadGuessed.candidate?.url || '',
+      selectedCandidateUrl: top.candidate?.url || '',
+    });
+  }
+  if (bestExtractedTitlePage && top && bestExtractedTitlePage.urlKey !== top.urlKey && compareRankedCandidates(bestExtractedTitlePage, top) < 0) {
+    logEvent('final_candidate_selected_from_extracted_title_page', {
+      ...logContext,
+      selectedCandidateUrl: bestExtractedTitlePage.candidate?.url || '',
+      selectedTier: bestExtractedTitlePage.tier,
+      replacedCandidateUrl: top.candidate?.url || '',
     });
   }
   return rows.map((row) => row.candidate);
@@ -1540,6 +1571,10 @@ async function researchAssetTitles({
       logManualResearchEvent('title_page_found_manual_probe_failed', { ...logContext });
     } else if (terminalStateReason === 'candidate_found_but_not_durable') {
       logManualResearchEvent('candidate_found_but_not_durable', { ...logContext });
+    } else if (terminalStateReason === 'generic-search-page-only') {
+      logManualResearchEvent('generic-search-page-only', { ...logContext });
+    } else if (terminalStateReason === 'guessed-pdf-404-no-better-candidate') {
+      logManualResearchEvent('guessed-pdf-404-no-better-candidate', { ...logContext });
     }
     logManualResearchEvent('terminal_status_reason', {
       ...logContext,
