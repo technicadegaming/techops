@@ -120,7 +120,11 @@ function isManufacturerOnlyFollowupAnswer({ followupAnswer = '', knownManufactur
 
 function classifyFallbackTerminalReason({ stage2ErrorCode = '', fallbackDiagnostics = {}, documentationCount = 0, supportCount = 0 } = {}) {
   const reasonCode = normalizeString(stage2ErrorCode, 80).toLowerCase();
+  const discoveryTerminalReason = normalizeString(fallbackDiagnostics?.terminalReason || '', 120).toLowerCase();
   if (Number(fallbackDiagnostics?.searchTimeoutCount || 0) > 0) return 'site_timeout';
+  if (discoveryTerminalReason === 'close_title_specific_hit_no_manual_extracted') return 'close_title_specific_hit_no_manual_extracted';
+  if (discoveryTerminalReason === 'title_page_found_manual_probe_failed') return 'title_page_found_manual_probe_failed';
+  if (discoveryTerminalReason === 'candidate_found_but_not_durable') return 'candidate_found_but_not_durable';
   if (!documentationCount && !supportCount && Number(fallbackDiagnostics?.searchNoResultsCount || 0) > 0) return 'deterministic-search-no-results';
   if ((reasonCode === 'openai-config-missing' || reasonCode === 'openai-auth-invalid') && !documentationCount && !supportCount) return '';
   return '';
@@ -1356,6 +1360,12 @@ async function researchAssetTitles({
       logManualResearchEvent('dead-candidate-only', { ...logContext, deadCandidatesSuppressedCount: deadCandidateUrls.size });
     } else if (terminalStateReason === 'deterministic-search-no-results') {
       logManualResearchEvent('deterministic-search-no-results', { ...logContext });
+    } else if (terminalStateReason === 'close_title_specific_hit_no_manual_extracted') {
+      logManualResearchEvent('close_title_specific_hit_no_manual_extracted', { ...logContext });
+    } else if (terminalStateReason === 'title_page_found_manual_probe_failed') {
+      logManualResearchEvent('title_page_found_manual_probe_failed', { ...logContext });
+    } else if (terminalStateReason === 'candidate_found_but_not_durable') {
+      logManualResearchEvent('candidate_found_but_not_durable', { ...logContext });
     }
     logManualResearchEvent('terminal_status_reason', {
       ...logContext,

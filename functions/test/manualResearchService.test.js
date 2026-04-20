@@ -1247,6 +1247,38 @@ test('researchAssetTitles reports deterministic-search-no-results terminal reaso
   assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'deterministic-search-no-results');
 });
 
+test('researchAssetTitles reports title_page_found_manual_probe_failed when fallback finds exact-title support page but no manual extraction', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{ originalTitle: 'Jurassic Park Arcade', manufacturerHint: 'Raw Thrills' }],
+    traceId: 'test-fallback-title-page-probe-failed',
+    storage: createStorageMock(),
+    fetchImpl: async (url) => {
+      if (String(url).includes('duckduckgo.com') || String(url).includes('bing.com/search')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => 'text/html' },
+          text: async () => '<a class="result__a" href="https://rawthrills.com/games/jurassic-park-arcade-support/">Jurassic Park Arcade Support</a>',
+        };
+      }
+      if (String(url).includes('rawthrills.com/games/jurassic-park-arcade-support')) {
+        return { ok: true, status: 200, headers: { get: () => 'text/html' }, text: async () => '<a href="/support">Support</a>' };
+      }
+      return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+    },
+    researchFallback: async () => {
+      const error = new Error('Responses API unavailable');
+      error.code = 'openai-temporary';
+      throw error;
+    },
+  });
+
+  assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'title_page_found_manual_probe_failed');
+});
+
 test('researchAssetTitles reuses previously approved company manuals before web fallback', async () => {
   let stageTwoCalls = 0;
   const result = await researchAssetTitles({

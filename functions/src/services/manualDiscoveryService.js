@@ -1231,7 +1231,16 @@ function extractAnchorCandidates(html, pageUrl, { mode = 'default' } = {}) {
   }).filter(Boolean);
 }
 
-async function extractManualLinksFromHtmlPage({ pageUrl, pageTitle, manufacturer, titleVariants, manufacturerProfile, fetchImpl = fetch, logEvent = () => {} }) {
+async function extractManualLinksFromHtmlPage({
+  pageUrl,
+  pageTitle,
+  manufacturer,
+  titleVariants,
+  manufacturerProfile,
+  fetchImpl = fetch,
+  logEvent = () => {},
+  probeSource = 'html_followup',
+}) {
   let response;
   try {
     response = await fetchWithTimeout(pageUrl, { headers: { 'user-agent': SEARCH_USER_AGENT } }, fetchImpl);
@@ -1274,6 +1283,20 @@ async function extractManualLinksFromHtmlPage({ pageUrl, pageTitle, manufacturer
       sourceType: row.classification.sourceType,
       discoverySource: 'html_followup'
     }));
+
+  accepted.forEach((entry) => {
+    logEvent('candidate_probe_extracted_manual_link', {
+      pageUrl,
+      extractedUrl: entry.url,
+      probeSource: sanitizeDiagnosticValue(probeSource, 80),
+    });
+    if (/rawthrills\.com/i.test(pageUrl)) {
+      logEvent('raw_thrills_link_extracted_from_title_page', {
+        pageUrl,
+        extractedUrl: entry.url,
+      });
+    }
+  });
 
   logEvent('html_followup_extracted', {
     pageUrl,
@@ -1428,7 +1451,8 @@ async function crawlManufacturerSeedPages({ candidates, manufacturer, titleVaria
             label: row.title,
             url: row.url,
             resourceType: row.classification.resourceType,
-            discoverySource: `seed:${candidate.adapter}`
+            discoverySource: `seed:${candidate.adapter}`,
+            titleSpecificSupport: row.classification.titleSpecificSupport === true,
           });
         }
       }
@@ -1455,6 +1479,26 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleV
     ? titleVariants
     : expandArcadeTitleAliases(title)).slice(0, 4);
   if (!adapterTitleVariants.length || !manufacturerProfile?.key) return [];
+  const normalizedVariants = new Set(
+    adapterTitleVariants
+      .map((value) => normalizePhrase(value))
+      .filter(Boolean)
+  );
+  const jurassicFamilyDetected = Array.from(normalizedVariants).some((value) => /jurassic\s+park/.test(value));
+  if (manufacturerProfile.key === 'raw thrills' && jurassicFamilyDetected) {
+    [
+      'jurassic park',
+      'jurassic park arcade',
+      'jurassic park vr',
+      'raw thrills jurassic park',
+      'raw thrills jurassic park arcade',
+      'raw thrills jurassic park vr',
+    ]
+      .map((value) => normalizePhrase(value))
+      .filter(Boolean)
+      .forEach((value) => normalizedVariants.add(value));
+  }
+  const rawThrillsVariantSlugs = Array.from(normalizedVariants).map((value) => slugifyTitle(value)).filter(Boolean);
 
   const adapters = {
     'bay tek': adapterTitleVariants.flatMap((titleVariant) => {
@@ -1533,8 +1577,8 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleV
         }
       ];
     }),
-    'raw thrills': adapterTitleVariants.flatMap((titleVariant) => {
-      const slug = slugifyTitle(titleVariant);
+    'raw thrills': rawThrillsVariantSlugs.flatMap((slug) => {
+      const titleVariant = slug.replace(/-/g, ' ');
       return [
         {
           adapter: 'raw_thrills',
@@ -1551,8 +1595,20 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleV
         {
           adapter: 'raw_thrills',
           type: 'support_page',
+          label: `${titleVariant} downloads`,
+          url: `https://rawthrills.com/games/${slug}/downloads/`
+        },
+        {
+          adapter: 'raw_thrills',
+          type: 'support_page',
           label: `${titleVariant} service support`,
           url: `https://rawthrills.com/service-support/${slug}/`
+        },
+        {
+          adapter: 'raw_thrills',
+          type: 'support_page',
+          label: `${titleVariant} support`,
+          url: `https://rawthrills.com/support/${slug}/`
         },
         {
           adapter: 'raw_thrills',
@@ -1565,6 +1621,12 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleV
           type: 'direct_pdf',
           label: `${titleVariant} service manual`,
           url: `https://rawthrills.com/wp-content/uploads/${slug}-service-manual.pdf`
+        },
+        {
+          adapter: 'raw_thrills',
+          type: 'direct_pdf',
+          label: `${titleVariant} manual`,
+          url: `https://rawthrills.com/wp-content/uploads/${slug}-manual.pdf`
         }
       ];
     }),
@@ -1714,7 +1776,8 @@ async function probeAdapterCandidates({ candidates, manufacturer, titleVariants,
           label: candidate.label,
           url: candidate.url,
           resourceType: classification.resourceType,
-          discoverySource: `adapter:${candidate.adapter}`
+          discoverySource: `adapter:${candidate.adapter}`,
+          titleSpecificSupport: classification.titleSpecificSupport === true,
         });
       }
 
@@ -2050,7 +2113,8 @@ async function discoverManualDocumentation({
           label: result.title,
           url: result.url,
           resourceType: classification.resourceType,
-          discoverySource: mode
+          discoverySource: mode,
+          titleSpecificSupport: classification.titleSpecificSupport === true,
         });
         recordEvidence({
           queryMode: mode,
@@ -2124,7 +2188,8 @@ async function discoverManualDocumentation({
       titleVariants,
       manufacturerProfile,
       fetchImpl,
-      logEvent
+      logEvent,
+      probeSource: page.discoveredBy || page.adapter || 'html_followup',
     }).catch((error) => {
       logEvent('html_followup_error', {
         pageUrl: page.url,
@@ -2257,6 +2322,14 @@ async function discoverManualDocumentation({
     .map((entry) => entry.candidate)
     .slice(0, MAX_DISCOVERY_RESULTS);
   const supportResources = dedupeByUrl(supportRows).slice(0, MAX_DISCOVERY_RESULTS);
+  const titleSpecificSupportCount = supportResources.filter((entry) => entry?.titleSpecificSupport === true).length;
+  const followupAttemptedCount = followupPlan.length;
+  const extractedManualEvidenceCount = followedRows.length;
+  const discoveryTerminalReason = documentationLinks.length
+    ? 'docs_discovered'
+    : (titleSpecificSupportCount > 0
+      ? (extractedManualEvidenceCount > 0 ? 'candidate_found_but_not_durable' : 'title_page_found_manual_probe_failed')
+      : (supportResources.length > 0 ? 'close_title_specific_hit_no_manual_extracted' : 'deterministic-search-no-results'));
   const bestExactDiscoveredCandidate = documentationLinks.find((entry) => {
     const tier = classifyCandidateTier(entry);
     return tier === CANDIDATE_TIER.EXACT_TITLE_VALIDATED_MANUAL || tier === CANDIDATE_TIER.EXACT_TITLE_SUPPORT_OR_LIBRARY;
@@ -2329,9 +2402,12 @@ async function discoverManualDocumentation({
       ) > 0),
     deadCandidatesSuppressedCount: deadManualUrls.size,
     acquisitionState: documentationLinks.length ? 'candidate_validated' : 'no_candidate_validated',
-    terminalReason: documentationLinks.length ? 'docs_discovered' : 'deterministic-search-no-results',
+    terminalReason: discoveryTerminalReason,
     searchTimeoutCount,
     searchNoResultsCount,
+    titleSpecificSupportCount,
+    followupAttemptedCount,
+    extractedManualEvidenceCount,
   });
 
   return {
@@ -2359,6 +2435,10 @@ async function discoverManualDocumentation({
       selectedCandidateUrl: documentationLinks[0]?.url || '',
       bestExactTitleDiscoveredCandidateUrl: bestExactDiscoveredCandidate?.url || '',
       deadCandidatesSuppressedCount: deadManualUrls.size,
+      terminalReason: discoveryTerminalReason,
+      titleSpecificSupportCount,
+      followupAttemptedCount,
+      extractedManualEvidenceCount,
     },
   };
 }
