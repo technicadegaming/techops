@@ -1312,6 +1312,16 @@ async function extractManualLinksFromHtmlPage({
         pageUrl,
         extractedUrl: entry.url,
       });
+      logEvent('raw_thrills_manual_link_extracted', {
+        pageUrl,
+        extractedUrl: entry.url,
+      });
+    }
+    if (/laigames\.com/i.test(pageUrl)) {
+      logEvent('lai_manual_link_extracted', {
+        pageUrl,
+        extractedUrl: entry.url,
+      });
     }
   });
 
@@ -1376,6 +1386,19 @@ function buildFollowupExecutionPlan(followupPages) {
   return [...searchPages, ...adapterPages].slice(0, MAX_FOLLOWUP_FETCHES);
 }
 
+function isDemotedRawThrillsGuessedPdf(candidate = {}) {
+  return candidate?.adapter === 'raw_thrills'
+    && candidate?.type === 'direct_pdf'
+    && /\/wp-content\/uploads\//i.test(`${candidate?.url || ''}`);
+}
+
+function isDemotedLaiGenericSearchPage(candidate = {}) {
+  const url = `${candidate?.url || ''}`.toLowerCase();
+  return candidate?.adapter === 'lai_seed'
+    && candidate?.type === 'search_page'
+    && (url.includes('laigames.com/support/?s=') || url.includes('parts.laigames.com/?s='));
+}
+
 
 function buildManufacturerDiscoverySeedPages({ title, manufacturerProfile, titleVariants = [] }) {
   const cleanTitle = `${title || ''}`.trim();
@@ -1426,6 +1449,9 @@ function buildManufacturerDiscoverySeedPages({ title, manufacturerProfile, title
 
 async function crawlManufacturerSeedPages({ candidates, manufacturer, titleVariants, manufacturerProfile, fetchImpl, manualRows, supportRows, followupPages, logEvent }) {
   for (const candidate of dedupeByUrl(candidates).slice(0, MAX_SEED_FETCHES)) {
+    if (isDemotedLaiGenericSearchPage(candidate)) {
+      logEvent('lai_generic_search_page_demoted', { url: candidate.url, reason: 'title_page_first_ordering' });
+    }
     try {
       const response = await fetchWithTimeout(candidate.url, { headers: { 'user-agent': SEARCH_USER_AGENT } }, fetchImpl);
       if (!response.ok) {
@@ -1653,6 +1679,12 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleV
         {
           adapter: 'lai_games',
           type: 'support_page',
+          label: `${titleVariant} product`,
+          url: `https://laigames.com/games/${slug}/`
+        },
+        {
+          adapter: 'lai_games',
+          type: 'support_page',
           label: `${titleVariant} support`,
           url: `https://laigames.com/games/${slug}/support/`
         },
@@ -1759,9 +1791,30 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleV
   return dedupeByUrl([...seeded, ...referenceAdapterRows]);
 }
 
-async function probeAdapterCandidates({ candidates, manufacturer, titleVariants, manufacturerProfile, fetchImpl, manualRows, supportRows, followupPages, logEvent }) {
+async function probeAdapterCandidates({
+  candidates,
+  manufacturer,
+  titleVariants,
+  manufacturerProfile,
+  fetchImpl,
+  manualRows,
+  supportRows,
+  followupPages,
+  logEvent,
+  diagnostics = {},
+}) {
   let titleSpecificHitCount = 0;
-  for (const candidate of dedupeByUrl(candidates).slice(0, MAX_ADAPTER_FETCHES)) {
+  const orderedCandidates = dedupeByUrl(candidates).slice(0, MAX_ADAPTER_FETCHES);
+  for (const candidate of orderedCandidates) {
+    if (candidate.adapter === 'raw_thrills' && candidate.type === 'support_page') {
+      logEvent('raw_thrills_title_page_candidate_generated', { url: candidate.url, type: candidate.type });
+    }
+    if (candidate.adapter === 'lai_games' && candidate.type === 'support_page') {
+      logEvent('lai_title_page_candidate_generated', { url: candidate.url, type: candidate.type });
+    }
+    if (isDemotedRawThrillsGuessedPdf(candidate)) {
+      logEvent('raw_thrills_guessed_pdf_demoted', { url: candidate.url, reason: 'title_page_first_ordering' });
+    }
     logEvent('manufacturer_adapter_candidate_generated', {
       adapter: candidate.adapter,
       type: candidate.type,
@@ -1771,6 +1824,9 @@ async function probeAdapterCandidates({ candidates, manufacturer, titleVariants,
       const response = await fetchWithTimeout(candidate.url, { headers: { 'user-agent': SEARCH_USER_AGENT } }, fetchImpl);
       const contentType = `${response.headers?.get?.('content-type') || ''}`.toLowerCase();
       if (!response.ok) {
+        if (isDemotedRawThrillsGuessedPdf(candidate) && Number(response.status || 0) === 404) {
+          diagnostics.guessedPdf404Count = Number(diagnostics.guessedPdf404Count || 0) + 1;
+        }
         logEvent('adapter_probe_rejected', {
           adapter: candidate.adapter,
           url: candidate.url,
@@ -1798,6 +1854,12 @@ async function probeAdapterCandidates({ candidates, manufacturer, titleVariants,
 
       if (classification.includeManual) {
         titleSpecificHitCount += 1;
+        if (candidate.adapter === 'raw_thrills' && candidate.type === 'support_page') {
+          logEvent('raw_thrills_title_page_validated', { url: candidate.url, includeManual: true });
+        }
+        if (candidate.adapter === 'lai_games' && candidate.type === 'support_page') {
+          logEvent('lai_title_page_validated', { url: candidate.url, includeManual: true });
+        }
         manualRows.push({
           title: candidate.label,
           url: candidate.url,
@@ -1809,6 +1871,20 @@ async function probeAdapterCandidates({ candidates, manufacturer, titleVariants,
 
       if (classification.includeSupport) {
         if (classification.titleSpecificSupport) titleSpecificHitCount += 1;
+        if (candidate.adapter === 'raw_thrills' && candidate.type === 'support_page') {
+          logEvent('raw_thrills_title_page_validated', {
+            url: candidate.url,
+            includeManual: false,
+            titleSpecificSupport: classification.titleSpecificSupport === true,
+          });
+        }
+        if (candidate.adapter === 'lai_games' && candidate.type === 'support_page') {
+          logEvent('lai_title_page_validated', {
+            url: candidate.url,
+            includeManual: false,
+            titleSpecificSupport: classification.titleSpecificSupport === true,
+          });
+        }
         supportRows.push({
           label: candidate.label,
           url: candidate.url,
@@ -1886,6 +1962,7 @@ async function discoverManualDocumentation({
   const manualRows = [];
   const supportRows = [];
   const followupPages = [];
+  const adapterDiagnostics = { guessedPdf404Count: 0 };
   const queryExecutionOrder = [];
   const evidenceRows = [];
   let searchTimeoutCount = 0;
@@ -1983,7 +2060,8 @@ async function discoverManualDocumentation({
       manualRows,
       supportRows,
       followupPages,
-      logEvent
+      logEvent,
+      diagnostics: adapterDiagnostics,
     });
   }
 
@@ -2368,7 +2446,11 @@ async function discoverManualDocumentation({
     ? 'docs_discovered'
     : (titleSpecificSupportCount > 0
       ? (extractedManualEvidenceCount > 0 ? 'candidate_found_but_not_durable' : 'title_page_found_manual_probe_failed')
-      : (supportResources.length > 0 ? 'close_title_specific_hit_no_manual_extracted' : 'deterministic-search-no-results'));
+      : (supportResources.length > 0
+        ? 'generic-search-page-only'
+        : ((deadManualUrls.size > 0 || Number(adapterDiagnostics.guessedPdf404Count || 0) > 0)
+          ? 'guessed-pdf-404-no-better-candidate'
+          : 'deterministic-search-no-results')));
   const bestExactDiscoveredCandidate = documentationLinks.find((entry) => {
     const tier = classifyCandidateTier(entry);
     return tier === CANDIDATE_TIER.EXACT_TITLE_VALIDATED_MANUAL || tier === CANDIDATE_TIER.EXACT_TITLE_SUPPORT_OR_LIBRARY;

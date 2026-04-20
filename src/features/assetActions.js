@@ -165,6 +165,11 @@ export function createAssetActions(deps) {
     saveAsset: async (id, payload) => {
       const name = `${payload.name || ''}`.trim();
       const manufacturer = `${payload.manufacturer || ''}`.trim();
+      const normalizedNameTokens = name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean);
+      const normalizedManufacturerTokens = manufacturer.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean);
+      const weakLookupWarning = (name.length < 4 || normalizedNameTokens.length <= 1 || manufacturer.length < 3 || normalizedManufacturerTokens.length <= 1)
+        ? 'Warning: title/manufacturer look weak for manual lookup. Add model/version or full manufacturer family to improve match quality.'
+        : '';
       if (!name) return alert('Asset name is required.');
       if (!manufacturer) return alert('Manufacturer is required.');
       const context = syncDraftContextState();
@@ -180,7 +185,7 @@ export function createAssetActions(deps) {
         ...(state.assetDraft || {}),
         saving: true,
         saveFeedback: '',
-        saveSecondaryFeedback: '',
+        saveSecondaryFeedback: weakLookupWarning,
         saveFeedbackTone: 'success',
         saveDebugContext: `Debug - ${buildAssetDraftContextDebug(context)}`
       };
@@ -245,7 +250,13 @@ export function createAssetActions(deps) {
         state.assetDraft = { ...createEmptyAssetDraft(), saveFeedback: 'Asset saved.', saveFeedbackTone: 'success', saveDebugContext: '' };
         await refreshData();
         render();
-        state.assetDraft = { ...(state.assetDraft || {}), saveSecondaryFeedback: 'Docs lookup is still pending.', saveFeedbackTone: 'success' };
+        const existingSecondary = `${state.assetDraft?.saveSecondaryFeedback || weakLookupWarning || ''}`.trim();
+        const pendingMessage = 'Docs lookup is still pending.';
+        state.assetDraft = {
+          ...(state.assetDraft || {}),
+          saveSecondaryFeedback: existingSecondary ? `${existingSecondary} ${pendingMessage}` : pendingMessage,
+          saveFeedbackTone: 'success'
+        };
         render();
         enrichAssetDocumentation(finalId, { trigger: 'post_save' })
           .then(async () => {
