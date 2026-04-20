@@ -1322,6 +1322,49 @@ test('buildDeterministicSearchPlan creates richer manufacturer-aware variants fo
   assert.equal(variants.some((v) => v.includes('bay tek')), true);
 });
 
+test('reference hints expand title variants for difficult known titles', () => {
+  const cases = [
+    ['Jurassic Park Arcade', 'Raw Thrills', ['Jurassic Park']],
+    ['King Kong VR', 'Raw Thrills', ['King Kong of Skull Island VR']],
+    ['HYPERshoot', 'LAI Games', ['Hyper Shoot']],
+    ['Virtual Rabbids', 'LAI Games', ['Virtual Rabbids: The Big Ride']],
+    ['Sink It', 'Bay Tek Games', ['Sink It Shootout']],
+    ['Wizard of Oz', 'Elaut', ['Wizard of Oz Coin Pusher']],
+  ];
+
+  cases.forEach(([title, manufacturer, aliases]) => {
+    const plan = buildDeterministicSearchPlan({
+      assetName: title,
+      normalizedName: title,
+      manufacturer,
+      manufacturerProfile: getManufacturerProfile(manufacturer, title),
+      referenceHints: {
+        canonicalTitleHints: [title],
+        aliases,
+        familyTitles: aliases,
+        preferredManufacturerDomains: ['example.com'],
+        likelyManualFilenamePatterns: [`${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-manual.pdf`],
+      },
+    });
+    assert.equal(plan.titleVariants.some((variant) => aliases.some((alias) => variant.toLowerCase().includes(alias.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ')[0]))), true);
+    assert.equal(plan.searchHints.some((hint) => hint.includes('site:example.com')), true);
+  });
+});
+
+test('reference hints add adapter probe paths without auto-validating manuals', () => {
+  const adapters = buildManufacturerDiscoveryAdapters({
+    title: 'King Kong VR',
+    titleVariants: ['King Kong VR'],
+    manufacturerProfile: getManufacturerProfile('Raw Thrills', 'King Kong VR'),
+    referenceHints: {
+      preferredManufacturerDomains: ['rawthrills.com'],
+      likelySlugPatterns: ['king-kong-of-skull-island-vr'],
+    },
+  });
+  assert.equal(adapters.some((entry) => entry.adapter === 'reference_hint' && /rawthrills\.com\/king-kong-of-skull-island-vr\//.test(entry.url)), true);
+  assert.equal(adapters.some((entry) => entry.adapter === 'reference_hint' && /rawthrills\.com\/wp-content\/uploads\/king-kong-of-skull-island-vr-manual\.pdf/.test(entry.url)), true);
+});
+
 test('discoverManualDocumentation treats provider 403 as nonterminal and still validates adapter/manual hits', async () => {
   const profile = getManufacturerProfile('LAI Games', 'HYPERshoot');
   const events = [];

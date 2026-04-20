@@ -21,8 +21,9 @@ Lookup now runs as a two-stage pipeline shared by single-entry preview, Assets b
 1. Update `functions/src/data/manualLookupWorkbookSeed.json` from the latest approved workbook rows.
 2. Run `npm run manual-catalog:import` from the repo root to normalize workbook rows into `functions/src/data/manualLookupCatalog.json` (`npm run manual-catalog:import --prefix functions` remains equivalent inside scripts/CI).
 3. Review the generated catalog diff and keep the change incremental.
-4. Import trusted CSV rows into the Firestore `trustedManualCatalog` collection with `npm run manual-catalog:import-trusted -- <path-to-csv>`.
-5. Run lint + functions tests + rules tests before deploy.
+4. Generate reference-only hint material from CSV with `npm run manual-catalog:extract-reference -- <path-to-csv> [output-json]`.
+5. Optional/admin-only: import trusted CSV rows into Firestore `trustedManualCatalog` with `npm run manual-catalog:import-trusted -- <path-to-csv>`, but runtime short-circuit is disabled by default (`manualResearchEnableTrustedCatalogShortCircuit` must be explicitly set `true` to re-enable).
+6. Run lint + functions tests + rules tests before deploy.
 
 The normalized catalog supports:
 - `canonicalTitle`
@@ -118,7 +119,7 @@ Trust expectations:
 - `supportUrl`: generic or title-specific support context that helps operators research, but does not satisfy docs-found on its own.
 - Raw crawler/search anchors are never promoted directly. Deterministic validation must reject generic header/footer/navigation, services/installations, account/cart/login, search/category, newsletter/blog, and similar junk links before anything can become `manualUrl`.
 
-This separation prevents dead catalog PDF seeds from short-circuiting deterministic discovery and keeps source/support context from being promoted to a found manual.
+This separation prevents dead catalog PDF seeds from short-circuiting deterministic discovery and keeps source/support context from being promoted to a found manual. CSV imports are treated as `referenceOnly`/`notTrustedCatalog` hints for normalization, alias expansion, adapter probing, and ranking confidence unless admins explicitly enable trusted short-circuit behavior.
 
 For crawled HTML pages and Stage 2 fallbacks, the backend now rejects chrome/junk candidates before classification, including:
 - header/footer/nav/search links

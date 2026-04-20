@@ -1373,7 +1373,7 @@ test('researchAssetTitles reuses previously approved company manuals before web 
 });
 
 
-test('trusted catalog exact matches short-circuit stage2 for difficult titles', async () => {
+test('trusted catalog rows are reference-only by default and do not short-circuit stage2 for difficult titles', async () => {
   let stageTwoCalls = 0;
   const trustedManualCatalog = {
     'jurassic-park-arcade-01': trustedRow({
@@ -1471,11 +1471,11 @@ test('trusted catalog exact matches short-circuit stage2 for difficult titles', 
     },
   });
 
-  assert.equal(stageTwoCalls, 0);
-  assert.equal(result.results.every((entry) => entry.pipelineMeta.trustedCatalogSelected === true), true);
-  assert.equal(result.results.every((entry) => entry.pipelineMeta.discoverySkippedBecauseTrustedCatalogMatched === true), true);
-  assert.equal(result.results.every((entry) => entry.pipelineMeta.trustedCatalogHit === true), true);
-  assert.equal(result.results.some((entry) => /virtualrabbidsthebigridemanual16\.pdf/i.test(entry.pipelineMeta.trustedCatalogCandidateUrl || '')), true);
+  assert.equal(stageTwoCalls, 6);
+  assert.equal(result.results.every((entry) => entry.pipelineMeta.trustedCatalogSelected === false), true);
+  assert.equal(result.results.every((entry) => entry.pipelineMeta.discoverySkippedBecauseTrustedCatalogMatched === false), true);
+  assert.equal(result.results.every((entry) => entry.pipelineMeta.trustedCatalogHit === false), true);
+  assert.equal(result.results.every((entry) => !entry.pipelineMeta.trustedCatalogCandidateUrl), true);
 });
 
 test('trusted catalog review-only rows become strong candidates without auto-attach', async () => {
@@ -1521,6 +1521,42 @@ test('trusted catalog review-only rows become strong candidates without auto-att
   assert.equal(stageTwoCalls, 1);
   assert.equal(result.results[0].manualReady, false);
   assert.equal(result.results[0].reviewRequired, true);
-  assert.equal(result.results[0].pipelineMeta.trustedCatalogHit, true);
+  assert.equal(result.results[0].pipelineMeta.trustedCatalogHit, false);
   assert.equal(result.results[0].pipelineMeta.trustedCatalogSelected, false);
+});
+
+test('trusted catalog short-circuit remains available only when explicitly enabled', async () => {
+  let stageTwoCalls = 0;
+  const result = await researchAssetTitles({
+    db: createDb({
+      trustedManualCatalog: {
+        jp: trustedRow({
+          assetId: 'jurassic-park-arcade-01',
+          assetName: 'Jurassic Park Arcade (2-Player)',
+          manufacturer: 'Raw Thrills',
+          normalizedTitle: 'Jurassic Park Arcade',
+          normalizedName: 'Jurassic Park Arcade',
+          alternateNames: 'Jurassic Park',
+          manualUrl: 'https://rawthrills.com/wp-content/uploads/2020/01/JP-Manual-r09.pdf',
+          manualReady: true,
+          reviewRequired: false,
+          matchConfidence: 0.98,
+        }),
+      },
+    }),
+    settings: { aiEnabled: true, manualResearchEnableTrustedCatalogShortCircuit: true },
+    companyId: 'company-1',
+    titles: [{ originalTitle: 'Jurassic Park Arcade', manufacturerHint: 'Raw Thrills' }],
+    traceId: 'trusted-opt-in',
+    fetchImpl: createFetchMock(),
+    storage: createStorageMock(),
+    researchFallback: async () => {
+      stageTwoCalls += 1;
+      return { manualReady: false, reviewRequired: true, matchType: 'support_only', manualUrl: '' };
+    },
+  });
+
+  assert.equal(stageTwoCalls, 0);
+  assert.equal(result.results[0].pipelineMeta.trustedCatalogSelected, true);
+  assert.equal(result.results[0].pipelineMeta.discoverySkippedBecauseTrustedCatalogMatched, true);
 });
