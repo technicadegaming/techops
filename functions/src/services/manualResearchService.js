@@ -136,6 +136,26 @@ function classifyFallbackTerminalReason({ stage2ErrorCode = '', fallbackDiagnost
   if (discoveryTerminalReason === 'candidate_found_but_not_durable') return 'candidate_found_but_not_durable';
   if (discoveryTerminalReason === 'generic-search-page-only') return 'generic-search-page-only';
   if (discoveryTerminalReason === 'guessed-pdf-404-no-better-candidate') return 'guessed-pdf-404-no-better-candidate';
+  if (Number(fallbackDiagnostics?.referenceManualUrl404Count || 0) > 0) return 'reference-manual-url-404';
+  if (Number(fallbackDiagnostics?.referenceSourcePageProbeCount || 0) > 0
+    && Number(fallbackDiagnostics?.referenceRowCandidateValidatedCount || 0) <= 0
+    && Number(fallbackDiagnostics?.referenceSourcePageNoManualCount || 0) > 0) {
+    return 'reference-source-page-no-manual-link';
+  }
+  if (Number(fallbackDiagnostics?.referenceSupportPageProbeCount || 0) > 0
+    && Number(fallbackDiagnostics?.referenceRowCandidateValidatedCount || 0) <= 0
+    && Number(fallbackDiagnostics?.referenceSupportPageNoManualCount || 0) > 0) {
+    return 'reference-support-page-no-manual-link';
+  }
+  if (Number(fallbackDiagnostics?.referenceManualUrlProbeCount || 0)
+    + Number(fallbackDiagnostics?.referenceSourcePageProbeCount || 0)
+    + Number(fallbackDiagnostics?.referenceSupportPageProbeCount || 0) > 0
+    && Number(fallbackDiagnostics?.referenceRowCandidateValidatedCount || 0) <= 0) {
+    return 'reference-row-hit-no-live-manual';
+  }
+  if (discoveryTerminalReason === 'deterministic-search-no-results' && normalizeString(fallbackDiagnostics?.manufacturer || '', 80)) {
+    return 'manufacturer-adapter-no-better-candidate';
+  }
   if (!documentationCount && !supportCount && Number(fallbackDiagnostics?.searchNoResultsCount || 0) > 0) return 'deterministic-search-no-results';
   if ((reasonCode === 'openai-config-missing' || reasonCode === 'openai-auth-invalid') && !documentationCount && !supportCount) return '';
   return '';
@@ -1328,6 +1348,13 @@ async function researchAssetTitles({
             candidateUrl: candidate?.url || '',
             reason: 'persisted_dead_link_candidate',
           });
+          if (`${candidate?.discoverySource || ''}`.startsWith('reference_row_')) {
+            logManualResearchEvent('reference_row_candidate_stale_cached', {
+              ...logContext,
+              candidateUrl: candidate?.url || '',
+              discoverySource: normalizeString(candidate?.discoverySource || '', 80),
+            });
+          }
           continue;
         }
         if (index > 0) {
@@ -1399,6 +1426,13 @@ async function researchAssetTitles({
           return null;
         });
         if (manualLibraryAcquisition?.manualReady && manualLibraryAcquisition.manualLibrary) {
+          if (`${candidate?.discoverySource || ''}`.startsWith('reference_row_')) {
+            logManualResearchEvent('reference_row_candidate_promoted_validated', {
+              ...logContext,
+              candidateUrl: candidate?.url || '',
+              discoverySource: normalizeString(candidate?.discoverySource || '', 80),
+            });
+          }
           acquiredCandidateIndex = index;
           acquisitionState = 'succeeded';
           break;
@@ -1419,6 +1453,14 @@ async function researchAssetTitles({
             candidateUrl: failed.url || '',
             httpStatus,
           });
+          if (`${candidate?.discoverySource || ''}`.startsWith('reference_row_')) {
+            logManualResearchEvent('reference_row_candidate_demoted_dead', {
+              ...logContext,
+              candidateUrl: failed.url || '',
+              httpStatus,
+              discoverySource: normalizeString(candidate?.discoverySource || '', 80),
+            });
+          }
         });
         if (!lastFailureState) acquisitionState = 'no_manual';
       }
@@ -1594,6 +1636,16 @@ async function researchAssetTitles({
       logManualResearchEvent('generic-search-page-only', { ...logContext });
     } else if (terminalStateReason === 'guessed-pdf-404-no-better-candidate') {
       logManualResearchEvent('guessed-pdf-404-no-better-candidate', { ...logContext });
+    } else if (terminalStateReason === 'reference-row-hit-no-live-manual') {
+      logManualResearchEvent('reference-row-hit-no-live-manual', { ...logContext });
+    } else if (terminalStateReason === 'reference-manual-url-404') {
+      logManualResearchEvent('reference-manual-url-404', { ...logContext });
+    } else if (terminalStateReason === 'reference-source-page-no-manual-link') {
+      logManualResearchEvent('reference-source-page-no-manual-link', { ...logContext });
+    } else if (terminalStateReason === 'reference-support-page-no-manual-link') {
+      logManualResearchEvent('reference-support-page-no-manual-link', { ...logContext });
+    } else if (terminalStateReason === 'manufacturer-adapter-no-better-candidate') {
+      logManualResearchEvent('manufacturer-adapter-no-better-candidate', { ...logContext });
     }
     logManualResearchEvent('terminal_status_reason', {
       ...logContext,
