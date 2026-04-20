@@ -188,6 +188,18 @@ function buildManufacturerAwareTitleVariants({
   });
   const generated = [];
   const seen = new Set();
+  const rejectVariant = (value = '', reason = '') => {
+    const cleaned = `${value || ''}`.replace(/\s+/g, ' ').trim();
+    if (!cleaned) return;
+    logEvent('title_variant_rejected', {
+      variant: sanitizeDiagnosticValue(cleaned, 120),
+      reason: sanitizeDiagnosticValue(reason, 80),
+    });
+    logEvent('title_variant_rejected_reason', {
+      variant: sanitizeDiagnosticValue(cleaned, 120),
+      reason: sanitizeDiagnosticValue(reason, 80),
+    });
+  };
   const pushVariant = (value = '', reason = '') => {
     const cleaned = `${value || ''}`.replace(/\s+/g, ' ').trim();
     if (!cleaned) return;
@@ -224,9 +236,19 @@ function buildManufacturerAwareTitleVariants({
     .forEach((value) => addSplitJoinPermutations(value, 'known_alias'));
 
   const tokenized = normalizePhrase(normalizedInput || typedTitle).split(' ').filter(Boolean);
-  if (tokenized.length > 1) {
-    pushVariant(tokenized.slice().reverse().join(' '), 'token_reordered');
-    pushVariant(tokenized.sort().join(' '), 'token_sorted');
+  if (tokenized.length > 1 && tokenized.length <= 3) {
+    const reordered = tokenized.slice().reverse().join(' ');
+    const sorted = tokenized.slice().sort().join(' ');
+    const hasStopword = tokenized.some((token) => ['the', 'of', 'and', 'for', 'in', 'on', 'at'].includes(token));
+    if (hasStopword) {
+      rejectVariant(reordered, 'token_reordered_plausibility_filter');
+      rejectVariant(sorted, 'token_sorted_plausibility_filter');
+    } else if (tokenized.length === 2 && tokenized[0].length <= 3 && tokenized[1].length >= 4) {
+      pushVariant(reordered, 'token_reordered_short_lead_token');
+    } else {
+      rejectVariant(reordered, 'token_reordered_weak_signal');
+      rejectVariant(sorted, 'token_sorted_weak_signal');
+    }
   }
   if (normalizedManufacturer) {
     const aliases = Array.from(new Set([
@@ -237,7 +259,7 @@ function buildManufacturerAwareTitleVariants({
     ].map((value) => `${value || ''}`.trim()).filter(Boolean))).slice(0, 3);
     aliases.forEach((alias) => {
       pushVariant(`${alias} ${typedTitle || normalizedInput}`.trim(), 'manufacturer_prefixed_title');
-      pushVariant(`${typedTitle || normalizedInput} ${alias}`.trim(), 'manufacturer_suffixed_title');
+      rejectVariant(`${typedTitle || normalizedInput} ${alias}`.trim(), 'manufacturer_suffixed_title_noise');
     });
   }
 
@@ -1101,6 +1123,18 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
     && !betsonUtility
     && (!nonManualUrlClass || nonManualUrlClass.allowSupport)
     && titleSpecificSupport;
+  const probeEligible = !includeManual
+    && !includeSupport
+    && titleMatch
+    && manufacturerMatch
+    && strongManualIntent
+    && !hardNegativeDomain
+    && !likelyChromeLink
+    && !junkPath
+    && !genericSupport
+    && !bayTekUtility
+    && !betsonUtility
+    && (!nonManualUrlClass || nonManualUrlClass.allowSupport);
   const rejectionReasons = [];
 
   if (!titleMatch) rejectionReasons.push('missing_title_match');
@@ -1122,6 +1156,7 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
     resourceType,
     exactMachineManual,
     titleSpecificSupport,
+    probeEligible,
     titleMatch,
     manufacturerMatch,
     directPdf,
@@ -1332,6 +1367,14 @@ function buildManufacturerDiscoverySeedPages({ title, manufacturerProfile, title
     'lai games': candidateVariants.flatMap((titleVariant) => ([
       { adapter: 'lai_seed', type: 'search_page', label: `${titleVariant} LAI Games support search`, url: `https://laigames.com/support/?s=${encodeURIComponent(titleVariant)}` },
       { adapter: 'lai_seed', type: 'search_page', label: `${titleVariant} LAI Games parts search`, url: `https://parts.laigames.com/?s=${encodeURIComponent(titleVariant)}` }
+    ])),
+    sega: titleVariants.flatMap((titleVariant) => ([
+      { adapter: 'sega_seed', type: 'search_page', label: `${titleVariant} Sega Amusements search`, url: `https://segaarcade.com/?s=${encodeURIComponent(titleVariant)}` },
+      { adapter: 'sega_seed', type: 'search_page', label: `${titleVariant} Sega support search`, url: `https://segaarcade.com/support/?s=${encodeURIComponent(titleVariant)}` },
+    ])),
+    elaut: titleVariants.flatMap((titleVariant) => ([
+      { adapter: 'elaut_seed', type: 'search_page', label: `${titleVariant} Elaut support search`, url: `https://www.elaut.com/?s=${encodeURIComponent(titleVariant)}` },
+      { adapter: 'elaut_seed', type: 'search_page', label: `${titleVariant} Elaut group search`, url: `https://www.elaut-group.com/?s=${encodeURIComponent(titleVariant)}` },
     ])),
     'adrenaline amusements': titleVariants.map((titleVariant) => (
       { adapter: 'adrenaline_seed', type: 'search_page', label: `${titleVariant} Adrenaline search`, url: `https://adrenalineamusements.com/?s=${encodeURIComponent(titleVariant)}` }
@@ -1551,6 +1594,64 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleV
           type: 'direct_pdf',
           label: `${titleVariant} operator manual`,
           url: `https://laigames.com/wp-content/uploads/${slug}-operator-manual.pdf`
+        },
+      ];
+    }),
+    sega: adapterTitleVariants.flatMap((titleVariant) => {
+      const slug = slugifyTitle(titleVariant);
+      return [
+        {
+          adapter: 'sega',
+          type: 'support_page',
+          label: `${titleVariant} Sega product page`,
+          url: `https://segaarcade.com/games/${slug}/`
+        },
+        {
+          adapter: 'sega',
+          type: 'support_page',
+          label: `${titleVariant} Sega support page`,
+          url: `https://segaarcade.com/support/${slug}/`
+        },
+        {
+          adapter: 'sega',
+          type: 'support_page',
+          label: `${titleVariant} Sega downloads page`,
+          url: `https://segaarcade.com/downloads/${slug}/`
+        },
+        {
+          adapter: 'sega',
+          type: 'direct_pdf',
+          label: `${titleVariant} Sega operator manual`,
+          url: `https://segaarcade.com/wp-content/uploads/${slug}-operator-manual.pdf`
+        },
+      ];
+    }),
+    elaut: adapterTitleVariants.flatMap((titleVariant) => {
+      const slug = slugifyTitle(titleVariant);
+      return [
+        {
+          adapter: 'elaut',
+          type: 'support_page',
+          label: `${titleVariant} Elaut product page`,
+          url: `https://www.elaut.com/product/${slug}/`
+        },
+        {
+          adapter: 'elaut',
+          type: 'support_page',
+          label: `${titleVariant} Elaut support page`,
+          url: `https://www.elaut.com/support/${slug}/`
+        },
+        {
+          adapter: 'elaut',
+          type: 'support_page',
+          label: `${titleVariant} Elaut Group product page`,
+          url: `https://www.elaut-group.com/products/${slug}/`
+        },
+        {
+          adapter: 'elaut',
+          type: 'direct_pdf',
+          label: `${titleVariant} Elaut operator manual`,
+          url: `https://www.elaut.com/wp-content/uploads/${slug}-operator-manual.pdf`
         },
       ];
     }),
@@ -1959,6 +2060,24 @@ async function discoverManualDocumentation({
           classification: 'support_candidate',
           acceptedAs: 'support_or_product_page',
         });
+      } else if (classification.probeEligible) {
+        followupPages.push({ title: result.title, url: result.url, discoveredBy: `${mode}:probe_promoted`, priority: SEARCH_FOLLOWUP_PRIORITY });
+        logEvent('candidate_promoted_for_probe', {
+          mode,
+          title: sanitizeDiagnosticValue(result.title, 120),
+          url: result.url,
+          manufacturerMatch: classification.manufacturerMatch,
+          titleMatch: classification.titleMatch,
+          strongManualIntent: classification.strongManualIntent,
+        });
+        recordEvidence({
+          queryMode: mode,
+          query,
+          title: result.title,
+          url: result.url,
+          classification: 'probe_candidate',
+          acceptedAs: 'probe_promoted',
+        });
       } else {
         recordEvidence({
           queryMode: mode,
@@ -2013,6 +2132,13 @@ async function discoverManualDocumentation({
       });
       return [];
     });
+    if (!extracted.length) {
+      logEvent('candidate_rejected_after_probe', {
+        pageUrl: page.url,
+        discoveredBy: page.discoveredBy || page.adapter || 'unknown',
+        reason: 'probe_no_manual_links',
+      });
+    }
     followedRows.push(...extracted);
   }
 
@@ -2119,7 +2245,7 @@ async function discoverManualDocumentation({
       // ignore fetch errors for validation
     }
   }
-  const documentationLinks = dedupeByUrl([
+  let documentationLinks = dedupeByUrl([
     ...validatedManualRows,
     ...recoveryRows,
     ...candidateManualRows.filter((row) => !deadManualUrls.has(`${row.url || ''}`.toLowerCase()))
@@ -2135,6 +2261,36 @@ async function discoverManualDocumentation({
     const tier = classifyCandidateTier(entry);
     return tier === CANDIDATE_TIER.EXACT_TITLE_VALIDATED_MANUAL || tier === CANDIDATE_TIER.EXACT_TITLE_SUPPORT_OR_LIBRARY;
   }) || null;
+  if (bestExactDiscoveredCandidate) {
+    logEvent('best_exact_title_candidate_found', {
+      candidateUrl: bestExactDiscoveredCandidate.url,
+      candidateTier: classifyCandidateTier(bestExactDiscoveredCandidate),
+    });
+  }
+  if (bestExactDiscoveredCandidate && documentationLinks[0]) {
+    const selectedRank = buildRankedCandidate(documentationLinks[0], { deadCandidateUrls: deadManualUrls });
+    const bestRank = buildRankedCandidate(bestExactDiscoveredCandidate, { deadCandidateUrls: deadManualUrls });
+    if (compareRankedCandidates(selectedRank, bestRank) > 0) {
+      logEvent('final_selected_weaker_than_best_discovered', {
+        selectedCandidateUrl: documentationLinks[0].url,
+        selectedTier: selectedRank.tier,
+        bestDiscoveredCandidateUrl: bestExactDiscoveredCandidate.url,
+        bestDiscoveredTier: bestRank.tier,
+      });
+      logEvent('weaker_candidate_rejected', {
+        rejectedCandidateUrl: documentationLinks[0].url,
+        selectedCandidateUrl: bestExactDiscoveredCandidate.url,
+      });
+      documentationLinks = dedupeByUrl([
+        bestExactDiscoveredCandidate,
+        ...documentationLinks,
+      ]).slice(0, MAX_DISCOVERY_RESULTS);
+      logEvent('final_candidate_selected_from_best_exact_match', {
+        selectedCandidateUrl: documentationLinks[0].url,
+        selectedCandidateTier: classifyCandidateTier(documentationLinks[0]),
+      });
+    }
+  }
 
   logEvent('complete', {
     documentationLinks: documentationLinks.map((row) => row.url),

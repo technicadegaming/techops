@@ -149,7 +149,39 @@ function prioritizeDocumentationSuggestions({
   const bestDiscovered = rows.find((row) => row.exactTitle && row.discovered && !row.dead);
   const bestWeak = rows.find((row) => !row.dead && (row.tier === CANDIDATE_TIER.GENERIC_BRAND_OR_LIBRARY_PAGE || row.tier === CANDIDATE_TIER.GENERATED_VENDOR_GUESS));
   const deadGuessed = rows.find((row) => row.dead);
-  const top = rows[0] || null;
+  let top = rows[0] || null;
+  if (bestDiscovered) {
+    logEvent('best_exact_title_candidate_found', {
+      ...logContext,
+      candidateUrl: bestDiscovered.candidate?.url || '',
+      candidateTier: bestDiscovered.tier,
+    });
+  }
+  if (bestDiscovered && top && compareRankedCandidates(top, bestDiscovered) > 0) {
+    logEvent('final_selected_weaker_than_best_discovered', {
+      ...logContext,
+      selectedCandidateUrl: top.candidate?.url || '',
+      selectedTier: top.tier,
+      bestDiscoveredCandidateUrl: bestDiscovered.candidate?.url || '',
+      bestDiscoveredTier: bestDiscovered.tier,
+    });
+    logEvent('weaker_candidate_rejected', {
+      ...logContext,
+      rejectedCandidateUrl: top.candidate?.url || '',
+      selectedCandidateUrl: bestDiscovered.candidate?.url || '',
+    });
+    const promoted = rows.find((row) => row.urlKey === bestDiscovered.urlKey);
+    if (promoted) {
+      rows.splice(rows.indexOf(promoted), 1);
+      rows.unshift(promoted);
+      top = rows[0];
+      logEvent('final_candidate_selected_from_best_exact_match', {
+        ...logContext,
+        selectedCandidateUrl: top.candidate?.url || '',
+        selectedTier: top.tier,
+      });
+    }
+  }
   if (top?.discovered) {
     logEvent('final_candidate_selected_from_discovery', { ...logContext, selectedCandidateUrl: top.candidate?.url || '', selectedTier: top.tier });
   } else if (top) {

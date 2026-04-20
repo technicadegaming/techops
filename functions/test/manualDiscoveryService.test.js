@@ -86,6 +86,27 @@ test('buildDeterministicSearchPlan applies manufacturer-aware normalization for 
   assert.equal(normalizedVariants.some((entry) => entry.includes('bay tek')), true);
 });
 
+test('buildDeterministicSearchPlan filters noisy token-reordered title variants while keeping useful normalized variants', () => {
+  const profile = getManufacturerProfile('Sega', 'Power Roll');
+  const logs = [];
+  const plan = buildDeterministicSearchPlan({
+    assetName: 'Power Roll',
+    normalizedName: 'Wizard of Oz',
+    manufacturer: 'Sega',
+    manufacturerProfile: profile,
+    logEvent: (event, payload) => logs.push([event, payload]),
+  });
+  const normalizedVariants = plan.titleVariants.map((entry) => entry.toLowerCase());
+  assert.equal(normalizedVariants.includes('power roll'), true);
+  assert.equal(normalizedVariants.includes('wizard of oz'), true);
+  assert.equal(normalizedVariants.includes('roll power'), false);
+  assert.equal(normalizedVariants.includes('oz of wizard'), false);
+  assert.equal(normalizedVariants.includes('of oz wizard'), false);
+  assert.equal(normalizedVariants.includes('power roll sega'), false);
+  assert.equal(logs.some(([event]) => event === 'title_variant_rejected'), true);
+  assert.equal(logs.some(([event]) => event === 'title_variant_rejected_reason'), true);
+});
+
 test('buildManualSearchQueries always includes both title-only and title+manufacturer deterministic query pairs', () => {
   const profile = getManufacturerProfile('LAI Games', 'Virtual Rabbids');
   const queries = buildManualSearchQueries({
@@ -119,6 +140,23 @@ test('buildManufacturerDiscoveryAdapters exposes deterministic candidates for Ba
 
   assert.ok(bayTek.some((row) => row.url === 'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf'));
   assert.ok(rawThrills.some((row) => row.url === 'https://rawthrills.com/games/jurassic-park-arcade-support/'));
+});
+
+test('buildManufacturerDiscoveryAdapters includes Sega and Elaut title-specific adapter candidates', () => {
+  const sega = buildManufacturerDiscoveryAdapters({
+    title: 'Power Roll',
+    titleVariants: ['Power Roll'],
+    manufacturerProfile: getManufacturerProfile('Sega', 'Power Roll'),
+  });
+  const elaut = buildManufacturerDiscoveryAdapters({
+    title: 'Wizard of Oz',
+    titleVariants: ['Wizard of Oz'],
+    manufacturerProfile: getManufacturerProfile('Elaut', 'Wizard of Oz'),
+  });
+  assert.equal(sega.some((entry) => entry.url === 'https://segaarcade.com/games/power-roll/'), true);
+  assert.equal(sega.some((entry) => /segaarcade\.com\/wp-content\/uploads\/power-roll-operator-manual\.pdf/.test(entry.url)), true);
+  assert.equal(elaut.some((entry) => entry.url === 'https://www.elaut.com/product/wizard-of-oz/'), true);
+  assert.equal(elaut.some((entry) => /elaut\.com\/wp-content\/uploads\/wizard-of-oz-operator-manual\.pdf/.test(entry.url)), true);
 });
 
 test('classifyManualCandidate restores hostname-based manual intent for exact-title manual-library links while rejecting generic manual hubs', () => {
