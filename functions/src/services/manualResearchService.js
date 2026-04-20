@@ -10,6 +10,13 @@ const {
   hasJunkManualCandidateUrl,
 } = require('./manualDiscoveryService');
 const {
+  TIER: CANDIDATE_TIER,
+  classifyCandidateTier,
+  buildRankedCandidate,
+  compareRankedCandidates,
+  normalizeUrlKey,
+} = require('./manualCandidateRankingService');
+const {
   findCatalogManualMatch,
 } = require('./manualLookupCatalogService');
 const {
@@ -82,10 +89,6 @@ function normalizeErrorMessage(error, max = 220) {
   return normalizeString(error?.message || String(error || ''), max);
 }
 
-function normalizeUrlKey(value = '') {
-  return normalizeUrl(value).toLowerCase();
-}
-
 function fingerprint(value = '') {
   const normalized = normalizeString(value, 500).toLowerCase();
   if (!normalized) return '';
@@ -123,23 +126,6 @@ function classifyFallbackTerminalReason({ stage2ErrorCode = '', fallbackDiagnost
   return '';
 }
 
-function buildCandidateValidationTier(entry = {}) {
-  const source = normalizeString(entry?.discoverySource || '', 80);
-  if (`${entry?.cachedManual || ''}` === 'true' || `${entry?.manualLibraryRef || ''}`.trim()) return 'A_shared_library_reuse';
-  if (entry?.verified === true && entry?.exactManualMatch === true) return 'B_validated_direct_manual';
-  if (entry?.verified === true) return 'C_validated_support_manual_evidence';
-  if (source.startsWith('adapter:')) return 'D_generated_vendor_guess';
-  return 'C_unvalidated_search_candidate';
-}
-
-function candidateTierRank(tier = '') {
-  if (tier === 'A_shared_library_reuse') return 0;
-  if (tier === 'B_validated_direct_manual') return 1;
-  if (tier === 'C_validated_support_manual_evidence' || tier === 'C_unvalidated_search_candidate') return 2;
-  if (tier === 'D_generated_vendor_guess') return 3;
-  return 4;
-}
-
 function prioritizeDocumentationSuggestions({
   documentationSuggestions = [],
   deadCandidateUrls = new Set(),
@@ -148,48 +134,58 @@ function prioritizeDocumentationSuggestions({
 } = {}) {
   const deadSet = deadCandidateUrls instanceof Set ? deadCandidateUrls : new Set();
   const rows = (Array.isArray(documentationSuggestions) ? documentationSuggestions : []).map((entry, index) => {
-    const tier = buildCandidateValidationTier(entry);
-    const urlKey = normalizeUrlKey(entry?.url || '');
-    return { entry, index, tier, urlKey, tierRank: candidateTierRank(tier) };
-  });
-  rows.sort((a, b) => {
-    const aDead = !!(a.urlKey && deadSet.has(a.urlKey));
-    const bDead = !!(b.urlKey && deadSet.has(b.urlKey));
-    if (aDead !== bDead) return aDead ? 1 : -1;
-    if (a.tierRank !== b.tierRank) return a.tierRank - b.tierRank;
-    const aScore = Number(a.entry?.discoveryCandidateScore || a.entry?.matchScore || 0);
-    const bScore = Number(b.entry?.discoveryCandidateScore || b.entry?.matchScore || 0);
-    return bScore - aScore || a.index - b.index;
-  });
-  const bestDiscovered = rows.find((row) => row.tierRank <= 2
-    && !`${row.entry?.discoverySource || ''}`.startsWith('adapter:')
-    && !(row.urlKey && deadSet.has(row.urlKey)));
-  const bestGuessed = rows.find((row) => row.tierRank === 3 || `${row.entry?.discoverySource || ''}`.startsWith('adapter:'));
-  const deadGuessed = rows.find((row) => row.urlKey && deadSet.has(row.urlKey));
-  if (bestDiscovered && bestGuessed && bestDiscovered.index !== bestGuessed.index) {
-    logEvent('discovered_candidate_preferred_over_guessed', {
+    const ranked = buildRankedCandidate(entry, { deadCandidateUrls: deadSet });
+    logEvent('candidate_rank_assigned', {
       ...logContext,
-      selectedCandidateUrl: bestDiscovered.entry?.url || '',
-      demotedCandidateUrl: bestGuessed.entry?.url || '',
+      candidateUrl: entry?.url || '',
+      candidateRankTier: ranked.tier,
+      candidateDead: ranked.dead,
+      candidateScore: ranked.score,
+      candidateIndex: index,
+    });
+    return { ...ranked, index };
+  });
+  rows.sort(compareRankedCandidates);
+  const bestDiscovered = rows.find((row) => row.exactTitle && row.discovered && !row.dead);
+  const bestWeak = rows.find((row) => !row.dead && (row.tier === CANDIDATE_TIER.GENERIC_BRAND_OR_LIBRARY_PAGE || row.tier === CANDIDATE_TIER.GENERATED_VENDOR_GUESS));
+  const deadGuessed = rows.find((row) => row.dead);
+  const top = rows[0] || null;
+  if (top?.discovered) {
+    logEvent('final_candidate_selected_from_discovery', { ...logContext, selectedCandidateUrl: top.candidate?.url || '', selectedTier: top.tier });
+  } else if (top) {
+    logEvent('final_candidate_selected_from_research', { ...logContext, selectedCandidateUrl: top.candidate?.url || '', selectedTier: top.tier });
+  }
+  if (bestDiscovered && top && bestDiscovered.urlKey !== top.urlKey && compareRankedCandidates(bestDiscovered, top) < 0) {
+    logEvent('candidate_replaced_due_to_better_exact_match', {
+      ...logContext,
+      previousSelectedCandidateUrl: top.candidate?.url || '',
+      selectedCandidateUrl: bestDiscovered.candidate?.url || '',
+    });
+  }
+  if (bestDiscovered && top && bestDiscovered.urlKey === top.urlKey) {
+    logEvent('discovered_candidate_promoted', {
+      ...logContext,
+      selectedCandidateUrl: bestDiscovered.candidate?.url || '',
       selectedTier: bestDiscovered.tier,
-      demotedTier: bestGuessed.tier,
     });
   }
-  if (deadGuessed && bestDiscovered && bestDiscovered.urlKey !== deadGuessed.urlKey) {
-    logEvent('dead_vendor_candidate_demoted', {
+  if (bestWeak && bestDiscovered && compareRankedCandidates(bestDiscovered, bestWeak) < 0) {
+    logEvent('weak_candidate_demoted', {
       ...logContext,
-      deadCandidateUrl: deadGuessed.entry?.url || '',
-      replacementCandidateUrl: bestDiscovered.entry?.url || '',
-      deadCandidateTier: deadGuessed.tier,
-      replacementTier: bestDiscovered.tier,
-    });
-    logEvent('selected_candidate_replaced_by_discovered_hit', {
-      ...logContext,
-      previousSelectedCandidateUrl: deadGuessed.entry?.url || '',
-      selectedCandidateUrl: bestDiscovered.entry?.url || '',
+      demotedCandidateUrl: bestWeak.candidate?.url || '',
+      selectedCandidateUrl: bestDiscovered.candidate?.url || '',
+      demotedTier: bestWeak.tier,
+      selectedTier: bestDiscovered.tier,
     });
   }
-  return rows.map((row) => row.entry);
+  if (deadGuessed && top && deadGuessed.urlKey !== top.urlKey) {
+    logEvent('candidate_replaced_due_to_better_exact_match', {
+      ...logContext,
+      previousSelectedCandidateUrl: deadGuessed.candidate?.url || '',
+      selectedCandidateUrl: top.candidate?.url || '',
+    });
+  }
+  return rows.map((row) => row.candidate);
 }
 
 function isDeadCandidateStatus(status = 0) {
@@ -1015,7 +1011,7 @@ async function researchAssetTitles({
       logManualResearchEvent('selected_candidate_final_tier', {
         ...logContext,
         candidateUrl: selectedSuggestion?.url || '',
-        candidateTier: buildCandidateValidationTier(selectedSuggestion),
+        candidateTier: classifyCandidateTier(selectedSuggestion),
       });
       logManualResearchEvent('selected_candidate_origin', {
         ...logContext,
@@ -1039,7 +1035,7 @@ async function researchAssetTitles({
     let lastFailureState = '';
     let lastFailureError = '';
     documentationSuggestions = documentationSuggestions.filter((candidate) => {
-      const tier = buildCandidateValidationTier(candidate);
+      const tier = classifyCandidateTier(candidate);
       logManualResearchEvent('candidate_validation_tier', {
         ...logContext,
         title: originalTitle,
@@ -1048,7 +1044,7 @@ async function researchAssetTitles({
         candidateUrl: candidate?.url || '',
         candidateTier: tier,
       });
-      if (tier === 'D_generated_vendor_guess' && candidate?.verified !== true) {
+      if (tier === CANDIDATE_TIER.GENERATED_VENDOR_GUESS && candidate?.verified !== true) {
         logManualResearchEvent('selected_candidate_rejected_unvalidated', {
           ...logContext,
           title: originalTitle,
@@ -1380,7 +1376,7 @@ async function researchAssetTitles({
       providerFallbackInvoked: fallbackDiagnostics.providerFallbackInvoked === true,
       reusableHit: documentationSuggestions.some((entry) => !!`${entry?.manualLibraryRef || ''}`.trim()),
       selectedCandidateUrl: documentationSuggestions[0]?.url || '',
-      selectedCandidateTier: buildCandidateValidationTier(documentationSuggestions[0] || {}),
+      selectedCandidateTier: classifyCandidateTier(documentationSuggestions[0] || {}),
       deadCandidatesSuppressedCount: deadCandidateUrls.size,
       acquisitionState,
       terminalReason: terminalStateReason,

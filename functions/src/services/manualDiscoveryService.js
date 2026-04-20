@@ -1,5 +1,11 @@
 const SEARCH_USER_AGENT = 'techops-manual-discovery/1.0';
 const { normalizePhrase, expandArcadeTitleAliases, resolveArcadeTitleFamily } = require('./arcadeTitleAliasService');
+const {
+  classifyCandidateTier,
+  buildRankedCandidate,
+  compareRankedCandidates,
+  TIER: CANDIDATE_TIER,
+} = require('./manualCandidateRankingService');
 const MAX_SEARCH_RESULTS_PER_QUERY = 8;
 const MAX_DISCOVERY_RESULTS = 10;
 const MAX_FOLLOWUP_FETCHES = 4;
@@ -157,9 +163,9 @@ function buildExactTitleVariants(title, normalizedTitle) {
 }
 
 const MANUFACTURER_VARIANT_EXPANSIONS = {
-  'bay tek': ['bay tek', 'baytek', 'bay tek games'],
-  'lai games': ['lai games', 'lai'],
-  'raw thrills': ['raw thrills', 'rawthrills'],
+  'bay tek': ['bay tek', 'baytek', 'bay tek games', 'skee ball', 'skee-ball', 'skeeball'],
+  'lai games': ['lai games', 'lai', 'lai parts', 'hyper shoot', 'hypershoot'],
+  'raw thrills': ['raw thrills', 'rawthrills', 'king kong', 'skull island'],
 };
 
 function buildManufacturerAwareTitleVariants({
@@ -175,6 +181,11 @@ function buildManufacturerAwareTitleVariants({
   const family = titleFamily || resolveArcadeTitleFamily({ title: normalizedInput || typedTitle, manufacturer });
   const normalizedManufacturer = normalizePhrase(manufacturerProfile?.key || family.manufacturer || manufacturer);
   const manufacturerAliases = MANUFACTURER_VARIANT_EXPANSIONS[normalizedManufacturer] || [];
+  logEvent('manufacturer_aware_title_family_generated', {
+    titleFamily: sanitizeDiagnosticValue(family.familyDisplayTitle || family.familyTitle || family.canonicalTitle || '', 120),
+    manufacturer: sanitizeDiagnosticValue(manufacturer, 120),
+    manufacturerAliases: manufacturerAliases.slice(0, 8),
+  });
   const generated = [];
   const seen = new Set();
   const pushVariant = (value = '', reason = '') => {
@@ -184,6 +195,10 @@ function buildManufacturerAwareTitleVariants({
     if (!key || seen.has(key)) return;
     seen.add(key);
     generated.push(cleaned);
+    logEvent('canonical_title_candidate', {
+      canonicalTitleCandidate: sanitizeDiagnosticValue(cleaned, 120),
+      normalizedCanonicalTitleCandidate: sanitizeDiagnosticValue(key, 120),
+    });
     logEvent('title_variant_generated', {
       variant: sanitizeDiagnosticValue(cleaned, 120),
       reason: sanitizeDiagnosticValue(reason, 80),
@@ -1287,18 +1302,20 @@ function buildFollowupExecutionPlan(followupPages) {
 }
 
 
-function buildManufacturerDiscoverySeedPages({ title, manufacturerProfile }) {
+function buildManufacturerDiscoverySeedPages({ title, manufacturerProfile, titleVariants = [] }) {
   const cleanTitle = `${title || ''}`.trim();
   if (!cleanTitle || !manufacturerProfile?.key) return [];
-  const titleVariants = expandArcadeTitleAliases(cleanTitle).slice(0, 2);
+  const candidateVariants = (Array.isArray(titleVariants) && titleVariants.length
+    ? titleVariants
+    : expandArcadeTitleAliases(cleanTitle)).slice(0, 4);
   const adapters = {
-    'bay tek': titleVariants.flatMap((titleVariant) => [
+    'bay tek': candidateVariants.flatMap((titleVariant) => [
       { adapter: 'bay_tek_seed', type: 'search_page', label: `${titleVariant} Bay Tek parts search`, url: `https://parts.baytekent.com/?s=${encodeURIComponent(titleVariant)}` },
       { adapter: 'bay_tek_seed', type: 'search_page', label: `${titleVariant} Bay Tek support search`, url: `https://baytekent.com/?s=${encodeURIComponent(titleVariant)}` },
       { adapter: 'bay_tek_seed', type: 'search_page', label: `${titleVariant} Betson search`, url: `https://www.betson.com/?s=${encodeURIComponent(`${titleVariant} Bay Tek`)}` },
       { adapter: 'bay_tek_seed', type: 'search_page', label: `${titleVariant} Betson product search`, url: `https://www.betson.com/amusement-products/?s=${encodeURIComponent(titleVariant)}` }
     ]),
-    'raw thrills': titleVariants.flatMap((titleVariant) => [
+    'raw thrills': candidateVariants.flatMap((titleVariant) => [
       { adapter: 'raw_thrills_seed', type: 'search_page', label: `${titleVariant} Raw Thrills search`, url: `https://rawthrills.com/?s=${encodeURIComponent(titleVariant)}` },
       { adapter: 'raw_thrills_seed', type: 'search_page', label: `${titleVariant} Raw Thrills games`, url: `https://rawthrills.com/games/?s=${encodeURIComponent(titleVariant)}` }
     ]),
@@ -1312,9 +1329,10 @@ function buildManufacturerDiscoverySeedPages({ title, manufacturerProfile }) {
     'coastal amusements': titleVariants.map((titleVariant) => (
       { adapter: 'coastal_seed', type: 'search_page', label: `${titleVariant} Coastal search`, url: `https://coastalamusements.com/?s=${encodeURIComponent(titleVariant)}` }
     )),
-    'lai games': titleVariants.map((titleVariant) => (
-      { adapter: 'lai_seed', type: 'search_page', label: `${titleVariant} LAI Games search`, url: `https://laigames.com/?s=${encodeURIComponent(titleVariant)}` }
-    )),
+    'lai games': candidateVariants.flatMap((titleVariant) => ([
+      { adapter: 'lai_seed', type: 'search_page', label: `${titleVariant} LAI Games support search`, url: `https://laigames.com/support/?s=${encodeURIComponent(titleVariant)}` },
+      { adapter: 'lai_seed', type: 'search_page', label: `${titleVariant} LAI Games parts search`, url: `https://parts.laigames.com/?s=${encodeURIComponent(titleVariant)}` }
+    ])),
     'adrenaline amusements': titleVariants.map((titleVariant) => (
       { adapter: 'adrenaline_seed', type: 'search_page', label: `${titleVariant} Adrenaline search`, url: `https://adrenalineamusements.com/?s=${encodeURIComponent(titleVariant)}` }
     ))
@@ -1389,12 +1407,14 @@ async function crawlManufacturerSeedPages({ candidates, manufacturer, titleVaria
   }
 }
 
-function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile }) {
-  const titleVariants = expandArcadeTitleAliases(title).slice(0, 2);
-  if (!titleVariants.length || !manufacturerProfile?.key) return [];
+function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleVariants = [] }) {
+  const adapterTitleVariants = (Array.isArray(titleVariants) && titleVariants.length
+    ? titleVariants
+    : expandArcadeTitleAliases(title)).slice(0, 4);
+  if (!adapterTitleVariants.length || !manufacturerProfile?.key) return [];
 
   const adapters = {
-    'bay tek': titleVariants.flatMap((titleVariant) => {
+    'bay tek': adapterTitleVariants.flatMap((titleVariant) => {
       const slug = slugifyTitle(titleVariant);
       return [
         {
@@ -1412,14 +1432,20 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile }) {
         {
           adapter: 'bay_tek',
           type: 'support_page',
-          label: `${titleVariant} support`,
-          url: `https://parts.baytekent.com/support/${slug}`
+          label: `${titleVariant} manuals`,
+          url: `https://parts.baytekent.com/manuals/${slug}/`
         },
         {
           adapter: 'bay_tek',
           type: 'support_page',
-          label: `${titleVariant} support`,
-          url: `https://baytekent.com/support/${slug}`
+          label: `${titleVariant} game page`,
+          url: `https://baytekent.com/games/${slug}/`
+        },
+        {
+          adapter: 'bay_tek',
+          type: 'support_page',
+          label: `${titleVariant} parts product`,
+          url: `https://parts.baytekent.com/product/${slug}/`
         },
         {
           adapter: 'betson',
@@ -1464,14 +1490,26 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile }) {
         }
       ];
     }),
-    'raw thrills': titleVariants.flatMap((titleVariant) => {
+    'raw thrills': adapterTitleVariants.flatMap((titleVariant) => {
       const slug = slugifyTitle(titleVariant);
       return [
         {
           adapter: 'raw_thrills',
           type: 'support_page',
+          label: `${titleVariant} game page`,
+          url: `https://rawthrills.com/games/${slug}/`
+        },
+        {
+          adapter: 'raw_thrills',
+          type: 'support_page',
           label: `${titleVariant} support`,
-          url: `https://rawthrills.com/games/${slug}-support`
+          url: `https://rawthrills.com/games/${slug}-support/`
+        },
+        {
+          adapter: 'raw_thrills',
+          type: 'support_page',
+          label: `${titleVariant} service support`,
+          url: `https://rawthrills.com/service-support/${slug}/`
         },
         {
           adapter: 'raw_thrills',
@@ -1486,14 +1524,49 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile }) {
           url: `https://rawthrills.com/wp-content/uploads/${slug}-service-manual.pdf`
         }
       ];
-    })
+    }),
+    'lai games': adapterTitleVariants.flatMap((titleVariant) => {
+      const slug = slugifyTitle(titleVariant);
+      return [
+        {
+          adapter: 'lai_games',
+          type: 'support_page',
+          label: `${titleVariant} support`,
+          url: `https://laigames.com/games/${slug}/support/`
+        },
+        {
+          adapter: 'lai_games',
+          type: 'support_page',
+          label: `${titleVariant} downloads`,
+          url: `https://laigames.com/games/${slug}/downloads/`
+        },
+        {
+          adapter: 'lai_games',
+          type: 'support_page',
+          label: `${titleVariant} parts`,
+          url: `https://parts.laigames.com/product/${slug}/`
+        },
+        {
+          adapter: 'lai_games',
+          type: 'direct_pdf',
+          label: `${titleVariant} operator manual`,
+          url: `https://laigames.com/wp-content/uploads/${slug}-operator-manual.pdf`
+        },
+      ];
+    }),
   };
 
   return dedupeByUrl(adapters[manufacturerProfile.key] || []);
 }
 
 async function probeAdapterCandidates({ candidates, manufacturer, titleVariants, manufacturerProfile, fetchImpl, manualRows, supportRows, followupPages, logEvent }) {
+  let titleSpecificHitCount = 0;
   for (const candidate of dedupeByUrl(candidates).slice(0, MAX_ADAPTER_FETCHES)) {
+    logEvent('manufacturer_adapter_candidate_generated', {
+      adapter: candidate.adapter,
+      type: candidate.type,
+      url: candidate.url,
+    });
     try {
       const response = await fetchWithTimeout(candidate.url, { headers: { 'user-agent': SEARCH_USER_AGENT } }, fetchImpl);
       const contentType = `${response.headers?.get?.('content-type') || ''}`.toLowerCase();
@@ -1524,6 +1597,7 @@ async function probeAdapterCandidates({ candidates, manufacturer, titleVariants,
       });
 
       if (classification.includeManual) {
+        titleSpecificHitCount += 1;
         manualRows.push({
           title: candidate.label,
           url: candidate.url,
@@ -1534,6 +1608,7 @@ async function probeAdapterCandidates({ candidates, manufacturer, titleVariants,
       }
 
       if (classification.includeSupport) {
+        if (classification.titleSpecificSupport) titleSpecificHitCount += 1;
         supportRows.push({
           label: candidate.label,
           url: candidate.url,
@@ -1545,6 +1620,14 @@ async function probeAdapterCandidates({ candidates, manufacturer, titleVariants,
       if (/text\/html|application\/xhtml\+xml/.test(contentType) && (classification.titleSpecificSupport || candidate.type === 'support_page')) {
         followupPages.push({ title: candidate.label, url: candidate.url, adapter: candidate.adapter, priority: ADAPTER_FOLLOWUP_PRIORITY });
       }
+      if (classification.includeManual || classification.titleSpecificSupport) {
+        logEvent('manufacturer_adapter_candidate_validated', {
+          adapter: candidate.adapter,
+          url: candidate.url,
+          includeManual: classification.includeManual,
+          titleSpecificSupport: classification.titleSpecificSupport,
+        });
+      }
     } catch (error) {
       logEvent('adapter_probe_error', {
         adapter: candidate.adapter,
@@ -1552,6 +1635,13 @@ async function probeAdapterCandidates({ candidates, manufacturer, titleVariants,
         reason: isAbortLikeError(error) ? 'timeout' : sanitizeDiagnosticValue(error?.message || String(error), 120)
       });
     }
+  }
+  if (!titleSpecificHitCount) {
+    logEvent('manufacturer_adapter_no_title_specific_hit', {
+      manufacturer: sanitizeDiagnosticValue(manufacturer, 120),
+      adapterCount: dedupeByUrl(candidates).slice(0, MAX_ADAPTER_FETCHES).length,
+      titleVariants: (Array.isArray(titleVariants) ? titleVariants : []).slice(0, 8),
+    });
   }
 }
 
@@ -1597,8 +1687,11 @@ async function discoverManualDocumentation({
   const evidenceRows = [];
   let searchTimeoutCount = 0;
   let searchNoResultsCount = 0;
+  let providerBlockedCount = 0;
+  let providerFailureCount = 0;
   const providerAttemptCounts = {};
   const providerZeroResultCounts = {};
+  const providerFailureCounts = {};
   const providerSequenceTried = [];
   let providerFallbackInvoked = false;
   const recordEvidence = (entry = {}) => {
@@ -1615,8 +1708,8 @@ async function discoverManualDocumentation({
       rejectionReasons: Array.isArray(entry.rejectionReasons) ? entry.rejectionReasons.slice(0, 6) : [],
     });
   };
-  const adapterCandidates = buildManufacturerDiscoveryAdapters({ title, manufacturerProfile });
-  const seedPages = buildManufacturerDiscoverySeedPages({ title, manufacturerProfile });
+  const adapterCandidates = buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleVariants });
+  const seedPages = buildManufacturerDiscoverySeedPages({ title, manufacturerProfile, titleVariants });
   const providerPlan = searchProvider
     ? [{ name: searchProvider?.name || 'custom_search_provider', fn: searchProvider }]
     : buildSearchProviderPlan(searchProviderOptions);
@@ -1666,6 +1759,11 @@ async function discoverManualDocumentation({
   }
 
   if (adapterCandidates.length) {
+    logEvent('manufacturer_adapter_started', {
+      manufacturer: sanitizeDiagnosticValue(manufacturer, 120),
+      adapterCandidateCount: adapterCandidates.length,
+      titleVariants: titleVariants.slice(0, 8),
+    });
     logEvent('adapter_candidates', {
       adapters: adapterCandidates.map((candidate) => ({
         adapter: candidate.adapter,
@@ -1706,14 +1804,37 @@ async function discoverManualDocumentation({
         attempt: attempt + 1,
       });
       const providerResults = await provider.fn(query, fetchImpl, searchProviderOptions).catch((error) => {
+        const reason = sanitizeDiagnosticValue(error?.message || String(error), 120);
+        const blockedOrForbidden = /\b403\b|forbidden/i.test(reason);
+        providerFailureCounts[provider.name] = Number(providerFailureCounts[provider.name] || 0) + 1;
         if (isAbortLikeError(error)) searchTimeoutCount += 1;
+        else if (blockedOrForbidden) providerBlockedCount += 1;
+        else providerFailureCount += 1;
+        if (blockedOrForbidden) {
+          logEvent('provider_blocked_or_forbidden', {
+            provider: provider.name,
+            mode,
+            query: sanitizeDiagnosticValue(query, 160),
+            attempt: attempt + 1,
+            reason,
+          });
+        } else {
+          logEvent('provider_failure_nonterminal', {
+            provider: provider.name,
+            mode,
+            query: sanitizeDiagnosticValue(query, 160),
+            attempt: attempt + 1,
+            reason: isAbortLikeError(error) ? 'timeout' : reason,
+          });
+        }
         logEvent('search_retry', {
           provider: provider.name,
           mode,
           query: sanitizeDiagnosticValue(query, 160),
           attempt: attempt + 1,
-          reason: isAbortLikeError(error) ? 'timeout' : sanitizeDiagnosticValue(error?.message || String(error), 120),
+          reason: isAbortLikeError(error) ? 'timeout' : reason,
         });
+        if (attempt + 1 < providerPlan.length) providerFallbackInvoked = true;
         return null;
       });
       if (Array.isArray(providerResults)) {
@@ -1852,6 +1973,14 @@ async function discoverManualDocumentation({
     if (manualRows.length >= 2 && mode === 'official') break;
   }
   logEvent('query_execution_order', { order: queryExecutionOrder });
+  if ((providerBlockedCount > 0 || providerFailureCount > 0 || searchTimeoutCount > 0) && adapterCandidates.length > 0) {
+    logEvent('adapter_recovery_after_provider_failure', {
+      providerBlockedCount,
+      providerFailureCount,
+      searchTimeoutCount,
+      adapterCandidateCount: adapterCandidates.length,
+    });
+  }
 
   const followupPlan = buildFollowupExecutionPlan(followupPages);
   logEvent('followup_plan', {
@@ -1899,6 +2028,16 @@ async function discoverManualDocumentation({
       if (aDiscoveredDirectPdf !== bDiscoveredDirectPdf) return aDiscoveredDirectPdf ? -1 : 1;
       return b.candidateScore - a.candidateScore || `${a.url || ''}`.localeCompare(`${b.url || ''}`);
     });
+  rankedManualRows.slice(0, MAX_DISCOVERY_RESULTS * 2).forEach((candidate, index) => {
+    const ranked = buildRankedCandidate(candidate);
+    logEvent('candidate_rank_assigned', {
+      candidateUrl: candidate.url,
+      candidateRankTier: ranked.tier,
+      candidateDead: false,
+      candidateScore: ranked.score,
+      candidateIndex: index,
+    });
+  });
   const candidateManualRows = rankedManualRows.slice(0, MAX_DISCOVERY_RESULTS * 2);
   if (candidateManualRows.length > 1) {
     const best = candidateManualRows[0];
@@ -1987,15 +2126,27 @@ async function discoverManualDocumentation({
   ])
     .map((candidate) => scoreManualCandidate(candidate, { titleVariants, manufacturerTerms, manufacturerProfile }))
     .filter(Boolean)
-    .sort((a, b) => b.candidateScore - a.candidateScore || `${a.url || ''}`.localeCompare(`${b.url || ''}`))
+    .map((candidate) => buildRankedCandidate(candidate, { deadCandidateUrls: deadManualUrls }))
+    .sort(compareRankedCandidates)
+    .map((entry) => entry.candidate)
     .slice(0, MAX_DISCOVERY_RESULTS);
   const supportResources = dedupeByUrl(supportRows).slice(0, MAX_DISCOVERY_RESULTS);
+  const bestExactDiscoveredCandidate = documentationLinks.find((entry) => {
+    const tier = classifyCandidateTier(entry);
+    return tier === CANDIDATE_TIER.EXACT_TITLE_VALIDATED_MANUAL || tier === CANDIDATE_TIER.EXACT_TITLE_SUPPORT_OR_LIBRARY;
+  }) || null;
 
   logEvent('complete', {
     documentationLinks: documentationLinks.map((row) => row.url),
     supportResources: supportResources.map((row) => row.url),
     htmlFollowups: dedupeByUrl(followupPages).map((row) => row.url)
   });
+  if (documentationLinks.length) {
+    logEvent('final_candidate_selected_from_discovery', {
+      selectedCandidateUrl: documentationLinks[0].url,
+      selectedCandidateTier: classifyCandidateTier(documentationLinks[0]),
+    });
+  }
   logEvent('run_summary', {
     rawTitle: sanitizeDiagnosticValue(assetName, 140),
     normalizedTitle: sanitizeDiagnosticValue(normalizedName || assetName, 140),
@@ -2008,9 +2159,18 @@ async function discoverManualDocumentation({
     providerSequenceTried: Array.from(new Set(providerSequenceTried)),
     providerAttempts: providerAttemptCounts,
     providerZeroResults: providerZeroResultCounts,
+    providerFailures: providerFailureCounts,
     fallbackInvoked: providerFallbackInvoked,
+    providerBlockedCount,
+    providerFailureCount,
     selectedCandidateUrl: documentationLinks[0]?.url || '',
-    selectedCandidateTier: documentationLinks[0]?.candidateScoringFlags?.isAdapterGuess ? 'D_generated_vendor_guess' : 'B_or_C_discovered_candidate',
+    selectedCandidateTier: classifyCandidateTier(documentationLinks[0] || {}),
+    bestExactTitleDiscoveredCandidateUrl: bestExactDiscoveredCandidate?.url || '',
+    finalSelectedWeakerThanBestDiscovered: !!(bestExactDiscoveredCandidate && documentationLinks[0]
+      && compareRankedCandidates(
+        buildRankedCandidate(documentationLinks[0], { deadCandidateUrls: deadManualUrls }),
+        buildRankedCandidate(bestExactDiscoveredCandidate, { deadCandidateUrls: deadManualUrls })
+      ) > 0),
     deadCandidatesSuppressedCount: deadManualUrls.size,
     acquisitionState: documentationLinks.length ? 'candidate_validated' : 'no_candidate_validated',
     terminalReason: documentationLinks.length ? 'docs_discovered' : 'deterministic-search-no-results',
@@ -2035,9 +2195,13 @@ async function discoverManualDocumentation({
       searchNoResultsCount,
       providerAttempts: providerAttemptCounts,
       providerZeroResultCounts: providerZeroResultCounts,
+      providerFailureCounts,
       providerFallbackInvoked,
       providerSequenceTried: Array.from(new Set(providerSequenceTried)),
+      providerBlockedCount,
+      providerFailureCount,
       selectedCandidateUrl: documentationLinks[0]?.url || '',
+      bestExactTitleDiscoveredCandidateUrl: bestExactDiscoveredCandidate?.url || '',
       deadCandidatesSuppressedCount: deadManualUrls.size,
     },
   };
