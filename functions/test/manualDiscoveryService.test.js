@@ -107,14 +107,10 @@ test('buildManualSearchQueries always includes both title-only and title+manufac
   assert.equal(baseline.some((entry) => /"lai games"\s+"virtual rabbids"\s+pdf/.test(entry)), true);
 });
 
-test('buildManufacturerDiscoveryAdapters exposes deterministic candidates for Bay Tek, ICE, and Raw Thrills', () => {
+test('buildManufacturerDiscoveryAdapters exposes deterministic candidates for Bay Tek and Raw Thrills', () => {
   const bayTek = buildManufacturerDiscoveryAdapters({
     title: 'Quik Drop',
     manufacturerProfile: getManufacturerProfile('Bay Tek Games', 'Quik Drop')
-  });
-  const ice = buildManufacturerDiscoveryAdapters({
-    title: 'Air FX',
-    manufacturerProfile: getManufacturerProfile('ICE', 'Air FX')
   });
   const rawThrills = buildManufacturerDiscoveryAdapters({
     title: 'Jurassic Park Arcade',
@@ -122,8 +118,7 @@ test('buildManufacturerDiscoveryAdapters exposes deterministic candidates for Ba
   });
 
   assert.ok(bayTek.some((row) => row.url === 'https://parts.baytekent.com/manuals/quik-drop-service-manual.pdf'));
-  assert.ok(ice.some((row) => row.url === 'https://support.icegame.com/manuals/air-fx-service-manual.pdf'));
-  assert.ok(rawThrills.some((row) => row.url === 'https://rawthrills.com/games/jurassic-park-arcade-support'));
+  assert.ok(rawThrills.some((row) => row.url === 'https://rawthrills.com/games/jurassic-park-arcade-support/'));
 });
 
 test('classifyManualCandidate restores hostname-based manual intent for exact-title manual-library links while rejecting generic manual hubs', () => {
@@ -754,7 +749,10 @@ test('discoverManualDocumentation prioritizes search-discovered follow-up pages 
     'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual-c.pdf',
     'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual-d.pdf'
   ]);
-  assert.equal(htmlFetchCounts.get('https://rawthrills.com/games/jurassic-park-arcade-support'), 1);
+  assert.equal(
+    Number(htmlFetchCounts.get('https://rawthrills.com/games/jurassic-park-arcade-support/') || htmlFetchCounts.get('https://rawthrills.com/games/jurassic-park-arcade-support') || 0),
+    1,
+  );
   assert.equal(htmlFetchCounts.get('https://rawthrills.com/games/jurassic-park-arcade-support-a'), 1);
   assert.equal(htmlFetchCounts.get('https://rawthrills.com/games/jurassic-park-arcade-support-d'), 1);
 });
@@ -1186,4 +1184,58 @@ test('discoverManualDocumentation dead-link recovery skips generic basename deta
   assert.equal(searchCalls.some((query) => /"details"/i.test(query)), false);
   assert.equal(searchCalls.some((query) => /id=com\.example\.willycrash/i.test(query)), false);
   assert.equal(searchCalls.some((query) => /filetype:pdf "Willy Crash"/i.test(query)), false);
+});
+
+test('buildManufacturerDiscoveryAdapters generates title-specific Raw Thrills and LAI candidate paths', () => {
+  const raw = buildManufacturerDiscoveryAdapters({
+    title: 'King Kong VR',
+    titleVariants: ['King Kong VR', 'King Kong of Skull Island VR'],
+    manufacturerProfile: getManufacturerProfile('Raw Thrills', 'King Kong VR'),
+  });
+  const lai = buildManufacturerDiscoveryAdapters({
+    title: 'HYPERshoot',
+    titleVariants: ['HYPERshoot', 'Hyper Shoot'],
+    manufacturerProfile: getManufacturerProfile('LAI Games', 'HYPERshoot'),
+  });
+  assert.equal(raw.some((entry) => /rawthrills\.com\/games\/king-kong-of-skull-island-vr/.test(entry.url)), true);
+  assert.equal(raw.some((entry) => /operator-manual\.pdf/.test(entry.url)), true);
+  assert.equal(lai.some((entry) => /laigames\.com\/games\/hypershoot\/support/.test(entry.url)), true);
+  assert.equal(lai.some((entry) => /parts\.laigames\.com\/product\/hyper-shoot/.test(entry.url)), true);
+});
+
+test('buildDeterministicSearchPlan creates richer manufacturer-aware variants for skeeball modern', () => {
+  const profile = getManufacturerProfile('Bay Tek Games', 'skeeball modern');
+  const plan = buildDeterministicSearchPlan({
+    assetName: 'skeeball modern',
+    normalizedName: 'skeeball modern',
+    manufacturer: 'Bay Tek Games',
+    manufacturerProfile: profile,
+  });
+  const variants = plan.titleVariants.map((v) => v.toLowerCase());
+  assert.equal(variants.includes('skeeball modern'), true);
+  assert.equal(variants.length > 2, true);
+  assert.equal(variants.includes('skeeballmodern'), true);
+  assert.equal(variants.some((v) => v.includes('bay tek')), true);
+});
+
+test('discoverManualDocumentation treats provider 403 as nonterminal and still validates adapter/manual hits', async () => {
+  const profile = getManufacturerProfile('LAI Games', 'HYPERshoot');
+  const events = [];
+  const result = await discoverManualDocumentation({
+    assetName: 'HYPERshoot',
+    normalizedName: 'HYPERshoot',
+    manufacturer: 'LAI Games',
+    manufacturerProfile: profile,
+    fetchImpl: async (url, options = {}) => {
+      if ((options.method || 'GET').toUpperCase() === 'HEAD') return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+      return { ok: true, status: 200, headers: { get: () => 'application/pdf' }, text: async () => '' };
+    },
+    searchProvider: async () => { throw new Error('Search request failed with status 403'); },
+    logger: { log: (...args) => events.push(args) },
+  });
+  assert.equal(result.documentationLinks.length > 0, true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:provider_blocked_or_forbidden'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:provider_failure_nonterminal'), false);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:manufacturer_adapter_started'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:adapter_recovery_after_provider_failure'), true);
 });

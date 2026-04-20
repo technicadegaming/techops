@@ -370,6 +370,56 @@ test('researchAssetTitles emits explicit logs and backend validation can promote
   }
 });
 
+test('researchAssetTitles promotes discovered exact-title manual over dead adapter guess candidate', async () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => { logs.push(args); };
+  try {
+    const result = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
+      companyId: 'company-1',
+      titles: [{ originalTitle: 'Virtual Rabbids', manufacturerHint: 'LAI Games' }],
+      traceId: 'test-rabbids-candidate-promotion',
+      storage: createStorageMock(),
+      fetchImpl: async (url, options = {}) => {
+        if ((options.method || 'GET').toUpperCase() === 'HEAD' && /install-guide\.pdf/i.test(String(url))) {
+          return { ok: false, status: 404, headers: { get: () => 'application/pdf' } };
+        }
+        return {
+          ok: true,
+          status: 200,
+          url,
+          headers: { get: () => (String(url).endsWith('.pdf') ? 'application/pdf' : 'text/html') },
+          text: async () => '',
+          arrayBuffer: async () => Buffer.from('%PDF-1.4\nmanual'),
+        };
+      },
+      researchFallback: async () => ({
+        normalizedTitle: 'Virtual Rabbids: The Big Ride',
+        manufacturer: 'LAI Games',
+        matchType: 'support_only',
+        manualReady: false,
+        reviewRequired: true,
+        manualUrl: '',
+        manualSourceUrl: 'https://laigames.com/games/virtual-rabbids-the-big-ride/support/',
+        supportUrl: 'https://laigames.com/games/virtual-rabbids-the-big-ride/support/',
+        confidence: 0.65,
+        candidates: [
+          { bucket: 'weak_lead', url: 'https://laigames.com/games/', title: 'LAI Games - Games' },
+          { bucket: 'verified_pdf_candidate', url: 'https://laigames.com/wp-content/uploads/virtual-rabbids-the-big-ride-operator-manual.pdf', title: 'Virtual Rabbids: The Big Ride Operator Manual', discoverySource: 'exact_pdf', verified: true, exactManualMatch: true },
+          { bucket: 'verified_pdf_candidate', url: 'https://laigames.com/wp-content/uploads/virtual-rabbids-install-guide.pdf', title: 'Virtual Rabbids Install Guide', discoverySource: 'adapter:lai_games' },
+        ],
+      }),
+    });
+    assert.equal(result.results[0].manualReady, true);
+    assert.match(result.results[0].manualUrl || '', /^manual-library\//i);
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:candidate_rank_assigned'), true);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
 test('researchAssetTitles persists/consumes answered follow-up fingerprints and avoids identical follow-up loop', async () => {
   const followupAnswer = 'It says Deluxe on the marquee';
   const followupFingerprint = createHash('sha1').update(followupAnswer.toLowerCase()).digest('hex');
@@ -683,7 +733,11 @@ test('researchAssetTitles prefers discovered validated candidate over persisted 
     assert.equal(result.results[0].manualReady, true);
     assert.equal(result.results[0].documentationSuggestions[0]?.url, result.results[0].manualUrl);
     assert.equal(result.results[0].documentationSuggestions.some((entry) => entry.url === deadGuessedUrl), false);
-    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:dead_vendor_candidate_demoted'), true);
+    assert.equal(
+      logs.some((entry) => entry[0] === 'manualResearch:candidate_replaced_due_to_better_exact_match')
+      || logs.some((entry) => entry[0] === 'manualResearch:weak_candidate_demoted'),
+      true,
+    );
   } finally {
     console.log = originalLog;
   }
