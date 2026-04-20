@@ -216,6 +216,9 @@ async function acquireManualToLibrary({
         lastVerifiedAt: new Date().toISOString(),
         seededFromWorkbook: context.seededFromWorkbook === true,
         catalogEntryId: context.catalogEntryId || '',
+        trustedCatalog: context.trustedCatalog === true,
+        trustedCatalogSourceRowId: context.trustedCatalogSourceRowId || '',
+        source: context.source || '',
         notes: context.notes || '',
       },
     });

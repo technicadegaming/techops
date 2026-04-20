@@ -4,12 +4,13 @@ const { createHash } = require('node:crypto');
 
 const { researchAssetTitles } = require('../src/services/manualResearchService');
 const { extractManualLinksFromHtmlPage } = require('../src/services/manualDiscoveryService');
+const { normalizeTrustedCatalogRow } = require('../src/services/trustedManualCatalogService');
 
 function createDoc(data = {}, id = 'doc-1') {
   return { id, data: () => data };
 }
 
-function createDb({ cache = {}, manuals = [], assets = [], manualLibrary = {} } = {}) {
+function createDb({ cache = {}, manuals = [], assets = [], manualLibrary = {}, trustedManualCatalog = {} } = {}) {
   return {
     collection(name) {
       if (name === 'assetTitleResearchCache') {
@@ -50,6 +51,23 @@ function createDb({ cache = {}, manuals = [], assets = [], manualLibrary = {} } 
           doc(id) { return { async set(value) { manualLibrary[id] = { ...(manualLibrary[id] || {}), ...value }; } }; },
         };
       }
+      if (name === 'trustedManualCatalog') {
+        return {
+          where(field, op, value) { this._filters = [...(this._filters || []), [field, op, value]]; return this; },
+          limit() { return this; },
+          async get() {
+            const docs = Object.entries(trustedManualCatalog)
+              .filter(([, row]) => (this._filters || []).every(([field, op, value]) => {
+                const fieldValue = row[field];
+                if (op === 'array-contains') return Array.isArray(fieldValue) && fieldValue.includes(value);
+                return fieldValue === value;
+              }))
+              .map(([id, row]) => createDoc(row, id));
+            return { empty: docs.length === 0, docs };
+          },
+          doc(id) { return { async set(value) { trustedManualCatalog[id] = { ...(trustedManualCatalog[id] || {}), ...value }; } }; },
+        };
+      }
       if (name === 'assets') {
         return {
           where() { return this; },
@@ -87,6 +105,29 @@ function createFetchMock() {
         : 'Operator manual support page for arcade game with title-specific references and support contacts.',
     };
   };
+}
+
+
+function trustedRow(row = {}) {
+  return normalizeTrustedCatalogRow({
+    assetId: row.assetId,
+    'asset name': row.assetName,
+    manufacturer: row.manufacturer,
+    model: row.model || '',
+    originalTitle: row.originalTitle || row.assetName,
+    normalizedTitle: row.normalizedTitle || row.assetName,
+    normalizedName: row.normalizedName || row.normalizedTitle || row.assetName,
+    alternateNames: row.alternateNames || '',
+    manualUrl: row.manualUrl || '',
+    manualSourceUrl: row.manualSourceUrl || '',
+    supportUrl: row.supportUrl || '',
+    supportEmail: row.supportEmail || '',
+    supportPhone: row.supportPhone || '',
+    matchType: row.matchType || 'exact_manual',
+    manualReady: row.manualReady,
+    reviewRequired: row.reviewRequired,
+    matchConfidence: row.matchConfidence,
+  });
 }
 
 test('researchAssetTitles runs OpenAI first and still resolves durable Quick Drop manuals', async () => {
@@ -1329,4 +1370,157 @@ test('researchAssetTitles reuses previously approved company manuals before web 
   assert.equal(result.results[0].manualReady, true);
   assert.match(result.results[0].manualUrl, /^manual-library\/bay-tek(?:-games)?\/quik-drop\/.+\.pdf$/i);
   assert.ok(result.results[0].manualLibraryRef);
+});
+
+
+test('trusted catalog exact matches short-circuit stage2 for difficult titles', async () => {
+  let stageTwoCalls = 0;
+  const trustedManualCatalog = {
+    'jurassic-park-arcade-01': trustedRow({
+      assetId: 'jurassic-park-arcade-01',
+      assetName: 'Jurassic Park Arcade (2-Player)',
+      manufacturer: 'Raw Thrills',
+      normalizedTitle: 'Jurassic Park Arcade',
+      normalizedName: 'Jurassic Park Arcade',
+      alternateNames: 'Jurassic Park',
+      manualUrl: 'https://rawthrills.com/wp-content/uploads/2020/01/JP-Manual-r09.pdf',
+      manualSourceUrl: 'https://rawthrills.com/games/jurassic-park-arcade/',
+      manualReady: true,
+      reviewRequired: false,
+      matchConfidence: 0.98,
+    }),
+    'king-kong-of-skull-island-vr-01': trustedRow({
+      assetId: 'king-kong-of-skull-island-vr-01',
+      assetName: 'King Kong of Skull Island VR (2-Player)',
+      manufacturer: 'Raw Thrills',
+      normalizedTitle: 'King Kong of Skull Island VR',
+      normalizedName: 'King Kong of Skull Island VR',
+      alternateNames: 'King Kong VR',
+      manualUrl: 'https://rawthrills.com/wp-content/uploads/2021/03/040-00078-01_King_Kong_of_Skull_Island_Manual_REV6.pdf',
+      manualReady: true,
+      reviewRequired: false,
+      matchConfidence: 0.97,
+    }),
+    hypershoot: trustedRow({
+      assetId: 'hypershoot-01',
+      assetName: 'HYPERshoot (2-Player)',
+      manufacturer: 'LAI Games',
+      normalizedTitle: 'HYPERshoot',
+      normalizedName: 'HYPERshoot',
+      alternateNames: 'HyperShoot',
+      manualUrl: 'https://www.mossdistributing.com/userdocs/documents/MS0225_HYPERSHOOT.PDF',
+      manualReady: true,
+      reviewRequired: false,
+      matchConfidence: 0.97,
+    }),
+    rabbits: trustedRow({
+      assetId: 'virtual-rabbids-the-big-ride-01',
+      assetName: 'Virtual Rabbids: The Big Ride (2-Player)',
+      manufacturer: 'LAI Games',
+      normalizedTitle: 'Virtual Rabbids: The Big Ride',
+      normalizedName: 'Virtual Rabbids: The Big Ride',
+      alternateNames: 'Virtual Rabbids',
+      manualUrl: 'https://www.betson.com/wp-content/uploads/2020/01/VirtualRabbidsTheBigRideManual16.pdf',
+      manualReady: true,
+      reviewRequired: false,
+      matchConfidence: 0.96,
+    }),
+    sinkit: trustedRow({
+      assetId: 'sink-it-01',
+      assetName: 'Sink It (2-Player)',
+      manufacturer: 'Bay Tek Games',
+      normalizedTitle: 'Sink It',
+      normalizedName: 'Sink It',
+      manualUrl: 'https://www.mossdistributing.com/userdocs/documents/MS0078_SINK%20IT.pdf',
+      manualReady: true,
+      reviewRequired: false,
+      matchConfidence: 0.97,
+    }),
+    wizard: trustedRow({
+      assetId: 'wizard-of-oz-coin-pusher-01',
+      assetName: 'Wizard of Oz Coin Pusher',
+      manufacturer: 'Elaut / Coastal Amusements',
+      normalizedTitle: 'Wizard of Oz Coin Pusher',
+      normalizedName: 'Wizard of Oz Coin Pusher',
+      alternateNames: 'Wizard of Oz',
+      manualUrl: 'https://www.betson.com/wp-content/uploads/2025/02/040-00094-01_Wizard-of-Oz_REV-05.pdf',
+      manualReady: true,
+      reviewRequired: false,
+      matchConfidence: 0.91,
+    }),
+  };
+
+  const result = await researchAssetTitles({
+    db: createDb({ trustedManualCatalog }),
+    settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
+    companyId: 'company-1',
+    titles: [
+      { originalTitle: 'Jurassic Park Arcade', manufacturerHint: 'Raw Thrills' },
+      { originalTitle: 'King Kong VR', manufacturerHint: 'Raw Thrills' },
+      { originalTitle: 'HYPERshoot', manufacturerHint: 'LAI Games' },
+      { originalTitle: 'Virtual Rabbids', manufacturerHint: 'LAI Games' },
+      { originalTitle: 'Sink It', manufacturerHint: 'Bay Tek Games' },
+      { originalTitle: 'Wizard of Oz', manufacturerHint: 'Elaut / Coastal Amusements' },
+    ],
+    traceId: 'trusted-short-circuit',
+    fetchImpl: createFetchMock(),
+    storage: createStorageMock(),
+    researchFallback: async () => {
+      stageTwoCalls += 1;
+      return { manualReady: false, reviewRequired: true, matchType: 'support_only', manualUrl: '' };
+    },
+  });
+
+  assert.equal(stageTwoCalls, 0);
+  assert.equal(result.results.every((entry) => entry.pipelineMeta.trustedCatalogSelected === true), true);
+  assert.equal(result.results.every((entry) => entry.pipelineMeta.discoverySkippedBecauseTrustedCatalogMatched === true), true);
+  assert.equal(result.results.every((entry) => entry.pipelineMeta.trustedCatalogHit === true), true);
+  assert.equal(result.results.some((entry) => /virtualrabbidsthebigridemanual16\.pdf/i.test(entry.pipelineMeta.trustedCatalogCandidateUrl || '')), true);
+});
+
+test('trusted catalog review-only rows become strong candidates without auto-attach', async () => {
+  let stageTwoCalls = 0;
+  const result = await researchAssetTitles({
+    db: createDb({
+      trustedManualCatalog: {
+        review_only: trustedRow({
+          assetId: 'duck-derby-01',
+          assetName: 'Duck Derby (2-Player)',
+          manufacturer: 'Adrenaline Amusements',
+          normalizedTitle: 'Duck Derby',
+          normalizedName: 'Duck Derby',
+          manualUrl: '',
+          manualSourceUrl: 'https://www.betson.com/amusement-products/duck-derby/',
+          supportUrl: 'https://adrenalineamusements.com/',
+          manualReady: false,
+          reviewRequired: true,
+          matchConfidence: 0.78,
+          matchType: 'no_manual',
+        }),
+      },
+    }),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{ originalTitle: 'Duck Derby', manufacturerHint: 'Adrenaline Amusements' }],
+    traceId: 'trusted-review-only',
+    fetchImpl: createFetchMock(),
+    storage: createStorageMock(),
+    researchFallback: async () => {
+      stageTwoCalls += 1;
+      return {
+        normalizedTitle: 'Duck Derby',
+        manufacturer: 'Adrenaline Amusements',
+        manualReady: false,
+        reviewRequired: true,
+        matchType: 'support_only',
+        manualUrl: '',
+      };
+    },
+  });
+
+  assert.equal(stageTwoCalls, 1);
+  assert.equal(result.results[0].manualReady, false);
+  assert.equal(result.results[0].reviewRequired, true);
+  assert.equal(result.results[0].pipelineMeta.trustedCatalogHit, true);
+  assert.equal(result.results[0].pipelineMeta.trustedCatalogSelected, false);
 });

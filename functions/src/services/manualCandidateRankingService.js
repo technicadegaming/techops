@@ -2,10 +2,11 @@ const { normalizeUrl } = require('./manualLibraryService');
 
 const TIER = {
   SHARED_LIBRARY_REUSE: 'A_shared_library_reuse',
-  EXACT_TITLE_VALIDATED_MANUAL: 'B_exact_title_validated_manual',
-  EXACT_TITLE_SUPPORT_OR_LIBRARY: 'C_exact_title_support_or_library',
-  GENERIC_BRAND_OR_LIBRARY_PAGE: 'D_generic_brand_or_library_page',
-  GENERATED_VENDOR_GUESS: 'E_generated_vendor_guess',
+  TRUSTED_IMPORTED_CATALOG: 'B_trusted_imported_catalog',
+  EXACT_TITLE_VALIDATED_MANUAL: 'C_exact_title_validated_manual',
+  EXACT_TITLE_SUPPORT_OR_LIBRARY: 'D_exact_title_support_or_library',
+  GENERIC_BRAND_OR_LIBRARY_PAGE: 'E_generic_brand_or_library_page',
+  GENERATED_VENDOR_GUESS: 'F_generated_vendor_guess',
 };
 
 function normalizeUrlKey(value = '') {
@@ -19,10 +20,11 @@ function toNumber(value, fallback = 0) {
 
 function tierRank(tier = '') {
   if (tier === TIER.SHARED_LIBRARY_REUSE) return 0;
-  if (tier === TIER.EXACT_TITLE_VALIDATED_MANUAL) return 1;
-  if (tier === TIER.EXACT_TITLE_SUPPORT_OR_LIBRARY) return 2;
-  if (tier === TIER.GENERIC_BRAND_OR_LIBRARY_PAGE) return 3;
-  if (tier === TIER.GENERATED_VENDOR_GUESS) return 4;
+  if (tier === TIER.TRUSTED_IMPORTED_CATALOG) return 1;
+  if (tier === TIER.EXACT_TITLE_VALIDATED_MANUAL) return 2;
+  if (tier === TIER.EXACT_TITLE_SUPPORT_OR_LIBRARY) return 3;
+  if (tier === TIER.GENERIC_BRAND_OR_LIBRARY_PAGE) return 4;
+  if (tier === TIER.GENERATED_VENDOR_GUESS) return 5;
   return 5;
 }
 
@@ -34,6 +36,9 @@ function classifyCandidateTier(candidate = {}) {
   const title = `${candidate?.title || ''}`.trim().toLowerCase();
   const verified = candidate?.verified === true || bucket === 'verified_pdf_candidate';
   const cachedManual = `${candidate?.cachedManual || ''}` === 'true' || !!`${candidate?.manualLibraryRef || ''}`.trim();
+  const trustedCatalog = candidate?.trustedCatalog === true
+    || `${candidate?.source || ''}`.trim().toLowerCase() === 'imported_csv'
+    || discoverySource === 'trusted_catalog';
   const exactTitle = candidate?.exactManualMatch === true
     || candidate?.candidateScoringFlags?.hasStrongTitleFamilyMatch === true
     || toNumber(candidate?.matchScore, 0) >= 85
@@ -53,6 +58,7 @@ function classifyCandidateTier(candidate = {}) {
     || /\/library\/?$|\/manuals?\/?$|\/support\/?$/.test(url);
 
   if (cachedManual) return TIER.SHARED_LIBRARY_REUSE;
+  if (trustedCatalog) return TIER.TRUSTED_IMPORTED_CATALOG;
   if (!adapterGuess && exactTitle && directManualLike && verified) return TIER.EXACT_TITLE_VALIDATED_MANUAL;
   if (!adapterGuess && exactTitle && (directManualLike || titleSpecificSupport || verified)) return TIER.EXACT_TITLE_SUPPORT_OR_LIBRARY;
   if (adapterGuess) return TIER.GENERATED_VENDOR_GUESS;
