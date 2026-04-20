@@ -499,7 +499,6 @@ test('discoverManualDocumentation logs broad-first query execution order and rec
     logger: { log: (event, payload) => events.push({ event, payload }) },
     traceId: 'raw-thrills-broad-first',
     searchProvider: async (query) => {
-      if (/site:rawthrills\.com/i.test(query)) return [];
       if (/king kong/i.test(query)) {
         return [{ title: 'King Kong Operator Manual PDF', url: 'https://cdn.example.com/king-kong-operator-manual.pdf' }];
       }
@@ -516,7 +515,7 @@ test('discoverManualDocumentation logs broad-first query execution order and rec
   assert.equal(result.documentationLinks.some((row) => /king-kong-operator-manual\.pdf/i.test(row.url)), true);
   const orderEvent = events.find((entry) => entry.event === 'manualDiscovery:query_execution_order');
   assert.ok(orderEvent);
-  assert.equal(orderEvent.payload?.order?.[0]?.mode, 'broad_first');
+  assert.equal(orderEvent.payload?.order?.[0]?.mode, 'official');
 });
 
 test('discoverManualDocumentation falls back from all-zero Bing batch to DuckDuckGo and uses fallback provider results', async () => {
@@ -1520,4 +1519,105 @@ test('buildManufacturerDiscoveryAdapters generates reference-first paths for Jur
   assert.equal(lai.some((entry) => entry.adapter === 'lai_games_reference' && /laigames\.com\/games\/hypershoot\/support\//.test(entry.url)), true);
   assert.equal(logs.some((entry) => entry[0] === 'raw_thrills_reference_path_generated'), true);
   assert.equal(logs.some((entry) => entry[0] === 'lai_reference_path_generated'), true);
+});
+
+test('buildManufacturerDiscoveryAdapters prioritizes reference row URLs before guessed manufacturer paths', () => {
+  const raw = buildManufacturerDiscoveryAdapters({
+    title: 'Jurassic Park Arcade',
+    titleVariants: ['Jurassic Park Arcade'],
+    manufacturerProfile: getManufacturerProfile('Raw Thrills', 'Jurassic Park Arcade'),
+    referenceHints: {
+      referenceRowCandidates: [{
+        sourceRowId: 'jp-row-1',
+        manufacturer: 'Raw Thrills',
+        normalizedTitle: 'Jurassic Park Arcade',
+        manualUrl: 'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual-r09.pdf',
+        manualSourceUrl: 'https://rawthrills.com/games/jurassic-park-arcade/',
+        supportUrl: 'https://rawthrills.com/games/jurassic-park-arcade-support/',
+      }],
+      preferredManufacturerDomains: ['rawthrills.com'],
+      likelySlugPatterns: ['jurassic-park-arcade'],
+    },
+  });
+  assert.equal(raw[0].url, 'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual-r09.pdf');
+  assert.equal(raw[0].adapter, 'reference_row');
+  assert.equal(raw.some((entry) => entry.adapter === 'raw_thrills' && entry.type === 'direct_pdf'), true);
+});
+
+test('buildManufacturerDiscoveryAdapters keeps manufacturer-first reference row filtering (Wizard of Oz / Elaut)', () => {
+  const elaut = buildManufacturerDiscoveryAdapters({
+    title: 'Wizard of Oz',
+    titleVariants: ['Wizard of Oz'],
+    manufacturerProfile: getManufacturerProfile('Elaut', 'Wizard of Oz'),
+    referenceHints: {
+      referenceRowCandidates: [{
+        sourceRowId: 'raw-jp-row',
+        manufacturer: 'Raw Thrills',
+        normalizedTitle: 'Jurassic Park Arcade',
+        manualUrl: 'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-manual.pdf',
+      }, {
+        sourceRowId: 'elaut-woz-row',
+        manufacturer: 'Elaut',
+        normalizedTitle: 'Wizard of Oz',
+        manualSourceUrl: 'https://www.elaut.com/product/wizard-of-oz/',
+      }],
+    },
+  });
+  assert.equal(elaut.some((entry) => entry.adapter === 'reference_row' && /rawthrills\.com/i.test(entry.url)), false);
+  assert.equal(elaut.some((entry) => entry.adapter === 'reference_row' && /elaut\.com\/product\/wizard-of-oz/i.test(entry.url)), true);
+});
+
+test('discoverManualDocumentation probes reference row candidates first for HYPERshoot/Virtual Rabbids style manufacturer matches', async () => {
+  const profile = getManufacturerProfile('LAI Games', 'HYPERshoot');
+  const events = [];
+  const result = await discoverManualDocumentation({
+    assetName: 'HYPERshoot',
+    normalizedName: 'HYPERshoot',
+    manufacturer: 'LAI Games',
+    manufacturerProfile: profile,
+    referenceHints: {
+      referenceRowCandidates: [{
+        sourceRowId: 'lai-hs-row',
+        manufacturer: 'LAI Games',
+        normalizedTitle: 'HYPERshoot',
+        manualUrl: 'https://laigames.com/wp-content/uploads/hypershoot-operator-manual.pdf',
+        manualSourceUrl: 'https://laigames.com/games/hypershoot/',
+        supportUrl: 'https://laigames.com/games/hypershoot/support/',
+      }],
+    },
+    searchProvider: async () => [],
+    fetchImpl: async (_url, options = {}) => {
+      if ((options.method || 'GET').toUpperCase() === 'HEAD') return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+      return { ok: true, status: 200, headers: { get: () => 'application/pdf' }, text: async () => '' };
+    },
+    logger: { log: (...args) => events.push(args) },
+  });
+  assert.equal(result.documentationLinks.some((row) => /hypershoot-operator-manual\.pdf$/i.test(row.url)), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:reference_row_candidate_generated'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:reference_row_manual_url_probed'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:reference_row_candidate_validated'), true);
+
+  const rabbits = await discoverManualDocumentation({
+    assetName: 'Virtual Rabbids',
+    normalizedName: 'Virtual Rabbids',
+    manufacturer: 'LAI Games',
+    manufacturerProfile: getManufacturerProfile('LAI Games', 'Virtual Rabbids'),
+    referenceHints: {
+      referenceRowCandidates: [{
+        sourceRowId: 'lai-rabbids-row',
+        manufacturer: 'LAI Games',
+        normalizedTitle: 'Virtual Rabbids: The Big Ride',
+        manualUrl: 'https://www.betson.com/wp-content/uploads/2020/01/VirtualRabbidsTheBigRideManual16.pdf',
+        manualSourceUrl: 'https://www.betson.com/amusement-products/virtual-rabbids-the-big-ride/',
+        supportUrl: 'https://www.betson.com/amusement-products/virtual-rabbids-the-big-ride/',
+      }],
+    },
+    searchProvider: async () => [],
+    fetchImpl: async (_url, options = {}) => {
+      if ((options.method || 'GET').toUpperCase() === 'HEAD') return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+      return { ok: true, status: 200, headers: { get: () => 'application/pdf' }, text: async () => '' };
+    },
+    logger: { log: () => {} },
+  });
+  assert.equal(rabbits.documentationLinks.some((row) => /virtualrabbidsthebigridemanual16\.pdf$/i.test(row.url)), true);
 });

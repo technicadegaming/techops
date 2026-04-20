@@ -24,6 +24,21 @@ test('findManualLookupReferenceHints resolves json index entries without Firesto
         likelySlugPatterns: ['jurassic-park-arcade'],
         likelyManualFilenamePatterns: ['jurassic-park-arcade-manual.pdf'],
         preferredManufacturerDomains: ['rawthrills.com'],
+        referenceRowCandidates: [{
+          sourceRowId: 'jp-1',
+          assetName: 'Jurassic Park Arcade',
+          manufacturer: 'Raw Thrills',
+          originalTitle: 'Jurassic Park Arcade',
+          normalizedTitle: 'Jurassic Park Arcade',
+          alternateNames: ['Jurassic Park'],
+          manualUrl: 'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-manual.pdf',
+          manualSourceUrl: 'https://rawthrills.com/games/jurassic-park-arcade/',
+          supportUrl: 'https://rawthrills.com/games/jurassic-park-arcade-support/',
+          matchType: 'manual_page_with_download',
+          manualReady: false,
+          reviewRequired: true,
+          matchConfidence: 0.92,
+        }],
       },
     ],
     byNormalizedTitleKey: { 'jurassic park arcade': ['raw thrills::jurassic park arcade'] },
@@ -46,6 +61,10 @@ test('findManualLookupReferenceHints resolves json index entries without Firesto
   assert.equal(lookup.source, 'json_index');
   assert.equal(lookup.hints.entryKey, 'raw thrills::jurassic park arcade');
   assert.equal(lookup.hints.preferredManufacturerDomains.includes('rawthrills.com'), true);
+  assert.equal(Array.isArray(lookup.hints.referenceRowCandidates), true);
+  assert.equal(lookup.hints.referenceRowCandidates[0].manualUrl.includes('jurassic-park-arcade-manual.pdf'), true);
+  assert.equal(lookup.hints.referenceRowCandidates[0].manualSourceUrl.includes('/games/jurassic-park-arcade/'), true);
+  assert.equal(lookup.hints.referenceRowCandidates[0].supportUrl.includes('/games/jurassic-park-arcade-support/'), true);
 });
 
 test('findManualLookupReferenceHints returns miss when no json entry exists', async () => {

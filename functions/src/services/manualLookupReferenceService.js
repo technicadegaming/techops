@@ -62,6 +62,31 @@ function deriveFilenameHints(values = []) {
   return Array.from(new Set(out));
 }
 
+function toReferenceRowCandidate(row = {}) {
+  const normalizeBool = (value) => value === true || `${value || ''}`.trim().toLowerCase() === 'true';
+  const normalizeConfidence = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const alternateNames = splitAliases(row.alternateNames).slice(0, 16);
+  return {
+    rowId: normalizeString(row.rowId || row.id || row.assetId || '', 160),
+    sourceRowId: normalizeString(row.sourceRowId || row.id || row.assetId || '', 160),
+    assetName: normalizeString(row.assetName || '', 220),
+    manufacturer: normalizeString(row.manufacturer || '', 180),
+    originalTitle: normalizeString(row.originalTitle || row.assetName || '', 220),
+    normalizedTitle: normalizeString(row.normalizedTitle || row.normalizedName || '', 220),
+    alternateNames,
+    manualUrl: normalizeString(row.manualUrl || '', 320),
+    manualSourceUrl: normalizeString(row.manualSourceUrl || '', 320),
+    supportUrl: normalizeString(row.supportUrl || '', 320),
+    matchType: normalizeString(row.matchType || '', 120),
+    manualReady: normalizeBool(row.manualReady),
+    reviewRequired: normalizeBool(row.reviewRequired),
+    matchConfidence: normalizeConfidence(row.matchConfidence),
+  };
+}
+
 function createIndexContainer() {
   return {
     generatedAt: new Date().toISOString(),
@@ -90,6 +115,7 @@ function buildReferenceHintsFromRows(rows = []) {
   const familyTitles = new Set();
   const manufacturerDomains = new Set();
   const provenance = new Set();
+  const referenceRowCandidates = [];
   let manufacturerNormalization = '';
 
   rows.forEach((row = {}) => {
@@ -110,6 +136,7 @@ function buildReferenceHintsFromRows(rows = []) {
 
     const sourceRowId = normalizeString(row.sourceRowId || row.id || row.assetId || '', 160);
     if (sourceRowId) provenance.add(sourceRowId);
+    referenceRowCandidates.push(toReferenceRowCandidate(row));
   });
 
   const allTitles = [
@@ -131,6 +158,7 @@ function buildReferenceHintsFromRows(rows = []) {
     preferredManufacturerDomains: Array.from(manufacturerDomains).slice(0, 10),
     lookupRowsUsed: rows.length,
     provenance: Array.from(provenance).slice(0, 30),
+    referenceRowCandidates: referenceRowCandidates.slice(0, 30),
   };
 }
 

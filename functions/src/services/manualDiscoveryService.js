@@ -1353,6 +1353,9 @@ function dedupeByUrl(rows) {
 
 function getDiscoverySourcePriority(source = '') {
   const normalized = `${source || ''}`.trim().toLowerCase();
+  if (normalized === 'reference_row_manual_url') return 7;
+  if (normalized === 'reference_row_source_page') return 6;
+  if (normalized === 'reference_row_support_page') return 6;
   if (normalized === 'official') return 5;
   if (normalized === 'exact_pdf') return 4;
   if (normalized === 'broad_first') return 3;
@@ -1769,6 +1772,52 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleV
   };
 
   const seeded = dedupeByUrl(adapters[manufacturerProfile.key] || []);
+  const referenceRowCandidates = Array.isArray(referenceHints?.referenceRowCandidates)
+    ? referenceHints.referenceRowCandidates.slice(0, 20)
+    : [];
+  const referenceRowAdapterRows = [];
+  referenceRowCandidates.forEach((row = {}) => {
+    const rowManufacturer = normalizePhrase(row.manufacturer || '');
+    if (manufacturerProfile?.key && rowManufacturer && rowManufacturer !== manufacturerProfile.key) return;
+    const referenceRowId = sanitizeDiagnosticValue(row.sourceRowId || row.rowId || '', 120);
+    const rowTitle = sanitizeDiagnosticValue(row.normalizedTitle || row.originalTitle || title, 120);
+    if (row.manualUrl) {
+      referenceRowAdapterRows.push({
+        adapter: 'reference_row',
+        type: 'direct_pdf',
+        label: `${rowTitle} reference row manual`,
+        url: row.manualUrl,
+        referenceDerived: true,
+        referenceRowField: 'manualUrl',
+        referenceRowId,
+      });
+      logEvent('reference_row_candidate_generated', { referenceRowField: 'manualUrl', referenceRowId, url: row.manualUrl });
+    }
+    if (row.manualSourceUrl) {
+      referenceRowAdapterRows.push({
+        adapter: 'reference_row',
+        type: 'support_page',
+        label: `${rowTitle} reference row source page`,
+        url: row.manualSourceUrl,
+        referenceDerived: true,
+        referenceRowField: 'manualSourceUrl',
+        referenceRowId,
+      });
+      logEvent('reference_row_candidate_generated', { referenceRowField: 'manualSourceUrl', referenceRowId, url: row.manualSourceUrl });
+    }
+    if (row.supportUrl) {
+      referenceRowAdapterRows.push({
+        adapter: 'reference_row',
+        type: 'support_page',
+        label: `${rowTitle} reference row support page`,
+        url: row.supportUrl,
+        referenceDerived: true,
+        referenceRowField: 'supportUrl',
+        referenceRowId,
+      });
+      logEvent('reference_row_candidate_generated', { referenceRowField: 'supportUrl', referenceRowId, url: row.supportUrl });
+    }
+  });
   const preferredDomains = Array.isArray(referenceHints?.preferredManufacturerDomains) ? referenceHints.preferredManufacturerDomains.slice(0, 3) : [];
   const slugHints = Array.isArray(referenceHints?.likelySlugPatterns) ? referenceHints.likelySlugPatterns.slice(0, 8) : [];
   const referenceAdapterRows = [];
@@ -1843,7 +1892,7 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleV
     });
   }
 
-  return dedupeByUrl([...orderedReferenceRows, ...seeded]);
+  return dedupeByUrl([...referenceRowAdapterRows, ...orderedReferenceRows, ...seeded]);
 }
 
 async function probeAdapterCandidates({
@@ -1861,6 +1910,16 @@ async function probeAdapterCandidates({
   let titleSpecificHitCount = 0;
   const orderedCandidates = dedupeByUrl(candidates).slice(0, MAX_ADAPTER_FETCHES);
   for (const candidate of orderedCandidates) {
+    if (candidate.referenceRowField === 'manualUrl') {
+      logEvent('reference_row_manual_url_probed', { url: candidate.url, referenceRowId: candidate.referenceRowId || '' });
+      diagnostics.referenceManualUrlProbeCount = Number(diagnostics.referenceManualUrlProbeCount || 0) + 1;
+    } else if (candidate.referenceRowField === 'manualSourceUrl') {
+      logEvent('reference_row_source_page_probed', { url: candidate.url, referenceRowId: candidate.referenceRowId || '' });
+      diagnostics.referenceSourcePageProbeCount = Number(diagnostics.referenceSourcePageProbeCount || 0) + 1;
+    } else if (candidate.referenceRowField === 'supportUrl') {
+      logEvent('reference_row_support_page_probed', { url: candidate.url, referenceRowId: candidate.referenceRowId || '' });
+      diagnostics.referenceSupportPageProbeCount = Number(diagnostics.referenceSupportPageProbeCount || 0) + 1;
+    }
     if (candidate.adapter === 'raw_thrills' && candidate.type === 'support_page') {
       logEvent('raw_thrills_title_page_candidate_generated', { url: candidate.url, type: candidate.type });
     }
@@ -1891,6 +1950,24 @@ async function probeAdapterCandidates({
           status: response.status,
           reason: 'http_error'
         });
+        if (candidate.referenceRowField) {
+          if (candidate.referenceRowField === 'manualUrl' && Number(response.status || 0) === 404) {
+            diagnostics.referenceManualUrl404Count = Number(diagnostics.referenceManualUrl404Count || 0) + 1;
+          }
+          if (candidate.referenceRowField === 'manualSourceUrl') {
+            diagnostics.referenceSourcePageNoManualCount = Number(diagnostics.referenceSourcePageNoManualCount || 0) + 1;
+          }
+          if (candidate.referenceRowField === 'supportUrl') {
+            diagnostics.referenceSupportPageNoManualCount = Number(diagnostics.referenceSupportPageNoManualCount || 0) + 1;
+          }
+          logEvent('reference_row_candidate_rejected', {
+            url: candidate.url,
+            referenceRowId: candidate.referenceRowId || '',
+            referenceRowField: candidate.referenceRowField,
+            status: Number(response.status || 0) || 0,
+            reason: 'http_error',
+          });
+        }
         continue;
       }
       const classification = classifyManualCandidate({
@@ -1922,8 +1999,18 @@ async function probeAdapterCandidates({
           title: candidate.label,
           url: candidate.url,
           sourceType: classification.sourceType,
-          discoverySource: `adapter:${candidate.adapter}`
+          discoverySource: candidate.referenceRowField === 'manualUrl'
+            ? 'reference_row_manual_url'
+            : `adapter:${candidate.adapter}`
         });
+        if (candidate.referenceRowField) {
+          diagnostics.referenceRowCandidateValidatedCount = Number(diagnostics.referenceRowCandidateValidatedCount || 0) + 1;
+          logEvent('reference_row_candidate_validated', {
+            url: candidate.url,
+            referenceRowId: candidate.referenceRowId || '',
+            referenceRowField: candidate.referenceRowField,
+          });
+        }
         continue;
       }
 
@@ -1947,9 +2034,21 @@ async function probeAdapterCandidates({
           label: candidate.label,
           url: candidate.url,
           resourceType: classification.resourceType,
-          discoverySource: `adapter:${candidate.adapter}`,
+          discoverySource: candidate.referenceRowField === 'manualSourceUrl'
+            ? 'reference_row_source_page'
+            : (candidate.referenceRowField === 'supportUrl'
+              ? 'reference_row_support_page'
+              : `adapter:${candidate.adapter}`),
           titleSpecificSupport: classification.titleSpecificSupport === true,
         });
+        if (candidate.referenceRowField) {
+          diagnostics.referenceRowCandidateValidatedCount = Number(diagnostics.referenceRowCandidateValidatedCount || 0) + 1;
+          logEvent('reference_row_candidate_validated', {
+            url: candidate.url,
+            referenceRowId: candidate.referenceRowId || '',
+            referenceRowField: candidate.referenceRowField,
+          });
+        }
       }
 
       if (/text\/html|application\/xhtml\+xml/.test(contentType) && (classification.titleSpecificSupport || candidate.type === 'support_page')) {
@@ -1969,6 +2068,14 @@ async function probeAdapterCandidates({
         url: candidate.url,
         reason: isAbortLikeError(error) ? 'timeout' : sanitizeDiagnosticValue(error?.message || String(error), 120)
       });
+      if (candidate.referenceRowField) {
+        logEvent('reference_row_candidate_rejected', {
+          url: candidate.url,
+          referenceRowId: candidate.referenceRowId || '',
+          referenceRowField: candidate.referenceRowField,
+          reason: isAbortLikeError(error) ? 'timeout' : sanitizeDiagnosticValue(error?.message || String(error), 120),
+        });
+      }
     }
   }
   if (!titleSpecificHitCount) {
@@ -2009,10 +2116,13 @@ async function discoverManualDocumentation({
   });
   const titleVariants = searchPlan.titleVariants;
   const { broadFirstQueries, officialQueries, exactTitleQueries, fallbackQueries } = searchPlan;
+  const manufacturerKnown = !!normalizePhrase(manufacturer);
   const queries = [
+    ...(manufacturerKnown ? officialQueries.map((query) => ({ query, mode: 'official' })) : []),
+    ...(manufacturerKnown ? exactTitleQueries.map((query) => ({ query, mode: 'exact_pdf' })) : []),
     ...broadFirstQueries.map((query) => ({ query, mode: 'broad_first' })),
-    ...officialQueries.map((query) => ({ query, mode: 'official' })),
-    ...exactTitleQueries.map((query) => ({ query, mode: 'exact_pdf' })),
+    ...(!manufacturerKnown ? officialQueries.map((query) => ({ query, mode: 'official' })) : []),
+    ...(!manufacturerKnown ? exactTitleQueries.map((query) => ({ query, mode: 'exact_pdf' })) : []),
     ...fallbackQueries.map((query) => ({ query, mode: 'fallback' })),
     ...searchPlan.searchHints.map((query) => ({ query, mode: 'hint' }))
   ].slice(0, MAX_SEARCH_QUERIES);
@@ -2020,7 +2130,16 @@ async function discoverManualDocumentation({
   const manualRows = [];
   const supportRows = [];
   const followupPages = [];
-  const adapterDiagnostics = { guessedPdf404Count: 0 };
+  const adapterDiagnostics = {
+    guessedPdf404Count: 0,
+    referenceManualUrlProbeCount: 0,
+    referenceSourcePageProbeCount: 0,
+    referenceSupportPageProbeCount: 0,
+    referenceManualUrl404Count: 0,
+    referenceSourcePageNoManualCount: 0,
+    referenceSupportPageNoManualCount: 0,
+    referenceRowCandidateValidatedCount: 0,
+  };
   const queryExecutionOrder = [];
   const evidenceRows = [];
   let searchTimeoutCount = 0;
@@ -2593,6 +2712,13 @@ async function discoverManualDocumentation({
     referenceSlugPatternsUsed: Array.isArray(referenceHints?.likelySlugPatterns) ? referenceHints.likelySlugPatterns.slice(0, 8) : [],
     referenceDomainsUsed: Array.isArray(referenceHints?.preferredManufacturerDomains) ? referenceHints.preferredManufacturerDomains.slice(0, 6) : [],
     titlePageFirstApplied: !!(referenceHints && adapterCandidates.some((candidate) => candidate.type === 'support_page' && candidate.referenceDerived === true)),
+    referenceManualUrlProbeCount: Number(adapterDiagnostics.referenceManualUrlProbeCount || 0),
+    referenceSourcePageProbeCount: Number(adapterDiagnostics.referenceSourcePageProbeCount || 0),
+    referenceSupportPageProbeCount: Number(adapterDiagnostics.referenceSupportPageProbeCount || 0),
+    referenceManualUrl404Count: Number(adapterDiagnostics.referenceManualUrl404Count || 0),
+    referenceSourcePageNoManualCount: Number(adapterDiagnostics.referenceSourcePageNoManualCount || 0),
+    referenceSupportPageNoManualCount: Number(adapterDiagnostics.referenceSupportPageNoManualCount || 0),
+    referenceRowCandidateValidatedCount: Number(adapterDiagnostics.referenceRowCandidateValidatedCount || 0),
   });
 
   return {
@@ -2630,6 +2756,13 @@ async function discoverManualDocumentation({
       referenceSlugPatternsUsed: Array.isArray(referenceHints?.likelySlugPatterns) ? referenceHints.likelySlugPatterns.slice(0, 8) : [],
       referenceDomainsUsed: Array.isArray(referenceHints?.preferredManufacturerDomains) ? referenceHints.preferredManufacturerDomains.slice(0, 6) : [],
       titlePageFirstApplied: !!(referenceHints && adapterCandidates.some((candidate) => candidate.type === 'support_page' && candidate.referenceDerived === true)),
+      referenceManualUrlProbeCount: Number(adapterDiagnostics.referenceManualUrlProbeCount || 0),
+      referenceSourcePageProbeCount: Number(adapterDiagnostics.referenceSourcePageProbeCount || 0),
+      referenceSupportPageProbeCount: Number(adapterDiagnostics.referenceSupportPageProbeCount || 0),
+      referenceManualUrl404Count: Number(adapterDiagnostics.referenceManualUrl404Count || 0),
+      referenceSourcePageNoManualCount: Number(adapterDiagnostics.referenceSourcePageNoManualCount || 0),
+      referenceSupportPageNoManualCount: Number(adapterDiagnostics.referenceSupportPageNoManualCount || 0),
+      referenceRowCandidateValidatedCount: Number(adapterDiagnostics.referenceRowCandidateValidatedCount || 0),
     },
   };
 }

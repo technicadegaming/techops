@@ -60,6 +60,12 @@ test('buildReferenceIndexFromRows creates distinct keyed entries per title/manuf
   assert.equal(laiEntry.aliases.includes('Hyper Shoot'), true);
   assert.equal(rawEntry.preferredManufacturerDomains.includes('rawthrills.com'), true);
   assert.equal(laiEntry.preferredManufacturerDomains.includes('laigames.com'), true);
+  assert.equal(Array.isArray(rawEntry.referenceRowCandidates), true);
+  assert.equal(Array.isArray(laiEntry.referenceRowCandidates), true);
+  assert.equal(rawEntry.referenceRowCandidates[0].manualUrl.includes('rawthrills.com'), true);
+  assert.equal(laiEntry.referenceRowCandidates[0].manualUrl.includes('laigames.com'), true);
+  assert.equal(typeof rawEntry.referenceRowCandidates[0].manualSourceUrl, 'string');
+  assert.equal(typeof rawEntry.referenceRowCandidates[0].supportUrl, 'string');
   assert.equal(Array.isArray(index.byNormalizedTitleKey[rawEntry.normalizedTitleKey]), true);
   assert.equal(Array.isArray(index.byNormalizedTitleKey[laiEntry.normalizedTitleKey]), true);
   assert.notEqual(rawEntry.entryKey, laiEntry.entryKey);
