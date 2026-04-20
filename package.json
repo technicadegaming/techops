@@ -7,7 +7,8 @@
     "test:functions": "npm run test --prefix functions",
     "test:rules": "node scripts/run-rules-tests.js",
     "lint": "eslint src/**/*.js functions/src/**/*.js functions/test/**/*.js test/**/*.js",
-    "test:app-shell": "node --test test/appShellControllers.test.js"
+    "test:app-shell": "node --test test/appShellControllers.test.js",
+    "manual-catalog:import-trusted": "npm run manual-catalog:import-trusted --prefix functions"
   },
   "devDependencies": {
     "eslint": "^9.22.0",

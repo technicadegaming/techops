@@ -20,6 +20,11 @@ const {
   findCatalogManualMatch,
 } = require('./manualLookupCatalogService');
 const {
+  findTrustedCatalogManualMatch,
+  toTrustedCatalogSuggestion,
+  DEFAULT_CONFIDENCE_THRESHOLD: TRUSTED_CATALOG_DEFAULT_CONFIDENCE_THRESHOLD,
+} = require('./trustedManualCatalogService');
+const {
   resolveArcadeTitleFamily,
   normalizeManufacturerName,
   expandArcadeTitleAliases,
@@ -51,6 +56,7 @@ const MAX_TITLE_BATCH = 50;
 const CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const MANUAL_ACQUISITION_TIMEOUT_MS = 15000;
 const MANUFACTURER_ONLY_FOLLOWUP_QUESTION = 'Manufacturer is already confirmed. What exact model/title/version or cabinet nameplate text is printed on the game?';
+const TRUSTED_CATALOG_MIN_CONFIDENCE = TRUSTED_CATALOG_DEFAULT_CONFIDENCE_THRESHOLD;
 
 function logManualResearchEvent(event, payload = {}) {
   try {
@@ -449,6 +455,7 @@ async function runStageOneLookup({
   input,
   fetchImpl = fetch,
   companyId = '',
+  logContext = {},
 }) {
   const titleFamily = resolveArcadeTitleFamily({
     title: input.originalTitle,
@@ -457,6 +464,56 @@ async function runStageOneLookup({
   const normalizedTitle = titleFamily.canonicalTitle || input.originalTitle;
   const manufacturer = normalizeManufacturerName(titleFamily.manufacturer || input.manufacturerHint || '');
   const manufacturerProfile = getManufacturerProfile(input.manufacturerHint || manufacturer, normalizedTitle);
+
+  logManualResearchEvent('trusted_catalog_lookup_started', {
+    ...logContext,
+    title: input.originalTitle,
+    normalizedTitle,
+    manufacturer,
+  });
+  const trustedCatalogMatch = await findTrustedCatalogManualMatch({
+    db,
+    assetName: input.originalTitle,
+    normalizedName: normalizedTitle,
+    originalTitle: input.originalTitle,
+    manufacturer,
+    minConfidence: TRUSTED_CATALOG_MIN_CONFIDENCE,
+    alternateNames: titleFamily.alternateTitles || [],
+  });
+
+  if (trustedCatalogMatch?.row) {
+    logManualResearchEvent('trusted_catalog_match_found', {
+      ...logContext,
+      title: input.originalTitle,
+      normalizedTitle,
+      manufacturer,
+      trustedCatalogSourceRowId: trustedCatalogMatch.row.sourceRowId || trustedCatalogMatch.row.id || '',
+      trustedCatalogConfidence: Number(trustedCatalogMatch.row.matchConfidence || 0),
+      trustedCatalogManualReady: trustedCatalogMatch.row.manualReady === true,
+      trustedCatalogReviewRequired: trustedCatalogMatch.row.reviewRequired === true,
+    });
+  } else {
+    logManualResearchEvent('trusted_catalog_lookup_miss', {
+      ...logContext,
+      title: input.originalTitle,
+      normalizedTitle,
+      manufacturer,
+    });
+  }
+
+  const trustedCatalogSuggestion = trustedCatalogMatch?.row
+    ? toTrustedCatalogSuggestion(trustedCatalogMatch.row)
+    : null;
+  const trustedCatalogDocs = trustedCatalogSuggestion
+    ? normalizeDocumentationSuggestions({
+      links: trustedCatalogSuggestion.documentationSuggestions,
+      confidence: Math.max(0.7, Number(trustedCatalogSuggestion.confidence || trustedCatalogMatch.row.matchConfidence || 0)),
+      asset: { name: input.originalTitle, manufacturer },
+      normalizedName: normalizedTitle,
+      manufacturerSuggestion: manufacturer,
+    })
+    : [];
+
   const catalogMatch = findCatalogManualMatch({
     assetName: input.originalTitle,
     normalizedName: normalizedTitle,
@@ -472,8 +529,9 @@ async function runStageOneLookup({
       manufacturerSuggestion: manufacturer,
     })
     : [];
-  const verifiedCatalogSuggestions = catalogSuggestions.length
-    ? await verifyDocumentationSuggestions(catalogSuggestions, fetchImpl)
+
+  const verifiedCatalogSuggestions = [...trustedCatalogDocs, ...catalogSuggestions].length
+    ? await verifyDocumentationSuggestions([...trustedCatalogDocs, ...catalogSuggestions], fetchImpl)
     : [];
   const reusedSuggestions = companyId
     ? await findReusableVerifiedManuals({
@@ -486,15 +544,16 @@ async function runStageOneLookup({
     : [];
 
   const documentationSuggestions = mergeDocumentationSuggestions({
-    existingSuggestions: [...verifiedCatalogSuggestions, ...reusedSuggestions],
+    existingSuggestions: [...reusedSuggestions, ...verifiedCatalogSuggestions],
     nextSuggestions: [],
     preserveExistingCandidates: true,
   });
   const supportResourcesSuggestion = normalizeDocumentationSuggestions({
     links: [
+      ...(trustedCatalogSuggestion?.supportResources || []),
       ...(catalogMatch?.supportResources || []),
     ],
-    confidence: Math.max(0.45, Number(catalogMatch?.confidence || 0)),
+    confidence: Math.max(0.45, Number(trustedCatalogMatch?.row?.matchConfidence || catalogMatch?.confidence || 0)),
     asset: { name: input.originalTitle, manufacturer },
     normalizedName: normalizedTitle,
     manufacturerSuggestion: manufacturer,
@@ -507,9 +566,32 @@ async function runStageOneLookup({
     documentationSuggestions,
     supportResourcesSuggestion,
     supportContactsSuggestion: [],
-    confidence: Math.max(Number(catalogMatch?.confidence || 0), documentationSuggestions[0]?.matchScore ? documentationSuggestions[0].matchScore / 100 : 0),
+    confidence: Math.max(Number(trustedCatalogMatch?.row?.matchConfidence || 0), Number(catalogMatch?.confidence || 0), documentationSuggestions[0]?.matchScore ? documentationSuggestions[0].matchScore / 100 : 0),
     catalogMatch,
   });
+
+  const trustedCatalogSelected = trustedCatalogMatch?.highConfidenceSelected === true;
+  if (trustedCatalogSelected) {
+    logManualResearchEvent('trusted_catalog_match_selected', {
+      ...logContext,
+      title: input.originalTitle,
+      normalizedTitle,
+      manufacturer,
+      trustedCatalogSourceRowId: trustedCatalogMatch.row.sourceRowId || trustedCatalogMatch.row.id || '',
+      trustedCatalogCandidateUrl: trustedCatalogMatch.row.manualUrl || '',
+      trustedCatalogConfidence: Number(trustedCatalogMatch.row.matchConfidence || 0),
+    });
+  } else if (trustedCatalogMatch?.row) {
+    logManualResearchEvent('trusted_catalog_match_review_only', {
+      ...logContext,
+      title: input.originalTitle,
+      normalizedTitle,
+      manufacturer,
+      trustedCatalogSourceRowId: trustedCatalogMatch.row.sourceRowId || trustedCatalogMatch.row.id || '',
+      trustedCatalogCandidateUrl: trustedCatalogMatch.row.manualUrl || trustedCatalogMatch.row.manualSourceUrl || trustedCatalogMatch.row.supportUrl || '',
+      trustedCatalogConfidence: Number(trustedCatalogMatch.row.matchConfidence || 0),
+    });
+  }
 
   return {
     originalTitle: input.originalTitle,
@@ -524,6 +606,10 @@ async function runStageOneLookup({
     supportContactsSuggestion: [],
     summary,
     catalogMatch,
+    trustedCatalogMatch,
+    trustedCatalogSelected,
+    trustedCatalogSuggestion,
+    discoverySkippedBecauseTrustedCatalogMatched: trustedCatalogSelected,
     searchEvidence: [],
     stage: 'stage1',
   };
@@ -742,7 +828,7 @@ async function researchAssetTitles({
       },
       fetchImpl,
       companyId,
-      maxWebSources,
+      logContext,
     });
 
     let summary = {
@@ -765,6 +851,7 @@ async function researchAssetTitles({
     let stage2SelectedCandidate = null;
     let stage2ErrorCode = '';
     let fallbackDiagnostics = {};
+    const stage2Planned = stageOne.discoverySkippedBecauseTrustedCatalogMatched !== true;
 
     logManualResearchEvent('stage1_result', {
       ...logContext,
@@ -772,61 +859,77 @@ async function researchAssetTitles({
       normalizedTitle: stageOne.normalizedTitle,
       manufacturer: stageOne.manufacturer,
       stage1MatchType: stageOne.summary.matchType,
-      ranStage2: true,
+      ranStage2: stage2Planned,
       candidateManualCount: cleanCount(stageOne.documentationSuggestions),
       supportCandidateCount: stageOne.supportResourcesSuggestion.length,
       finalManualReady: stageOne.summary.manualReady === true,
     });
-    logManualResearchEvent('OPENAI_SEARCH_STARTED', {
-      ...logContext,
-      title: originalTitle,
-      normalizedTitle: stageOne.normalizedTitle,
-      manufacturer: stageOne.manufacturer,
-    });
-    const stageTwo = await runStageTwoResearch({
-      db,
-      settings,
-      companyId,
-      includeInternalDocs,
-      input: row,
-      stageOne,
-      traceId: `${traceId || 'manual-research'}:${originalTitle}`,
-      maxWebSources,
-      researchFallback,
-    }).catch((error) => {
-      const reasonCode = normalizeString(error?.code || '', 80);
-      stage2ErrorCode = reasonCode;
-      logManualResearchEvent('stage2_validation_failed', {
+    let stageTwo = null;
+    if (stage2Planned) {
+      logManualResearchEvent('OPENAI_SEARCH_STARTED', {
         ...logContext,
         title: originalTitle,
         normalizedTitle: stageOne.normalizedTitle,
         manufacturer: stageOne.manufacturer,
-        stage1MatchType: stageOne.summary.matchType,
-        ranStage2: true,
-        reason: normalizeString(error?.message || String(error), 220),
-        reasonCode,
       });
-      if (reasonCode === 'openai-auth-invalid') {
-        logManualResearchEvent('stage2_auth_invalid_fallback', {
+      stageTwo = await runStageTwoResearch({
+        db,
+        settings,
+        companyId,
+        includeInternalDocs,
+        input: row,
+        stageOne,
+        traceId: `${traceId || 'manual-research'}:${originalTitle}`,
+        maxWebSources,
+        researchFallback,
+      }).catch((error) => {
+        const reasonCode = normalizeString(error?.code || '', 80);
+        stage2ErrorCode = reasonCode;
+        logManualResearchEvent('stage2_validation_failed', {
           ...logContext,
           title: originalTitle,
           normalizedTitle: stageOne.normalizedTitle,
           manufacturer: stageOne.manufacturer,
-          reasonCode,
-          guidance: 'Verify OPENAI_API_KEY secret binding for Cloud Functions runtime.',
-        });
-      } else if (reasonCode === 'openai-config-missing') {
-        logManualResearchEvent('openai-config-missing', {
-          ...logContext,
-          title: originalTitle,
-          normalizedTitle: stageOne.normalizedTitle,
-          manufacturer: stageOne.manufacturer,
+          stage1MatchType: stageOne.summary.matchType,
+          ranStage2: stage2Planned,
+          reason: normalizeString(error?.message || String(error), 220),
           reasonCode,
         });
-      }
-      return null;
-    });
-    let shouldFallbackToScraping = true;
+        if (reasonCode === 'openai-auth-invalid') {
+          logManualResearchEvent('stage2_auth_invalid_fallback', {
+            ...logContext,
+            title: originalTitle,
+            normalizedTitle: stageOne.normalizedTitle,
+            manufacturer: stageOne.manufacturer,
+            reasonCode,
+            guidance: 'Verify OPENAI_API_KEY secret binding for Cloud Functions runtime.',
+          });
+        } else if (reasonCode === 'openai-config-missing') {
+          logManualResearchEvent('openai-config-missing', {
+            ...logContext,
+            title: originalTitle,
+            normalizedTitle: stageOne.normalizedTitle,
+            manufacturer: stageOne.manufacturer,
+            reasonCode,
+          });
+        }
+        return null;
+      });
+    } else {
+      logManualResearchEvent('trusted_catalog_match_selected', {
+        ...logContext,
+        title: originalTitle,
+        normalizedTitle: stageOne.normalizedTitle,
+        manufacturer: stageOne.manufacturer,
+        trustedCatalogSourceRowId: stageOne.trustedCatalogMatch?.row?.sourceRowId || stageOne.trustedCatalogMatch?.row?.id || '',
+        trustedCatalogCandidateUrl: stageOne.trustedCatalogMatch?.row?.manualUrl || '',
+        trustedCatalogConfidence: Number(stageOne.trustedCatalogMatch?.row?.matchConfidence || 0),
+      });
+    }
+    let shouldFallbackToScraping = stage2Planned;
+    if (stageOne.discoverySkippedBecauseTrustedCatalogMatched === true) {
+      fallbackDiagnostics.discoverySkippedBecauseTrustedCatalogMatched = true;
+    }
     if (stageTwo) {
       logManualResearchEvent('openai_search_invocation', {
         ...logContext,
@@ -900,7 +1003,7 @@ async function researchAssetTitles({
           normalizedTitle: stageOne.normalizedTitle,
           manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
           stage1MatchType: stageOne.summary.matchType,
-          ranStage2: true,
+          ranStage2: stage2Planned,
           candidateUrl: stageTwo.manualUrl,
           reason: 'manual_contract_not_authoritative',
         });
@@ -911,7 +1014,7 @@ async function researchAssetTitles({
         normalizedTitle: stageOne.normalizedTitle,
         manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
         stage1MatchType: stageOne.summary.matchType,
-        ranStage2: true,
+        ranStage2: stage2Planned,
         candidateCount: normalizedStageTwoDocs.length,
         rejectedCandidateCount: Math.max(0, normalizedStageTwoDocs.length - acceptedManualCandidateCount),
         acceptedManualCandidateCount,
@@ -934,7 +1037,7 @@ async function researchAssetTitles({
             normalizedTitle: stageOne.normalizedTitle,
             manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
             stage1MatchType: stageOne.summary.matchType,
-            ranStage2: true,
+            ranStage2: stage2Planned,
             candidateUrl: entry.url || '',
             verificationKind: entry.verificationKind || '',
             verificationStatus: entry.verificationStatus || '',
@@ -986,7 +1089,7 @@ async function researchAssetTitles({
           normalizedTitle: stageOne.normalizedTitle,
           manufacturer: stageTwo.manufacturer || stageOne.manufacturer,
           stage1MatchType: stageOne.summary.matchType,
-          ranStage2: true,
+          ranStage2: stage2Planned,
           reason: 'manual_candidate_rejected_by_backend_validation',
           candidateManualUrl: stageTwo.manualUrl,
         });
@@ -1154,6 +1257,9 @@ async function researchAssetTitles({
               notes: summary.matchNotes || '',
               catalogEntryId: stageOne.catalogMatch?.catalogEntryId || '',
               seededFromWorkbook: stageOne.catalogMatch?.seededFromWorkbook === true,
+              trustedCatalog: !!stageOne.trustedCatalogMatch?.row,
+              trustedCatalogSourceRowId: stageOne.trustedCatalogMatch?.row?.sourceRowId || stageOne.trustedCatalogMatch?.row?.id || '',
+              source: stageOne.trustedCatalogMatch?.row ? 'imported_csv' : '',
               downloadTimeoutMs: MANUAL_ACQUISITION_TIMEOUT_MS,
             },
           }),
@@ -1388,7 +1494,7 @@ async function researchAssetTitles({
       normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
       manufacturer: summary.manufacturer || stageOne.manufacturer,
       stage1MatchType: stageOne.summary.matchType,
-      ranStage2: true,
+      ranStage2: stage2Planned,
       candidateManualCount: Array.isArray(documentationSuggestions) ? documentationSuggestions.length : 0,
       rejectedCandidateCount: Math.max(0, (Array.isArray(documentationSuggestions) ? documentationSuggestions.length : 0) - cleanCount(documentationSuggestions)),
       acceptedManualCount: cleanCount(documentationSuggestions),
@@ -1416,6 +1522,12 @@ async function researchAssetTitles({
       providerAttempts: fallbackDiagnostics.providerAttempts || {},
       providerZeroResults: fallbackDiagnostics.providerZeroResultCounts || {},
       providerFallbackInvoked: fallbackDiagnostics.providerFallbackInvoked === true,
+      trustedCatalogHit: !!stageOne.trustedCatalogMatch?.row,
+      trustedCatalogSelected: stageOne.discoverySkippedBecauseTrustedCatalogMatched === true,
+      trustedCatalogCandidateUrl: stageOne.trustedCatalogMatch?.row?.manualUrl || stageOne.trustedCatalogMatch?.row?.manualSourceUrl || stageOne.trustedCatalogMatch?.row?.supportUrl || '',
+      trustedCatalogConfidence: Number(stageOne.trustedCatalogMatch?.row?.matchConfidence || 0),
+      trustedCatalogSourceRowId: stageOne.trustedCatalogMatch?.row?.sourceRowId || stageOne.trustedCatalogMatch?.row?.id || '',
+      discoverySkippedBecauseTrustedCatalogMatched: stageOne.discoverySkippedBecauseTrustedCatalogMatched === true,
       reusableHit: documentationSuggestions.some((entry) => !!`${entry?.manualLibraryRef || ''}`.trim()),
       selectedCandidateUrl: documentationSuggestions[0]?.url || '',
       selectedCandidateTier: classifyCandidateTier(documentationSuggestions[0] || {}),
@@ -1440,7 +1552,7 @@ async function researchAssetTitles({
       },
       pipelineMeta: {
         stage1MatchType: stageOne.summary.matchType || '',
-        stage2Ran: true,
+        stage2Ran: stage2Planned,
         sourcePageExtracted: Array.isArray(documentationSuggestions) && documentationSuggestions.some((entry) => !!`${entry?.sourcePageUrl || ''}`.trim()),
         acquisitionSucceeded: summary.manualReady === true && !!`${summary.manualLibraryRef || ''}`.trim(),
         acquisitionState,
@@ -1452,6 +1564,12 @@ async function researchAssetTitles({
         returnedCandidates: stage2ReturnedCandidates,
         selectedCandidate: stage2SelectedCandidate,
         stage2CandidateAudit,
+        trustedCatalogHit: !!stageOne.trustedCatalogMatch?.row,
+        trustedCatalogSelected: stageOne.discoverySkippedBecauseTrustedCatalogMatched === true,
+        trustedCatalogCandidateUrl: stageOne.trustedCatalogMatch?.row?.manualUrl || stageOne.trustedCatalogMatch?.row?.manualSourceUrl || stageOne.trustedCatalogMatch?.row?.supportUrl || '',
+        trustedCatalogConfidence: Number(stageOne.trustedCatalogMatch?.row?.matchConfidence || 0),
+        trustedCatalogSourceRowId: stageOne.trustedCatalogMatch?.row?.sourceRowId || stageOne.trustedCatalogMatch?.row?.id || '',
+        discoverySkippedBecauseTrustedCatalogMatched: stageOne.discoverySkippedBecauseTrustedCatalogMatched === true,
         terminalStateReason,
         followupQuestionKey: summary.followupQuestion ? fingerprint(summary.followupQuestion) : followupQuestionKeyPrev,
         followupQuestion: normalizeString(summary.followupQuestion || '', 220),

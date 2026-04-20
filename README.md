@@ -201,5 +201,6 @@ For current implementation-oriented contributor docs, also see `docs/DATA_MODEL.
 ### Manual lookup registry
 
 - Workbook-backed manual seed data lives in `functions/src/data/manualLookupWorkbookSeed.json`.
-- Regenerate the curated catalog with `npm run manual-catalog:import` from the repo root (or `npm run manual-catalog:import --prefix functions` if you are working directly in `functions/`).
+- Regenerate the curated workbook catalog with `npm run manual-catalog:import` from the repo root (or `npm run manual-catalog:import --prefix functions` if you are working directly in `functions/`).
+- Import trusted arcade CSV rows into Firestore with `npm run manual-catalog:import-trusted -- <path-to-csv>` (or `npm run manual-catalog:import-trusted --prefix functions -- <path-to-csv>`).
 - See `docs/MANUAL_LOOKUP_REGISTRY.md` for verification/trust-tier guidance and regression expectations.

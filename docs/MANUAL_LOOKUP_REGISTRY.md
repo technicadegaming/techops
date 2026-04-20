@@ -21,7 +21,8 @@ Lookup now runs as a two-stage pipeline shared by single-entry preview, Assets b
 1. Update `functions/src/data/manualLookupWorkbookSeed.json` from the latest approved workbook rows.
 2. Run `npm run manual-catalog:import` from the repo root to normalize workbook rows into `functions/src/data/manualLookupCatalog.json` (`npm run manual-catalog:import --prefix functions` remains equivalent inside scripts/CI).
 3. Review the generated catalog diff and keep the change incremental.
-4. Run lint + functions tests + rules tests before deploy.
+4. Import trusted CSV rows into the Firestore `trustedManualCatalog` collection with `npm run manual-catalog:import-trusted -- <path-to-csv>`.
+5. Run lint + functions tests + rules tests before deploy.
 
 The normalized catalog supports:
 - `canonicalTitle`
