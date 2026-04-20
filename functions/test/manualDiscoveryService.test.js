@@ -1241,6 +1241,72 @@ test('buildManufacturerDiscoveryAdapters generates title-specific Raw Thrills an
   assert.equal(lai.some((entry) => /parts\.laigames\.com\/product\/hyper-shoot/.test(entry.url)), true);
 });
 
+test('buildManufacturerDiscoveryAdapters expands Raw Thrills Jurassic Park family variants and title paths', () => {
+  const raw = buildManufacturerDiscoveryAdapters({
+    title: 'Jurassic Park Arcade',
+    titleVariants: ['Jurassic Park Arcade'],
+    manufacturerProfile: getManufacturerProfile('Raw Thrills', 'Jurassic Park Arcade'),
+  });
+  const urls = raw.map((entry) => entry.url);
+  assert.equal(urls.some((url) => /rawthrills\.com\/games\/jurassic-park\/$/.test(url)), true);
+  assert.equal(urls.some((url) => /rawthrills\.com\/games\/jurassic-park-arcade\/downloads\/$/.test(url)), true);
+  assert.equal(urls.some((url) => /rawthrills\.com\/games\/jurassic-park-vr-support\/$/.test(url)), true);
+  assert.equal(urls.some((url) => /rawthrills\.com\/wp-content\/uploads\/jurassic-park-manual\.pdf/.test(url)), true);
+});
+
+test('discoverManualDocumentation logs promoted probe extraction and Raw Thrills title-page manual links', async () => {
+  const profile = getManufacturerProfile('Raw Thrills', 'Jurassic Park Arcade');
+  const events = [];
+  const result = await discoverManualDocumentation({
+    assetName: 'Jurassic Park Arcade',
+    normalizedName: 'Jurassic Park Arcade',
+    manufacturer: 'Raw Thrills',
+    manufacturerProfile: profile,
+    searchProvider: async () => ([
+      { title: 'Jurassic Park Arcade Product', url: 'https://rawthrills.com/games/jurassic-park-arcade/' },
+    ]),
+    fetchImpl: async (url, options = {}) => {
+      if ((options.method || 'GET').toUpperCase() === 'HEAD') return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+      if (url === 'https://rawthrills.com/games/jurassic-park-arcade/' || url === 'https://rawthrills.com/games/jurassic-park-arcade') {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => 'text/html' },
+          text: async () => '<a href="/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf">Operator Manual</a>'
+        };
+      }
+      if (url.endsWith('/jurassic-park-arcade-operator-manual.pdf')) return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+      return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+    },
+    logger: { log: (...args) => events.push(args) },
+  });
+  assert.equal(result.documentationLinks.some((row) => /jurassic-park-arcade-operator-manual\.pdf$/.test(row.url)), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:candidate_probe_extracted_manual_link'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:raw_thrills_link_extracted_from_title_page'), true);
+});
+
+test('discoverManualDocumentation records title_page_found_manual_probe_failed for close exact-title support hits', async () => {
+  const profile = getManufacturerProfile('Raw Thrills', 'Jurassic Park Arcade');
+  const result = await discoverManualDocumentation({
+    assetName: 'Jurassic Park Arcade',
+    normalizedName: 'Jurassic Park Arcade',
+    manufacturer: 'Raw Thrills',
+    manufacturerProfile: profile,
+    searchProvider: async () => ([
+      { title: 'Jurassic Park Arcade Support', url: 'https://rawthrills.com/games/jurassic-park-arcade-support/' },
+    ]),
+    fetchImpl: async (url) => {
+      if (url === 'https://rawthrills.com/games/jurassic-park-arcade-support/' || url === 'https://rawthrills.com/games/jurassic-park-arcade-support') {
+        return { ok: true, status: 200, headers: { get: () => 'text/html' }, text: async () => '<a href="/support">Support Hub</a>' };
+      }
+      return { ok: false, status: 404, headers: { get: () => 'text/html' }, text: async () => '<html></html>' };
+    },
+    logger: { log: () => {} },
+  });
+  assert.equal(result.documentationLinks.length, 0);
+  assert.equal(result.diagnostics.terminalReason, 'title_page_found_manual_probe_failed');
+});
+
 test('buildDeterministicSearchPlan creates richer manufacturer-aware variants for skeeball modern', () => {
   const profile = getManufacturerProfile('Bay Tek Games', 'skeeball modern');
   const plan = buildDeterministicSearchPlan({
