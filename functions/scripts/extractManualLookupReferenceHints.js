@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 const fs = require('node:fs');
 const path = require('node:path');
-const { buildReferenceHintsFromRows } = require('../src/services/manualLookupReferenceService');
+const { buildReferenceIndexFromRows } = require('../src/services/manualLookupReferenceService');
 const { normalizeTrustedCatalogRow } = require('../src/services/trustedManualCatalogService');
 
 function parseCsvLine(line = '') {
@@ -54,17 +54,14 @@ function toReferenceRows(rows = []) {
     }));
 }
 
-function mergeReferenceHints(rows = []) {
-  const hints = buildReferenceHintsFromRows(rows);
+function buildReferenceOutput(rows = []) {
+  const index = buildReferenceIndexFromRows(rows);
   return {
     generatedAt: new Date().toISOString(),
     referenceOnly: true,
     notTrustedCatalog: true,
     rowsUsedForReference: rows.length,
-    aliasesGenerated: (hints.aliases || []).length,
-    manufacturerMappingsGenerated: hints.manufacturerNormalization ? 1 : 0,
-    titleFamilyMappingsGenerated: (hints.familyTitles || []).length,
-    ...hints,
+    ...index,
   };
 }
 
@@ -79,7 +76,7 @@ function main() {
   const csv = fs.readFileSync(inputPath, 'utf8');
   const parsedRows = parseCsv(csv);
   const referenceRows = toReferenceRows(parsedRows);
-  const output = mergeReferenceHints(referenceRows);
+  const output = buildReferenceOutput(referenceRows);
 
   fs.writeFileSync(outputPath, `${JSON.stringify(output, null, 2)}\n`, 'utf8');
 
@@ -88,9 +85,7 @@ function main() {
     outputPath,
     rowsProcessed: parsedRows.length,
     rowsUsedForReference: referenceRows.length,
-    aliasesGenerated: output.aliasesGenerated,
-    manufacturerMappingsGenerated: output.manufacturerMappingsGenerated,
-    titleFamilyMappingsGenerated: output.titleFamilyMappingsGenerated,
+    entryCount: Number(output.entryCount || 0),
   }, null, 2)}\n`);
 }
 

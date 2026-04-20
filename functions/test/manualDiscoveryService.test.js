@@ -1492,3 +1492,32 @@ test('discoverManualDocumentation treats provider 403 as nonterminal and still v
   assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:manufacturer_adapter_started'), true);
   assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:adapter_recovery_after_provider_failure'), true);
 });
+
+test('buildManufacturerDiscoveryAdapters generates reference-first paths for Jurassic Park (Raw Thrills) and HYPERshoot (LAI)', () => {
+  const logs = [];
+  const raw = buildManufacturerDiscoveryAdapters({
+    title: 'Jurassic Park Arcade',
+    titleVariants: ['Jurassic Park Arcade'],
+    manufacturerProfile: getManufacturerProfile('Raw Thrills', 'Jurassic Park Arcade'),
+    referenceHints: {
+      preferredManufacturerDomains: ['rawthrills.com'],
+      likelySlugPatterns: ['jurassic-park-arcade'],
+    },
+    logEvent: (event, payload) => logs.push([event, payload]),
+  });
+  const lai = buildManufacturerDiscoveryAdapters({
+    title: 'HYPERshoot',
+    titleVariants: ['HYPERshoot'],
+    manufacturerProfile: getManufacturerProfile('LAI Games', 'HYPERshoot'),
+    referenceHints: {
+      preferredManufacturerDomains: ['laigames.com'],
+      likelySlugPatterns: ['hypershoot'],
+    },
+    logEvent: (event, payload) => logs.push([event, payload]),
+  });
+
+  assert.equal(raw.some((entry) => entry.adapter === 'raw_thrills_reference'), true);
+  assert.equal(lai.some((entry) => entry.adapter === 'lai_games_reference' && /laigames\.com\/games\/hypershoot\/support\//.test(entry.url)), true);
+  assert.equal(logs.some((entry) => entry[0] === 'raw_thrills_reference_path_generated'), true);
+  assert.equal(logs.some((entry) => entry[0] === 'lai_reference_path_generated'), true);
+});

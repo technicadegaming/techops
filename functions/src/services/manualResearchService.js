@@ -501,7 +501,7 @@ async function runStageOneLookup({
   const manufacturerProfile = getManufacturerProfile(input.manufacturerHint || manufacturer, normalizedTitle);
   const trustedCatalogEnabled = settings.manualResearchEnableTrustedCatalogShortCircuit === true;
 
-  logManualResearchEvent('reference_hint_lookup_started', {
+  logManualResearchEvent('reference_index_lookup_started', {
     ...logContext,
     title: input.originalTitle,
     normalizedTitle,
@@ -516,8 +516,17 @@ async function runStageOneLookup({
     alternateNames: titleFamily.alternateTitles || [],
   });
   const referenceHints = referenceLookup?.hints || null;
+  if (referenceLookup) {
+    logManualResearchEvent('reference_index_entry_count', {
+      ...logContext,
+      title: input.originalTitle,
+      normalizedTitle,
+      manufacturer,
+      entryCount: Number(referenceLookup.entryCount || 0),
+    });
+  }
   if (referenceHints) {
-    logManualResearchEvent('reference_hint_hit', {
+    logManualResearchEvent('reference_index_hit', {
       ...logContext,
       title: input.originalTitle,
       normalizedTitle,
@@ -550,6 +559,13 @@ async function runStageOneLookup({
         domains: referenceHints.preferredManufacturerDomains.slice(0, 6),
       });
     }
+  } else {
+    logManualResearchEvent('reference_index_miss', {
+      ...logContext,
+      title: input.originalTitle,
+      normalizedTitle,
+      manufacturer,
+    });
   }
 
   logManualResearchEvent('trusted_catalog_lookup_started', {
@@ -713,7 +729,10 @@ async function runStageOneLookup({
     trustedCatalogMatch,
     trustedCatalogSelected,
     trustedCatalogSuggestion,
-    referenceHints,
+    referenceHints: referenceHints ? { ...referenceHints, source: referenceLookup?.source || 'json_index' } : null,
+    referenceHintSource: referenceLookup?.source || 'none',
+    referenceEntryKey: referenceLookup?.entry?.entryKey || '',
+    referenceHit: !!referenceHints,
     discoverySkippedBecauseTrustedCatalogMatched: trustedCatalogEnabled && trustedCatalogSelected,
     searchEvidence: [],
     stage: 'stage1',
@@ -1637,6 +1656,12 @@ async function researchAssetTitles({
       deadCandidatesSuppressedCount: deadCandidateUrls.size,
       acquisitionState,
       terminalReason: terminalStateReason,
+      referenceHintSource: stageOne.referenceHintSource || 'none',
+      referenceHit: stageOne.referenceHit === true,
+      referenceEntryKey: stageOne.referenceEntryKey || '',
+      referenceSlugPatternsUsed: Array.isArray(fallbackDiagnostics.referenceSlugPatternsUsed) ? fallbackDiagnostics.referenceSlugPatternsUsed : [],
+      referenceDomainsUsed: Array.isArray(fallbackDiagnostics.referenceDomainsUsed) ? fallbackDiagnostics.referenceDomainsUsed : [],
+      titlePageFirstApplied: fallbackDiagnostics.titlePageFirstApplied === true,
     });
 
     results.push({
@@ -1674,6 +1699,12 @@ async function researchAssetTitles({
         trustedCatalogSourceRowId: stageOne.trustedCatalogMatch?.row?.sourceRowId || stageOne.trustedCatalogMatch?.row?.id || '',
         discoverySkippedBecauseTrustedCatalogMatched: stageOne.discoverySkippedBecauseTrustedCatalogMatched === true,
         terminalStateReason,
+        referenceHintSource: stageOne.referenceHintSource || 'none',
+        referenceHit: stageOne.referenceHit === true,
+        referenceEntryKey: stageOne.referenceEntryKey || '',
+        referenceSlugPatternsUsed: Array.isArray(fallbackDiagnostics.referenceSlugPatternsUsed) ? fallbackDiagnostics.referenceSlugPatternsUsed : [],
+        referenceDomainsUsed: Array.isArray(fallbackDiagnostics.referenceDomainsUsed) ? fallbackDiagnostics.referenceDomainsUsed : [],
+        titlePageFirstApplied: fallbackDiagnostics.titlePageFirstApplied === true,
         followupQuestionKey: summary.followupQuestion ? fingerprint(summary.followupQuestion) : followupQuestionKeyPrev,
         followupQuestion: normalizeString(summary.followupQuestion || '', 220),
         followupAnswerFingerprint,

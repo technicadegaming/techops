@@ -1,7 +1,20 @@
+const fs = require('node:fs');
+const path = require('node:path');
 const { normalizePhrase, normalizeManufacturerName } = require('./arcadeTitleAliasService');
 const { buildTrustedCatalogLookupKeys } = require('./trustedManualCatalogService');
 
 const TRUSTED_MANUAL_CATALOG_COLLECTION = 'trustedManualCatalog';
+const DEFAULT_REFERENCE_INDEX_PATH = path.resolve(__dirname, '../data/manualLookupReferenceHints.json');
+
+let inMemoryReferenceIndex = null;
+
+function logReferenceEvent(event, payload = {}) {
+  try {
+    console.log(`manualLookupReference:${event}`, payload);
+  } catch {
+    // ignore logging failures for safety
+  }
+}
 
 function normalizeString(value = '', max = 240) {
   return `${value || ''}`.replace(/\s+/g, ' ').trim().slice(0, max);
@@ -49,12 +62,34 @@ function deriveFilenameHints(values = []) {
   return Array.from(new Set(out));
 }
 
+function createIndexContainer() {
+  return {
+    generatedAt: new Date().toISOString(),
+    referenceOnly: true,
+    notTrustedCatalog: true,
+    entries: [],
+    byNormalizedTitleKey: {},
+    byNormalizedNameKey: {},
+    byOriginalTitleKey: {},
+    byAliasKey: {},
+    byNormalizedManufacturerKey: {},
+  };
+}
+
+function indexEntryKey(row = {}) {
+  const keys = buildTrustedCatalogLookupKeys(row);
+  const titleKey = keys.normalizedTitleKey || keys.originalTitleKey || keys.normalizedNameKey || 'unknown-title';
+  const manufacturerKey = keys.normalizedManufacturerKey || 'unknown-manufacturer';
+  return `${manufacturerKey}::${titleKey}`;
+}
+
 function buildReferenceHintsFromRows(rows = []) {
   const canonicalTitleHints = new Set();
   const normalizedTitleHints = new Set();
   const aliases = new Set();
   const familyTitles = new Set();
   const manufacturerDomains = new Set();
+  const provenance = new Set();
   let manufacturerNormalization = '';
 
   rows.forEach((row = {}) => {
@@ -72,6 +107,9 @@ function buildReferenceHintsFromRows(rows = []) {
       .map((value) => normalizeDomain(value))
       .filter(Boolean)
       .forEach((domain) => manufacturerDomains.add(domain));
+
+    const sourceRowId = normalizeString(row.sourceRowId || row.id || row.assetId || '', 160);
+    if (sourceRowId) provenance.add(sourceRowId);
   });
 
   const allTitles = [
@@ -92,7 +130,107 @@ function buildReferenceHintsFromRows(rows = []) {
     likelySlugPatterns: deriveSlugHints(allTitles).slice(0, 24),
     preferredManufacturerDomains: Array.from(manufacturerDomains).slice(0, 10),
     lookupRowsUsed: rows.length,
+    provenance: Array.from(provenance).slice(0, 30),
   };
+}
+
+function addKeyedReference(map = {}, key = '', entryKey = '') {
+  if (!key || !entryKey) return;
+  const existing = Array.isArray(map[key]) ? map[key] : [];
+  if (!existing.includes(entryKey)) map[key] = [...existing, entryKey];
+}
+
+function buildReferenceIndexFromRows(rows = []) {
+  const grouped = new Map();
+  rows.forEach((row) => {
+    const key = indexEntryKey(row);
+    const list = grouped.get(key) || [];
+    list.push(row);
+    grouped.set(key, list);
+  });
+
+  const index = createIndexContainer();
+  grouped.forEach((groupRows, entryKey) => {
+    const primary = groupRows[0] || {};
+    const keys = buildTrustedCatalogLookupKeys(primary);
+    const hints = buildReferenceHintsFromRows(groupRows);
+    const entry = {
+      entryKey,
+      normalizedTitleKey: keys.normalizedTitleKey,
+      normalizedNameKey: keys.normalizedNameKey,
+      originalTitleKey: keys.originalTitleKey,
+      aliasKeys: keys.aliasKeys || [],
+      normalizedManufacturerKey: keys.normalizedManufacturerKey,
+      ...hints,
+    };
+    index.entries.push(entry);
+
+    addKeyedReference(index.byNormalizedTitleKey, entry.normalizedTitleKey, entryKey);
+    addKeyedReference(index.byNormalizedNameKey, entry.normalizedNameKey, entryKey);
+    addKeyedReference(index.byOriginalTitleKey, entry.originalTitleKey, entryKey);
+    (entry.aliasKeys || []).forEach((aliasKey) => addKeyedReference(index.byAliasKey, aliasKey, entryKey));
+    addKeyedReference(index.byNormalizedManufacturerKey, entry.normalizedManufacturerKey, entryKey);
+  });
+
+  return {
+    ...index,
+    entryCount: index.entries.length,
+  };
+}
+
+function safeReadReferenceIndex(referenceIndexPath = DEFAULT_REFERENCE_INDEX_PATH) {
+  try {
+    if (!fs.existsSync(referenceIndexPath)) return createIndexContainer();
+    const parsed = JSON.parse(fs.readFileSync(referenceIndexPath, 'utf8'));
+    if (!parsed || typeof parsed !== 'object') return createIndexContainer();
+    return {
+      ...createIndexContainer(),
+      ...parsed,
+      entries: Array.isArray(parsed.entries) ? parsed.entries : [],
+    };
+  } catch {
+    return createIndexContainer();
+  }
+}
+
+function getReferenceIndex({ referenceIndex = null, referenceIndexPath = DEFAULT_REFERENCE_INDEX_PATH } = {}) {
+  if (referenceIndex && typeof referenceIndex === 'object') return referenceIndex;
+  if (!inMemoryReferenceIndex) {
+    inMemoryReferenceIndex = safeReadReferenceIndex(referenceIndexPath);
+    logReferenceEvent('reference_index_loaded', {
+      referenceIndexPath,
+      referenceIndexEntryCount: (inMemoryReferenceIndex.entries || []).length,
+    });
+    logReferenceEvent('reference_index_entry_count', {
+      count: (inMemoryReferenceIndex.entries || []).length,
+    });
+  }
+  return inMemoryReferenceIndex;
+}
+
+function findReferenceEntries(index = {}, lookupKeys = {}) {
+  const entryByKey = new Map((index.entries || []).map((entry) => [entry.entryKey, entry]));
+  const candidateKeys = new Set();
+  const addFromMap = (mapName, key) => {
+    if (!key) return;
+    const rows = Array.isArray(index?.[mapName]?.[key]) ? index[mapName][key] : [];
+    rows.forEach((entryKey) => candidateKeys.add(entryKey));
+  };
+
+  addFromMap('byNormalizedTitleKey', lookupKeys.normalizedTitleKey);
+  addFromMap('byNormalizedNameKey', lookupKeys.normalizedNameKey);
+  addFromMap('byOriginalTitleKey', lookupKeys.originalTitleKey);
+  (lookupKeys.aliasKeys || []).forEach((key) => addFromMap('byAliasKey', key));
+
+  const entries = Array.from(candidateKeys)
+    .map((entryKey) => entryByKey.get(entryKey))
+    .filter(Boolean)
+    .filter((entry) => {
+      if (!lookupKeys.normalizedManufacturerKey) return true;
+      return !entry.normalizedManufacturerKey || entry.normalizedManufacturerKey === lookupKeys.normalizedManufacturerKey;
+    });
+
+  return entries;
 }
 
 async function fetchRowsByKeys(db, lookupKeys = {}) {
@@ -122,8 +260,10 @@ async function findManualLookupReferenceHints({
   originalTitle = '',
   manufacturer = '',
   alternateNames = [],
+  referenceIndex = null,
+  referenceIndexPath = DEFAULT_REFERENCE_INDEX_PATH,
+  allowFirestoreFallback = false,
 } = {}) {
-  if (!db) return null;
   const lookupKeys = buildTrustedCatalogLookupKeys({
     assetName,
     normalizedName,
@@ -133,26 +273,65 @@ async function findManualLookupReferenceHints({
     alternateNames,
   });
 
+  const title = normalizeString(originalTitle || normalizedName || assetName, 180);
+  logReferenceEvent('reference_index_lookup_started', {
+    title,
+    normalizedManufacturerKey: lookupKeys.normalizedManufacturerKey,
+  });
+
+  const index = getReferenceIndex({ referenceIndex, referenceIndexPath });
+  const entries = findReferenceEntries(index, lookupKeys);
+  if (entries.length) {
+    const bestEntry = entries[0];
+    logReferenceEvent('reference_index_hit', {
+      title,
+      entryKey: bestEntry.entryKey,
+      candidateEntryCount: entries.length,
+    });
+    return {
+      source: 'json_index',
+      lookupKeys,
+      entryCount: (index.entries || []).length,
+      entry: bestEntry,
+      hints: {
+        ...bestEntry,
+        lookupRowsUsed: Number(bestEntry.lookupRowsUsed || 0),
+      },
+    };
+  }
+
+  logReferenceEvent('reference_index_miss', {
+    title,
+    normalizedManufacturerKey: lookupKeys.normalizedManufacturerKey,
+  });
+
+  if (!allowFirestoreFallback || !db) return null;
+
   const rows = await fetchRowsByKeys(db, lookupKeys);
   if (!rows.length) return null;
-  const normalizedManufacturer = normalizePhrase(normalizeManufacturerName(manufacturer || ''));
-  const deduped = new Map();
-  rows.forEach((row) => {
-    if (!row?.id || deduped.has(row.id)) return;
+  const filtered = rows.filter((row) => {
     const rowManufacturer = normalizePhrase(normalizeManufacturerName(row.manufacturer || ''));
-    if (normalizedManufacturer && rowManufacturer && rowManufacturer !== normalizedManufacturer) return;
-    deduped.set(row.id, row);
+    return !lookupKeys.normalizedManufacturerKey || !rowManufacturer || rowManufacturer === lookupKeys.normalizedManufacturerKey;
   });
-  if (!deduped.size) return null;
+  if (!filtered.length) return null;
 
+  const hints = buildReferenceHintsFromRows(filtered);
   return {
-    rows: Array.from(deduped.values()).slice(0, 8),
+    source: 'firestore',
     lookupKeys,
-    hints: buildReferenceHintsFromRows(Array.from(deduped.values())),
+    entryCount: (index.entries || []).length,
+    entry: null,
+    hints,
   };
+}
+
+function __resetReferenceIndexForTests() {
+  inMemoryReferenceIndex = null;
 }
 
 module.exports = {
   findManualLookupReferenceHints,
   buildReferenceHintsFromRows,
+  buildReferenceIndexFromRows,
+  __resetReferenceIndexForTests,
 };

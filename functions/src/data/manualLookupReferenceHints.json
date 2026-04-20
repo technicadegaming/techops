@@ -1,0 +1,68 @@
+{
+  "generatedAt": "2026-04-20T00:00:00.000Z",
+  "referenceOnly": true,
+  "notTrustedCatalog": true,
+  "entryCount": 2,
+  "entries": [
+    {
+      "entryKey": "raw thrills::jurassic park arcade",
+      "normalizedTitleKey": "jurassic park arcade",
+      "normalizedNameKey": "jurassic park arcade",
+      "originalTitleKey": "jurassic park arcade",
+      "aliasKeys": ["jurassic park"],
+      "normalizedManufacturerKey": "raw thrills",
+      "referenceOnly": true,
+      "notTrustedCatalog": true,
+      "canonicalTitleHints": ["Jurassic Park Arcade"],
+      "normalizedTitleHints": ["jurassic park arcade"],
+      "manufacturerNormalization": "Raw Thrills",
+      "aliases": ["Jurassic Park"],
+      "familyTitles": ["Jurassic Park"],
+      "likelyManualFilenamePatterns": ["jurassic-park-arcade-manual.pdf", "jurassic-park-arcade-operator-manual.pdf"],
+      "likelySlugPatterns": ["jurassic-park-arcade", "jurassic-park"],
+      "preferredManufacturerDomains": ["rawthrills.com"],
+      "lookupRowsUsed": 1,
+      "provenance": ["seed-jurassic-park-arcade"]
+    },
+    {
+      "entryKey": "lai games::hypershoot",
+      "normalizedTitleKey": "hypershoot",
+      "normalizedNameKey": "hypershoot",
+      "originalTitleKey": "hypershoot",
+      "aliasKeys": ["hyper shoot"],
+      "normalizedManufacturerKey": "lai games",
+      "referenceOnly": true,
+      "notTrustedCatalog": true,
+      "canonicalTitleHints": ["HYPERshoot"],
+      "normalizedTitleHints": ["hypershoot"],
+      "manufacturerNormalization": "LAI Games",
+      "aliases": ["Hyper Shoot"],
+      "familyTitles": ["HYPERshoot"],
+      "likelyManualFilenamePatterns": ["hypershoot-operator-manual.pdf", "hypershoot-manual.pdf"],
+      "likelySlugPatterns": ["hypershoot", "hyper-shoot"],
+      "preferredManufacturerDomains": ["laigames.com", "parts.laigames.com"],
+      "lookupRowsUsed": 1,
+      "provenance": ["seed-hypershoot"]
+    }
+  ],
+  "byNormalizedTitleKey": {
+    "jurassic park arcade": ["raw thrills::jurassic park arcade"],
+    "hypershoot": ["lai games::hypershoot"]
+  },
+  "byNormalizedNameKey": {
+    "jurassic park arcade": ["raw thrills::jurassic park arcade"],
+    "hypershoot": ["lai games::hypershoot"]
+  },
+  "byOriginalTitleKey": {
+    "jurassic park arcade": ["raw thrills::jurassic park arcade"],
+    "hypershoot": ["lai games::hypershoot"]
+  },
+  "byAliasKey": {
+    "jurassic park": ["raw thrills::jurassic park arcade"],
+    "hyper shoot": ["lai games::hypershoot"]
+  },
+  "byNormalizedManufacturerKey": {
+    "raw thrills": ["raw thrills::jurassic park arcade"],
+    "lai games": ["lai games::hypershoot"]
+  }
+}
