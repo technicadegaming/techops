@@ -1517,7 +1517,7 @@ async function crawlManufacturerSeedPages({ candidates, manufacturer, titleVaria
   }
 }
 
-function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleVariants = [], referenceHints = null }) {
+function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleVariants = [], referenceHints = null, logEvent = () => {} }) {
   const adapterTitleVariants = (Array.isArray(titleVariants) && titleVariants.length
     ? titleVariants
     : expandArcadeTitleAliases(title)).slice(0, 4);
@@ -1769,26 +1769,81 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleV
   };
 
   const seeded = dedupeByUrl(adapters[manufacturerProfile.key] || []);
-  const preferredDomain = (referenceHints?.preferredManufacturerDomains || [])[0] || '';
-  const slugHints = Array.isArray(referenceHints?.likelySlugPatterns) ? referenceHints.likelySlugPatterns.slice(0, 6) : [];
+  const preferredDomains = Array.isArray(referenceHints?.preferredManufacturerDomains) ? referenceHints.preferredManufacturerDomains.slice(0, 3) : [];
+  const slugHints = Array.isArray(referenceHints?.likelySlugPatterns) ? referenceHints.likelySlugPatterns.slice(0, 8) : [];
   const referenceAdapterRows = [];
-  if (preferredDomain && slugHints.length) {
+  const pushReferencePath = (entry = {}) => {
+    if (!entry.url) return;
+    referenceAdapterRows.push({ ...entry, adapter: entry.adapter || 'reference_hint', referenceDerived: true });
+  };
+
+  preferredDomains.forEach((domain) => {
     slugHints.forEach((slug) => {
-      referenceAdapterRows.push({
-        adapter: 'reference_hint',
+      pushReferencePath({
         type: 'support_page',
-        label: `${slug} reference support`,
-        url: `https://${preferredDomain}/${slug}/`
+        label: `${slug} reference title page`,
+        url: `https://${domain}/${slug}/`
       });
-      referenceAdapterRows.push({
-        adapter: 'reference_hint',
+      pushReferencePath({
+        type: 'support_page',
+        label: `${slug} reference product page`,
+        url: `https://${domain}/games/${slug}/`
+      });
+      pushReferencePath({
+        type: 'support_page',
+        label: `${slug} reference support page`,
+        url: `https://${domain}/support/${slug}/`
+      });
+      pushReferencePath({
+        type: 'support_page',
+        label: `${slug} reference downloads page`,
+        url: `https://${domain}/downloads/${slug}/`
+      });
+      pushReferencePath({
         type: 'direct_pdf',
         label: `${slug} reference manual`,
-        url: `https://${preferredDomain}/wp-content/uploads/${slug}-manual.pdf`
+        url: `https://${domain}/wp-content/uploads/${slug}-manual.pdf`
       });
     });
+  });
+
+  if (manufacturerProfile.key === 'raw thrills') {
+    slugHints.forEach((slug) => {
+      pushReferencePath({ adapter: 'raw_thrills_reference', type: 'support_page', label: `${slug} Raw Thrills game page`, url: `https://rawthrills.com/games/${slug}/` });
+      pushReferencePath({ adapter: 'raw_thrills_reference', type: 'support_page', label: `${slug} Raw Thrills support page`, url: `https://rawthrills.com/games/${slug}-support/` });
+      pushReferencePath({ adapter: 'raw_thrills_reference', type: 'support_page', label: `${slug} Raw Thrills service support`, url: `https://rawthrills.com/service-support/${slug}/` });
+      pushReferencePath({ adapter: 'raw_thrills_reference', type: 'direct_pdf', label: `${slug} Raw Thrills manual pdf`, url: `https://rawthrills.com/wp-content/uploads/${slug}-manual.pdf` });
+      logEvent('raw_thrills_reference_path_generated', { slug, pathsAdded: 4 });
+    });
   }
-  return dedupeByUrl([...seeded, ...referenceAdapterRows]);
+
+  if (manufacturerProfile.key === 'lai games') {
+    slugHints.forEach((slug) => {
+      pushReferencePath({ adapter: 'lai_games_reference', type: 'support_page', label: `${slug} LAI title page`, url: `https://laigames.com/games/${slug}/` });
+      pushReferencePath({ adapter: 'lai_games_reference', type: 'support_page', label: `${slug} LAI support page`, url: `https://laigames.com/games/${slug}/support/` });
+      pushReferencePath({ adapter: 'lai_games_reference', type: 'support_page', label: `${slug} LAI downloads page`, url: `https://laigames.com/games/${slug}/downloads/` });
+      pushReferencePath({ adapter: 'lai_games_reference', type: 'support_page', label: `${slug} LAI parts page`, url: `https://parts.laigames.com/product/${slug}/` });
+      pushReferencePath({ adapter: 'lai_games_reference', type: 'direct_pdf', label: `${slug} LAI manual pdf`, url: `https://laigames.com/wp-content/uploads/${slug}-operator-manual.pdf` });
+      logEvent('lai_reference_path_generated', { slug, pathsAdded: 5 });
+    });
+  }
+
+  const orderedReferenceRows = dedupeByUrl(referenceAdapterRows).sort((a, b) => {
+    if (a.type === b.type) return 0;
+    if (a.type === 'support_page') return -1;
+    if (b.type === 'support_page') return 1;
+    return 0;
+  });
+
+  if (orderedReferenceRows.length) {
+    logEvent('reference_adapter_paths_added', {
+      referencePathCount: orderedReferenceRows.length,
+      slugPatternsUsed: slugHints.slice(0, 8),
+      domainsUsed: preferredDomains.slice(0, 3),
+    });
+  }
+
+  return dedupeByUrl([...orderedReferenceRows, ...seeded]);
 }
 
 async function probeAdapterCandidates({
@@ -1814,6 +1869,9 @@ async function probeAdapterCandidates({
     }
     if (isDemotedRawThrillsGuessedPdf(candidate)) {
       logEvent('raw_thrills_guessed_pdf_demoted', { url: candidate.url, reason: 'title_page_first_ordering' });
+      if ((Array.isArray(candidates) ? candidates : []).some((row) => row?.referenceDerived === true && row?.type === 'support_page')) {
+        logEvent('guessed_pdf_demoted_due_to_reference_path', { url: candidate.url, reason: 'reference_title_page_candidates_present' });
+      }
     }
     logEvent('manufacturer_adapter_candidate_generated', {
       adapter: candidate.adapter,
@@ -1988,7 +2046,7 @@ async function discoverManualDocumentation({
       rejectionReasons: Array.isArray(entry.rejectionReasons) ? entry.rejectionReasons.slice(0, 6) : [],
     });
   };
-  const adapterCandidates = buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleVariants, referenceHints });
+  const adapterCandidates = buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleVariants, referenceHints, logEvent });
   const seedPages = buildManufacturerDiscoverySeedPages({ title, manufacturerProfile, titleVariants });
   const providerPlan = searchProvider
     ? [{ name: searchProvider?.name || 'custom_search_provider', fn: searchProvider }]
@@ -2529,6 +2587,12 @@ async function discoverManualDocumentation({
     titleSpecificSupportCount,
     followupAttemptedCount,
     extractedManualEvidenceCount,
+    referenceHintSource: referenceHints ? (referenceHints.source || 'json_index') : 'none',
+    referenceHit: !!referenceHints,
+    referenceEntryKey: referenceHints?.entryKey || '',
+    referenceSlugPatternsUsed: Array.isArray(referenceHints?.likelySlugPatterns) ? referenceHints.likelySlugPatterns.slice(0, 8) : [],
+    referenceDomainsUsed: Array.isArray(referenceHints?.preferredManufacturerDomains) ? referenceHints.preferredManufacturerDomains.slice(0, 6) : [],
+    titlePageFirstApplied: !!(referenceHints && adapterCandidates.some((candidate) => candidate.type === 'support_page' && candidate.referenceDerived === true)),
   });
 
   return {
@@ -2560,6 +2624,12 @@ async function discoverManualDocumentation({
       titleSpecificSupportCount,
       followupAttemptedCount,
       extractedManualEvidenceCount,
+      referenceHintSource: referenceHints ? (referenceHints.source || 'json_index') : 'none',
+      referenceHit: !!referenceHints,
+      referenceEntryKey: referenceHints?.entryKey || '',
+      referenceSlugPatternsUsed: Array.isArray(referenceHints?.likelySlugPatterns) ? referenceHints.likelySlugPatterns.slice(0, 8) : [],
+      referenceDomainsUsed: Array.isArray(referenceHints?.preferredManufacturerDomains) ? referenceHints.preferredManufacturerDomains.slice(0, 6) : [],
+      titlePageFirstApplied: !!(referenceHints && adapterCandidates.some((candidate) => candidate.type === 'support_page' && candidate.referenceDerived === true)),
     },
   };
 }

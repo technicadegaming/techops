@@ -1627,3 +1627,36 @@ test('trusted catalog short-circuit remains available only when explicitly enabl
   assert.equal(result.results[0].pipelineMeta.trustedCatalogSelected, true);
   assert.equal(result.results[0].pipelineMeta.discoverySkippedBecauseTrustedCatalogMatched, true);
 });
+
+test('researchAssetTitles loads reference hints from json index and reports reference summary metadata', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{ originalTitle: 'Jurassic Park Arcade', manufacturerHint: 'Raw Thrills' }],
+    traceId: 'reference-json-index-hit',
+    fetchImpl: createFetchMock(),
+    storage: createStorageMock(),
+    researchFallback: async () => ({
+      normalizedTitle: 'Jurassic Park Arcade',
+      manufacturer: 'Raw Thrills',
+      confidence: 0.55,
+      matchType: 'support_only',
+      manualReady: false,
+      reviewRequired: true,
+      manualUrl: '',
+      supportUrl: 'https://rawthrills.com/games/jurassic-park-arcade/',
+      candidates: [
+        { bucket: 'weak_lead', title: 'Raw Thrills Support', url: 'https://rawthrills.com/support/' },
+        { bucket: 'verified_pdf_candidate', title: 'Jurassic Park Arcade Manual', url: 'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-manual.pdf' },
+      ],
+      selectedCandidate: { bucket: 'weak_lead', title: 'Raw Thrills Support', url: 'https://rawthrills.com/support/' },
+      citations: [{ url: 'https://rawthrills.com/games/jurassic-park-arcade/', title: 'Jurassic Park Arcade' }],
+    }),
+  });
+
+  assert.equal(result.results[0].pipelineMeta.referenceHintSource, 'json_index');
+  assert.equal(typeof result.results[0].pipelineMeta.referenceHit, 'boolean');
+  assert.equal(typeof result.results[0].pipelineMeta.referenceEntryKey, 'string');
+  assert.equal(typeof result.results[0].pipelineMeta.titlePageFirstApplied, 'boolean');
+});
