@@ -124,6 +124,21 @@ test('asset helpers prefer authoritative manual attachment fields over legacy se
   assert.deepEqual(fallback.manualLinks, []);
 });
 
+test('asset helpers prefer storage-backed attached manual links over external source URLs', async () => {
+  const { getAuthoritativeManualState } = await loadAssetsHelpers();
+  const state = getAuthoritativeManualState({
+    manualLibraryRef: 'manual-king-kong',
+    manualStoragePath: 'manual-library/raw-thrills/king-kong/existing.pdf',
+    manualLinks: [
+      'https://rawthrills.com/wp-content/uploads/king-kong-manual.pdf',
+      'manual-library/raw-thrills/king-kong/existing.pdf',
+      'https://support.example.com/product-page'
+    ],
+  });
+  assert.equal(state.hasAttachedManual, true);
+  assert.deepEqual(state.manualLinks, ['manual-library/raw-thrills/king-kong/existing.pdf']);
+});
+
 test('asset manual links do not render raw Firebase Storage REST URLs from storage paths', async () => {
   const { buildStoredManualDownloadUrl } = await loadAssetsHelpers();
   const storagePath = 'manual-library/bay-tek/quik-drop/existing.pdf';

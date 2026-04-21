@@ -467,6 +467,61 @@ test('researchAssetTitles promotes discovered exact-title manual over dead adapt
   }
 });
 
+test('researchAssetTitles forces durable acquisition for direct validated HYPERshoot PDF candidates', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
+    companyId: 'company-1',
+    titles: [{ originalTitle: 'HYPERshoot', manufacturerHint: 'LAI Games' }],
+    traceId: 'test-hypershoot-durable-acquisition',
+    storage: createStorageMock(),
+    fetchImpl: async (url) => ({
+      ok: true,
+      status: 200,
+      url,
+      headers: { get: () => (String(url).toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'text/html') },
+      text: async () => '',
+      arrayBuffer: async () => Uint8Array.from(Buffer.from('%PDF-1.4\nhypershoot')).buffer,
+    }),
+    researchFallback: async () => ({
+      normalizedTitle: 'HYPERshoot',
+      manufacturer: 'LAI Games',
+      matchType: 'support_only',
+      manualReady: false,
+      reviewRequired: true,
+      manualUrl: '',
+      manualSourceUrl: 'https://www.mossdistributing.com/userdocs/documents/',
+      supportUrl: 'https://www.mossdistributing.com/userdocs/documents/',
+      confidence: 0.77,
+      candidates: [{
+        bucket: 'verified_pdf_candidate',
+        url: 'https://www.mossdistributing.com/userdocs/documents/MS0225_HYPERSHOOT.PDF',
+        title: 'HYPERshoot Operator Manual',
+        discoverySource: 'search_result',
+        verified: true,
+        exactManualMatch: true,
+      }],
+      selectedCandidate: {
+        bucket: 'verified_pdf_candidate',
+        url: 'https://www.mossdistributing.com/userdocs/documents/MS0225_HYPERSHOOT.PDF',
+        title: 'HYPERshoot Operator Manual',
+        discoverySource: 'search_result',
+        verified: true,
+        exactManualMatch: true,
+      },
+      citations: [],
+      rawResearchSummary: 'Direct exact-title manual PDF discovered.',
+    }),
+  });
+
+  assert.equal(result.results[0].manualReady, true);
+  assert.ok(result.results[0].manualLibraryRef);
+  assert.match(result.results[0].manualStoragePath, /^manual-library\//i);
+  assert.equal(result.results[0].pipelineMeta.acquisitionAttempted, true);
+  assert.equal(result.results[0].pipelineMeta.durableStorageCompleted, true);
+  assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'docs_found_after_durable_storage');
+});
+
 test('researchAssetTitles persists/consumes answered follow-up fingerprints and avoids identical follow-up loop', async () => {
   const followupAnswer = 'It says Deluxe on the marquee';
   const followupFingerprint = createHash('sha1').update(followupAnswer.toLowerCase()).digest('hex');
@@ -1277,8 +1332,8 @@ test('Connect 4 brochure/spec PDFs remain support_product_page candidates and ne
   assert.equal(result.results[0].status, 'followup_needed');
   assert.equal(result.results[0].manualLibraryRef, '');
   assert.equal(result.results[0].manualStoragePath, '');
-  assert.equal(result.results[0].pipelineMeta.acquisitionState, 'no_manual');
-  assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'no_durable_manual:no_manual');
+  assert.equal(result.results[0].pipelineMeta.acquisitionState, 'skipped');
+  assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'docs_discovered_candidate_only');
   assert.equal(result.results[0].pipelineMeta.returnedCandidates[0]?.bucket, 'brochure_or_spec_doc');
   assert.equal(result.results[0].documentationSuggestions[0].candidateBucket, 'support_product_page');
 });
@@ -1327,7 +1382,7 @@ test('Betson sell sheet links stay support/review only and never become manual c
   assert.equal(result.results[0].status, 'followup_needed');
   assert.equal(result.results[0].manualUrl, '');
   assert.equal(result.results[0].manualLibraryRef, '');
-  assert.equal(result.results[0].pipelineMeta.acquisitionState, 'no_manual');
+  assert.equal(result.results[0].pipelineMeta.acquisitionState, 'skipped');
   assert.equal(result.results[0].documentationSuggestions[0]?.candidateBucket, 'support_product_page');
 });
 
