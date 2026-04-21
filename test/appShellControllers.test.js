@@ -125,7 +125,7 @@ test('asset helpers prefer authoritative manual attachment fields over legacy se
 });
 
 test('asset helpers prefer storage-backed attached manual links over external source URLs', async () => {
-  const { getAuthoritativeManualState } = await loadAssetsHelpers();
+  const { getAuthoritativeManualState, resolveStoragePreferredManualLink } = await loadAssetsHelpers();
   const state = getAuthoritativeManualState({
     manualLibraryRef: 'manual-king-kong',
     manualStoragePath: 'manual-library/raw-thrills/king-kong/existing.pdf',
@@ -137,6 +137,29 @@ test('asset helpers prefer storage-backed attached manual links over external so
   });
   assert.equal(state.hasAttachedManual, true);
   assert.deepEqual(state.manualLinks, ['manual-library/raw-thrills/king-kong/existing.pdf']);
+  const preferred = resolveStoragePreferredManualLink({
+    manualLibraryRef: 'manual-king-kong',
+    manualStoragePath: 'manual-library/raw-thrills/king-kong/existing.pdf',
+  }, 'file:///Users/me/Downloads/king-kong-manual.pdf');
+  assert.equal(preferred.openedFromStoragePreferred, true);
+  assert.equal(preferred.manualSourceUrlSuppressedBecauseStorageExists, true);
+  assert.equal(preferred.storageMetadataPresentButExternalUsed, false);
+  assert.equal(preferred.dataStoragePath, 'manual-library/raw-thrills/king-kong/existing.pdf');
+  assert.equal(preferred.href, '#');
+});
+
+test('asset helpers keep external candidate link when durable storage metadata is missing', async () => {
+  const { resolveStoragePreferredManualLink } = await loadAssetsHelpers();
+  const externalUrl = 'https://example.com/manual.pdf';
+  const preferred = resolveStoragePreferredManualLink({
+    manualLibraryRef: '',
+    manualStoragePath: '',
+    manualLinks: [externalUrl],
+  }, externalUrl);
+  assert.equal(preferred.href, externalUrl);
+  assert.equal(preferred.dataStoragePath, '');
+  assert.equal(preferred.openedFromStoragePreferred, false);
+  assert.equal(preferred.manualSourceUrlSuppressedBecauseStorageExists, false);
 });
 
 test('asset manual links do not render raw Firebase Storage REST URLs from storage paths', async () => {

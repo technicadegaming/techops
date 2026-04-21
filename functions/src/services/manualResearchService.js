@@ -1477,8 +1477,9 @@ async function researchAssetTitles({
     }
     const reusableCandidate = documentationSuggestions[0] || {};
     const reusableStoragePath = `${reusableCandidate?.manualStoragePath || reusableCandidate?.url || ''}`.trim();
+    const reusableManualLibraryRef = `${reusableCandidate?.manualLibraryRef || ''}`.trim();
     const reusableCandidateIsDurable = acquisitionEligible
-      && (`${reusableCandidate?.manualLibraryRef || ''}`.trim() || `${reusableCandidate?.cachedManual || ''}` === 'true')
+      && !!reusableManualLibraryRef
       && /^(manual-library\/|companies\/)/i.test(reusableStoragePath);
     if (reusableCandidateIsDurable) {
       summary = {
@@ -1488,7 +1489,7 @@ async function researchAssetTitles({
         reviewRequired: true,
         status: 'docs_found',
         manualUrl: reusableStoragePath,
-        manualLibraryRef: `${reusableCandidate?.manualLibraryRef || ''}`.trim(),
+        manualLibraryRef: reusableManualLibraryRef,
         manualStoragePath: reusableStoragePath,
       };
       acquisitionState = 'reused_existing_durable_storage';
@@ -1499,6 +1500,11 @@ async function researchAssetTitles({
         manualLibraryRef: summary.manualLibraryRef || '',
         manualStoragePath: reusableStoragePath,
         source: 'reused_candidate',
+      });
+      logManualResearchEvent('asset_manual_fields_persisted', {
+        ...logContext,
+        manualLibraryRef: summary.manualLibraryRef || '',
+        manualStoragePath: reusableStoragePath,
       });
     } else if (acquisitionEligible) {
       acquisitionState = 'started';
@@ -1679,6 +1685,11 @@ async function researchAssetTitles({
         manualLibraryRef: library.id,
         manualStoragePath: library.storagePath || '',
       });
+      logManualResearchEvent('asset_manual_fields_persisted', {
+        ...logContext,
+        manualLibraryRef: library.id,
+        manualStoragePath: library.storagePath || '',
+      });
       documentationSuggestions = documentationSuggestions.map((entry, index) => index === acquiredCandidateIndex ? {
         ...entry,
         url: storageUrl,
@@ -1695,6 +1706,14 @@ async function researchAssetTitles({
         reviewRequired: true,
         manualUrl: '',
       };
+    }
+    if (durableStorageCompleted === true && openedFromStoragePreferred !== true) {
+      logManualResearchEvent('storageMetadataPresentButExternalUsed', {
+        ...logContext,
+        manualLibraryRef: summary.manualLibraryRef || '',
+        manualStoragePath: summary.manualStoragePath || '',
+        selectedCandidateUrl: documentationSuggestions[0]?.url || '',
+      });
     }
     documentationSuggestions = documentationSuggestions
       .filter((entry) => {
@@ -1939,6 +1958,7 @@ async function researchAssetTitles({
       acquisitionSkippedReason,
       durableStorageCompleted,
       openedFromStoragePreferred,
+      storageMetadataPresentButExternalUsed: durableStorageCompleted === true && openedFromStoragePreferred !== true,
       referenceHintSource: stageOne.referenceHintSource || 'none',
       referenceHit: stageOne.referenceHit === true,
       referenceEntryKey: stageOne.referenceEntryKey || '',
@@ -1972,6 +1992,7 @@ async function researchAssetTitles({
         acquisitionSkippedReason,
         durableStorageCompleted,
         openedFromStoragePreferred,
+        storageMetadataPresentButExternalUsed: durableStorageCompleted === true && openedFromStoragePreferred !== true,
         acquisitionState,
         acquisitionError,
         manualLibraryRef: summary.manualLibraryRef || '',

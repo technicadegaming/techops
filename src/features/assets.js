@@ -367,6 +367,28 @@ function getAuthoritativeManualState(asset = {}) {
   };
 }
 
+function resolveStoragePreferredManualLink(asset = {}, candidateUrl = '') {
+  const manualState = getAuthoritativeManualState(asset);
+  const storagePreferredPath = `${manualState.manualStoragePath || manualState.manualLinks[0] || ''}`.trim();
+  const hasStorageMetadata = !!storagePreferredPath;
+  if (!hasStorageMetadata) {
+    return {
+      href: `${candidateUrl || ''}`.trim(),
+      dataStoragePath: '',
+      openedFromStoragePreferred: false,
+      storageMetadataPresentButExternalUsed: false,
+      manualSourceUrlSuppressedBecauseStorageExists: false,
+    };
+  }
+  return {
+    href: buildStoredManualDownloadUrl(storagePreferredPath),
+    dataStoragePath: storagePreferredPath,
+    openedFromStoragePreferred: true,
+    storageMetadataPresentButExternalUsed: false,
+    manualSourceUrlSuppressedBecauseStorageExists: !!`${candidateUrl || ''}`.trim(),
+  };
+}
+
 function renderInlineFeedback(message, tone = 'info') {
   const palette = tone === 'error'
     ? { border: '#fca5a5', background: '#fef2f2', text: '#991b1b' }
@@ -519,9 +541,20 @@ function renderEnrichmentDetails(asset, manager, state) {
       <div class="tiny" style="font-weight:700; margin-bottom:4px;">Suggested manuals to review</div>
       ${hiddenDeadLinks > 0 ? `<div class="tiny">Suppressed ${hiddenDeadLinks} unreachable/dead suggestion${hiddenDeadLinks === 1 ? '' : 's'}.</div>` : ''}
       ${suggestions.length ? suggestions.map((entry, index) => {
+    const preferredLink = resolveStoragePreferredManualLink(asset, entry.url);
+    if (preferredLink.manualSourceUrlSuppressedBecauseStorageExists) {
+      console.debug('[manual_diagnostics]', {
+        assetId: asset.id || '',
+        openedFromStoragePreferred: preferredLink.openedFromStoragePreferred,
+        storageMetadataPresentButExternalUsed: preferredLink.storageMetadataPresentButExternalUsed,
+        manualSourceUrlSuppressedBecauseStorageExists: preferredLink.manualSourceUrlSuppressedBecauseStorageExists,
+        manualStoragePath: preferredLink.dataStoragePath,
+        suppressedSourceUrl: entry.url || '',
+      });
+    }
     const confidence = entry.confidence ? ` | ${Math.round(Number(entry.confidence) * 100)}%` : '';
     const score = Number.isFinite(Number(entry.matchScore)) ? ` | score ${Math.round(Number(entry.matchScore))}` : '';
-    return `<div class="tiny" style="display:flex; justify-content:space-between; gap:8px; align-items:center; margin:2px 0;"><span><a href="${entry.url}" target="_blank" rel="noopener">${entry.title || entry.url}</a>${confidence}${score} | trust: ${renderSuggestionSource(entry)}</span>${manager ? `<button data-apply-doc-item="${asset.id}" data-doc-index="${index}" type="button">Apply this manual</button>` : ''}</div>`;
+    return `<div class="tiny" style="display:flex; justify-content:space-between; gap:8px; align-items:center; margin:2px 0;"><span><a href="${preferredLink.href || entry.url}" target="_blank" rel="noopener" ${preferredLink.dataStoragePath ? `data-manual-storage-path="${encodeURIComponent(preferredLink.dataStoragePath)}"` : ''}>${entry.title || entry.url}</a>${confidence}${score} | trust: ${renderSuggestionSource(entry)}${preferredLink.manualSourceUrlSuppressedBecauseStorageExists ? ' | storage-backed manual preferred' : ''}</span>${manager ? `<button data-apply-doc-item="${asset.id}" data-doc-index="${index}" type="button">Apply this manual</button>` : ''}</div>`;
   }).join('') : (strongReviewCandidates.length
     ? `<div class="tiny">No verified manual yet. ${strongReviewCandidates.length} strong review candidate${strongReviewCandidates.length === 1 ? '' : 's'} found.</div>
         ${strongReviewCandidates.slice(0, 3).map((entry) => `<div class="tiny" style="margin:2px 0;"><a href="${entry.url}" target="_blank" rel="noopener">${entry.title || entry.url}</a> | ${renderCandidateBucket(entry)} | trust: ${renderSuggestionSource(entry)} | score ${Math.round(Number(entry.matchScore || 0)) || 'n/a'}</div>`).join('')}
@@ -954,5 +987,6 @@ export {
   buildStoredManualDownloadUrl,
   resolveStoredManualDownloadUrl,
   openStoredManualPath,
-  filterDisplaySupportResources
+  filterDisplaySupportResources,
+  resolveStoragePreferredManualLink,
 };

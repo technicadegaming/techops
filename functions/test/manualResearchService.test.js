@@ -524,10 +524,13 @@ test('researchAssetTitles forces durable acquisition for direct validated HYPERs
     assert.equal(result.results[0].pipelineMeta.acquisitionAttempted, true);
     assert.equal(result.results[0].pipelineMeta.durableStorageCompleted, true);
     assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'docs_found_after_durable_storage');
+    assert.ok(`${result.results[0].manualLibraryRef || ''}`.trim());
+    assert.match(result.results[0].manualStoragePath || '', /^manual-library\//i);
     const markers = logs.map((entry) => entry[0]);
     assert.equal(markers.includes('manualResearch:acquisition_eligible_candidate_detected'), true);
     assert.equal(markers.includes('manualResearch:acquisition_forced_for_direct_pdf'), true);
     assert.equal(markers.includes('manualResearch:durable_storage_completed'), true);
+    assert.equal(markers.includes('manualResearch:asset_manual_fields_persisted'), true);
   } finally {
     console.log = originalLog;
   }
