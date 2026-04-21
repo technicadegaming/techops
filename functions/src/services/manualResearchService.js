@@ -136,6 +136,7 @@ function classifyFallbackTerminalReason({ stage2ErrorCode = '', fallbackDiagnost
   if (discoveryTerminalReason === 'candidate_found_but_not_durable') return 'candidate_found_but_not_durable';
   if (discoveryTerminalReason === 'generic-search-page-only') return 'generic-search-page-only';
   if (discoveryTerminalReason === 'guessed-pdf-404-no-better-candidate') return 'guessed-pdf-404-no-better-candidate';
+  if (discoveryTerminalReason === 'reference_row_not_matched') return 'reference_row_not_matched';
   if (Number(fallbackDiagnostics?.referenceManualUrl404Count || 0) > 0) return 'reference-manual-url-404';
   if (Number(fallbackDiagnostics?.referenceSourcePageProbeCount || 0) > 0
     && Number(fallbackDiagnostics?.referenceRowCandidateValidatedCount || 0) <= 0
@@ -151,7 +152,7 @@ function classifyFallbackTerminalReason({ stage2ErrorCode = '', fallbackDiagnost
     + Number(fallbackDiagnostics?.referenceSourcePageProbeCount || 0)
     + Number(fallbackDiagnostics?.referenceSupportPageProbeCount || 0) > 0
     && Number(fallbackDiagnostics?.referenceRowCandidateValidatedCount || 0) <= 0) {
-    return 'reference-row-hit-no-live-manual';
+    return 'reference_row_match_no_live_manual';
   }
   if (discoveryTerminalReason === 'deterministic-search-no-results' && normalizeString(fallbackDiagnostics?.manufacturer || '', 80)) {
     return 'manufacturer-adapter-no-better-candidate';
@@ -181,6 +182,15 @@ function prioritizeDocumentationSuggestions({
     return { ...ranked, index };
   });
   rows.sort(compareRankedCandidates);
+  const deadRows = rows.filter((row) => row.dead);
+  const staleTopDead = deadRows[0] || null;
+  deadRows.forEach((row) => {
+    logEvent('stale_candidate_pre_demoted', {
+      ...logContext,
+      candidateUrl: row.candidate?.url || '',
+      candidateTier: row.tier,
+    });
+  });
   const bestDiscovered = rows.find((row) => row.exactTitle && row.discovered && !row.dead);
   const bestWeak = rows.find((row) => !row.dead && (row.tier === CANDIDATE_TIER.GENERIC_BRAND_OR_LIBRARY_PAGE || row.tier === CANDIDATE_TIER.GENERATED_VENDOR_GUESS));
   const deadGuessed = rows.find((row) => row.dead);
@@ -225,6 +235,14 @@ function prioritizeDocumentationSuggestions({
     logEvent('final_candidate_selected_from_discovery', { ...logContext, selectedCandidateUrl: top.candidate?.url || '', selectedTier: top.tier });
   } else if (top) {
     logEvent('final_candidate_selected_from_research', { ...logContext, selectedCandidateUrl: top.candidate?.url || '', selectedTier: top.tier });
+  }
+  if (staleTopDead && top && staleTopDead.urlKey !== top.urlKey) {
+    logEvent('alternate_candidate_selected_due_to_dead_cache', {
+      ...logContext,
+      deadCandidateUrl: staleTopDead.candidate?.url || '',
+      selectedCandidateUrl: top.candidate?.url || '',
+      selectedTier: top.tier,
+    });
   }
   if (top && `${top.candidate?.discoverySource || ''}`.toLowerCase() === 'html_followup') {
     logEvent('final_candidate_selected_from_extracted_title_page', {
@@ -560,6 +578,15 @@ async function runStageOneLookup({
       normalizedTitle,
       manufacturer,
       variantCount: (referenceHints.aliases || []).length + (referenceHints.familyTitles || []).length,
+    });
+    logManualResearchEvent('reference_row_match_expanded', {
+      ...logContext,
+      title: input.originalTitle,
+      normalizedTitle,
+      manufacturer,
+      expandedMatchReasons: Array.isArray(referenceHints.expandedMatchReasons)
+        ? referenceHints.expandedMatchReasons.slice(0, 12)
+        : [],
     });
     if (Array.isArray(referenceHints.likelySlugPatterns) && referenceHints.likelySlugPatterns.length) {
       logManualResearchEvent('reference_adapter_paths_added', {
@@ -1340,6 +1367,13 @@ async function researchAssetTitles({
         const candidate = documentationSuggestions[index];
         const candidateUrlKey = normalizeUrlKey(candidate?.url || '');
         if (candidateUrlKey && deadCandidateUrls.has(candidateUrlKey)) {
+          logManualResearchEvent('dead_candidate_skipped_before_selection', {
+            ...logContext,
+            title: originalTitle,
+            normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
+            manufacturer: summary.manufacturer || stageOne.manufacturer,
+            candidateUrl: candidate?.url || '',
+          });
           logManualResearchEvent('candidate_rejected', {
             ...logContext,
             title: originalTitle,
@@ -1606,10 +1640,18 @@ async function researchAssetTitles({
       documentationCount: documentationSuggestions.length,
       supportCount: supportResourcesSuggestion.length,
     });
+    const selectedTier = classifyCandidateTier(documentationSuggestions[0] || {});
+    const deadRetryUsedAlternate = deadCandidateUrls.size > 0 && !!documentationSuggestions.length;
+    const exactTitleUnvalidated404 = deadCandidateUrls.size > 0
+      && selectedTier === CANDIDATE_TIER.EXACT_TITLE_UNVALIDATED_CANDIDATE;
     const terminalStateReason = fallbackTerminalReason
       || (summary.manualReady === true
       ? 'docs_found_after_durable_storage'
-      : (acquisitionError ? 'acquisition-failed' : (deadCandidateUrls.size > 0 ? 'dead-candidate-only' : `no_durable_manual:${acquisitionState}`)));
+      : (exactTitleUnvalidated404
+        ? 'exact_title_candidate_unvalidated_then_404'
+        : (deadRetryUsedAlternate
+          ? 'dead_candidate_retry_to_alternate'
+          : (acquisitionError ? 'acquisition-failed' : (deadCandidateUrls.size > 0 ? 'dead-candidate-only' : `no_durable_manual:${acquisitionState}`)))));
     if (stage2ErrorCode === 'openai-config-missing' || stage2ErrorCode === 'openai-auth-invalid') {
       logManualResearchEvent(stage2ErrorCode, {
         ...logContext,
@@ -1636,8 +1678,14 @@ async function researchAssetTitles({
       logManualResearchEvent('generic-search-page-only', { ...logContext });
     } else if (terminalStateReason === 'guessed-pdf-404-no-better-candidate') {
       logManualResearchEvent('guessed-pdf-404-no-better-candidate', { ...logContext });
-    } else if (terminalStateReason === 'reference-row-hit-no-live-manual') {
-      logManualResearchEvent('reference-row-hit-no-live-manual', { ...logContext });
+    } else if (terminalStateReason === 'reference_row_match_no_live_manual') {
+      logManualResearchEvent('reference_row_match_no_live_manual', { ...logContext });
+    } else if (terminalStateReason === 'reference_row_not_matched') {
+      logManualResearchEvent('reference_row_not_matched', { ...logContext });
+    } else if (terminalStateReason === 'exact_title_candidate_unvalidated_then_404') {
+      logManualResearchEvent('exact_title_candidate_unvalidated_then_404', { ...logContext });
+    } else if (terminalStateReason === 'dead_candidate_retry_to_alternate') {
+      logManualResearchEvent('dead_candidate_retry_to_alternate', { ...logContext });
     } else if (terminalStateReason === 'reference-manual-url-404') {
       logManualResearchEvent('reference-manual-url-404', { ...logContext });
     } else if (terminalStateReason === 'reference-source-page-no-manual-link') {

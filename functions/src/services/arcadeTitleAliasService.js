@@ -20,6 +20,8 @@ function normalizeManufacturerName(value = '') {
     ['baytekent', 'Bay Tek'],
     ['raw thrills', 'Raw Thrills'],
     ['rawthrills', 'Raw Thrills'],
+    ['rawthrills inc', 'Raw Thrills'],
+    ['rawthrills inc.', 'Raw Thrills'],
     ['raw thrills inc', 'Raw Thrills'],
     ['raw thrills inc.', 'Raw Thrills'],
     ['lai', 'LAI Games'],

@@ -85,3 +85,35 @@ test('findManualLookupReferenceHints returns miss when no json entry exists', as
 
   assert.equal(lookup, null);
 });
+
+test('findManualLookupReferenceHints expands close title/manufacturer variants for Jurassic Park and Raw Thrills Inc.', async () => {
+  __resetReferenceIndexForTests();
+  const referenceIndex = {
+    entries: [{
+      entryKey: 'raw thrills::jurassic park arcade',
+      normalizedTitleKey: 'jurassic park arcade',
+      normalizedNameKey: 'jurassic park arcade',
+      originalTitleKey: 'jurassic park arcade',
+      aliasKeys: ['jurassic park'],
+      normalizedManufacturerKey: 'raw thrills',
+      preferredManufacturerDomains: ['rawthrills.com'],
+      referenceRowCandidates: [{ sourceRowId: 'jp-row', manufacturer: 'Raw Thrills', normalizedTitle: 'Jurassic Park Arcade' }],
+    }],
+    byNormalizedTitleKey: { 'jurassic park arcade': ['raw thrills::jurassic park arcade'] },
+    byNormalizedNameKey: { 'jurassic park arcade': ['raw thrills::jurassic park arcade'] },
+    byOriginalTitleKey: { 'jurassic park arcade': ['raw thrills::jurassic park arcade'] },
+    byAliasKey: { 'jurassic park': ['raw thrills::jurassic park arcade'] },
+  };
+  const lookup = await findManualLookupReferenceHints({
+    assetName: 'Jurassic Park',
+    normalizedName: 'Jurassic Park',
+    originalTitle: 'Jurassic Park',
+    manufacturer: 'RawThrills Inc.',
+    alternateNames: ['Jurassic Park Arcade'],
+    referenceIndex,
+  });
+  assert.equal(lookup?.source, 'json_index');
+  assert.equal(lookup?.hints?.entryKey, 'raw thrills::jurassic park arcade');
+  assert.equal(Array.isArray(lookup?.hints?.expandedMatchReasons), true);
+  assert.equal((lookup?.hints?.expandedMatchReasons || []).length > 0, true);
+});

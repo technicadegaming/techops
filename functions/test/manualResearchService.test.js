@@ -460,6 +460,8 @@ test('researchAssetTitles promotes discovered exact-title manual over dead adapt
     assert.equal(result.results[0].manualReady, true);
     assert.match(result.results[0].manualUrl || '', /^manual-library\//i);
     assert.equal(logs.some((entry) => entry[0] === 'manualResearch:candidate_rank_assigned'), true);
+    const selectedTierEvent = logs.find((entry) => entry[0] === 'manualResearch:selected_candidate_final_tier');
+    assert.equal(selectedTierEvent?.[1]?.candidateTier, 'B_exact_title_validated_manual');
   } finally {
     console.log = originalLog;
   }
@@ -778,11 +780,71 @@ test('researchAssetTitles prefers discovered validated candidate over persisted 
     assert.equal(result.results[0].manualReady, true);
     assert.equal(result.results[0].documentationSuggestions[0]?.url, result.results[0].manualUrl);
     assert.equal(result.results[0].documentationSuggestions.some((entry) => entry.url === deadGuessedUrl), false);
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:stale_candidate_pre_demoted'), true);
+    assert.equal(
+      logs.some((entry) => entry[0] === 'manualResearch:dead_candidate_skipped_before_selection')
+      || logs.some((entry) => entry[0] === 'manualResearch:stale_candidate_pre_demoted'),
+      true
+    );
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:alternate_candidate_selected_due_to_dead_cache'), true);
     assert.equal(
       logs.some((entry) => entry[0] === 'manualResearch:candidate_replaced_due_to_better_exact_match')
       || logs.some((entry) => entry[0] === 'manualResearch:weak_candidate_demoted'),
       true,
     );
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test('researchAssetTitles keeps exact-title 404 candidates unvalidated and prefers alternate Betson PDF on dead-cache rerun', async () => {
+  const deadLaiUrl = 'https://laigames.com/wp-content/uploads/virtual-rabbids-install-guide.pdf';
+  const betsonUrl = 'https://www.betson.com/wp-content/uploads/2020/01/VirtualRabbidsTheBigRideManual16.pdf';
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args);
+  try {
+    const result = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true },
+      companyId: 'company-1',
+      titles: [{
+        originalTitle: 'Virtual Rabbids',
+        manufacturerHint: 'LAI Games',
+        deadCandidateUrls: [deadLaiUrl],
+      }],
+      traceId: 'test-rabbids-dead-cache-betson',
+      storage: createStorageMock(),
+      fetchImpl: async (url, options = {}) => {
+        if (url === deadLaiUrl) return { ok: false, status: 404, url, headers: { get: () => 'application/pdf' }, text: async () => '' };
+        if ((options.method || 'GET').toUpperCase() === 'HEAD') return { ok: true, status: 200, url, headers: { get: () => 'application/pdf' } };
+        return { ok: true, status: 200, url, headers: { get: () => 'application/pdf' }, text: async () => '', arrayBuffer: async () => Buffer.from('%PDF-1.4\nmanual') };
+      },
+      researchFallback: async () => ({
+        normalizedTitle: 'Virtual Rabbids: The Big Ride',
+        manufacturer: 'LAI Games',
+        matchType: 'support_only',
+        manualReady: false,
+        reviewRequired: true,
+        manualUrl: '',
+        manualSourceUrl: 'https://laigames.com/games/virtual-rabbids-the-big-ride/',
+        supportUrl: 'https://laigames.com/games/virtual-rabbids-the-big-ride/',
+        confidence: 0.7,
+        candidates: [
+          { bucket: 'verified_pdf_candidate', url: deadLaiUrl, title: 'Virtual Rabbids Install Guide' },
+          { bucket: 'verified_pdf_candidate', url: betsonUrl, title: 'Virtual Rabbids Operator Manual', verified: true, exactManualMatch: true },
+        ],
+      }),
+    });
+    assert.equal(result.results[0].manualReady, true);
+    assert.equal(result.results[0].documentationSuggestions.some((entry) => entry.url === deadLaiUrl), false);
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:candidate_rank_assigned' && entry[1]?.candidateUrl === deadLaiUrl && entry[1]?.candidateRankTier === 'B_exact_title_unvalidated_candidate'), true);
+    assert.equal(
+      logs.some((entry) => entry[0] === 'manualResearch:dead_candidate_skipped_before_selection' && entry[1]?.candidateUrl === deadLaiUrl)
+      || logs.some((entry) => entry[0] === 'manualResearch:stale_candidate_pre_demoted' && entry[1]?.candidateUrl === deadLaiUrl),
+      true
+    );
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:alternate_candidate_selected_due_to_dead_cache'), true);
   } finally {
     console.log = originalLog;
   }
