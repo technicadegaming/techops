@@ -2,6 +2,7 @@ const { normalizeUrl } = require('./manualLibraryService');
 
 const TIER = {
   SHARED_LIBRARY_REUSE: 'A_shared_library_reuse',
+  EXACT_TITLE_UNVALIDATED_CANDIDATE: 'B_exact_title_unvalidated_candidate',
   EXACT_TITLE_VALIDATED_MANUAL: 'B_exact_title_validated_manual',
   EXACT_TITLE_SUPPORT_OR_LIBRARY: 'C_exact_title_support_or_library',
   GENERIC_BRAND_OR_LIBRARY_PAGE: 'D_generic_brand_or_library_page',
@@ -20,10 +21,11 @@ function toNumber(value, fallback = 0) {
 function tierRank(tier = '') {
   if (tier === TIER.SHARED_LIBRARY_REUSE) return 0;
   if (tier === TIER.EXACT_TITLE_VALIDATED_MANUAL) return 1;
-  if (tier === TIER.EXACT_TITLE_SUPPORT_OR_LIBRARY) return 2;
-  if (tier === TIER.GENERIC_BRAND_OR_LIBRARY_PAGE) return 3;
-  if (tier === TIER.GENERATED_VENDOR_GUESS) return 4;
-  return 4;
+  if (tier === TIER.EXACT_TITLE_UNVALIDATED_CANDIDATE) return 2;
+  if (tier === TIER.EXACT_TITLE_SUPPORT_OR_LIBRARY) return 3;
+  if (tier === TIER.GENERIC_BRAND_OR_LIBRARY_PAGE) return 4;
+  if (tier === TIER.GENERATED_VENDOR_GUESS) return 5;
+  return 5;
 }
 
 function classifyCandidateTier(candidate = {}) {
@@ -32,7 +34,7 @@ function classifyCandidateTier(candidate = {}) {
   const bucket = `${candidate?.bucket || candidate?.candidateBucket || ''}`.trim().toLowerCase();
   const sourceType = `${candidate?.sourceType || candidate?.resourceType || ''}`.trim().toLowerCase();
   const title = `${candidate?.title || ''}`.trim().toLowerCase();
-  const verified = candidate?.verified === true || bucket === 'verified_pdf_candidate';
+  const verified = candidate?.verified === true;
   const cachedManual = `${candidate?.cachedManual || ''}` === 'true' || !!`${candidate?.manualLibraryRef || ''}`.trim();
   const exactTitle = candidate?.exactManualMatch === true
     || candidate?.candidateScoringFlags?.hasStrongTitleFamilyMatch === true
@@ -54,10 +56,11 @@ function classifyCandidateTier(candidate = {}) {
 
   if (cachedManual) return TIER.SHARED_LIBRARY_REUSE;
   if (!adapterGuess && exactTitle && directManualLike && verified) return TIER.EXACT_TITLE_VALIDATED_MANUAL;
-  if (!adapterGuess && exactTitle && (directManualLike || titleSpecificSupport || verified)) return TIER.EXACT_TITLE_SUPPORT_OR_LIBRARY;
+  if (!adapterGuess && exactTitle && directManualLike) return TIER.EXACT_TITLE_UNVALIDATED_CANDIDATE;
+  if (!adapterGuess && exactTitle && (titleSpecificSupport || verified)) return TIER.EXACT_TITLE_SUPPORT_OR_LIBRARY;
   if (adapterGuess) return TIER.GENERATED_VENDOR_GUESS;
   if (generic) return TIER.GENERIC_BRAND_OR_LIBRARY_PAGE;
-  if (!adapterGuess && directManualLike && exactTitle) return TIER.EXACT_TITLE_SUPPORT_OR_LIBRARY;
+  if (!adapterGuess && directManualLike && exactTitle) return TIER.EXACT_TITLE_UNVALIDATED_CANDIDATE;
   return TIER.GENERIC_BRAND_OR_LIBRARY_PAGE;
 }
 
@@ -76,7 +79,9 @@ function buildRankedCandidate(candidate = {}, { deadCandidateUrls = new Set() } 
     urlKey,
     dead,
     discovered,
-    exactTitle: tier === TIER.EXACT_TITLE_VALIDATED_MANUAL || tier === TIER.EXACT_TITLE_SUPPORT_OR_LIBRARY,
+    exactTitle: tier === TIER.EXACT_TITLE_VALIDATED_MANUAL
+      || tier === TIER.EXACT_TITLE_UNVALIDATED_CANDIDATE
+      || tier === TIER.EXACT_TITLE_SUPPORT_OR_LIBRARY,
   };
 }
 

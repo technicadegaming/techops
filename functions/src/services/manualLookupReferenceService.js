@@ -239,16 +239,48 @@ function getReferenceIndex({ referenceIndex = null, referenceIndexPath = DEFAULT
 function findReferenceEntries(index = {}, lookupKeys = {}) {
   const entryByKey = new Map((index.entries || []).map((entry) => [entry.entryKey, entry]));
   const candidateKeys = new Set();
+  const expandedMatchReasons = [];
   const addFromMap = (mapName, key) => {
     if (!key) return;
     const rows = Array.isArray(index?.[mapName]?.[key]) ? index[mapName][key] : [];
-    rows.forEach((entryKey) => candidateKeys.add(entryKey));
+    rows.forEach((entryKey) => {
+      candidateKeys.add(entryKey);
+      expandedMatchReasons.push({ mapName, key, entryKey });
+    });
+  };
+  const expandArcadeKeyVariants = (key = '') => {
+    const normalized = normalizePhrase(key);
+    if (!normalized) return [];
+    const expanded = new Set([normalized]);
+    if (/\barcade\b/.test(normalized)) expanded.add(normalized.replace(/\barcade\b/g, '').replace(/\s+/g, ' ').trim());
+    else expanded.add(`${normalized} arcade`.trim());
+    return Array.from(expanded).filter(Boolean);
+  };
+  const buildFamilyAliasKeys = () => {
+    const all = [
+      lookupKeys.normalizedTitleKey,
+      lookupKeys.normalizedNameKey,
+      lookupKeys.originalTitleKey,
+      ...(lookupKeys.aliasKeys || []),
+    ].filter(Boolean);
+    return Array.from(new Set(
+      expandArcadeKeyVariants(all.join(' '))
+        .flatMap((value) => value.split(/\s{2,}|\s*\/\s*/g))
+        .map((value) => normalizePhrase(value))
+        .filter(Boolean)
+    ));
   };
 
-  addFromMap('byNormalizedTitleKey', lookupKeys.normalizedTitleKey);
-  addFromMap('byNormalizedNameKey', lookupKeys.normalizedNameKey);
-  addFromMap('byOriginalTitleKey', lookupKeys.originalTitleKey);
-  (lookupKeys.aliasKeys || []).forEach((key) => addFromMap('byAliasKey', key));
+  const normalizedTitleKeys = expandArcadeKeyVariants(lookupKeys.normalizedTitleKey);
+  const normalizedNameKeys = expandArcadeKeyVariants(lookupKeys.normalizedNameKey);
+  const originalTitleKeys = expandArcadeKeyVariants(lookupKeys.originalTitleKey);
+  const aliasKeys = Array.from(new Set((lookupKeys.aliasKeys || []).flatMap((key) => expandArcadeKeyVariants(key))));
+  const familyKeys = buildFamilyAliasKeys();
+  normalizedTitleKeys.forEach((key) => addFromMap('byNormalizedTitleKey', key));
+  normalizedNameKeys.forEach((key) => addFromMap('byNormalizedNameKey', key));
+  originalTitleKeys.forEach((key) => addFromMap('byOriginalTitleKey', key));
+  aliasKeys.forEach((key) => addFromMap('byAliasKey', key));
+  familyKeys.forEach((key) => addFromMap('byAliasKey', key));
 
   const entries = Array.from(candidateKeys)
     .map((entryKey) => entryByKey.get(entryKey))
@@ -258,7 +290,7 @@ function findReferenceEntries(index = {}, lookupKeys = {}) {
       return !entry.normalizedManufacturerKey || entry.normalizedManufacturerKey === lookupKeys.normalizedManufacturerKey;
     });
 
-  return entries;
+  return { entries, expandedMatchReasons };
 }
 
 async function fetchRowsByKeys(db, lookupKeys = {}) {
@@ -308,13 +340,14 @@ async function findManualLookupReferenceHints({
   });
 
   const index = getReferenceIndex({ referenceIndex, referenceIndexPath });
-  const entries = findReferenceEntries(index, lookupKeys);
+  const { entries, expandedMatchReasons } = findReferenceEntries(index, lookupKeys);
   if (entries.length) {
     const bestEntry = entries[0];
     logReferenceEvent('reference_index_hit', {
       title,
       entryKey: bestEntry.entryKey,
       candidateEntryCount: entries.length,
+      expandedMatchCount: expandedMatchReasons.length,
     });
     return {
       source: 'json_index',
@@ -323,6 +356,7 @@ async function findManualLookupReferenceHints({
       entry: bestEntry,
       hints: {
         ...bestEntry,
+        expandedMatchReasons: expandedMatchReasons.slice(0, 20),
         lookupRowsUsed: Number(bestEntry.lookupRowsUsed || 0),
       },
     };

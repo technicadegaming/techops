@@ -2166,6 +2166,21 @@ async function discoverManualDocumentation({
     });
   };
   const adapterCandidates = buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleVariants, referenceHints, logEvent });
+  const referenceRowCandidates = adapterCandidates.filter((candidate) => candidate.adapter === 'reference_row');
+  const referenceRowsRequested = Array.isArray(referenceHints?.referenceRowCandidates) && referenceHints.referenceRowCandidates.length > 0;
+  if (referenceRowCandidates.length) {
+    logEvent('reference_row_match_expanded', {
+      referenceRowCandidateCount: referenceRowCandidates.length,
+      referenceRowIds: Array.from(new Set(referenceRowCandidates.map((candidate) => candidate.referenceRowId).filter(Boolean))).slice(0, 10),
+      generatedProbeOrder: referenceRowCandidates.map((candidate) => candidate.referenceRowField || '').filter(Boolean).slice(0, 12),
+    });
+  } else if (referenceHints && referenceRowsRequested) {
+    logEvent('reference_row_not_matched', {
+      title: sanitizeDiagnosticValue(title, 140),
+      manufacturer: sanitizeDiagnosticValue(manufacturer, 120),
+      referenceEntryKey: referenceHints?.entryKey || '',
+    });
+  }
   const seedPages = buildManufacturerDiscoverySeedPages({ title, manufacturerProfile, titleVariants });
   const providerPlan = searchProvider
     ? [{ name: searchProvider?.name || 'custom_search_provider', fn: searchProvider }]
@@ -2619,18 +2634,31 @@ async function discoverManualDocumentation({
   const titleSpecificSupportCount = supportResources.filter((entry) => entry?.titleSpecificSupport === true).length;
   const followupAttemptedCount = followupPlan.length;
   const extractedManualEvidenceCount = followedRows.length;
-  const discoveryTerminalReason = documentationLinks.length
-    ? 'docs_discovered'
-    : (titleSpecificSupportCount > 0
-      ? (extractedManualEvidenceCount > 0 ? 'candidate_found_but_not_durable' : 'title_page_found_manual_probe_failed')
-      : (supportResources.length > 0
-        ? 'generic-search-page-only'
-        : ((deadManualUrls.size > 0 || Number(adapterDiagnostics.guessedPdf404Count || 0) > 0)
-          ? 'guessed-pdf-404-no-better-candidate'
-          : 'deterministic-search-no-results')));
+  const hasReferenceRows = referenceRowCandidates.length > 0;
+  const anyReferenceRowProbe = Number(adapterDiagnostics.referenceManualUrlProbeCount || 0)
+    + Number(adapterDiagnostics.referenceSourcePageProbeCount || 0)
+    + Number(adapterDiagnostics.referenceSupportPageProbeCount || 0) > 0;
+  let discoveryTerminalReason = '';
+  if (documentationLinks.length) {
+    discoveryTerminalReason = 'docs_discovered';
+  } else if (referenceHints && referenceRowsRequested && !hasReferenceRows) {
+    discoveryTerminalReason = 'reference_row_not_matched';
+  } else if (hasReferenceRows && anyReferenceRowProbe && Number(adapterDiagnostics.referenceRowCandidateValidatedCount || 0) <= 0) {
+    discoveryTerminalReason = 'reference_row_match_no_live_manual';
+  } else if (titleSpecificSupportCount > 0) {
+    discoveryTerminalReason = extractedManualEvidenceCount > 0 ? 'candidate_found_but_not_durable' : 'title_page_found_manual_probe_failed';
+  } else if (supportResources.length > 0) {
+    discoveryTerminalReason = 'generic-search-page-only';
+  } else if (deadManualUrls.size > 0 || Number(adapterDiagnostics.guessedPdf404Count || 0) > 0) {
+    discoveryTerminalReason = 'guessed-pdf-404-no-better-candidate';
+  } else {
+    discoveryTerminalReason = 'deterministic-search-no-results';
+  }
   const bestExactDiscoveredCandidate = documentationLinks.find((entry) => {
     const tier = classifyCandidateTier(entry);
-    return tier === CANDIDATE_TIER.EXACT_TITLE_VALIDATED_MANUAL || tier === CANDIDATE_TIER.EXACT_TITLE_SUPPORT_OR_LIBRARY;
+    return tier === CANDIDATE_TIER.EXACT_TITLE_VALIDATED_MANUAL
+      || tier === CANDIDATE_TIER.EXACT_TITLE_UNVALIDATED_CANDIDATE
+      || tier === CANDIDATE_TIER.EXACT_TITLE_SUPPORT_OR_LIBRARY;
   }) || null;
   if (bestExactDiscoveredCandidate) {
     logEvent('best_exact_title_candidate_found', {

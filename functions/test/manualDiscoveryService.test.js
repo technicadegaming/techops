@@ -1621,3 +1621,57 @@ test('discoverManualDocumentation probes reference row candidates first for HYPE
   });
   assert.equal(rabbits.documentationLinks.some((row) => /virtualrabbidsthebigridemanual16\.pdf$/i.test(row.url)), true);
 });
+
+test('discoverManualDocumentation probes reference rows first for Jurassic Park and King Kong Raw Thrills entries', async () => {
+  const events = [];
+  const fetchImpl = async (_url, options = {}) => {
+    if ((options.method || 'GET').toUpperCase() === 'HEAD') return { ok: true, status: 200, headers: { get: () => 'application/pdf' } };
+    return { ok: true, status: 200, headers: { get: () => 'application/pdf' }, text: async () => '' };
+  };
+  const searchProvider = async () => [{ title: 'generic fallback result', url: 'https://example.com/search-result' }];
+
+  const jurassic = await discoverManualDocumentation({
+    assetName: 'Jurassic Park',
+    normalizedName: 'Jurassic Park',
+    manufacturer: 'Raw Thrills Inc.',
+    manufacturerProfile: getManufacturerProfile('Raw Thrills', 'Jurassic Park'),
+    referenceHints: {
+      entryKey: 'raw thrills::jurassic park arcade',
+      referenceRowCandidates: [{
+        sourceRowId: 'jp-row',
+        manufacturer: 'Raw Thrills',
+        normalizedTitle: 'Jurassic Park Arcade',
+        manualUrl: 'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf',
+        manualSourceUrl: 'https://rawthrills.com/games/jurassic-park-arcade/',
+        supportUrl: 'https://rawthrills.com/games/jurassic-park-arcade-support/',
+      }],
+    },
+    searchProvider,
+    fetchImpl,
+    logger: { log: (...args) => events.push(args) },
+  });
+  const kingKong = await discoverManualDocumentation({
+    assetName: 'King Kong',
+    normalizedName: 'King Kong',
+    manufacturer: 'RawThrills',
+    manufacturerProfile: getManufacturerProfile('Raw Thrills', 'King Kong'),
+    referenceHints: {
+      entryKey: 'raw thrills::king kong of skull island vr',
+      referenceRowCandidates: [{
+        sourceRowId: 'kk-row',
+        manufacturer: 'Raw Thrills',
+        normalizedTitle: 'King Kong of Skull Island VR',
+        manualUrl: 'https://rawthrills.com/wp-content/uploads/king-kong-of-skull-island-vr-operator-manual.pdf',
+      }],
+    },
+    searchProvider,
+    fetchImpl,
+    logger: { log: (...args) => events.push(args) },
+  });
+
+  assert.equal(jurassic.documentationLinks.some((row) => /jurassic-park-arcade-operator-manual\.pdf$/i.test(row.url)), true);
+  assert.equal(kingKong.documentationLinks.some((row) => /king-kong-of-skull-island-vr-operator-manual\.pdf$/i.test(row.url)), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:reference_row_match_expanded'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:reference_row_manual_url_probed'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:reference_row_candidate_generated'), true);
+});
