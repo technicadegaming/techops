@@ -77,6 +77,39 @@ test('direct PDF manual acquisition stores file once and writes manualLibrary re
   assert.match(row.storagePath, /^manual-library\/bay-tek-games\/quik-drop\//);
 });
 
+test('direct candidate acquisition emits durable storage lifecycle logs and persisted manual fields', async () => {
+  const db = createDb();
+  const saves = [];
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args);
+  try {
+    const result = await acquireManualToLibrary({
+      db,
+      storage: createStorage(saves),
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        url: 'https://example.com/files/king-kong-manual.pdf',
+        headers: { get: () => 'application/pdf' },
+        arrayBuffer: async () => Buffer.from('%PDF-1.4\nking kong')
+      }),
+      candidate: { url: 'https://example.com/files/king-kong-manual.pdf' },
+      context: { originalTitle: 'King Kong', canonicalTitle: 'King Kong', manufacturer: 'Raw Thrills', familyTitle: 'King Kong' }
+    });
+    assert.equal(result.manualReady, true);
+    assert.ok(result.manualLibrary?.id);
+    assert.match(result.manualLibrary?.storagePath || '', /^manual-library\//i);
+    const events = logs.map((entry) => entry[0]);
+    assert.equal(events.includes('manualAcquire:acquisition_download_succeeded'), true);
+    assert.equal(events.includes('manualAcquire:durable_storage_write_started'), true);
+    assert.equal(events.includes('manualAcquire:durable_storage_write_completed'), true);
+    assert.equal(events.includes('manualAcquire:asset_manual_fields_persisted'), true);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
 test('repeated acquisition of same manual reuses existing library record via URL or hash dedupe', async () => {
   const db = createDb();
   const saves = [];

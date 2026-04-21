@@ -156,6 +156,14 @@ async function acquireManualToLibrary({
       return null;
     });
     if (!download) continue;
+    logEvent('acquisition_download_succeeded', {
+      canonicalTitle,
+      originalDownloadUrl: normalizedCandidateUrl,
+      resolvedDownloadUrl: download.resolvedDownloadUrl,
+      contentType: download.contentType,
+      extension: download.extension,
+      fileSize: download.buffer.length,
+    });
     if (!ALLOWED_EXTENSIONS.has(download.extension) || !isDocumentLike(download)) {
       logEvent('download_candidate_rejected', { canonicalTitle, originalDownloadUrl: normalizedCandidateUrl, resolvedDownloadUrl: download.resolvedDownloadUrl, rejectionReasons: ['not_a_manual_document'] });
       failedCandidates.push({
@@ -175,10 +183,21 @@ async function acquireManualToLibrary({
       return { manualReady: true, reusedExisting: true, manualLibrary: existingByHash, manualUrl: existingByHash.storagePath, manualSourceUrl: existingByHash.sourcePageUrl || sourcePageUrl, failedCandidates };
     }
     const storagePath = buildManualLibraryStoragePath({ normalizedManufacturer, canonicalTitle, sha256, extension: download.extension });
+    logEvent('durable_storage_write_started', {
+      canonicalTitle,
+      resolvedDownloadUrl: download.resolvedDownloadUrl,
+      storagePath,
+      sha256,
+    });
     await storage.bucket().file(storagePath).save(download.buffer, {
       resumable: false,
       contentType: download.contentType,
       metadata: { metadata: { canonicalTitle, manufacturer, sha256, sourcePageUrl, resolvedDownloadUrl: download.resolvedDownloadUrl } }
+    });
+    logEvent('durable_storage_write_completed', {
+      canonicalTitle,
+      storagePath,
+      sha256,
     });
     logEvent('file_uploaded', { canonicalTitle, storagePath, sha256, reusedExisting: false });
     const record = await writeManualLibraryRecord({
@@ -223,6 +242,12 @@ async function acquireManualToLibrary({
       },
     });
     logEvent('library_record_written', { canonicalTitle, storagePath, sha256, manualLibraryId: record.id });
+    logEvent('asset_manual_fields_persisted', {
+      canonicalTitle,
+      manualLibraryRef: record.id,
+      manualStoragePath: storagePath,
+      manualUrl: storagePath,
+    });
     logEvent('final_result', { canonicalTitle, manufacturer, sourcePageUrl, resolvedDownloadUrl: download.resolvedDownloadUrl, acceptedCandidateCount: acceptedCount, sha256, storagePath, reusedExisting: false, finalManualReady: true, elapsedMs: Date.now() - startedAt });
     return { manualReady: true, reusedExisting: false, manualLibrary: record, manualUrl: storagePath, manualSourceUrl: sourcePageUrl, failedCandidates };
   }
