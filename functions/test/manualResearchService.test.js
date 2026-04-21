@@ -468,58 +468,69 @@ test('researchAssetTitles promotes discovered exact-title manual over dead adapt
 });
 
 test('researchAssetTitles forces durable acquisition for direct validated HYPERshoot PDF candidates', async () => {
-  const result = await researchAssetTitles({
-    db: createDb(),
-    settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
-    companyId: 'company-1',
-    titles: [{ originalTitle: 'HYPERshoot', manufacturerHint: 'LAI Games' }],
-    traceId: 'test-hypershoot-durable-acquisition',
-    storage: createStorageMock(),
-    fetchImpl: async (url) => ({
-      ok: true,
-      status: 200,
-      url,
-      headers: { get: () => (String(url).toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'text/html') },
-      text: async () => '',
-      arrayBuffer: async () => Uint8Array.from(Buffer.from('%PDF-1.4\nhypershoot')).buffer,
-    }),
-    researchFallback: async () => ({
-      normalizedTitle: 'HYPERshoot',
-      manufacturer: 'LAI Games',
-      matchType: 'support_only',
-      manualReady: false,
-      reviewRequired: true,
-      manualUrl: '',
-      manualSourceUrl: 'https://www.mossdistributing.com/userdocs/documents/',
-      supportUrl: 'https://www.mossdistributing.com/userdocs/documents/',
-      confidence: 0.77,
-      candidates: [{
-        bucket: 'verified_pdf_candidate',
-        url: 'https://www.mossdistributing.com/userdocs/documents/MS0225_HYPERSHOOT.PDF',
-        title: 'HYPERshoot Operator Manual',
-        discoverySource: 'search_result',
-        verified: true,
-        exactManualMatch: true,
-      }],
-      selectedCandidate: {
-        bucket: 'verified_pdf_candidate',
-        url: 'https://www.mossdistributing.com/userdocs/documents/MS0225_HYPERSHOOT.PDF',
-        title: 'HYPERshoot Operator Manual',
-        discoverySource: 'search_result',
-        verified: true,
-        exactManualMatch: true,
-      },
-      citations: [],
-      rawResearchSummary: 'Direct exact-title manual PDF discovered.',
-    }),
-  });
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args);
+  try {
+    const result = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
+      companyId: 'company-1',
+      titles: [{ originalTitle: 'HYPERshoot', manufacturerHint: 'LAI Games' }],
+      traceId: 'test-hypershoot-durable-acquisition',
+      storage: createStorageMock(),
+      fetchImpl: async (url) => ({
+        ok: true,
+        status: 200,
+        url,
+        headers: { get: () => (String(url).toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'text/html') },
+        text: async () => '',
+        arrayBuffer: async () => Uint8Array.from(Buffer.from('%PDF-1.4\nhypershoot')).buffer,
+      }),
+      researchFallback: async () => ({
+        normalizedTitle: 'HYPERshoot',
+        manufacturer: 'LAI Games',
+        matchType: 'support_only',
+        manualReady: false,
+        reviewRequired: true,
+        manualUrl: '',
+        manualSourceUrl: 'https://www.mossdistributing.com/userdocs/documents/',
+        supportUrl: 'https://www.mossdistributing.com/userdocs/documents/',
+        confidence: 0.77,
+        candidates: [{
+          bucket: 'verified_pdf_candidate',
+          url: 'https://www.mossdistributing.com/userdocs/documents/MS0225_HYPERSHOOT.PDF',
+          title: 'HYPERshoot Operator Manual',
+          discoverySource: 'reference_row_manual_url',
+          verified: true,
+          exactManualMatch: true,
+        }],
+        selectedCandidate: {
+          bucket: 'verified_pdf_candidate',
+          url: 'https://www.mossdistributing.com/userdocs/documents/MS0225_HYPERSHOOT.PDF',
+          title: 'HYPERshoot Operator Manual',
+          discoverySource: 'reference_row_manual_url',
+          verified: true,
+          exactManualMatch: true,
+        },
+        citations: [],
+        rawResearchSummary: 'Direct exact-title manual PDF discovered.',
+      }),
+    });
 
-  assert.equal(result.results[0].manualReady, true);
-  assert.ok(result.results[0].manualLibraryRef);
-  assert.match(result.results[0].manualStoragePath, /^manual-library\//i);
-  assert.equal(result.results[0].pipelineMeta.acquisitionAttempted, true);
-  assert.equal(result.results[0].pipelineMeta.durableStorageCompleted, true);
-  assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'docs_found_after_durable_storage');
+    assert.equal(result.results[0].manualReady, true);
+    assert.ok(result.results[0].manualLibraryRef);
+    assert.match(result.results[0].manualStoragePath, /^manual-library\//i);
+    assert.equal(result.results[0].pipelineMeta.acquisitionAttempted, true);
+    assert.equal(result.results[0].pipelineMeta.durableStorageCompleted, true);
+    assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'docs_found_after_durable_storage');
+    const markers = logs.map((entry) => entry[0]);
+    assert.equal(markers.includes('manualResearch:acquisition_eligible_candidate_detected'), true);
+    assert.equal(markers.includes('manualResearch:acquisition_forced_for_direct_pdf'), true);
+    assert.equal(markers.includes('manualResearch:durable_storage_completed'), true);
+  } finally {
+    console.log = originalLog;
+  }
 });
 
 test('researchAssetTitles persists/consumes answered follow-up fingerprints and avoids identical follow-up loop', async () => {

@@ -155,6 +155,13 @@ const MANUAL_FILENAME_TOKENS = /(manual|operator|service|install(?:ation)?|owner
 const MANUAL_PART_NUMBER_PATTERN = /\b\d{2,4}-\d{4,6}(?:-\d{2,4})?\b/i;
 const MANUAL_REVISION_PATTERN = /\b(?:rev(?:ision)?)[\s._-]*\d+[a-z]?\b/i;
 const DEAD_LINK_HTTP_STATUSES = new Set([404, 410]);
+const LAI_GENERIC_PARTS_PATH_PATTERNS = [
+  /\/(?:cart|login|register|create_account|account)\.php(?:$|[?#])/,
+  /\/shop-all-parts(?:\/|$)/,
+  /\/(?:balls|cable|cabinet-components|consumables|merchandise)(?:\/|$)/,
+  /\/category\//,
+  /\/product-category\//,
+];
 
 function buildExactTitleVariants(title, normalizedTitle) {
   return expandArcadeTitleAliases([title, normalizedTitle])
@@ -1093,6 +1100,8 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
   const sourceType = detectSourceType(url, manufacturerProfile);
   const resourceType = detectResourceType(url, manufacturerProfile);
   const nonManualUrlClass = classifyNonManualUrl(parsed);
+  const laiGenericPartsPage = /(^|\.)parts\.laigames\.com$/.test(host)
+    && LAI_GENERIC_PARTS_PATH_PATTERNS.some((pattern) => pattern.test(`${path}${parsed.search || ''}`));
   const hardNegativeDomain = isHardNegativeDomain(host);
   const bayTekDomain = isBayTekDomain(host);
   const bayTekUtility = isBayTekProfile(manufacturerProfile) && bayTekDomain && isBayTekUtilityPath(path);
@@ -1127,6 +1136,7 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
     && manufacturerMatch
     && !hardNegativeDomain
     && !nonManualUrlClass
+    && !laiGenericPartsPage
     && !junkPath
     && !likelyChromeLink
     && !genericSupport
@@ -1135,6 +1145,7 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
     && (directFile || strongManualIntent || explicitManualBearingHtml || hostManualIntent || (betsonDomain && /\/wp-content\/uploads\//.test(path)));
   const includeSupport = !junkPath
     && !hardNegativeDomain
+    && !laiGenericPartsPage
     && !likelyChromeLink
     && !bayTekUtility
     && !betsonUtility
@@ -1158,6 +1169,7 @@ function classifyManualCandidate({ title, url, manufacturer, titleVariants, manu
   if (!manufacturerMatch) rejectionReasons.push('missing_manufacturer_match');
   if (!directFile && !strongManualIntent && !hostManualIntent) rejectionReasons.push('missing_manual_signal');
   if (nonManualUrlClass?.reason) rejectionReasons.push(nonManualUrlClass.reason);
+  if (laiGenericPartsPage) rejectionReasons.push('lai_generic_parts_page');
   if (genericSupport) rejectionReasons.push('generic_support_page');
   if (junkPath) rejectionReasons.push('junk_path');
   if (hardNegativeDomain) rejectionReasons.push('hard_negative_domain');
@@ -1248,6 +1260,23 @@ function extractAnchorCandidates(html, pageUrl, { mode = 'default' } = {}) {
   }).filter(Boolean);
 }
 
+function classifyCommerceNavigationUrl(url = '') {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    const combined = `${path}${parsed.search || ''}`.toLowerCase();
+    if (/\/(?:cart|checkout|login|register|create_account|account)\.php(?:$|[?#])/.test(combined)) return 'junk_support_page';
+    if (/(^|\.)parts\.laigames\.com$/.test(host) && LAI_GENERIC_PARTS_PATH_PATTERNS.some((pattern) => pattern.test(combined))) {
+      if (/\/shop-all-parts(?:\/|$)/.test(combined)) return 'lai_generic_parts_page';
+      return 'commerce_navigation_link';
+    }
+    return '';
+  } catch {
+    return '';
+  }
+}
+
 async function extractManualLinksFromHtmlPage({
   pageUrl,
   pageTitle,
@@ -1290,9 +1319,19 @@ async function extractManualLinksFromHtmlPage({
         manufacturerProfile
       })
     }));
+  classified.forEach((row) => {
+    const rejection = classifyCommerceNavigationUrl(row.url);
+    if (rejection === 'junk_support_page') {
+      logEvent('junk_support_page_rejected', { pageUrl, rejectedUrl: row.url });
+    } else if (rejection === 'commerce_navigation_link') {
+      logEvent('commerce_navigation_link_rejected', { pageUrl, rejectedUrl: row.url });
+    } else if (rejection === 'lai_generic_parts_page') {
+      logEvent('lai_generic_parts_page_rejected', { pageUrl, rejectedUrl: row.url });
+    }
+  });
 
   const accepted = classified
-    .filter((row) => row.classification.includeManual)
+    .filter((row) => row.classification.includeManual && !classifyCommerceNavigationUrl(row.url))
     .slice(0, 3)
     .map((row) => ({
       title: [pageTitle, row.title].filter(Boolean).join(' - '),
@@ -2015,6 +2054,19 @@ async function probeAdapterCandidates({
       }
 
       if (classification.includeSupport) {
+        const commerceRejection = classifyCommerceNavigationUrl(candidate.url);
+        if (commerceRejection) {
+          logEvent(commerceRejection === 'junk_support_page'
+            ? 'junk_support_page_rejected'
+            : (commerceRejection === 'lai_generic_parts_page'
+              ? 'lai_generic_parts_page_rejected'
+              : 'commerce_navigation_link_rejected'), {
+            url: candidate.url,
+            adapter: candidate.adapter,
+            referenceRowField: candidate.referenceRowField || '',
+          });
+          continue;
+        }
         if (classification.titleSpecificSupport) titleSpecificHitCount += 1;
         if (candidate.adapter === 'raw_thrills' && candidate.type === 'support_page') {
           logEvent('raw_thrills_title_page_validated', {

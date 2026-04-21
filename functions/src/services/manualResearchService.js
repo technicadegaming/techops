@@ -505,6 +505,34 @@ function isDirectManualCandidateUrl(url = '') {
   return /\.(pdf|docx?)($|[?#])/.test(normalized) || /manual|operator|service-manual|installation/.test(normalized);
 }
 
+const JUNK_SUPPORT_LINK_PATTERNS = [
+  /\/(?:cart|checkout|login|register|create_account|account)\.php(?:$|[?#])/i,
+  /\/shop-all-parts(?:\/|$)/i,
+  /\/(?:balls|cable|cabinet-components|consumables|merchandise)(?:\/|$)/i,
+  /\/(?:category|product-category)\//i,
+];
+
+function isJunkSupportResourceUrl(url = '') {
+  const normalized = normalizeUrl(url);
+  if (!normalized) return true;
+  if (hasJunkManualCandidateUrl(normalized)) return true;
+  return JUNK_SUPPORT_LINK_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function filterSupportResourcesSuggestion(entries = [], logContext = {}) {
+  return (Array.isArray(entries) ? entries : []).filter((entry) => {
+    const url = normalizeUrl(entry?.url || entry || '');
+    if (!url || isJunkSupportResourceUrl(url)) {
+      logManualResearchEvent('junk_support_page_rejected', {
+        ...logContext,
+        rejectedUrl: url || `${entry?.url || entry || ''}`,
+      });
+      return false;
+    }
+    return true;
+  });
+}
+
 function isAcquisitionEligibleCandidate(candidate = {}) {
   const tier = classifyCandidateTier(candidate);
   const url = normalizeUrl(candidate?.url || '');
@@ -1689,6 +1717,10 @@ async function researchAssetTitles({
         return !(key && deadCandidateUrls.has(key));
       })
       .map(withSuggestionBucket);
+    supportResourcesSuggestion = filterSupportResourcesSuggestion(supportResourcesSuggestion, logContext).map(withSuggestionBucket);
+    if (summary.supportUrl && isJunkSupportResourceUrl(summary.supportUrl)) {
+      summary = { ...summary, supportUrl: '' };
+    }
     const queryPlanFingerprint = fingerprint([
       stageOne.normalizedTitle,
       stageOne.manufacturer,
@@ -1790,7 +1822,7 @@ async function researchAssetTitles({
         : (deadRetryUsedAlternate
           ? 'dead_candidate_retry_to_alternate'
           : (acquisitionError ? 'acquisition-failed' : (acquisitionEligible
-            ? (candidateWasDirectPdf ? 'direct_pdf_found_storage_skipped' : 'candidate_validated_but_not_stored')
+            ? 'candidate_validated_but_not_stored'
             : (documentationSuggestions.length ? 'docs_discovered_candidate_only' : (deadCandidateUrls.size > 0 ? 'dead-candidate-only' : `no_durable_manual:${acquisitionState}`)))))));
     if (stage2ErrorCode === 'openai-config-missing' || stage2ErrorCode === 'openai-auth-invalid') {
       logManualResearchEvent(stage2ErrorCode, {
@@ -1834,6 +1866,11 @@ async function researchAssetTitles({
       logManualResearchEvent('reference-support-page-no-manual-link', { ...logContext });
     } else if (terminalStateReason === 'manufacturer-adapter-no-better-candidate') {
       logManualResearchEvent('manufacturer-adapter-no-better-candidate', { ...logContext });
+    } else if (terminalStateReason === 'candidate_validated_but_not_stored') {
+      logManualResearchEvent('candidate_validated_but_not_stored', {
+        ...logContext,
+        candidateUrl: documentationSuggestions[0]?.url || '',
+      });
     }
     logManualResearchEvent('terminal_status_reason', {
       ...logContext,

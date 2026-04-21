@@ -440,6 +440,35 @@ test('classifyManualCandidate rejects generic Bay Tek terms/blog/parts-service p
   });
 });
 
+test('classifyManualCandidate rejects LAI generic commerce/auth/cart/category pages for manual/support extraction', () => {
+  const profile = getManufacturerProfile('LAI Games', 'HYPERshoot');
+  const urls = [
+    'https://parts.laigames.com/cart.php',
+    'https://parts.laigames.com/login.php',
+    'https://parts.laigames.com/create_account.php',
+    'https://parts.laigames.com/shop-all-parts',
+    'https://parts.laigames.com/balls/',
+    'https://parts.laigames.com/cabinet-components/',
+    'https://parts.laigames.com/category/decals/',
+  ];
+  urls.forEach((url) => {
+    const row = classifyManualCandidate({
+      title: 'HYPERshoot support',
+      url,
+      manufacturer: 'LAI Games',
+      titleVariants: ['hypershoot'],
+      manufacturerProfile: profile,
+    });
+    assert.equal(row.includeManual, false);
+    assert.equal(row.includeSupport, false);
+    assert.ok(
+      row.rejectionReasons.includes('lai_generic_parts_page')
+      || row.rejectionReasons.includes('junk_path')
+      || row.rejectionReasons.includes('not_support_or_manual')
+    );
+  });
+});
+
 test('discoverManualDocumentation extracts Quik Drop PDF from Betson title-specific result pages', async () => {
   const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
   const fetchMock = async (url) => {
@@ -1002,6 +1031,37 @@ test('discoverManualDocumentation rejects Bay Tek utility links and extracts Qui
   assert.ok(result.documentationLinks.some((row) => row.url === 'https://parts.baytekent.com/downloads/quik-drop-operator-manual.pdf'));
   assert.equal(result.documentationLinks.some((row) => /cart\.php|login\.php|baytekent\.com\/?$|parts\.baytekent\.com\/?$/.test(row.url)), false);
   assert.equal(result.supportResources.some((row) => /cart\.php|login\.php|https:\/\/baytekent\.com\/?$|https:\/\/parts\.baytekent\.com\/?$/.test(row.url)), false);
+});
+
+test('extractManualLinksFromHtmlPage rejects LAI generic parts/cart/category/shop-all-parts links', async () => {
+  const profile = getManufacturerProfile('LAI Games', 'HYPERshoot');
+  const events = [];
+  const rows = await extractManualLinksFromHtmlPage({
+    pageUrl: 'https://parts.laigames.com/category/decals/',
+    pageTitle: 'HYPERshoot parts',
+    manufacturer: 'LAI Games',
+    titleVariants: ['hypershoot'],
+    manufacturerProfile: profile,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => 'text/html' },
+      text: async () => `
+        <html><body>
+          <a href="https://parts.laigames.com/cart.php">Cart</a>
+          <a href="https://parts.laigames.com/login.php">Sign In</a>
+          <a href="https://parts.laigames.com/shop-all-parts">Shop All Parts</a>
+          <a href="https://parts.laigames.com/balls/">Balls</a>
+          <a href="https://parts.laigames.com/category/decals/">Decals</a>
+        </body></html>
+      `,
+    }),
+    logEvent: (event, payload) => events.push({ event, payload }),
+  });
+  assert.deepEqual(rows, []);
+  assert.equal(events.some((entry) => entry.event === 'junk_support_page_rejected'), true);
+  assert.equal(events.some((entry) => entry.event === 'commerce_navigation_link_rejected'), true);
+  assert.equal(events.some((entry) => entry.event === 'lai_generic_parts_page_rejected'), true);
 });
 
 
