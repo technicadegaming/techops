@@ -499,6 +499,44 @@ function isLikelyManualResearchUrl(url = '', { title = '', manufacturer = '', ti
   return classification.includeManual;
 }
 
+function isDirectManualCandidateUrl(url = '') {
+  const normalized = normalizeUrl(url).toLowerCase();
+  if (!normalized) return false;
+  return /\.(pdf|docx?)($|[?#])/.test(normalized) || /manual|operator|service-manual|installation/.test(normalized);
+}
+
+function isAcquisitionEligibleCandidate(candidate = {}) {
+  const tier = classifyCandidateTier(candidate);
+  const url = normalizeUrl(candidate?.url || '');
+  const bucket = `${candidate?.candidateBucket || candidate?.bucket || ''}`.trim().toLowerCase();
+  const supportOnlyBucket = new Set(['support_product_page', 'weak_lead', 'brochure_or_spec_doc', 'title_specific_support_page']);
+  const brochureLike = /(brochure|spec(?:ification)?(?:\s*sheet)?|sell[\s-]?sheet|flyer|catalog)/.test(`${candidate?.title || ''} ${url}`);
+  const cachedManual = !!`${candidate?.manualLibraryRef || ''}`.trim() || `${candidate?.cachedManual || ''}` === 'true';
+  const hasStoredPath = /^(manual-library\/|companies\/)/i.test(`${candidate?.manualStoragePath || candidate?.url || ''}`.trim());
+  if (cachedManual || hasStoredPath || tier === CANDIDATE_TIER.SHARED_LIBRARY_REUSE) {
+    return {
+      eligible: true,
+      tier,
+      directManualLike: false,
+      url,
+    };
+  }
+  const directManualLike = isDirectManualCandidateUrl(url)
+    || candidate?.candidateScoringFlags?.isDirectPdf === true
+    || `${candidate?.resourceType || candidate?.sourceType || ''}`.trim().toLowerCase() === 'manual';
+  const validatedManualTier = [
+    CANDIDATE_TIER.EXACT_TITLE_VALIDATED_MANUAL,
+    CANDIDATE_TIER.EXACT_TITLE_UNVALIDATED_CANDIDATE,
+    CANDIDATE_TIER.SHARED_LIBRARY_REUSE,
+  ].includes(tier);
+  return {
+    eligible: !!url && !brochureLike && !supportOnlyBucket.has(bucket) && (directManualLike || validatedManualTier),
+    tier,
+    directManualLike,
+    url,
+  };
+}
+
 async function loadCachedResearchResult({ db, companyId, normalizedTitle, manufacturer }) {
   const cacheId = buildCacheId(companyId, normalizedTitle, manufacturer);
   const snap = await db.collection(CACHE_COLLECTION).doc(cacheId).get();
@@ -1335,6 +1373,12 @@ async function researchAssetTitles({
     let manualLibraryAcquisition = null;
     let acquiredCandidateIndex = -1;
     let acquisitionState = 'skipped';
+    let acquisitionAttempted = false;
+    let acquisitionEligible = false;
+    let candidateWasDirectPdf = false;
+    let acquisitionSkippedReason = '';
+    let durableStorageCompleted = false;
+    let openedFromStoragePreferred = false;
     let acquisitionError = '';
     let lastFailureState = '';
     let lastFailureError = '';
@@ -1361,8 +1405,82 @@ async function researchAssetTitles({
       }
       return true;
     });
-    if (documentationSuggestions.length) {
+    if (!documentationSuggestions.length && stage2SelectedCandidate?.url) {
+      const selectedCandidateEligibility = isAcquisitionEligibleCandidate(stage2SelectedCandidate);
+      if (selectedCandidateEligibility.eligible) {
+        documentationSuggestions = [withSuggestionBucket({
+          ...stage2SelectedCandidate,
+          url: selectedCandidateEligibility.url,
+          title: stage2SelectedCandidate.title || originalTitle,
+          exactTitleMatch: stage2SelectedCandidate.exactTitleMatch !== false,
+          exactManualMatch: selectedCandidateEligibility.directManualLike || stage2SelectedCandidate.verified === true,
+          sourcePageUrl: stage2SelectedCandidate.sourcePageUrl || summary.manualSourceUrl || '',
+        })];
+        logManualResearchEvent('acquisition_eligible_candidate_detected', {
+          ...logContext,
+          candidateUrl: selectedCandidateEligibility.url,
+          candidateTier: selectedCandidateEligibility.tier,
+          candidateWasDirectPdf: selectedCandidateEligibility.directManualLike,
+          source: 'stage2_selected_candidate',
+        });
+      }
+    }
+    const selectedCandidateEligibility = isAcquisitionEligibleCandidate(documentationSuggestions[0] || {});
+    acquisitionEligible = documentationSuggestions.length > 0 && selectedCandidateEligibility.eligible;
+    candidateWasDirectPdf = selectedCandidateEligibility.directManualLike;
+    if (!documentationSuggestions.length) {
+      acquisitionSkippedReason = 'no_candidate_selected';
+    } else if (!acquisitionEligible) {
+      acquisitionSkippedReason = `candidate_not_acquisition_eligible:${selectedCandidateEligibility.tier || 'unknown'}`;
+      logManualResearchEvent('acquisition_skipped_reason', {
+        ...logContext,
+        reason: acquisitionSkippedReason,
+        candidateUrl: documentationSuggestions[0]?.url || '',
+        candidateTier: selectedCandidateEligibility.tier || '',
+      });
+    } else {
+      logManualResearchEvent('acquisition_eligible_candidate_detected', {
+        ...logContext,
+        candidateUrl: selectedCandidateEligibility.url,
+        candidateTier: selectedCandidateEligibility.tier,
+        candidateWasDirectPdf,
+        source: normalizeString(documentationSuggestions[0]?.discoverySource || '', 80) || 'ranked_candidate',
+      });
+    }
+    const reusableCandidate = documentationSuggestions[0] || {};
+    const reusableStoragePath = `${reusableCandidate?.manualStoragePath || reusableCandidate?.url || ''}`.trim();
+    const reusableCandidateIsDurable = acquisitionEligible
+      && (`${reusableCandidate?.manualLibraryRef || ''}`.trim() || `${reusableCandidate?.cachedManual || ''}` === 'true')
+      && /^(manual-library\/|companies\/)/i.test(reusableStoragePath);
+    if (reusableCandidateIsDurable) {
+      summary = {
+        ...summary,
+        matchType: 'exact_manual',
+        manualReady: true,
+        reviewRequired: true,
+        status: 'docs_found',
+        manualUrl: reusableStoragePath,
+        manualLibraryRef: `${reusableCandidate?.manualLibraryRef || ''}`.trim(),
+        manualStoragePath: reusableStoragePath,
+      };
+      acquisitionState = 'reused_existing_durable_storage';
+      durableStorageCompleted = true;
+      openedFromStoragePreferred = true;
+      logManualResearchEvent('durable_storage_completed', {
+        ...logContext,
+        manualLibraryRef: summary.manualLibraryRef || '',
+        manualStoragePath: reusableStoragePath,
+        source: 'reused_candidate',
+      });
+    } else if (acquisitionEligible) {
       acquisitionState = 'started';
+      acquisitionAttempted = true;
+      if (candidateWasDirectPdf) {
+        logManualResearchEvent('acquisition_forced_for_direct_pdf', {
+          ...logContext,
+          candidateUrl: documentationSuggestions[0]?.url || '',
+        });
+      }
       for (let index = 0; index < documentationSuggestions.length; index += 1) {
         const candidate = documentationSuggestions[index];
         const candidateUrlKey = normalizeUrlKey(candidate?.url || '');
@@ -1469,6 +1587,7 @@ async function researchAssetTitles({
           }
           acquiredCandidateIndex = index;
           acquisitionState = 'succeeded';
+          durableStorageCompleted = true;
           break;
         }
         const failedCandidates = Array.isArray(manualLibraryAcquisition?.failedCandidates)
@@ -1502,10 +1621,19 @@ async function researchAssetTitles({
         acquisitionState = lastFailureState;
         acquisitionError = lastFailureError || acquisitionError;
       }
+    } else if (!acquisitionSkippedReason) {
+      acquisitionSkippedReason = 'acquisition_not_attempted';
+    }
+    if (!acquisitionAttempted && acquisitionSkippedReason) {
+      logManualResearchEvent('acquisition_skipped_reason', {
+        ...logContext,
+        reason: acquisitionSkippedReason,
+      });
     }
     if (manualLibraryAcquisition?.manualReady && manualLibraryAcquisition.manualLibrary) {
       const library = manualLibraryAcquisition.manualLibrary;
       const storageUrl = library.storagePath || manualLibraryAcquisition.manualUrl || '';
+      openedFromStoragePreferred = !!storageUrl;
       summary = {
         ...summary,
         matchType: 'exact_manual',
@@ -1518,6 +1646,11 @@ async function researchAssetTitles({
         manualStoragePath: library.storagePath || '',
         manualVariant: library.variant || '',
       };
+      logManualResearchEvent('durable_storage_completed', {
+        ...logContext,
+        manualLibraryRef: library.id,
+        manualStoragePath: library.storagePath || '',
+      });
       documentationSuggestions = documentationSuggestions.map((entry, index) => index === acquiredCandidateIndex ? {
         ...entry,
         url: storageUrl,
@@ -1526,7 +1659,7 @@ async function researchAssetTitles({
         manualStoragePath: library.storagePath || '',
         cachedManual: true,
       } : entry).map(withSuggestionBucket);
-    } else {
+    } else if (!durableStorageCompleted) {
       summary = {
         ...summary,
         manualReady: false,
@@ -1629,6 +1762,11 @@ async function researchAssetTitles({
       normalizedTitle: summary.normalizedTitle || stageOne.normalizedTitle,
       manufacturer: summary.manufacturer || stageOne.manufacturer,
       acquisitionState,
+      acquisitionEligible,
+      acquisitionAttempted,
+      acquisitionSkippedReason,
+      candidateWasDirectPdf,
+      durableStorageCompleted,
       manualReady: summary.manualReady === true,
       manualLibraryRef: summary.manualLibraryRef || '',
       manualStoragePath: summary.manualStoragePath || '',
@@ -1651,7 +1789,9 @@ async function researchAssetTitles({
         ? 'exact_title_candidate_unvalidated_then_404'
         : (deadRetryUsedAlternate
           ? 'dead_candidate_retry_to_alternate'
-          : (acquisitionError ? 'acquisition-failed' : (deadCandidateUrls.size > 0 ? 'dead-candidate-only' : `no_durable_manual:${acquisitionState}`)))));
+          : (acquisitionError ? 'acquisition-failed' : (acquisitionEligible
+            ? (candidateWasDirectPdf ? 'direct_pdf_found_storage_skipped' : 'candidate_validated_but_not_stored')
+            : (documentationSuggestions.length ? 'docs_discovered_candidate_only' : (deadCandidateUrls.size > 0 ? 'dead-candidate-only' : `no_durable_manual:${acquisitionState}`)))))));
     if (stage2ErrorCode === 'openai-config-missing' || stage2ErrorCode === 'openai-auth-invalid') {
       logManualResearchEvent(stage2ErrorCode, {
         ...logContext,
@@ -1756,6 +1896,12 @@ async function researchAssetTitles({
       deadCandidatesSuppressedCount: deadCandidateUrls.size,
       acquisitionState,
       terminalReason: terminalStateReason,
+      candidateWasDirectPdf,
+      acquisitionEligible,
+      acquisitionAttempted,
+      acquisitionSkippedReason,
+      durableStorageCompleted,
+      openedFromStoragePreferred,
       referenceHintSource: stageOne.referenceHintSource || 'none',
       referenceHit: stageOne.referenceHit === true,
       referenceEntryKey: stageOne.referenceEntryKey || '',
@@ -1783,6 +1929,12 @@ async function researchAssetTitles({
         stage2Ran: stage2Planned,
         sourcePageExtracted: Array.isArray(documentationSuggestions) && documentationSuggestions.some((entry) => !!`${entry?.sourcePageUrl || ''}`.trim()),
         acquisitionSucceeded: summary.manualReady === true && !!`${summary.manualLibraryRef || ''}`.trim(),
+        candidateWasDirectPdf,
+        acquisitionEligible,
+        acquisitionAttempted,
+        acquisitionSkippedReason,
+        durableStorageCompleted,
+        openedFromStoragePreferred,
         acquisitionState,
         acquisitionError,
         manualLibraryRef: summary.manualLibraryRef || '',
