@@ -109,7 +109,7 @@ function getEffectiveEnrichmentStatus(asset = {}) {
   if (TERMINAL_MANUAL_STATUSES.has(explicitManualStatus) && ['queued', 'searching_docs', 'in_progress'].includes(normalizedStatus) && !hasRecentEnrichmentHeartbeat(asset)) {
     return explicitManualStatus === 'no_manual' ? 'no_match_yet' : 'followup_needed';
   }
-  const supportLinks = Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : [];
+  const supportLinks = filterDisplaySupportResources(Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []);
   const hasFollowupContext = supportLinks.length || `${asset.supportUrl || ''}`.trim() || `${asset.manualSourceUrl || ''}`.trim() || `${asset.enrichmentFollowupQuestion || ''}`.trim();
   const hasSuggestionContext = (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).some((entry) => `${entry?.url || ''}`.trim());
   if (['queued', 'searching_docs', 'in_progress'].includes(normalizedStatus) && !hasRecentEnrichmentHeartbeat(asset) && isEnrichmentStale(asset)) {
@@ -180,6 +180,26 @@ function renderSuggestionSource(entry) {
 
 function hasRenderableUrl(entry = {}) {
   return !!`${entry?.url || entry || ''}`.trim();
+}
+
+const JUNK_SUPPORT_DISPLAY_PATTERNS = [
+  /\/(?:cart|checkout|login|register|create_account|account)\.php(?:$|[?#])/i,
+  /\/shop-all-parts(?:\/|$)/i,
+  /\/(?:balls|cable|cabinet-components|consumables|merchandise)(?:\/|$)/i,
+  /\/(?:category|product-category)\//i,
+];
+
+function isJunkSupportDisplayUrl(url = '') {
+  const value = `${url || ''}`.trim();
+  if (!value) return true;
+  return JUNK_SUPPORT_DISPLAY_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+function filterDisplaySupportResources(entries = []) {
+  return (Array.isArray(entries) ? entries : []).filter((entry) => {
+    const url = `${entry?.url || entry || ''}`.trim();
+    return url && !entry?.deadPage && !entry?.unreachable && !isJunkSupportDisplayUrl(url);
+  });
 }
 
 function isStoredManualUrl(value = '') {
@@ -326,7 +346,7 @@ function deriveAssetManualStatus(asset = {}) {
   const manualState = getAuthoritativeManualState(asset);
   if (manualState.hasAttachedManual) return 'attached';
   if (getReviewableManualCandidateCount(asset) > 0) return 'review_needed';
-  const supportOnlyCount = (Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []).filter((entry) => !entry?.deadPage && !entry?.unreachable && hasRenderableUrl(entry)).length;
+  const supportOnlyCount = filterDisplaySupportResources(Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []).length;
   if (supportOnlyCount > 0) return 'support_only';
   return 'no_manual';
 }
@@ -407,7 +427,7 @@ function renderPreviewPanel(state) {
   }
 
   const docs = sortDocumentationSuggestions(preview?.documentationSuggestions || []).slice(0, 3);
-  const support = (preview?.supportResourcesSuggestion || []).slice(0, 3);
+  const support = filterDisplaySupportResources(preview?.supportResourcesSuggestion || []).slice(0, 3);
   const rawTitle = `${state.assetDraft?.name || ''}`.trim();
   const normalizedTitle = `${preview?.normalizedName || state.assetDraft?.normalizedName || ''}`.trim();
   const manufacturer = `${state.assetDraft?.manufacturer || preview?.likelyManufacturer || ''}`.trim();
@@ -456,14 +476,14 @@ function renderEnrichmentDetails(asset, manager, state) {
   const followupCandidates = suggestionBuckets.followupCandidates;
   const strongReviewCandidates = suggestionBuckets.strongReviewCandidates;
   const weakLeads = suggestionBuckets.weakLeads;
-  const supportLinks = (Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []).filter((entry) => !entry?.deadPage && !entry?.unreachable);
+  const supportLinks = filterDisplaySupportResources(Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []);
   const strongSupportLinks = supportLinks.filter((entry) => `${entry?.candidateBucket || ''}` !== 'weak_lead');
   const hiddenDeadLinks = (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).length - suggestionBuckets.allCandidates.length;
   const contacts = Array.isArray(asset.supportContactsSuggestion) ? asset.supportContactsSuggestion : [];
   const showFollowup = status === 'followup_needed' && asset.enrichmentFollowupQuestion;
   const manualState = getAuthoritativeManualState(asset);
   const linkedManuals = manualState.manualLinks;
-  const linkedSupport = Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : [];
+  const linkedSupport = filterDisplaySupportResources(Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []);
   const manualStatus = deriveAssetManualStatus(asset);
   const actionFeedback = state?.assetUi?.lastActionByAsset?.[asset.id] || null;
   const statusHelp = status === 'retry_needed'
@@ -745,7 +765,7 @@ export function renderAssets(el, state, actions) {
           removeAttr: `data-remove-manual="${asset.id}" data-url="${encodeURIComponent(url)}"`
         })).join('') : (manualState.manualLibraryRef ? renderInlineFeedback(`Shared manual attached via library ref ${manualState.manualLibraryRef}.`, 'success') : renderInlineFeedback('No attached manual yet. Run lookup or approve a suggested manual below.', 'info'))}</div>
             <div class="tiny" style="margin:4px 0;">Linked support links:</div>
-            <div style="margin:4px 0 8px;">${(asset.supportResourcesSuggestion || []).length ? (asset.supportResourcesSuggestion || []).map((entry) => {
+            <div style="margin:4px 0 8px;">${filterDisplaySupportResources(asset.supportResourcesSuggestion || []).length ? filterDisplaySupportResources(asset.supportResourcesSuggestion || []).map((entry) => {
           const url = entry?.url || entry;
           const label = entry?.label || entry?.title || url;
           if (!url) return '';
@@ -933,5 +953,6 @@ export {
   getDocumentationSuggestionBuckets,
   buildStoredManualDownloadUrl,
   resolveStoredManualDownloadUrl,
-  openStoredManualPath
+  openStoredManualPath,
+  filterDisplaySupportResources
 };

@@ -1044,11 +1044,26 @@ test('app shell routes stale bootstrap repairs through the callable flow instead
 
 
 test('asset manual status derivation distinguishes attached vs support-only vs review-needed vs none', async () => {
-  const { deriveAssetManualStatus } = await import('./../src/features/assets.js');
+  const { deriveAssetManualStatus, filterDisplaySupportResources } = await import('./../src/features/assets.js');
   assert.equal(deriveAssetManualStatus({ manualLibraryRef: 'manual-1', manualLinks: [] }), 'attached');
   assert.equal(deriveAssetManualStatus({ documentationSuggestions: [{ url: 'https://example.com/manual.pdf', verified: true, exactTitleMatch: true, exactManualMatch: true }] }), 'review_needed');
   assert.equal(deriveAssetManualStatus({ supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }] }), 'support_only');
   assert.equal(deriveAssetManualStatus({ documentationSuggestions: [], supportResourcesSuggestion: [] }), 'no_manual');
+  assert.equal(deriveAssetManualStatus({
+    supportResourcesSuggestion: [
+      { url: 'https://parts.laigames.com/balls/', label: 'Balls' },
+      { url: 'https://parts.laigames.com/cart.php', label: 'Cart' },
+      { url: 'https://parts.laigames.com/login.php', label: 'Sign In' },
+      { url: 'https://parts.laigames.com/create_account.php', label: 'Register' },
+    ],
+  }), 'no_manual');
+  assert.deepEqual(filterDisplaySupportResources([
+    { url: 'https://parts.laigames.com/balls/', label: 'Balls' },
+    { url: 'https://parts.laigames.com/cart.php', label: 'Cart' },
+    { url: 'https://parts.laigames.com/login.php', label: 'Sign In' },
+    { url: 'https://parts.laigames.com/create_account.php', label: 'Register' },
+    { url: 'https://laigames.com/games/hypershoot/support/', label: 'HYPERshoot support' },
+  ]).map((entry) => entry.url), ['https://laigames.com/games/hypershoot/support/']);
 });
 
 test('asset helpers render manual outcome states consistently', async () => {
