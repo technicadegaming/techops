@@ -1299,6 +1299,92 @@ test('asset actions surface weak lookup warning before save for ambiguous add/ed
   assert.match(state.assetDraft.saveSecondaryFeedback || '', /look weak for manual lookup/i);
 });
 
+test('assets view renders bulk visible doc re-search action and disables it while running', async () => {
+  const { renderAssets } = await loadAssetsHelpers();
+  const state = {
+    permissions: { companyRole: 'owner', role: 'owner' },
+    tasks: [],
+    pmSchedules: [],
+    taskAiRuns: [],
+    manuals: [],
+    auditLogs: [],
+    troubleshootingLibrary: [],
+    companyLocations: [],
+    route: { tab: 'assets', location: 'all', assetFilter: 'all' },
+    assetDraft: {},
+    assetUi: { searchQuery: '', statusFilter: 'all', reviewFilter: 'all', enrichmentFilter: 'all', bulkDocRerunStatus: 'running', bulkDocRerunProgress: { totalTargeted: 2, completed: 1, succeeded: 1, failed: 0, skipped: 0, currentAssetId: 'asset-2', currentAssetName: 'Asset Two' }, bulkDocRerunSummary: '' },
+    assets: [
+      { id: 'asset-1', name: 'Asset One', manufacturer: 'Mfr', locationId: '', locationName: '', enrichmentStatus: 'idle' },
+      { id: 'asset-2', name: 'Asset Two', manufacturer: 'Mfr', locationId: '', locationName: '', enrichmentStatus: 'idle' }
+    ]
+  };
+  const el = { innerHTML: '', querySelector: () => null, querySelectorAll: () => [] };
+  const actions = { setLocationFilter: () => {}, runBulkAssetEnrichment: () => {} };
+  renderAssets(el, state, actions);
+  assert.match(el.innerHTML, /Re-search docs for all visible assets/);
+  assert.match(el.innerHTML, /data-bulk-visible-enrich class="primary" disabled/);
+  assert.match(el.innerHTML, /Re-searching docs: 1 \/ 2 complete/);
+});
+
+test('asset actions bulk doc re-search uses visible ids, skips in-progress assets, and records progress summary', async () => {
+  const { createAssetActions } = await loadAssetActions();
+  const state = {
+    assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
+    assetUi: {},
+    assets: [
+      { id: 'asset-a', name: 'Asset A', enrichmentStatus: 'idle' },
+      { id: 'asset-b', name: 'Asset B', enrichmentStatus: 'searching_docs' },
+      { id: 'asset-c', name: 'Asset C', enrichmentStatus: 'idle' }
+    ],
+    companyLocations: [],
+    permissions: { companyRole: 'owner', role: 'owner' },
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    user: { uid: 'user-1' }
+  };
+  const enrichCalls = [];
+  const actions = createAssetActions({
+    state,
+    onLocationFilter: () => {},
+    render: () => {},
+    refreshData: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    deleteEntity: async () => {},
+    approveAssetManual: async () => {},
+    enrichAssetDocumentation: async (id) => {
+      enrichCalls.push(id);
+      if (id === 'asset-c') throw new Error('lookup failed');
+      return { status: 'no_match_yet' };
+    },
+    previewAssetDocumentationLookup: async () => ({}),
+    researchAssetTitles: async () => ({}),
+    markAssetEnrichmentFailure: async () => ({ message: 'failure marked' }),
+    normalizeAssetId: (name) => name,
+    pickUniqueAssetId: (id) => id,
+    createEmptyAssetDraft: () => ({ previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } }),
+    withTimeout: async (promise) => promise,
+    normalizeSupportEntries: (entries) => entries,
+    canDelete: () => false,
+    isAdmin: () => true,
+    isManager: () => true,
+    buildAssetSaveErrorMessage: () => 'error',
+    buildAssetSaveDebugContext: () => ({}),
+    isPermissionRelatedError: () => false,
+    buildPreviewQueryKey: () => ''
+  });
+
+  await actions.runBulkAssetEnrichment(['asset-a', 'asset-b', 'asset-c'], { confirmStart: false, requestDelayMs: 0 });
+
+  assert.deepEqual(enrichCalls, ['asset-a', 'asset-c']);
+  assert.equal(state.assetUi.bulkDocRerunStatus, 'idle');
+  assert.equal(state.assetUi.bulkDocRerunProgress.totalTargeted, 3);
+  assert.equal(state.assetUi.bulkDocRerunProgress.succeeded, 1);
+  assert.equal(state.assetUi.bulkDocRerunProgress.failed, 1);
+  assert.equal(state.assetUi.bulkDocRerunProgress.skipped, 1);
+  assert.match(state.assetUi.bulkDocRerunSummary, /Succeeded 1, failed 1, skipped 1/);
+});
+
 test('admin source no longer exposes a duplicate asset documentation review section', () => {
   const source = loadAdminSource();
   assert.doesNotMatch(source, /asset_review/);

@@ -640,6 +640,9 @@ export function renderAssets(el, state, actions) {
   const assetTasks = scope.scopedTasks;
   const docsReadyCount = (scope.scopedAssets || []).filter((asset) => getAuthoritativeManualState(asset).hasAttachedManual).length;
   const docsMissingCount = scope.assetsWithoutDocs.length;
+  const bulkDocRerunRunning = state.assetUi?.bulkDocRerunStatus === 'running';
+  const bulkDocRerunProgress = state.assetUi?.bulkDocRerunProgress || null;
+  const bulkDocRerunCurrentLabel = `${bulkDocRerunProgress?.currentAssetName || bulkDocRerunProgress?.currentAssetId || ''}`.trim();
 
   el.innerHTML = `
     <h2>Assets</h2>
@@ -692,6 +695,12 @@ export function renderAssets(el, state, actions) {
         <button type="button" data-clear-asset-filters ${activeAssetFilters.length ? '' : 'disabled'}>Clear filters</button>
       </div>
       <div class="tiny mt">Active filters: ${activeAssetFilters.length ? activeAssetFilters.join(' · ') : 'none'}</div>
+      <div class="row mt" style="flex-wrap:wrap; align-items:center;">
+        <button type="button" data-bulk-visible-enrich class="primary" ${bulkDocRerunRunning ? 'disabled' : ''}>Re-search docs for all visible assets</button>
+        ${bulkDocRerunRunning && bulkDocRerunProgress ? `<span class="tiny">Re-searching docs: ${bulkDocRerunProgress.completed} / ${bulkDocRerunProgress.totalTargeted} complete${bulkDocRerunCurrentLabel ? ` · Current: ${bulkDocRerunCurrentLabel}` : ''}</span>` : ''}
+      </div>
+      ${bulkDocRerunProgress ? `<div class="tiny mt">Bulk docs progress · targeted ${bulkDocRerunProgress.totalTargeted} · completed ${bulkDocRerunProgress.completed} · succeeded ${bulkDocRerunProgress.succeeded} · failed ${bulkDocRerunProgress.failed} · skipped ${bulkDocRerunProgress.skipped}</div>` : ''}
+      ${state.assetUi?.bulkDocRerunSummary ? `<div class="tiny mt">${state.assetUi.bulkDocRerunSummary}</div>` : ''}
     </div>
     ${assetFilter === 'missing_docs' ? '<div class="inline-state warn">Showing assets missing docs only.</div>' : ''}
     <form id="assetForm" class="grid grid-2" style="margin-bottom:12px; border:1px solid #e5e7eb; border-radius:10px; padding:10px;">
@@ -950,6 +959,7 @@ export function renderAssets(el, state, actions) {
     state.assetUi.enrichmentFilter = 'all';
     renderAssets(el, state, actions);
   });
+  el.querySelector('[data-bulk-visible-enrich]')?.addEventListener('click', () => actions.runBulkAssetEnrichment(scopedAssets.map((asset) => asset.id), { confirmStart: true }));
   el.querySelectorAll('[data-docs]').forEach((button) => button.addEventListener('click', () => actions.markDocsReviewed(button.dataset.docs)));
   el.querySelectorAll('[data-del]').forEach((button) => button.addEventListener('click', () => actions.deleteAsset(button.dataset.del)));
   el.querySelectorAll('[data-enrich]').forEach((button) => button.addEventListener('click', () => actions.runAssetEnrichment(button.dataset.enrich)));

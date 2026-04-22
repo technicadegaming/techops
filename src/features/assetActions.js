@@ -43,6 +43,8 @@ export function createAssetActions(deps) {
     .split(/\r?\n|,/)
     .map((entry) => entry.trim())
     .filter(Boolean);
+  const ACTIVE_ENRICHMENT_STATUSES = new Set(['queued', 'searching_docs', 'in_progress']);
+  const pause = (ms = 0) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 
   const setAssetActionFeedback = (assetId, message, tone = 'info') => {
     state.assetUi = {
@@ -598,12 +600,93 @@ export function createAssetActions(deps) {
         const refreshed = state.assets.find((asset) => asset.id === id) || {};
         const feedback = buildCompletionFeedback(refreshed, result);
         setAssetActionFeedback(id, feedback.message, feedback.tone);
+        await refreshData();
+        render();
+        return { ok: true, assetId: id };
       } catch (error) {
         console.error('[asset_manual_enrichment]', error);
         const failure = await markAssetEnrichmentFailure(id, error, true);
         setAssetActionFeedback(id, failure.message, 'error');
+        await refreshData();
+        render();
+        return { ok: false, assetId: id, error };
       }
-      await refreshData();
+    },
+    runBulkAssetEnrichment: async (assetIds = [], options = {}) => {
+      if (state.assetUi?.bulkDocRerunStatus === 'running') return;
+      const visibleIds = Array.from(new Set((Array.isArray(assetIds) ? assetIds : []).map((id) => `${id || ''}`.trim()).filter(Boolean)));
+      if (!visibleIds.length) {
+        state.assetUi = {
+          ...(state.assetUi || {}),
+          bulkDocRerunStatus: 'idle',
+          bulkDocRerunProgress: null,
+          bulkDocRerunSummary: 'No visible assets to process.'
+        };
+        render();
+        return;
+      }
+      const confirmStart = options?.confirmStart !== false;
+      if (confirmStart && typeof window !== 'undefined' && typeof window.confirm === 'function') {
+        const proceed = window.confirm(`Re-search docs for ${visibleIds.length} visible asset${visibleIds.length === 1 ? '' : 's'}?`);
+        if (!proceed) return;
+      }
+      const requestDelayMs = Number(options?.requestDelayMs ?? 250);
+      const initialProgress = {
+        totalTargeted: visibleIds.length,
+        completed: 0,
+        succeeded: 0,
+        failed: 0,
+        skipped: 0,
+        currentAssetId: '',
+        currentAssetName: ''
+      };
+      state.assetUi = {
+        ...(state.assetUi || {}),
+        bulkDocRerunStatus: 'running',
+        bulkDocRerunProgress: initialProgress,
+        bulkDocRerunSummary: ''
+      };
+      render();
+
+      const progress = { ...initialProgress };
+      for (let index = 0; index < visibleIds.length; index += 1) {
+        const assetId = visibleIds[index];
+        const current = state.assets.find((asset) => asset.id === assetId) || {};
+        progress.currentAssetId = assetId;
+        progress.currentAssetName = `${current?.name || ''}`.trim();
+        state.assetUi = { ...(state.assetUi || {}), bulkDocRerunProgress: { ...progress } };
+        render();
+
+        const status = `${current?.enrichmentStatus || ''}`.trim();
+        if (ACTIVE_ENRICHMENT_STATUSES.has(status)) {
+          progress.skipped += 1;
+          progress.completed += 1;
+          state.assetUi = { ...(state.assetUi || {}), bulkDocRerunProgress: { ...progress } };
+          render();
+          continue;
+        }
+        try {
+          const result = await actions.runAssetEnrichment(assetId);
+          if (result?.ok === false) progress.failed += 1;
+          else progress.succeeded += 1;
+        } catch (error) {
+          console.error('[asset_bulk_manual_enrichment]', { assetId, error });
+          progress.failed += 1;
+          setAssetActionFeedback(assetId, 'Bulk documentation re-search failed. Retry this asset manually.', 'error');
+        } finally {
+          progress.completed += 1;
+          state.assetUi = { ...(state.assetUi || {}), bulkDocRerunProgress: { ...progress } };
+          render();
+        }
+        if (requestDelayMs > 0 && index < visibleIds.length - 1) await pause(requestDelayMs);
+      }
+      const summary = `Bulk documentation re-search complete. Succeeded ${progress.succeeded}, failed ${progress.failed}, skipped ${progress.skipped}.`;
+      state.assetUi = {
+        ...(state.assetUi || {}),
+        bulkDocRerunStatus: 'idle',
+        bulkDocRerunProgress: { ...progress, currentAssetId: '', currentAssetName: '' },
+        bulkDocRerunSummary: summary
+      };
       render();
     },
     submitEnrichmentFollowup: async (id, answer) => {
