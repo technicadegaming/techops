@@ -554,6 +554,112 @@ function filterSupportResourcesSuggestion(entries = [], logContext = {}) {
   });
 }
 
+function buildContinuationSuggestions({
+  stageOne = {},
+  summary = {},
+  supportResourcesSuggestion = [],
+  documentationSuggestions = [],
+  logContext = {},
+} = {}) {
+  const existingUrlKeys = new Set(
+    (Array.isArray(documentationSuggestions) ? documentationSuggestions : [])
+      .map((entry) => normalizeUrlKey(entry?.url || ''))
+      .filter(Boolean)
+  );
+  const out = [];
+  const pushContinuation = ({
+    url = '',
+    sourcePageUrl = '',
+    title = '',
+    discoverySource = '',
+    continuationLogEvent = '',
+  } = {}) => {
+    const normalized = normalizeUrl(url);
+    if (!normalized || hasJunkManualCandidateUrl(normalized)) return false;
+    const key = normalizeUrlKey(normalized);
+    if (!key || existingUrlKeys.has(key)) return false;
+    existingUrlKeys.add(key);
+    out.push(withSuggestionBucket({
+      url: normalized,
+      sourcePageUrl: normalizeUrl(sourcePageUrl || normalized),
+      title: title || summary.normalizedTitle || stageOne.normalizedTitle || '',
+      discoverySource: discoverySource || 'continuation_context',
+      bucket: 'title_specific_support_page',
+      matchType: 'manual_page_with_download',
+      titleSpecificSupport: true,
+      continuationCandidate: true,
+    }));
+    if (continuationLogEvent) {
+      logManualResearchEvent(continuationLogEvent, {
+        ...logContext,
+        candidateUrl: normalized,
+      });
+    }
+    return true;
+  };
+
+  const referenceRows = Array.isArray(stageOne.referenceHints?.referenceRowCandidates)
+    ? stageOne.referenceHints.referenceRowCandidates
+    : [];
+  referenceRows.forEach((row = {}) => {
+    if (row.manualSourceUrl) {
+      pushContinuation({
+        url: row.manualSourceUrl,
+        sourcePageUrl: row.manualSourceUrl,
+        title: row.originalTitle || row.normalizedTitle,
+        discoverySource: 'reference_row_source_page',
+        continuationLogEvent: 'reference_source_continuation_started',
+      });
+    }
+    if (row.supportUrl) {
+      pushContinuation({
+        url: row.supportUrl,
+        sourcePageUrl: row.supportUrl,
+        title: row.originalTitle || row.normalizedTitle,
+        discoverySource: 'reference_row_support_page',
+        continuationLogEvent: 'support_page_continuation_started',
+      });
+    }
+    if (row.manualUrl) {
+      pushContinuation({
+        url: row.manualUrl,
+        sourcePageUrl: row.manualSourceUrl || row.supportUrl || summary.manualSourceUrl || summary.supportUrl || '',
+        title: row.originalTitle || row.normalizedTitle,
+        discoverySource: 'reference_row_manual_url_continuation',
+      });
+    }
+  });
+
+  if (summary.manualSourceUrl) {
+    pushContinuation({
+      url: summary.manualSourceUrl,
+      sourcePageUrl: summary.manualSourceUrl,
+      discoverySource: 'workbook_source_page_continuation',
+      continuationLogEvent: 'workbook_source_continuation_started',
+    });
+  }
+  if (summary.supportUrl) {
+    pushContinuation({
+      url: summary.supportUrl,
+      sourcePageUrl: summary.supportUrl,
+      discoverySource: 'workbook_support_page_continuation',
+      continuationLogEvent: 'support_page_continuation_started',
+    });
+  }
+
+  (Array.isArray(supportResourcesSuggestion) ? supportResourcesSuggestion : []).forEach((entry = {}) => {
+    pushContinuation({
+      url: entry.url,
+      sourcePageUrl: entry.url,
+      title: entry.label || entry.title || '',
+      discoverySource: normalizeString(entry.discoverySource || '', 80) || 'support_resource_continuation',
+      continuationLogEvent: 'support_page_continuation_started',
+    });
+  });
+
+  return out;
+}
+
 function isAcquisitionEligibleCandidate(candidate = {}) {
   const tier = classifyCandidateTier(candidate);
   const url = normalizeUrl(candidate?.url || '');
@@ -1436,6 +1542,41 @@ async function researchAssetTitles({
       stageOne.searchEvidence = discoveredFallback.searchEvidence;
       fallbackDiagnostics = discoveredFallback.fallbackDiagnostics || {};
     }
+    if (stageOne.referenceHints) {
+      logManualResearchEvent('reference_hint_rehydrated', {
+        ...logContext,
+        referenceEntryKey: stageOne.referenceEntryKey || '',
+        referenceRowCount: Array.isArray(stageOne.referenceHints.referenceRowCandidates)
+          ? stageOne.referenceHints.referenceRowCandidates.length
+          : 0,
+      });
+    } else {
+      logManualResearchEvent('reference_hint_missing_reason', {
+        ...logContext,
+        reason: stageOne.referenceHintSource || 'none',
+      });
+    }
+
+    const preContinuationDeterministicState = detectDeterministicCandidate(documentationSuggestions);
+    const shouldExpandContinuationCandidates = preContinuationDeterministicState.found
+      || documentationSuggestions.some((entry) => isBrochureLikeCandidate(entry))
+      || !!stageOne.referenceHints;
+    if (shouldExpandContinuationCandidates) {
+      const continuationSuggestions = buildContinuationSuggestions({
+        stageOne,
+        summary,
+        supportResourcesSuggestion,
+        documentationSuggestions,
+        logContext,
+      });
+      if (continuationSuggestions.length) {
+        documentationSuggestions = mergeDocumentationSuggestions({
+          existingSuggestions: documentationSuggestions,
+          nextSuggestions: continuationSuggestions,
+          preserveExistingCandidates: true,
+        }).map(withSuggestionBucket);
+      }
+    }
 
     const deadCandidateUrls = new Set([...persistedDeadCandidateUrls]);
     documentationSuggestions = prioritizeDocumentationSuggestions({
@@ -1626,6 +1767,13 @@ async function researchAssetTitles({
               candidateTier: candidateEligibility.tier || '',
               reason: 'brochure_or_sell_sheet',
             });
+            if (index + 1 < documentationSuggestions.length) {
+              logManualResearchEvent('brochure_candidate_continuation_started', {
+                ...logContext,
+                candidateUrl: candidate?.url || '',
+                nextCandidateUrl: documentationSuggestions[index + 1]?.url || '',
+              });
+            }
           }
           logManualResearchEvent('non_manual_candidate_rejected', {
             ...logContext,
@@ -1775,6 +1923,13 @@ async function researchAssetTitles({
               candidateUrl: failed?.url || candidate?.url || '',
               httpStatus,
             });
+            if (index + 1 < documentationSuggestions.length) {
+              logManualResearchEvent('dead_direct_pdf_continuation_started', {
+                ...logContext,
+                candidateUrl: failed?.url || candidate?.url || '',
+                nextCandidateUrl: documentationSuggestions[index + 1]?.url || '',
+              });
+            }
             if (httpStatus === 404) {
               logManualResearchEvent('deterministic_candidate_404', {
                 ...logContext,
@@ -1831,10 +1986,28 @@ async function researchAssetTitles({
       }
       if (!manualLibraryAcquisition?.manualReady) {
         if (manualGradeCandidateCount > 0) {
+          if (documentationSuggestions.some((entry) => isBrochureLikeCandidate(entry))) {
+            logManualResearchEvent('continuation_exhausted_after_brochure', {
+              ...logContext,
+              attemptedCandidateCount: manualGradeCandidateCount,
+            });
+          }
+          if (documentationSuggestions.some((entry) => resolveDeterministicCandidateType(entry) === 'workbook_seed_exact_pdf')) {
+            logManualResearchEvent('continuation_exhausted_after_dead_pdf', {
+              ...logContext,
+              attemptedCandidateCount: manualGradeCandidateCount,
+            });
+          }
           logManualResearchEvent('exhausted_manual_grade_candidates', {
             ...logContext,
             attemptedCandidateCount: manualGradeCandidateCount,
             acquisitionState,
+          });
+          logManualResearchEvent('terminalized_after_continuation_exhaustion', {
+            ...logContext,
+            attemptedCandidateCount: manualGradeCandidateCount,
+            acquisitionState,
+            reason: acquisitionError || acquisitionState || 'no_manual_after_attempt',
           });
           logManualResearchEvent('terminalized_after_exhaustion', {
             ...logContext,

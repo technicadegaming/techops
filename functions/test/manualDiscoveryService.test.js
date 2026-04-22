@@ -1652,6 +1652,36 @@ test('buildManufacturerDiscoveryAdapters prioritizes reference row URLs before g
   assert.equal(raw.some((entry) => entry.adapter === 'raw_thrills' && entry.type === 'direct_pdf'), true);
 });
 
+test('discoverManualDocumentation logs reference hint rehydration and reference row probe lifecycle', async () => {
+  const events = [];
+  const result = await discoverManualDocumentation({
+    assetName: 'Angry Birds Coin Crash',
+    normalizedName: 'Angry Birds Coin Crash',
+    manufacturer: 'LAI Games',
+    manufacturerProfile: getManufacturerProfile('LAI Games', 'Angry Birds Coin Crash'),
+    referenceHints: {
+      source: 'json_index',
+      entryKey: 'lai games::angry birds coin crash',
+      referenceRowCandidates: [{
+        sourceRowId: 'abc-1',
+        manufacturer: 'LAI Games',
+        normalizedTitle: 'Angry Birds Coin Crash',
+        manualUrl: 'https://laigames.com/wp-content/uploads/angry-birds-coin-crash-operator-manual.pdf',
+      }],
+      preferredManufacturerDomains: ['laigames.com'],
+      likelySlugPatterns: ['angry-birds-coin-crash'],
+    },
+    searchProvider: async () => ([]),
+    fetchImpl: async () => ({ ok: false, status: 404, headers: { get: () => 'application/pdf' }, text: async () => '' }),
+    logger: { log: (...args) => events.push(args) },
+  });
+  assert.equal(result.diagnostics.referenceHit, true);
+  assert.equal(result.diagnostics.referenceManualUrlProbeCount > 0, true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:reference_hint_rehydrated'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:reference_row_probe_started'), true);
+  assert.equal(events.some((entry) => entry[0] === 'manualDiscovery:reference_row_probe_skipped_reason'), true);
+});
+
 test('buildManufacturerDiscoveryAdapters keeps manufacturer-first reference row filtering (Wizard of Oz / Elaut)', () => {
   const elaut = buildManufacturerDiscoveryAdapters({
     title: 'Wizard of Oz',
