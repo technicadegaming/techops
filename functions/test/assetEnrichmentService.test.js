@@ -2063,9 +2063,9 @@ test('planAssetDocumentationStateRepair preserves attached manual data while cle
   assert.equal(result.patched, true);
   assert.equal(result.repairedEnrichmentStatus, 'docs_found');
   assert.equal(result.updatePayload.manualStatus, 'attached');
-  assert.equal(result.updatePayload.manualLibraryRef, undefined);
-  assert.equal(result.updatePayload.manualStoragePath, undefined);
-  assert.equal(result.updatePayload.manualLinks, undefined);
+  assert.equal(result.updatePayload.manualLibraryRef, 'manual-1');
+  assert.equal(result.updatePayload.manualStoragePath, 'manual-library/company-1/manual.pdf');
+  assert.deepEqual(result.updatePayload.manualLinks, ['manual-library/company-1/manual.pdf']);
 });
 
 test('planSingleAssetManualLiveRepair clears stale in_progress and finalizes support-only without overwriting unrelated fields', async () => {
@@ -2718,6 +2718,9 @@ test('enrichAssetDocumentation logs authoritative single-asset finalization mile
     'singleAssetDocs:asset_write',
     'singleAssetDocs:final_result',
     'assetEnrichment:final_counts',
+    'assetEnrichment:asset_manual_persist_started',
+    'assetEnrichment:asset_manual_fields_persisted',
+    'assetEnrichment:asset_manual_persist_completed',
     'assetEnrichment:terminal_status_write',
   ]) {
     assert.ok(labels.includes(label), `missing ${label}`);

@@ -1501,11 +1501,6 @@ async function researchAssetTitles({
         manualStoragePath: reusableStoragePath,
         source: 'reused_candidate',
       });
-      logManualResearchEvent('asset_manual_fields_persisted', {
-        ...logContext,
-        manualLibraryRef: summary.manualLibraryRef || '',
-        manualStoragePath: reusableStoragePath,
-      });
     } else if (acquisitionEligible) {
       acquisitionState = 'started';
       acquisitionAttempted = true;
@@ -1681,11 +1676,6 @@ async function researchAssetTitles({
         manualVariant: library.variant || '',
       };
       logManualResearchEvent('durable_storage_completed', {
-        ...logContext,
-        manualLibraryRef: library.id,
-        manualStoragePath: library.storagePath || '',
-      });
-      logManualResearchEvent('asset_manual_fields_persisted', {
         ...logContext,
         manualLibraryRef: library.id,
         manualStoragePath: library.storagePath || '',

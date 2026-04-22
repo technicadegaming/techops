@@ -77,7 +77,7 @@ test('direct PDF manual acquisition stores file once and writes manualLibrary re
   assert.match(row.storagePath, /^manual-library\/bay-tek-games\/quik-drop\//);
 });
 
-test('direct candidate acquisition emits durable storage lifecycle logs and persisted manual fields', async () => {
+test('direct candidate acquisition emits durable storage lifecycle logs and manual-library persistence', async () => {
   const db = createDb();
   const saves = [];
   const logs = [];
@@ -104,7 +104,7 @@ test('direct candidate acquisition emits durable storage lifecycle logs and pers
     assert.equal(events.includes('manualAcquire:acquisition_download_succeeded'), true);
     assert.equal(events.includes('manualAcquire:durable_storage_write_started'), true);
     assert.equal(events.includes('manualAcquire:durable_storage_write_completed'), true);
-    assert.equal(events.includes('manualAcquire:asset_manual_fields_persisted'), true);
+    assert.equal(events.includes('manualAcquire:manual_library_record_persisted'), true);
   } finally {
     console.log = originalLog;
   }

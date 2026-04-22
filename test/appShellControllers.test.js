@@ -148,6 +148,40 @@ test('asset helpers prefer storage-backed attached manual links over external so
   assert.equal(preferred.href, '#');
 });
 
+test('asset helpers render attached manual chips from durable storage metadata instead of local file URLs', async () => {
+  const { getAuthoritativeManualState, resolveStoragePreferredManualLink } = await loadAssetsHelpers();
+  const manualState = getAuthoritativeManualState({
+    manualLibraryRef: 'manual-king-kong',
+    manualStoragePath: 'manual-library/raw-thrills/king-kong/existing.pdf',
+    manualLinks: [
+      'file:///Users/me/Downloads/king-kong-manual.pdf',
+      'https://rawthrills.com/manuals/king-kong.pdf',
+      'manual-library/raw-thrills/king-kong/existing.pdf',
+    ],
+  });
+  assert.deepEqual(manualState.manualLinks, ['manual-library/raw-thrills/king-kong/existing.pdf']);
+  const preferred = resolveStoragePreferredManualLink({
+    manualLibraryRef: manualState.manualLibraryRef,
+    manualStoragePath: manualState.manualStoragePath,
+    manualLinks: manualState.manualLinks,
+  }, 'file:///Users/me/Downloads/king-kong-manual.pdf');
+  assert.equal(preferred.dataStoragePath, 'manual-library/raw-thrills/king-kong/existing.pdf');
+  assert.equal(preferred.href, '#');
+});
+
+test('asset helpers surface attached-manual status when durable metadata exists even if legacy follow-up state remains', async () => {
+  const { deriveAssetManualStatus, getEffectiveEnrichmentStatus } = await loadAssetsHelpers();
+  const hyperShoot = {
+    name: 'HYPERshoot',
+    enrichmentStatus: 'followup_needed',
+    manualLibraryRef: 'manual-hypershoot',
+    manualStoragePath: 'manual-library/moss/hypershoot/operator.pdf',
+    supportResourcesSuggestion: [{ url: 'https://mossdistributing.com/support/hypershoot', label: 'Support' }],
+  };
+  assert.equal(deriveAssetManualStatus(hyperShoot), 'attached');
+  assert.equal(getEffectiveEnrichmentStatus(hyperShoot), 'verified_manual_found');
+});
+
 test('asset helpers keep external candidate link when durable storage metadata is missing', async () => {
   const { resolveStoragePreferredManualLink } = await loadAssetsHelpers();
   const externalUrl = 'https://example.com/manual.pdf';

@@ -241,13 +241,7 @@ async function acquireManualToLibrary({
         notes: context.notes || '',
       },
     });
-    logEvent('library_record_written', { canonicalTitle, storagePath, sha256, manualLibraryId: record.id });
-    logEvent('asset_manual_fields_persisted', {
-      canonicalTitle,
-      manualLibraryRef: record.id,
-      manualStoragePath: storagePath,
-      manualUrl: storagePath,
-    });
+    logEvent('manual_library_record_persisted', { canonicalTitle, storagePath, sha256, manualLibraryId: record.id });
     logEvent('final_result', { canonicalTitle, manufacturer, sourcePageUrl, resolvedDownloadUrl: download.resolvedDownloadUrl, acceptedCandidateCount: acceptedCount, sha256, storagePath, reusedExisting: false, finalManualReady: true, elapsedMs: Date.now() - startedAt });
     return { manualReady: true, reusedExisting: false, manualLibrary: record, manualUrl: storagePath, manualSourceUrl: sourcePageUrl, failedCandidates };
   }

@@ -1416,10 +1416,22 @@ function cleanFinalEnrichmentResult(asset = {}) {
 }
 
 async function repairLegacyAssetEnrichmentRecord({ asset = {}, verifySuggestions = verifyDocumentationSuggestions }) {
+  const durableEvidence = deriveDurableManualEvidence(asset);
+  const seededAsset = durableEvidence
+    ? {
+      ...asset,
+      manualLibraryRef: `${asset.manualLibraryRef || durableEvidence.manualLibraryRef || ''}`.trim(),
+      manualStoragePath: `${asset.manualStoragePath || durableEvidence.manualStoragePath || ''}`.trim(),
+      manualStatus: `${asset.manualStatus || ''}`.trim() || 'attached',
+      manualUrl: `${asset.manualUrl || durableEvidence.manualStoragePath || ''}`.trim(),
+      enrichmentStatus: `${asset.enrichmentStatus || ''}`.trim() === 'docs_found' ? 'docs_found' : (asset.enrichmentStatus || 'docs_found'),
+      enrichmentFollowupQuestion: '',
+    }
+    : asset;
   const staleRepairPayload = buildStaleRepairPayload(asset, 'stale_in_progress_repair');
   const repairSeed = staleRepairPayload
-    ? { ...asset, ...staleRepairPayload }
-    : asset;
+    ? { ...seededAsset, ...staleRepairPayload }
+    : seededAsset;
   const rehydratedSeededDocs = rehydrateSeededManualDocumentationSuggestions({
     asset,
     documentationSuggestions: asset.documentationSuggestions || [],
@@ -1441,15 +1453,32 @@ async function repairLegacyAssetEnrichmentRecord({ asset = {}, verifySuggestions
   });
   const hasExceptionContext = !!(`${asset.enrichmentErrorCode || ''}`.trim() || `${asset.enrichmentErrorMessage || ''}`.trim() || asset.enrichmentFailedAt);
   const shouldRetainFailureMetadata = cleaned.enrichmentStatus === 'lookup_failed' && hasExceptionContext;
-  const manualStatus = deriveManualStatus({ cleanedResult: cleaned, asset });
+  const manualStatus = deriveManualStatus({ cleanedResult: cleaned, asset: seededAsset });
   const repairedEnrichmentStatus = NON_DURABLE_ENRICHMENT_STATUSES.has(`${asset.enrichmentStatus || ''}`.trim())
     || TERMINAL_MANUAL_STATUSES.has(`${asset.manualStatus || ''}`.trim())
     ? resolveForcedTerminalStatus({ asset: { ...asset, ...cleaned, manualStatus } })
     : cleaned.enrichmentStatus;
+  const repairedManualLibraryRef = `${asset.manualLibraryRef || durableEvidence?.manualLibraryRef || cleaned.manualMatchSummary?.manualLibraryRef || ''}`.trim();
+  const repairedManualStoragePath = `${asset.manualStoragePath || durableEvidence?.manualStoragePath || cleaned.manualMatchSummary?.manualStoragePath || ''}`.trim();
+  const repairedManualLinks = manualStatus === 'attached'
+    ? Array.from(new Set([repairedManualStoragePath].filter(Boolean)))
+    : [];
   return {
     ...cleaned,
     manualStatus,
     enrichmentStatus: repairedEnrichmentStatus,
+    manualLibraryRef: manualStatus === 'attached' ? repairedManualLibraryRef : '',
+    manualStoragePath: manualStatus === 'attached' ? repairedManualStoragePath : '',
+    manualUrl: manualStatus === 'attached' ? repairedManualStoragePath : '',
+    manualLinks: repairedManualLinks,
+    manualMatchSummary: {
+      ...(cleaned.manualMatchSummary || {}),
+      manualReady: manualStatus === 'attached',
+      manualLibraryRef: manualStatus === 'attached' ? repairedManualLibraryRef : '',
+      manualStoragePath: manualStatus === 'attached' ? repairedManualStoragePath : '',
+      manualUrl: manualStatus === 'attached' ? repairedManualStoragePath : '',
+      status: manualStatus === 'attached' ? 'docs_found' : repairedEnrichmentStatus,
+    },
     enrichmentFailedAt: shouldRetainFailureMetadata ? asset.enrichmentFailedAt : null,
     enrichmentErrorCode: shouldRetainFailureMetadata ? asset.enrichmentErrorCode : '',
     enrichmentErrorMessage: shouldRetainFailureMetadata ? asset.enrichmentErrorMessage : ''
@@ -1474,6 +1503,11 @@ function buildAssetDocumentationRepairWrite({ repaired = {}, userId = '' } = {})
     enrichmentFollowupQuestion: repaired.enrichmentFollowupQuestion,
     enrichmentStatus: repaired.enrichmentStatus,
     manualStatus: repaired.manualStatus,
+    manualLinks: Array.isArray(repaired.manualLinks) ? repaired.manualLinks : [],
+    manualLibraryRef: `${repaired.manualLibraryRef || ''}`.trim(),
+    manualStoragePath: `${repaired.manualStoragePath || ''}`.trim(),
+    manualUrl: `${repaired.manualUrl || ''}`.trim(),
+    manualMatchSummary: repaired.manualMatchSummary || {},
     reviewState: repaired.reviewState,
     enrichmentFailedAt: repaired.enrichmentFailedAt,
     enrichmentErrorCode: repaired.enrichmentErrorCode,
@@ -1501,6 +1535,11 @@ function listChangedRepairFields({ asset = {}, writePayload = {} } = {}) {
     'enrichmentFollowupQuestion',
     'enrichmentStatus',
     'manualStatus',
+    'manualLinks',
+    'manualLibraryRef',
+    'manualStoragePath',
+    'manualUrl',
+    'manualMatchSummary',
     'reviewState',
     'enrichmentFailedAt',
     'enrichmentErrorCode',
@@ -1832,6 +1871,27 @@ function deriveManualStatus({ manualFields = {}, cleanedResult = {}, asset = {} 
   return 'no_manual';
 }
 
+function deriveDurableManualEvidence(asset = {}) {
+  const manualLibraryRef = `${asset?.manualLibraryRef || asset?.manualMatchSummary?.manualLibraryRef || ''}`.trim();
+  const manualStoragePath = `${asset?.manualStoragePath || asset?.manualMatchSummary?.manualStoragePath || ''}`.trim();
+  if (manualLibraryRef && manualStoragePath && /^(manual-library\/|companies\/)/i.test(manualStoragePath)) {
+    return { manualLibraryRef, manualStoragePath };
+  }
+  const suggestions = Array.isArray(asset?.documentationSuggestions) ? asset.documentationSuggestions : [];
+  const suggestionHit = suggestions.find((entry) => {
+    const ref = `${entry?.manualLibraryRef || ''}`.trim();
+    const path = `${entry?.manualStoragePath || entry?.url || ''}`.trim();
+    return ref && /^(manual-library\/|companies\/)/i.test(path);
+  });
+  if (suggestionHit) {
+    return {
+      manualLibraryRef: `${suggestionHit.manualLibraryRef || ''}`.trim(),
+      manualStoragePath: `${suggestionHit.manualStoragePath || suggestionHit.url || ''}`.trim(),
+    };
+  }
+  return null;
+}
+
 function finalizeSingleAssetEnrichment({
   asset = {},
   cleanedResult = {},
@@ -1929,6 +1989,87 @@ function finalizeSingleAssetEnrichment({
     authoritativeManualAttached: false,
     resolutionReason,
   };
+}
+
+async function persistDurableManualToAsset({
+  assetRef,
+  userId = '',
+  log = () => {},
+  runId = '',
+  normalizedName = '',
+  confidence = 0,
+  cleanedResult = {},
+  preview = {},
+  finalManualFields = {},
+  finalManualMatchSummary = {},
+  matchedManufacturer = '',
+  pipelineMeta = {},
+  extraPayload = {},
+} = {}) {
+  const manualLibraryRef = `${finalManualFields?.manualLibraryRef || ''}`.trim();
+  const manualStoragePath = `${finalManualFields?.manualStoragePath || ''}`.trim();
+  if (!assetRef || !manualLibraryRef || !manualStoragePath) return false;
+  const persistPayload = {
+    normalizedName,
+    documentationSuggestions: cleanedResult.documentationSuggestions,
+    supportResourcesSuggestion: cleanedResult.supportResourcesSuggestion,
+    enrichmentConfidence: confidence,
+    enrichmentFollowupQuestion: '',
+    enrichmentStatus: 'docs_found',
+    enrichmentFailedAt: null,
+    enrichmentErrorCode: '',
+    enrichmentErrorMessage: '',
+    reviewState: deriveDocumentationReviewState({
+      documentationSuggestions: cleanedResult.documentationSuggestions,
+      supportResourcesSuggestion: cleanedResult.supportResourcesSuggestion,
+      enrichmentStatus: 'docs_found',
+      enrichmentFollowupQuestion: '',
+    }),
+    manualStatus: 'attached',
+    manualMatchSummary: {
+      ...(finalManualMatchSummary || {}),
+      status: 'docs_found',
+      manualReady: true,
+      manualLibraryRef,
+      manualStoragePath,
+      manualUrl: manualStoragePath,
+      manualSourceUrl: `${finalManualFields?.manualSourceUrl || ''}`.trim(),
+    },
+    manualLinks: Array.from(new Set([manualStoragePath, ...(Array.isArray(finalManualFields?.manualLinks) ? finalManualFields.manualLinks : [])].filter(Boolean))).slice(0, 5),
+    manualLibraryRef,
+    manualStoragePath,
+    manualUrl: manualStoragePath,
+    manualSourceUrl: `${finalManualFields?.manualSourceUrl || ''}`.trim(),
+    supportUrl: `${finalManualFields?.supportUrl || ''}`.trim(),
+    enrichmentAcquisitionState: pipelineMeta.acquisitionState || '',
+    enrichmentCandidates: [
+      preview?.likelyManufacturer,
+      preview?.likelyCategory,
+      preview?.normalizedName
+    ].filter(Boolean).slice(0, 5),
+    enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    enrichmentPhase: 'terminalized',
+    enrichmentHeartbeatAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: userId,
+    ...(matchedManufacturer ? { matchedManufacturer } : {}),
+    ...(extraPayload || {}),
+  };
+  log('asset_manual_persist_started', { runId, manualLibraryRef, manualStoragePath });
+  try {
+    await assetRef.set(persistPayload, { merge: true });
+    log('asset_manual_fields_persisted', { runId, manualLibraryRef, manualStoragePath });
+    log('asset_manual_persist_completed', { runId, manualLibraryRef, manualStoragePath });
+    return true;
+  } catch (error) {
+    log('asset_manual_persist_failed', {
+      runId,
+      manualLibraryRef,
+      manualStoragePath,
+      message: `${error?.message || error || 'persist_failed'}`.slice(0, 240),
+    });
+    throw error;
+  }
 }
 
 async function enrichAssetDocumentation({ db, assetId, userId, settings, triggerSource, followupAnswer, traceId, dependencies = {} }) {
@@ -2226,6 +2367,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       manualLinks: finalManualFields.manualLinks,
       manualLibraryRef: finalManualFields.manualLibraryRef,
       manualStoragePath: finalManualFields.manualStoragePath,
+      manualUrl: `${finalManualFields.manualStoragePath || finalManualFields.manualLinks?.[0] || ''}`.trim(),
       manualSourceUrl: finalManualFields.manualSourceUrl,
       supportUrl: finalManualFields.supportUrl,
       enrichmentAcquisitionState: pipelineMeta.acquisitionState || '',
@@ -2261,8 +2403,46 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       verificationMetadata: preview.catalogMatch.verificationMetadata || catalogMatch?.entry?.verification || null
     };
     if (shouldSetManufacturer) updatePayload.manufacturer = manufacturerSuggestion;
+    const durableManualExtraPayload = {};
+    if (followupAnswerText) {
+      durableManualExtraPayload.enrichmentFollowupAnswer = followupAnswerText;
+      durableManualExtraPayload.enrichmentFollowupAnsweredAt = admin.firestore.FieldValue.serverTimestamp();
+      durableManualExtraPayload.enrichmentFollowupAnswerFingerprint = fingerprintText(followupAnswerText);
+      durableManualExtraPayload.enrichmentFollowupConsumedAt = admin.firestore.FieldValue.serverTimestamp();
+    }
+    durableManualExtraPayload.enrichmentFollowupQuestionKey = fingerprintText(cleanedResult.enrichmentFollowupQuestion || asset.enrichmentFollowupQuestion || '');
+    if (manufacturerSuggestion) durableManualExtraPayload.manufacturerSuggestion = manufacturerSuggestion;
+    if (Array.isArray(preview.supportContactsSuggestion) && preview.supportContactsSuggestion.length) durableManualExtraPayload.supportContactsSuggestion = preview.supportContactsSuggestion;
+    if (Array.isArray(preview.alternateNames) && preview.alternateNames.length) durableManualExtraPayload.alternateNames = preview.alternateNames;
+    if (Array.isArray(preview.searchHints) && preview.searchHints.length) durableManualExtraPayload.searchHints = preview.searchHints;
+    if (preview.topMatchReason) durableManualExtraPayload.topMatchReason = preview.topMatchReason;
+    if (preview.catalogMatch) {
+      durableManualExtraPayload.manualLookupCatalogMatch = {
+        ...preview.catalogMatch,
+        verificationMetadata: preview.catalogMatch.verificationMetadata || catalogMatch?.entry?.verification || null
+      };
+    }
+    if (shouldSetManufacturer) durableManualExtraPayload.manufacturer = manufacturerSuggestion;
 
-    await assetRef.set(updatePayload, { merge: true });
+    if (authoritativeManualAttached && finalManualFields.manualReady === true) {
+      await persistDurableManualToAsset({
+        assetRef,
+        userId,
+        log,
+        runId,
+        normalizedName,
+        confidence,
+        cleanedResult,
+        preview,
+        finalManualFields,
+        finalManualMatchSummary,
+        matchedManufacturer: finalManualFields.matchedManufacturer,
+        pipelineMeta,
+        extraPayload: durableManualExtraPayload,
+      });
+    } else {
+      await assetRef.set(updatePayload, { merge: true });
+    }
     buildSingleAssetDocLog('asset_write', {
       runId,
       assetId,
@@ -2450,6 +2630,7 @@ module.exports = {
   runAuthoritativeAssetResearch,
   buildSingleAssetDocumentationFields,
   finalizeSingleAssetEnrichment,
+  persistDurableManualToAsset,
   hasAuthoritativeManualAttachment,
   recoverCatalogSourcePageManuals,
   isSeededCatalogManualCandidate,
