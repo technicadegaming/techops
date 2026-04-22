@@ -594,6 +594,103 @@ test('researchAssetTitles short-circuits deterministic StepManiaX workbook-seede
   }
 });
 
+test('researchAssetTitles treats workbook-seeded direct manuals as acquisition-eligible even when bucket metadata is support-oriented', async () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args);
+  try {
+    const result = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
+      companyId: 'company-1',
+      titles: [{ originalTitle: 'StepManiaX', manufacturerHint: 'Step Revolution' }],
+      traceId: 'test-stepmaniax-workbook-seed-support-bucket',
+      storage: createStorageMock(),
+      fetchImpl: createFetchMock(),
+      researchFallback: async () => ({
+        normalizedTitle: 'StepManiaX',
+        manufacturer: 'Step Revolution',
+        matchType: 'manual_page_with_download',
+        manualReady: false,
+        reviewRequired: false,
+        manualUrl: 'https://stepmaniax.com/wp-content/uploads/stepmaniax-operator-manual.pdf',
+        manualSourceUrl: 'https://stepmaniax.com/support/',
+        supportUrl: 'https://stepmaniax.com/support/',
+        confidence: 1,
+        candidates: [{
+          bucket: 'title_specific_support_page',
+          lookupMethod: 'workbook_seed_exact_pdf',
+          exactManualMatch: true,
+          verified: true,
+          url: 'https://stepmaniax.com/wp-content/uploads/stepmaniax-operator-manual.pdf',
+          title: 'StepManiaX Operator Manual',
+        }],
+        citations: [],
+        rawResearchSummary: 'Workbook-seeded exact PDF should skip provider fallback and persist durably.',
+      }),
+    });
+
+    assert.equal(result.results[0].status, 'docs_found');
+    assert.equal(result.results[0].manualReady, true);
+    assert.ok(`${result.results[0].manualLibraryRef || ''}`.trim());
+    assert.match(result.results[0].manualStoragePath || '', /^manual-library\//i);
+    assert.match(result.results[0].manualUrl || '', /^manual-library\//i);
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:deterministic_candidate_type' && entry[1]?.deterministicCandidateType === 'workbook_seed_exact_pdf'), true);
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:provider_fallback_skipped_due_to_deterministic_candidate'), true);
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:provider_fallback_used_due_to_no_deterministic_candidate'), false);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test('researchAssetTitles promotes Angry Birds Coin Crash reference-row direct manual candidates into durable acquisition', async () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args);
+  try {
+    const result = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
+      companyId: 'company-1',
+      titles: [{ originalTitle: 'Angry Birds Coin Crash', manufacturerHint: 'LAI Games' }],
+      traceId: 'test-angry-birds-reference-row-direct-manual',
+      storage: createStorageMock(),
+      fetchImpl: createFetchMock(),
+      researchFallback: async () => ({
+        normalizedTitle: 'Angry Birds Coin Crash',
+        manufacturer: 'LAI Games',
+        matchType: 'manual_page_with_download',
+        manualReady: false,
+        reviewRequired: true,
+        manualUrl: 'https://cdn.laigames.com/manuals/angry-birds-coin-crash-operator-manual.pdf',
+        manualSourceUrl: 'https://laigames.com/games/angry-birds-coin-crash/support/',
+        supportUrl: 'https://laigames.com/games/angry-birds-coin-crash/support/',
+        confidence: 0.95,
+        candidates: [{
+          bucket: 'title_specific_support_page',
+          discoverySource: 'reference_row_manual_url',
+          exactManualMatch: true,
+          verified: true,
+          url: 'https://cdn.laigames.com/manuals/angry-birds-coin-crash-operator-manual.pdf',
+          title: 'Angry Birds Coin Crash Operator Manual',
+        }],
+        citations: [],
+        rawResearchSummary: 'Reference row points at direct manual PDF.',
+      }),
+    });
+
+    assert.equal(result.results[0].status, 'docs_found');
+    assert.equal(result.results[0].manualReady, true);
+    assert.ok(`${result.results[0].manualLibraryRef || ''}`.trim());
+    assert.match(result.results[0].manualStoragePath || '', /^manual-library\//i);
+    assert.match(result.results[0].manualUrl || '', /^manual-library\//i);
+    assert.equal(result.results[0].pipelineMeta.acquisitionAttempted, true);
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:durable_acquisition_attempted'), true);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
 test('researchAssetTitles promotes deterministic direct PDF candidates into acquisition ahead of provider fallback terminalization', async () => {
   const logs = [];
   const originalLog = console.log;
