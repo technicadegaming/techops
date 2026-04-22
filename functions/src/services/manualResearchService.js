@@ -130,34 +130,41 @@ function isManufacturerOnlyFollowupAnswer({ followupAnswer = '', knownManufactur
 function classifyFallbackTerminalReason({ stage2ErrorCode = '', fallbackDiagnostics = {}, documentationCount = 0, supportCount = 0 } = {}) {
   const reasonCode = normalizeString(stage2ErrorCode, 80).toLowerCase();
   const discoveryTerminalReason = normalizeString(fallbackDiagnostics?.terminalReason || '', 120).toLowerCase();
+  const referenceManualUrlProbeCount = Number(fallbackDiagnostics?.referenceManualUrlProbeCount || 0);
+  const referenceSourcePageProbeCount = Number(fallbackDiagnostics?.referenceSourcePageProbeCount || 0);
+  const referenceSupportPageProbeCount = Number(fallbackDiagnostics?.referenceSupportPageProbeCount || 0);
+  const referenceProbeCount = referenceManualUrlProbeCount + referenceSourcePageProbeCount + referenceSupportPageProbeCount;
+  const referenceRowCandidateValidatedCount = Number(fallbackDiagnostics?.referenceRowCandidateValidatedCount || 0);
   if (Number(fallbackDiagnostics?.searchTimeoutCount || 0) > 0) return 'site_timeout';
+  if (discoveryTerminalReason === 'deterministic-search-no-results') return 'deterministic-search-no-results';
   if (discoveryTerminalReason === 'close_title_specific_hit_no_manual_extracted') return 'close_title_specific_hit_no_manual_extracted';
   if (discoveryTerminalReason === 'title_page_found_manual_probe_failed') return 'title_page_found_manual_probe_failed';
   if (discoveryTerminalReason === 'candidate_found_but_not_durable') return 'candidate_found_but_not_durable';
   if (discoveryTerminalReason === 'generic-search-page-only') return 'generic-search-page-only';
-  if (discoveryTerminalReason === 'guessed-pdf-404-no-better-candidate') return 'guessed-pdf-404-no-better-candidate';
   if (discoveryTerminalReason === 'reference_row_not_matched') return 'reference_row_not_matched';
-  if (Number(fallbackDiagnostics?.referenceManualUrl404Count || 0) > 0) return 'reference-manual-url-404';
-  if (Number(fallbackDiagnostics?.referenceSourcePageProbeCount || 0) > 0
-    && Number(fallbackDiagnostics?.referenceRowCandidateValidatedCount || 0) <= 0
+  if (Number(fallbackDiagnostics?.referenceManualUrl404Count || 0) > 0
+    && referenceManualUrlProbeCount > 0
+    && referenceRowCandidateValidatedCount <= 0) return 'reference-manual-url-404';
+  if (referenceSourcePageProbeCount > 0
+    && referenceRowCandidateValidatedCount <= 0
     && Number(fallbackDiagnostics?.referenceSourcePageNoManualCount || 0) > 0) {
     return 'reference-source-page-no-manual-link';
   }
-  if (Number(fallbackDiagnostics?.referenceSupportPageProbeCount || 0) > 0
-    && Number(fallbackDiagnostics?.referenceRowCandidateValidatedCount || 0) <= 0
+  if (referenceSupportPageProbeCount > 0
+    && referenceRowCandidateValidatedCount <= 0
     && Number(fallbackDiagnostics?.referenceSupportPageNoManualCount || 0) > 0) {
     return 'reference-support-page-no-manual-link';
   }
-  if (Number(fallbackDiagnostics?.referenceManualUrlProbeCount || 0)
-    + Number(fallbackDiagnostics?.referenceSourcePageProbeCount || 0)
-    + Number(fallbackDiagnostics?.referenceSupportPageProbeCount || 0) > 0
-    && Number(fallbackDiagnostics?.referenceRowCandidateValidatedCount || 0) <= 0) {
+  if (referenceProbeCount > 0
+    && referenceRowCandidateValidatedCount <= 0) {
     return 'reference_row_match_no_live_manual';
   }
-  if (discoveryTerminalReason === 'deterministic-search-no-results' && normalizeString(fallbackDiagnostics?.manufacturer || '', 80)) {
+  if (!documentationCount && !supportCount && Number(fallbackDiagnostics?.searchNoResultsCount || 0) > 0) return 'deterministic-search-no-results';
+  if (discoveryTerminalReason === 'guessed-pdf-404-no-better-candidate') return 'guessed-pdf-404-no-better-candidate';
+  if (normalizeString(fallbackDiagnostics?.manufacturer || '', 80)
+    && Number(fallbackDiagnostics?.searchNoResultsCount || 0) > 0) {
     return 'manufacturer-adapter-no-better-candidate';
   }
-  if (!documentationCount && !supportCount && Number(fallbackDiagnostics?.searchNoResultsCount || 0) > 0) return 'deterministic-search-no-results';
   if ((reasonCode === 'openai-config-missing' || reasonCode === 'openai-auth-invalid') && !documentationCount && !supportCount) return '';
   return '';
 }

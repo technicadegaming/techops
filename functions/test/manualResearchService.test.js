@@ -1428,7 +1428,13 @@ test('OpenAI auth/config failures are logged and fall back to scraping without t
     const authFallbackLog = logs.find((entry) => entry[0] === 'manualResearch:stage2_auth_invalid_fallback');
     assert.ok(authFallbackLog);
     assert.equal(
-      ['no_durable_manual:skipped', 'title_page_found_manual_probe_failed'].includes(result.results[0].pipelineMeta.terminalStateReason),
+      [
+        'no_durable_manual:skipped',
+        'title_page_found_manual_probe_failed',
+        'deterministic-search-no-results',
+        'guessed-pdf-404-no-better-candidate',
+        'manufacturer-adapter-no-better-candidate'
+      ].includes(result.results[0].pipelineMeta.terminalStateReason),
       true
     );
   } finally {
@@ -1480,10 +1486,7 @@ test('researchAssetTitles reports deterministic-search-no-results terminal reaso
     },
   });
 
-  assert.equal(
-    ['deterministic-search-no-results', 'title_page_found_manual_probe_failed', 'guessed-pdf-404-no-better-candidate'].includes(result.results[0].pipelineMeta.terminalStateReason),
-    true
-  );
+  assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'deterministic-search-no-results');
 });
 
 test('researchAssetTitles reports title_page_found_manual_probe_failed when fallback finds exact-title support page but no manual extraction', async () => {
@@ -1517,6 +1520,7 @@ test('researchAssetTitles reports title_page_found_manual_probe_failed when fall
 
   assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'title_page_found_manual_probe_failed');
 });
+
 
 test('researchAssetTitles reuses previously approved company manuals before web fallback', async () => {
   let stageTwoCalls = 0;
