@@ -1459,30 +1459,44 @@ function buildManufacturerDiscoverySeedPages({ title, manufacturerProfile, title
       { adapter: 'raw_thrills_seed', type: 'search_page', label: `${titleVariant} Raw Thrills search`, url: `https://rawthrills.com/?s=${encodeURIComponent(titleVariant)}` },
       { adapter: 'raw_thrills_seed', type: 'search_page', label: `${titleVariant} Raw Thrills games`, url: `https://rawthrills.com/games/?s=${encodeURIComponent(titleVariant)}` }
     ]),
-    'ice': titleVariants.flatMap((titleVariant) => [
+    'ice': candidateVariants.flatMap((titleVariant) => [
       { adapter: 'ice_seed', type: 'search_page', label: `${titleVariant} ICE support search`, url: `https://support.icegame.com/portal/en/kb/search/${encodeURIComponent(titleVariant)}` },
       { adapter: 'ice_seed', type: 'search_page', label: `${titleVariant} ICE site search`, url: `https://www.icegame.com/?s=${encodeURIComponent(titleVariant)}` }
     ]),
-    'unis': titleVariants.map((titleVariant) => (
+    'unis': candidateVariants.map((titleVariant) => (
       { adapter: 'unis_seed', type: 'search_page', label: `${titleVariant} UNIS search`, url: `https://www.unistechnology.com/?s=${encodeURIComponent(titleVariant)}` }
     )),
-    'coastal amusements': titleVariants.map((titleVariant) => (
+    'coastal amusements': candidateVariants.map((titleVariant) => (
       { adapter: 'coastal_seed', type: 'search_page', label: `${titleVariant} Coastal search`, url: `https://coastalamusements.com/?s=${encodeURIComponent(titleVariant)}` }
     )),
     'lai games': candidateVariants.flatMap((titleVariant) => ([
       { adapter: 'lai_seed', type: 'search_page', label: `${titleVariant} LAI Games support search`, url: `https://laigames.com/support/?s=${encodeURIComponent(titleVariant)}` },
       { adapter: 'lai_seed', type: 'search_page', label: `${titleVariant} LAI Games parts search`, url: `https://parts.laigames.com/?s=${encodeURIComponent(titleVariant)}` }
     ])),
-    sega: titleVariants.flatMap((titleVariant) => ([
+    sega: candidateVariants.flatMap((titleVariant) => ([
       { adapter: 'sega_seed', type: 'search_page', label: `${titleVariant} Sega Amusements search`, url: `https://segaarcade.com/?s=${encodeURIComponent(titleVariant)}` },
       { adapter: 'sega_seed', type: 'search_page', label: `${titleVariant} Sega support search`, url: `https://segaarcade.com/support/?s=${encodeURIComponent(titleVariant)}` },
     ])),
-    elaut: titleVariants.flatMap((titleVariant) => ([
+    elaut: candidateVariants.flatMap((titleVariant) => ([
       { adapter: 'elaut_seed', type: 'search_page', label: `${titleVariant} Elaut support search`, url: `https://www.elaut.com/?s=${encodeURIComponent(titleVariant)}` },
       { adapter: 'elaut_seed', type: 'search_page', label: `${titleVariant} Elaut group search`, url: `https://www.elaut-group.com/?s=${encodeURIComponent(titleVariant)}` },
     ])),
-    'adrenaline amusements': titleVariants.map((titleVariant) => (
+    'adrenaline amusements': candidateVariants.map((titleVariant) => (
       { adapter: 'adrenaline_seed', type: 'search_page', label: `${titleVariant} Adrenaline search`, url: `https://adrenalineamusements.com/?s=${encodeURIComponent(titleVariant)}` }
+    )),
+    'smart industries': candidateVariants.flatMap((titleVariant) => ([
+      { adapter: 'smart_industries_seed', type: 'search_page', label: `${titleVariant} Smart Industries search`, url: `https://smartind.com/?s=${encodeURIComponent(titleVariant)}` },
+      { adapter: 'smart_industries_seed', type: 'search_page', label: `${titleVariant} Smart Industries manuals search`, url: `https://smartind.com/manuals/?s=${encodeURIComponent(titleVariant)}` },
+    ])),
+    andamiro: candidateVariants.flatMap((titleVariant) => ([
+      { adapter: 'andamiro_seed', type: 'search_page', label: `${titleVariant} Andamiro USA search`, url: `https://andamirousa.com/?s=${encodeURIComponent(titleVariant)}` },
+      { adapter: 'andamiro_seed', type: 'search_page', label: `${titleVariant} Andamiro search`, url: `https://andamiro.com/?s=${encodeURIComponent(titleVariant)}` },
+    ])),
+    'benchmark games': candidateVariants.map((titleVariant) => (
+      { adapter: 'benchmark_seed', type: 'search_page', label: `${titleVariant} Benchmark Games search`, url: `https://benchmarkgames.com/?s=${encodeURIComponent(titleVariant)}` }
+    )),
+    komuse: candidateVariants.map((titleVariant) => (
+      { adapter: 'komuse_seed', type: 'search_page', label: `${titleVariant} Komuse search`, url: `https://komuse.com/?s=${encodeURIComponent(titleVariant)}` }
     ))
   };
 
@@ -1633,7 +1647,7 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleV
         }
       ];
     }),
-    ice: titleVariants.flatMap((titleVariant) => {
+    ice: adapterTitleVariants.flatMap((titleVariant) => {
       const slug = slugifyTitle(titleVariant);
       return [
         {
@@ -1660,6 +1674,144 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleV
           label: `${titleVariant} support`,
           url: `https://icegame.com/games/${slug}`
         }
+      ];
+    }),
+    unis: adapterTitleVariants.flatMap((titleVariant) => {
+      const slug = slugifyTitle(titleVariant);
+      return [
+        {
+          adapter: 'unis',
+          type: 'support_page',
+          label: `${titleVariant} UNIS product`,
+          url: `https://www.unistechnology.com/products/${slug}/`
+        },
+        {
+          adapter: 'unis',
+          type: 'support_page',
+          label: `${titleVariant} UNIS support`,
+          url: `https://www.unistechnology.com/support/${slug}/`
+        },
+        {
+          adapter: 'unis',
+          type: 'direct_pdf',
+          label: `${titleVariant} UNIS operator manual`,
+          url: `https://www.unistechnology.com/wp-content/uploads/${slug}-operator-manual.pdf`
+        },
+      ];
+    }),
+    andamiro: adapterTitleVariants.flatMap((titleVariant) => {
+      const slug = slugifyTitle(titleVariant);
+      return [
+        {
+          adapter: 'andamiro',
+          type: 'support_page',
+          label: `${titleVariant} Andamiro USA support`,
+          url: `https://andamirousa.com/support/${slug}/`
+        },
+        {
+          adapter: 'andamiro',
+          type: 'support_page',
+          label: `${titleVariant} Andamiro product`,
+          url: `https://andamirousa.com/product/${slug}/`
+        },
+        {
+          adapter: 'andamiro',
+          type: 'direct_pdf',
+          label: `${titleVariant} Andamiro operator manual`,
+          url: `https://andamirousa.com/wp-content/uploads/${slug}-operator-manual.pdf`
+        },
+      ];
+    }),
+    'smart industries': adapterTitleVariants.flatMap((titleVariant) => {
+      const slug = slugifyTitle(titleVariant);
+      return [
+        {
+          adapter: 'smart_industries',
+          type: 'support_page',
+          label: `${titleVariant} Smart Industries manuals`,
+          url: `https://smartind.com/manuals/${slug}/`
+        },
+        {
+          adapter: 'smart_industries',
+          type: 'support_page',
+          label: `${titleVariant} Smart Industries product`,
+          url: `https://smartind.com/product/${slug}/`
+        },
+        {
+          adapter: 'smart_industries',
+          type: 'direct_pdf',
+          label: `${titleVariant} Smart Industries service manual`,
+          url: `https://smartind.com/wp-content/uploads/${slug}-service-manual.pdf`
+        },
+      ];
+    }),
+    'benchmark games': adapterTitleVariants.flatMap((titleVariant) => {
+      const slug = slugifyTitle(titleVariant);
+      return [
+        {
+          adapter: 'benchmark_games',
+          type: 'support_page',
+          label: `${titleVariant} Benchmark Games support`,
+          url: `https://benchmarkgames.com/support/${slug}/`
+        },
+        {
+          adapter: 'benchmark_games',
+          type: 'support_page',
+          label: `${titleVariant} Benchmark Games games`,
+          url: `https://benchmarkgames.com/games/${slug}/`
+        },
+        {
+          adapter: 'benchmark_games',
+          type: 'direct_pdf',
+          label: `${titleVariant} Benchmark Games operator manual`,
+          url: `https://benchmarkgames.com/wp-content/uploads/${slug}-operator-manual.pdf`
+        },
+      ];
+    }),
+    komuse: adapterTitleVariants.flatMap((titleVariant) => {
+      const slug = slugifyTitle(titleVariant);
+      return [
+        {
+          adapter: 'komuse',
+          type: 'support_page',
+          label: `${titleVariant} Komuse support`,
+          url: `https://komuse.com/support/${slug}/`
+        },
+        {
+          adapter: 'komuse',
+          type: 'support_page',
+          label: `${titleVariant} Komuse product`,
+          url: `https://komuse.com/product/${slug}/`
+        },
+        {
+          adapter: 'komuse',
+          type: 'direct_pdf',
+          label: `${titleVariant} Komuse operator manual`,
+          url: `https://komuse.com/wp-content/uploads/${slug}-operator-manual.pdf`
+        },
+      ];
+    }),
+    'coastal amusements': adapterTitleVariants.flatMap((titleVariant) => {
+      const slug = slugifyTitle(titleVariant);
+      return [
+        {
+          adapter: 'coastal',
+          type: 'support_page',
+          label: `${titleVariant} Coastal support`,
+          url: `https://coastalamusements.com/support/${slug}/`
+        },
+        {
+          adapter: 'coastal',
+          type: 'support_page',
+          label: `${titleVariant} Coastal game`,
+          url: `https://coastalamusements.com/games/${slug}/`
+        },
+        {
+          adapter: 'coastal',
+          type: 'direct_pdf',
+          label: `${titleVariant} Coastal operator manual`,
+          url: `https://coastalamusements.com/wp-content/uploads/${slug}-operator-manual.pdf`
+        },
       ];
     }),
     'raw thrills': rawThrillsVariantSlugs.flatMap((slug) => {

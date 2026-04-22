@@ -159,6 +159,35 @@ test('buildManufacturerDiscoveryAdapters includes Sega and Elaut title-specific 
   assert.equal(elaut.some((entry) => /elaut\.com\/wp-content\/uploads\/wizard-of-oz-operator-manual\.pdf/.test(entry.url)), true);
 });
 
+test('buildManufacturerDiscoverySeedPages and adapters include broader manufacturer-specific probes for unresolved backlog families', () => {
+  const smartProfile = getManufacturerProfile('Smart Industries', 'Prize Time Deluxe');
+  const andamiroProfile = getManufacturerProfile('Andamiro', 'Pump It Up Phoenix');
+  const unisProfile = getManufacturerProfile('UNIS', 'Power Roll');
+  const benchmarkProfile = getManufacturerProfile('Benchmark Games', 'SpongeBob Pineapple Arcade');
+
+  const smartSeeds = buildManufacturerDiscoverySeedPages({
+    title: 'Prize Time Deluxe',
+    manufacturerProfile: smartProfile,
+  });
+  const andamiroSeeds = buildManufacturerDiscoverySeedPages({
+    title: 'Pump It Up Phoenix',
+    manufacturerProfile: andamiroProfile,
+  });
+  const unisAdapters = buildManufacturerDiscoveryAdapters({
+    title: 'Power Roll',
+    manufacturerProfile: unisProfile,
+  });
+  const benchmarkAdapters = buildManufacturerDiscoveryAdapters({
+    title: 'SpongeBob Pineapple Arcade',
+    manufacturerProfile: benchmarkProfile,
+  });
+
+  assert.equal(smartSeeds.some((entry) => /smartind\.com\/\?s=Prize%20Time%20Deluxe/.test(entry.url)), true);
+  assert.equal(andamiroSeeds.some((entry) => /andamirousa\.com\/\?s=Pump%20It%20Up%20Phoenix/.test(entry.url)), true);
+  assert.equal(unisAdapters.some((entry) => /unistechnology\.com\/wp-content\/uploads\/power-roll-operator-manual\.pdf/.test(entry.url)), true);
+  assert.equal(benchmarkAdapters.some((entry) => /benchmarkgames\.com\/wp-content\/uploads\/spongebob-pineapple-arcade-operator-manual\.pdf/.test(entry.url)), true);
+});
+
 test('classifyManualCandidate restores hostname-based manual intent for exact-title manual-library links while rejecting generic manual hubs', () => {
   const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
   const exactLibraryManual = classifyManualCandidate({

@@ -2484,17 +2484,30 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       });
     }
 
-    await db.collection('auditLogs').add({
-      action: 'asset_enrichment_run',
-      entityType: 'assets',
-      entityId: assetId,
-      summary: `Asset enrichment ${triggerSource || 'manual'} for ${assetId}`,
-      userUid: userId,
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      confidence,
-      suggestions: cleanedResult.documentationSuggestions.length,
-      runId,
-    });
+    try {
+      await db.collection('auditLogs').add({
+        action: 'asset_enrichment_run',
+        entityType: 'assets',
+        entityId: assetId,
+        summary: `Asset enrichment ${triggerSource || 'manual'} for ${assetId}`,
+        userUid: userId,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        confidence,
+        suggestions: cleanedResult.documentationSuggestions.length,
+        runId,
+      });
+    } catch (auditError) {
+      buildSingleAssetDocLog('audit_log_write_failed_non_critical', {
+        runId,
+        assetId,
+        reason: `${auditError?.message || auditError || 'audit_write_failed'}`.slice(0, 180),
+      });
+      log('audit_log_write_failed_non_critical', {
+        runId,
+        assetId,
+        reason: `${auditError?.message || auditError || 'audit_write_failed'}`.slice(0, 180),
+      });
+    }
 
     buildSingleAssetDocLog('final_result', {
       runId,
