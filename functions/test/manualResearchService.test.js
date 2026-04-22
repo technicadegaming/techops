@@ -536,6 +536,39 @@ test('researchAssetTitles forces durable acquisition for direct validated HYPERs
   }
 });
 
+test('researchAssetTitles promotes StepManiaX exact-manual fallback url into durable attachment metadata', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
+    companyId: 'company-1',
+    titles: [{ originalTitle: 'StepManiaX', manufacturerHint: 'Step Revolution' }],
+    traceId: 'test-stepmaniax-exact-manual-promote',
+    storage: createStorageMock(),
+    fetchImpl: createFetchMock(),
+    researchFallback: async () => ({
+      normalizedTitle: 'StepManiaX',
+      manufacturer: 'Step Revolution',
+      matchType: 'exact_manual',
+      manualReady: false,
+      reviewRequired: true,
+      manualUrl: 'https://stepmaniax.com/wp-content/uploads/stepmaniax-operator-manual.pdf',
+      manualSourceUrl: 'https://stepmaniax.com/support/',
+      supportUrl: 'https://stepmaniax.com/support/',
+      confidence: 1,
+      candidates: [],
+      citations: [],
+      rawResearchSummary: 'Official exact manual URL provided by manufacturer support.',
+    }),
+  });
+
+  assert.equal(result.results[0].matchType, 'exact_manual');
+  assert.equal(result.results[0].status, 'docs_found');
+  assert.equal(result.results[0].manualReady, true);
+  assert.ok(`${result.results[0].manualLibraryRef || ''}`.trim());
+  assert.match(result.results[0].manualStoragePath || '', /^manual-library\//i);
+  assert.match(result.results[0].manualUrl || '', /^manual-library\//i);
+});
+
 test('researchAssetTitles persists/consumes answered follow-up fingerprints and avoids identical follow-up loop', async () => {
   const followupAnswer = 'It says Deluxe on the marquee';
   const followupFingerprint = createHash('sha1').update(followupAnswer.toLowerCase()).digest('hex');

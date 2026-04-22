@@ -457,7 +457,16 @@ function mapResearchResultToSuggestions(result = {}, manufacturerProfile = {}) {
     }
   });
 
-  if (manualUrl && explicitManualContract && manualLikeUrl && !documentationSuggestions.some((entry) => entry.url === manualUrl)) {
+  const exactManualPromotionEligible = manualUrl
+    && explicitManualContract
+    && !hasJunkManualCandidateUrl(manualUrl)
+    && (
+      manualLikeUrl
+      || result.matchType === 'exact_manual'
+      || result.manualReady === true
+      || /\.(pdf|docx?)($|[?#])/i.test(manualUrl)
+    );
+  if (exactManualPromotionEligible && !documentationSuggestions.some((entry) => entry.url === manualUrl)) {
     documentationSuggestions.push({
       title: normalizeString(result.manualTitle || result.originalTitle || result.normalizedTitle || '', 160),
       url: manualUrl,
@@ -1463,6 +1472,14 @@ async function researchAssetTitles({
     const selectedCandidateEligibility = isAcquisitionEligibleCandidate(documentationSuggestions[0] || {});
     acquisitionEligible = documentationSuggestions.length > 0 && selectedCandidateEligibility.eligible;
     candidateWasDirectPdf = selectedCandidateEligibility.directManualLike;
+    if (summary.matchType === 'exact_manual' || summary.manualReady === true) {
+      logManualResearchEvent('exact_manual_detected', {
+        ...logContext,
+        matchType: summary.matchType || '',
+        manualReady: summary.manualReady === true,
+        manualUrl: summary.manualUrl || '',
+      });
+    }
     if (!documentationSuggestions.length) {
       acquisitionSkippedReason = 'no_candidate_selected';
     } else if (!acquisitionEligible) {
@@ -1511,6 +1528,11 @@ async function researchAssetTitles({
     } else if (acquisitionEligible) {
       acquisitionState = 'started';
       acquisitionAttempted = true;
+      logManualResearchEvent('durable_acquisition_attempted', {
+        ...logContext,
+        candidateCount: documentationSuggestions.length,
+        firstCandidateUrl: documentationSuggestions[0]?.url || '',
+      });
       if (candidateWasDirectPdf) {
         logManualResearchEvent('acquisition_forced_for_direct_pdf', {
           ...logContext,
@@ -1661,6 +1683,10 @@ async function researchAssetTitles({
       acquisitionSkippedReason = 'acquisition_not_attempted';
     }
     if (!acquisitionAttempted && acquisitionSkippedReason) {
+      logManualResearchEvent('durable_acquisition_skipped_reason', {
+        ...logContext,
+        reason: acquisitionSkippedReason,
+      });
       logManualResearchEvent('acquisition_skipped_reason', {
         ...logContext,
         reason: acquisitionSkippedReason,
@@ -1696,6 +1722,12 @@ async function researchAssetTitles({
         cachedManual: true,
       } : entry).map(withSuggestionBucket);
     } else if (!durableStorageCompleted) {
+      logManualResearchEvent('exact_manual_terminalized_without_attachment', {
+        ...logContext,
+        matchType: summary.matchType || '',
+        manualReady: summary.manualReady === true,
+        reason: acquisitionError || acquisitionSkippedReason || acquisitionState || 'no_durable_storage',
+      });
       summary = {
         ...summary,
         manualReady: false,

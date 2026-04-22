@@ -2797,10 +2797,10 @@ test('enrichAssetDocumentation downgrades non-stored manual candidates so docs_f
   assert.deepEqual(assetWrites.at(-1).payload.manualLinks, []);
 });
 
-test('enrichAssetDocumentation writes a terminal state before surfacing late audit-log failures', async () => {
+test('enrichAssetDocumentation treats audit-log write failures as non-critical after durable attachment succeeds', async () => {
   const { db, assetWrites, assetState } = createEnrichmentDb({ name: 'Fast & Furious', manufacturer: 'Raw Thrills', companyId: 'company-1' }, { failAuditLog: true });
 
-  await assert.rejects(() => enrichAssetDocumentation({
+  const result = await enrichAssetDocumentation({
     db,
     assetId: 'asset-1',
     userId: 'user-1',
@@ -2810,41 +2810,52 @@ test('enrichAssetDocumentation writes a terminal state before surfacing late aud
     traceId: 'trace-late-audit-failure',
     dependencies: {
       runLookupPreview: async () => ({
-        confidence: 0.68,
+        confidence: 0.94,
         normalizedName: 'Fast & Furious Arcade',
         likelyManufacturer: 'Raw Thrills',
-        documentationSuggestions: [],
-        supportResourcesSuggestion: [{
-          title: 'Fast & Furious Arcade title page',
-          url: 'https://rawthrills.com/games/fast-furious-arcade/',
-          sourceType: 'support',
-          matchScore: 62,
+        documentationSuggestions: [{
+          title: 'Fast & Furious Arcade Manual',
+          url: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
+          sourceType: 'manual_library',
+          manualLibraryRef: 'manual-fast-furious',
+          manualStoragePath: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
+          cachedManual: true,
+          exactTitleMatch: true,
+          exactManualMatch: true,
+          matchScore: 99,
+          trustedSource: true,
+          verified: true,
         }],
+        supportResourcesSuggestion: [],
         supportContactsSuggestion: [],
-        oneFollowupQuestion: '',
         manualMatchSummary: {
-          matchType: 'title_specific_source',
-          manualReady: false,
-          manualUrl: '',
+          matchType: 'exact_manual',
+          manualReady: true,
+          manualUrl: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
+          manualLibraryRef: 'manual-fast-furious',
+          manualStoragePath: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
           manualSourceUrl: 'https://rawthrills.com/games/fast-furious-arcade/',
-          supportUrl: 'https://rawthrills.com/games/fast-furious-arcade/',
         },
         pipelineMeta: {
-          stage1MatchType: 'title_specific_source',
-          stage2Ran: true,
-          sourcePageExtracted: true,
-          acquisitionSucceeded: false,
-          acquisitionState: 'no_manual',
+          stage1MatchType: 'exact_manual',
+          stage2Ran: false,
+          acquisitionSucceeded: true,
+          acquisitionState: 'succeeded',
+          manualLibraryRef: 'manual-fast-furious',
+          manualStoragePath: 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf',
         },
       }),
       findReusableVerifiedManuals: async () => [],
-      verifyDocumentationSuggestions: async () => [],
+      verifyDocumentationSuggestions: async (rows) => rows,
     }
-  }), /audit write failed/);
+  });
 
+  assert.equal(result.status, 'docs_found');
   assert.equal(assetWrites[0].payload.enrichmentStatus, 'searching_docs');
-  assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'followup_needed');
-  assert.equal(assetState.enrichmentStatus, 'followup_needed');
+  assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'docs_found');
+  assert.equal(assetWrites.at(-1).payload.manualStatus, 'attached');
+  assert.equal(assetWrites.at(-1).payload.manualLibraryRef, 'manual-fast-furious');
+  assert.equal(assetState.enrichmentStatus, 'docs_found');
 });
 
 test('enrichAssetDocumentation emits terminal_status_write on defensive failure paths', async () => {
