@@ -49,6 +49,12 @@ function isDeadLinkStatus(status = 0) {
   return DEAD_LINK_STATUSES.has(code) || code >= 500;
 }
 
+function isLikelyDirectDocumentUrl(url = '') {
+  const normalized = normalizeUrl(url).toLowerCase();
+  if (!normalized) return false;
+  return /\.(pdf|docx?)($|[?#])/.test(normalized);
+}
+
 async function downloadManualCandidate(url, fetchImpl = fetch, timeoutMs = DOWNLOAD_TIMEOUT_MS) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -95,6 +101,9 @@ async function acquireManualToLibrary({
   const normalizedManufacturer = normalizePhrase(manufacturer);
   const sourcePageUrl = normalizeUrl(candidate.sourcePageUrl || context.manualSourceUrl || '');
   const directManualUrl = normalizeUrl(candidate.url || context.manualUrl || '');
+  const directManualLooksDocument = isLikelyDirectDocumentUrl(directManualUrl);
+  const fallbackSourcePageUrl = !directManualLooksDocument ? directManualUrl : '';
+  const sourcePageProbeUrl = sourcePageUrl || fallbackSourcePageUrl;
 
   const startedAt = Date.now();
   logEvent('start', { inputTitle: context.originalTitle, canonicalTitle, manufacturer, sourcePageUrl, originalDownloadUrl: directManualUrl });
@@ -107,12 +116,14 @@ async function acquireManualToLibrary({
 
   let candidates = [];
   const failedCandidates = [];
-  if (directManualUrl) candidates.push({ url: directManualUrl, sourcePageUrl, title: candidate.title || context.originalTitle || canonicalTitle });
-  if (!candidates.length && sourcePageUrl) {
-    logEvent('source_page_fetch', { canonicalTitle, manufacturer, sourcePageUrl });
+  if (directManualLooksDocument && directManualUrl) {
+    candidates.push({ url: directManualUrl, sourcePageUrl: sourcePageProbeUrl, title: candidate.title || context.originalTitle || canonicalTitle });
+  }
+  if (sourcePageProbeUrl) {
+    logEvent('source_page_fetch', { canonicalTitle, manufacturer, sourcePageUrl: sourcePageProbeUrl });
     const titleVariants = [canonicalTitle, context.originalTitle, familyTitle].filter(Boolean).map((value) => normalizePhrase(value));
     const extracted = await extractManualLinksFromHtmlPage({
-      pageUrl: sourcePageUrl,
+      pageUrl: sourcePageProbeUrl,
       pageTitle: candidate.title || canonicalTitle,
       manufacturer,
       titleVariants,
@@ -120,7 +131,10 @@ async function acquireManualToLibrary({
       fetchImpl,
       logEvent: (event, payload) => logEvent(event, payload),
     });
-    candidates = extracted.map((entry) => ({ ...entry, sourcePageUrl }));
+    candidates = [
+      ...candidates,
+      ...extracted.map((entry) => ({ ...entry, sourcePageUrl: sourcePageProbeUrl })),
+    ];
   }
 
   let acceptedCount = 0;

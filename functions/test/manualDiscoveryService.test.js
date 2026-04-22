@@ -188,6 +188,25 @@ test('buildManufacturerDiscoverySeedPages and adapters include broader manufactu
   assert.equal(benchmarkAdapters.some((entry) => /benchmarkgames\.com\/wp-content\/uploads\/spongebob-pineapple-arcade-operator-manual\.pdf/.test(entry.url)), true);
 });
 
+test('buildManufacturerDiscoveryAdapters keeps Bay Tek/Skee-Ball family probe coverage for unresolved title families', () => {
+  const connect4 = buildManufacturerDiscoveryAdapters({
+    title: 'Connect 4 Hoops',
+    manufacturerProfile: getManufacturerProfile('Bay Tek Games', 'Connect 4 Hoops'),
+  });
+  const tower = buildManufacturerDiscoveryAdapters({
+    title: 'Tower of Tickets',
+    manufacturerProfile: getManufacturerProfile('Bay Tek Games', 'Tower of Tickets'),
+  });
+  const skee = buildManufacturerDiscoveryAdapters({
+    title: 'Skee-Ball Machines',
+    manufacturerProfile: getManufacturerProfile('Bay Tek Games', 'Skee-Ball Machines'),
+  });
+
+  assert.equal(connect4.some((entry) => /parts\.baytekent\.com\/manuals\/connect-4-hoops-operator-manual\.pdf/.test(entry.url)), true);
+  assert.equal(tower.some((entry) => /parts\.baytekent\.com\/manuals\/tower-of-tickets-operator-manual\.pdf/.test(entry.url)), true);
+  assert.equal(skee.some((entry) => /parts\.baytekent\.com\/manuals\/skee-ball-machines-operator-manual\.pdf/.test(entry.url)), true);
+});
+
 test('classifyManualCandidate restores hostname-based manual intent for exact-title manual-library links while rejecting generic manual hubs', () => {
   const profile = getManufacturerProfile('Bay Tek Games', 'Quik Drop');
   const exactLibraryManual = classifyManualCandidate({
