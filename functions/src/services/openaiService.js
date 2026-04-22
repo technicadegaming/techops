@@ -408,8 +408,31 @@ async function requestManualResearchFallback({
                   confidence: { type: 'number' },
                 }
               },
-              evidence: { type: 'array', items: { type: 'object' } },
-              citations: { type: 'array', items: { type: 'object' } },
+              evidence: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['url', 'title', 'reason'],
+                  properties: {
+                    url: { type: 'string' },
+                    title: { type: 'string' },
+                    reason: { type: 'string' },
+                  },
+                },
+              },
+              citations: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['url', 'title'],
+                  properties: {
+                    url: { type: 'string' },
+                    title: { type: 'string' },
+                  },
+                },
+              },
               rawResearchSummary: { type: 'string' },
             },
           },

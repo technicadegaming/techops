@@ -576,8 +576,12 @@ function isAcquisitionEligibleCandidate(candidate = {}) {
     CANDIDATE_TIER.EXACT_TITLE_UNVALIDATED_CANDIDATE,
     CANDIDATE_TIER.SHARED_LIBRARY_REUSE,
   ].includes(tier);
+  const deterministicDirectManual = (
+    normalizeString(candidate?.lookupMethod || '', 80).toLowerCase() === 'workbook_seed_exact_pdf'
+    || normalizeString(candidate?.discoverySource || '', 120).toLowerCase() === 'reference_row_manual_url'
+  ) && directManualLike;
   return {
-    eligible: !!url && !brochureLike && (manualPageWithDownloadContract || (!supportOnlyBucket.has(bucket) && (directManualLike || validatedManualTier))),
+    eligible: !!url && !brochureLike && (manualPageWithDownloadContract || directManualLike || deterministicDirectManual || (!supportOnlyBucket.has(bucket) && validatedManualTier)),
     tier,
     directManualLike,
     url,
@@ -1368,6 +1372,10 @@ async function researchAssetTitles({
         deterministicCandidateType: deterministicCandidateState.deterministicCandidateType,
         candidateUrl: deterministicCandidateState.candidate?.url || '',
       });
+      logManualResearchEvent('deterministic_candidate_type', {
+        ...logContext,
+        deterministicCandidateType: deterministicCandidateState.deterministicCandidateType,
+      });
       logManualResearchEvent('deterministic_candidate_short_circuit_applied', {
         ...logContext,
         deterministicCandidateType: deterministicCandidateState.deterministicCandidateType,
@@ -1384,6 +1392,10 @@ async function researchAssetTitles({
         ...logContext,
         deterministicCandidateType: deterministicCandidateState.deterministicCandidateType,
         candidateUrl: deterministicCandidateState.candidate?.url || '',
+      });
+      logManualResearchEvent('deterministic_candidate_type', {
+        ...logContext,
+        deterministicCandidateType: deterministicCandidateState.deterministicCandidateType,
       });
       logManualResearchEvent('deterministic_candidate_skipped_reason', {
         ...logContext,
@@ -2178,6 +2190,7 @@ function resolveDeterministicCandidateType(candidate = {}) {
   const exactManual = candidate?.exactManualMatch === true || candidate?.verified === true;
 
   if (lookupMethod === 'workbook_seed_exact_pdf' && isDirectManual && exactManual) return 'workbook_seed_exact_pdf';
+  if (lookupMethod === 'reference_row_manual_url' && isDirectManual && exactManual) return 'reference_row_direct_pdf';
   if (discoverySource === 'reference_row_manual_url' && isDirectManual && exactManual) return 'reference_row_direct_pdf';
   if (discoverySource === 'reference_row_source_page' && exactManual) return 'reference_row_manual_url';
   if (discoverySource === 'reference_row_support_page' && exactManual) return 'reference_row_manual_url';
