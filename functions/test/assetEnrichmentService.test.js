@@ -1842,6 +1842,59 @@ test('repairLegacyAssetEnrichmentRecord rehydrates Quik Drop live persisted seed
   assert.equal(repaired.supportResourcesSuggestion[0].url, 'https://www.baytekent.com/games/quik-drop/');
 });
 
+test('repairLegacyAssetEnrichmentRecord reapplies durable manual attachment fields for stale docs_found drift without rediscovery', async () => {
+  const repaired = await repairLegacyAssetEnrichmentRecord({
+    asset: {
+      name: 'King Kong',
+      normalizedName: 'King Kong of Skull Island VR',
+      manufacturer: 'Raw Thrills',
+      enrichmentStatus: 'in_progress',
+      reviewState: 'followup_needed',
+      manualStatus: 'review_needed',
+      manualLibraryRef: '',
+      manualStoragePath: '',
+      manualUrl: '',
+      documentationSuggestions: [{
+        title: 'King Kong of Skull Island VR Service Manual',
+        url: 'manual-library/raw-thrills/king-kong/king-kong-vr-service-manual.pdf',
+        sourceType: 'manual_library',
+        manualLibraryRef: 'manual-king-kong-vr',
+        manualStoragePath: 'manual-library/raw-thrills/king-kong/king-kong-vr-service-manual.pdf',
+        cachedManual: true,
+        exactTitleMatch: true,
+        exactManualMatch: true,
+        trustedSource: true,
+        verified: true,
+        matchScore: 100,
+      }],
+      supportResourcesSuggestion: [{
+        title: 'King Kong support',
+        url: 'https://rawthrills.com/games/king-kong-of-skull-island-vr/',
+        sourceType: 'support',
+        matchScore: 67
+      }],
+      manualMatchSummary: {
+        status: 'docs_found',
+        manualReady: true,
+        matchType: 'exact_manual',
+        manualLibraryRef: 'manual-king-kong-vr',
+        manualStoragePath: 'manual-library/raw-thrills/king-kong/king-kong-vr-service-manual.pdf',
+        manualUrl: 'manual-library/raw-thrills/king-kong/king-kong-vr-service-manual.pdf',
+      },
+      enrichmentFollowupQuestion: 'What subtitle is on the marquee?'
+    },
+    verifySuggestions: async (rows) => rows,
+  });
+
+  assert.equal(repaired.enrichmentStatus, 'docs_found');
+  assert.equal(repaired.manualStatus, 'attached');
+  assert.equal(repaired.reviewState, 'pending_review');
+  assert.equal(repaired.manualLibraryRef, 'manual-king-kong-vr');
+  assert.equal(repaired.manualStoragePath, 'manual-library/raw-thrills/king-kong/king-kong-vr-service-manual.pdf');
+  assert.equal(repaired.manualUrl, 'manual-library/raw-thrills/king-kong/king-kong-vr-service-manual.pdf');
+  assert.equal(repaired.enrichmentFollowupQuestion, '');
+});
+
 
 
 
@@ -2510,6 +2563,179 @@ test('enrichAssetDocumentation terminalizes post_save runs to docs_found when au
   assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'docs_found');
   assert.equal(assetWrites.at(-1).payload.manualStoragePath, 'manual-library/bay-tek/quik-drop/existing.pdf');
   assert.equal(assetWrites.at(-1).payload.manualLibraryRef, 'manual-quik-drop');
+});
+
+test('enrichAssetDocumentation persists durable HYPERshoot manual attachment for stale post-save assets', async () => {
+  const { db, assetWrites, assetState } = createEnrichmentDb({
+    name: 'HYPERshoot',
+    manufacturer: 'LAI Games',
+    companyId: 'company-1',
+    enrichmentStatus: 'searching_docs',
+    manualStatus: 'support_only',
+    manualLibraryRef: '',
+    manualStoragePath: '',
+    manualUrl: '',
+    supportUrl: 'https://laigames.com/games/hypershoot/'
+  });
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args);
+  try {
+    const result = await enrichAssetDocumentation({
+      db,
+      assetId: 'asset-1',
+      userId: 'user-1',
+      settings: { aiConfidenceThreshold: 0.45 },
+      triggerSource: 'post_save',
+      followupAnswer: '',
+      traceId: 'trace-hypershoot-stale-durable',
+      dependencies: {
+        runLookupPreview: async () => ({
+          confidence: 0.98,
+          normalizedName: 'HYPERshoot',
+          likelyManufacturer: 'LAI Games',
+          documentationSuggestions: [{
+            title: 'HYPERshoot Operator Manual',
+            url: 'manual-library/lai-games/hypershoot/hypershoot-operator-manual.pdf',
+            sourceType: 'manual_library',
+            manualLibraryRef: 'manual-hypershoot',
+            manualStoragePath: 'manual-library/lai-games/hypershoot/hypershoot-operator-manual.pdf',
+            cachedManual: true,
+            matchScore: 100,
+            exactTitleMatch: true,
+            exactManualMatch: true,
+            trustedSource: true,
+            verified: true,
+          }],
+          supportResourcesSuggestion: [{
+            title: 'HYPERshoot support page',
+            url: 'https://laigames.com/games/hypershoot/',
+            sourceType: 'support',
+            matchScore: 66,
+          }],
+          supportContactsSuggestion: [],
+          matchType: 'exact_manual',
+          manualReady: true,
+          manualUrl: 'manual-library/lai-games/hypershoot/hypershoot-operator-manual.pdf',
+          manualSourceUrl: 'https://laigames.com/games/hypershoot/',
+          supportUrl: 'https://laigames.com/games/hypershoot/',
+          manualMatchSummary: {
+            matchType: 'exact_manual',
+            manualReady: true,
+            manualUrl: 'manual-library/lai-games/hypershoot/hypershoot-operator-manual.pdf',
+            manualSourceUrl: 'https://laigames.com/games/hypershoot/',
+            supportUrl: 'https://laigames.com/games/hypershoot/',
+            manualLibraryRef: 'manual-hypershoot',
+            manualStoragePath: 'manual-library/lai-games/hypershoot/hypershoot-operator-manual.pdf',
+          },
+          pipelineMeta: {
+            stage1MatchType: 'exact_manual',
+            stage2Ran: false,
+            acquisitionSucceeded: true,
+            acquisitionState: 'succeeded',
+            manualLibraryRef: 'manual-hypershoot',
+            manualStoragePath: 'manual-library/lai-games/hypershoot/hypershoot-operator-manual.pdf',
+          },
+        }),
+        verifyDocumentationSuggestions: async (rows) => rows,
+        findReusableVerifiedManuals: async () => [],
+      }
+    });
+
+    assert.equal(result.status, 'docs_found');
+    const finalWrite = assetWrites.at(-1).payload;
+    assert.equal(finalWrite.enrichmentStatus, 'docs_found');
+    assert.equal(finalWrite.manualStatus, 'attached');
+    assert.equal(finalWrite.manualLibraryRef, 'manual-hypershoot');
+    assert.equal(finalWrite.manualStoragePath, 'manual-library/lai-games/hypershoot/hypershoot-operator-manual.pdf');
+    assert.equal(finalWrite.manualUrl, 'manual-library/lai-games/hypershoot/hypershoot-operator-manual.pdf');
+    assert.equal(assetState.manualLibraryRef, 'manual-hypershoot');
+    assert.equal(assetState.manualStoragePath, 'manual-library/lai-games/hypershoot/hypershoot-operator-manual.pdf');
+    assert.ok(logs.some((entry) => entry[0] === 'assetEnrichment:asset_manual_persist_started'));
+    assert.ok(logs.some((entry) => entry[0] === 'assetEnrichment:asset_manual_persist_completed'));
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test('enrichAssetDocumentation reopens stale King Kong support state and reattaches durable manual evidence', async () => {
+  const { db, assetWrites } = createEnrichmentDb({
+    name: 'King Kong',
+    manufacturer: 'Raw Thrills',
+    companyId: 'company-1',
+    enrichmentStatus: 'followup_needed',
+    manualStatus: 'support_only',
+    manualLibraryRef: '',
+    manualStoragePath: '',
+    supportUrl: 'https://rawthrills.com/games/king-kong-of-skull-island-vr/'
+  });
+
+  const result = await enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'manual',
+    followupAnswer: '',
+    traceId: 'trace-king-kong-reopen-durable',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.97,
+        normalizedName: 'King Kong of Skull Island VR',
+        likelyManufacturer: 'Raw Thrills',
+        documentationSuggestions: [{
+          title: 'King Kong of Skull Island VR Service Manual',
+          url: 'manual-library/raw-thrills/king-kong/king-kong-vr-service-manual.pdf',
+          sourceType: 'manual_library',
+          manualLibraryRef: 'manual-king-kong-vr',
+          manualStoragePath: 'manual-library/raw-thrills/king-kong/king-kong-vr-service-manual.pdf',
+          cachedManual: true,
+          matchScore: 100,
+          exactTitleMatch: true,
+          exactManualMatch: true,
+          trustedSource: true,
+          verified: true,
+        }],
+        supportResourcesSuggestion: [{
+          title: 'King Kong support',
+          url: 'https://rawthrills.com/games/king-kong-of-skull-island-vr/',
+          sourceType: 'support',
+          matchScore: 67,
+        }],
+        supportContactsSuggestion: [],
+        matchType: 'exact_manual',
+        manualReady: true,
+        manualUrl: 'manual-library/raw-thrills/king-kong/king-kong-vr-service-manual.pdf',
+        manualSourceUrl: 'https://rawthrills.com/games/king-kong-of-skull-island-vr/',
+        supportUrl: 'https://rawthrills.com/games/king-kong-of-skull-island-vr/',
+        manualMatchSummary: {
+          matchType: 'exact_manual',
+          manualReady: true,
+          manualUrl: 'manual-library/raw-thrills/king-kong/king-kong-vr-service-manual.pdf',
+          manualSourceUrl: 'https://rawthrills.com/games/king-kong-of-skull-island-vr/',
+          supportUrl: 'https://rawthrills.com/games/king-kong-of-skull-island-vr/',
+          manualLibraryRef: 'manual-king-kong-vr',
+          manualStoragePath: 'manual-library/raw-thrills/king-kong/king-kong-vr-service-manual.pdf',
+        },
+        pipelineMeta: {
+          stage1MatchType: 'exact_manual',
+          stage2Ran: false,
+          acquisitionSucceeded: true,
+          acquisitionState: 'succeeded',
+          manualLibraryRef: 'manual-king-kong-vr',
+          manualStoragePath: 'manual-library/raw-thrills/king-kong/king-kong-vr-service-manual.pdf',
+        },
+      }),
+      verifyDocumentationSuggestions: async (rows) => rows,
+      findReusableVerifiedManuals: async () => [],
+    }
+  });
+
+  assert.equal(result.status, 'docs_found');
+  assert.equal(assetWrites.at(-1).payload.manualLibraryRef, 'manual-king-kong-vr');
+  assert.equal(assetWrites.at(-1).payload.manualStoragePath, 'manual-library/raw-thrills/king-kong/king-kong-vr-service-manual.pdf');
+  assert.equal(assetWrites.at(-1).payload.manualStatus, 'attached');
+  assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'docs_found');
 });
 
 test('enrichAssetDocumentation downgrades non-stored manual candidates so docs_found requires shared-library attachment', async () => {
