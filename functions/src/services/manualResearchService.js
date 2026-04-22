@@ -553,6 +553,7 @@ function isAcquisitionEligibleCandidate(candidate = {}) {
   const tier = classifyCandidateTier(candidate);
   const url = normalizeUrl(candidate?.url || '');
   const bucket = `${candidate?.candidateBucket || candidate?.bucket || ''}`.trim().toLowerCase();
+  const matchType = `${candidate?.matchType || ''}`.trim().toLowerCase();
   const supportOnlyBucket = new Set(['support_product_page', 'weak_lead', 'brochure_or_spec_doc', 'title_specific_support_page']);
   const brochureLike = /(brochure|spec(?:ification)?(?:\s*sheet)?|sell[\s-]?sheet|flyer|catalog)/.test(`${candidate?.title || ''} ${url}`);
   const cachedManual = !!`${candidate?.manualLibraryRef || ''}`.trim() || `${candidate?.cachedManual || ''}` === 'true';
@@ -568,13 +569,15 @@ function isAcquisitionEligibleCandidate(candidate = {}) {
   const directManualLike = isDirectManualCandidateUrl(url)
     || candidate?.candidateScoringFlags?.isDirectPdf === true
     || `${candidate?.resourceType || candidate?.sourceType || ''}`.trim().toLowerCase() === 'manual';
+  const manualPageWithDownloadContract = (matchType === 'manual_page_with_download' || matchType === 'exact_manual')
+    && !!normalizeUrl(candidate?.sourcePageUrl || candidate?.url || '');
   const validatedManualTier = [
     CANDIDATE_TIER.EXACT_TITLE_VALIDATED_MANUAL,
     CANDIDATE_TIER.EXACT_TITLE_UNVALIDATED_CANDIDATE,
     CANDIDATE_TIER.SHARED_LIBRARY_REUSE,
   ].includes(tier);
   return {
-    eligible: !!url && !brochureLike && !supportOnlyBucket.has(bucket) && (directManualLike || validatedManualTier),
+    eligible: !!url && !brochureLike && (manualPageWithDownloadContract || (!supportOnlyBucket.has(bucket) && (directManualLike || validatedManualTier))),
     tier,
     directManualLike,
     url,
@@ -1480,6 +1483,14 @@ async function researchAssetTitles({
         manualUrl: summary.manualUrl || '',
       });
     }
+    if (summary.matchType === 'manual_page_with_download') {
+      logManualResearchEvent('manual_page_with_download_detected', {
+        ...logContext,
+        matchType: summary.matchType || '',
+        manualSourceUrl: summary.manualSourceUrl || '',
+        manualUrl: summary.manualUrl || '',
+      });
+    }
     if (!documentationSuggestions.length) {
       acquisitionSkippedReason = 'no_candidate_selected';
     } else if (!acquisitionEligible) {
@@ -1678,6 +1689,14 @@ async function researchAssetTitles({
       if (!manualLibraryAcquisition?.manualReady && lastFailureState) {
         acquisitionState = lastFailureState;
         acquisitionError = lastFailureError || acquisitionError;
+      }
+      if (!manualLibraryAcquisition?.manualReady) {
+        logManualResearchEvent('durable_acquisition_failed_reason', {
+          ...logContext,
+          reason: acquisitionError || acquisitionState || 'no_manual_after_attempt',
+          acquisitionState,
+          candidateCount: documentationSuggestions.length,
+        });
       }
     } else if (!acquisitionSkippedReason) {
       acquisitionSkippedReason = 'acquisition_not_attempted';

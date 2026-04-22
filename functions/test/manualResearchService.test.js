@@ -569,6 +569,144 @@ test('researchAssetTitles promotes StepManiaX exact-manual fallback url into dur
   assert.match(result.results[0].manualUrl || '', /^manual-library\//i);
 });
 
+test('researchAssetTitles promotes Willy Crash exact-manual source pages into durable attachment when download links are extractable', async () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args);
+  try {
+    const result = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
+      companyId: 'company-1',
+      titles: [{ originalTitle: 'Willy Crash', manufacturerHint: 'Raw Thrills' }],
+      traceId: 'test-willy-crash-exact-manual-source-page',
+      storage: createStorageMock(),
+      fetchImpl: async (url, options = {}) => {
+        if (String(url).includes('willy-crash-operator-manual.pdf')) {
+          return {
+            ok: true,
+            status: 200,
+            url,
+            headers: { get: () => 'application/pdf' },
+            text: async () => '',
+            arrayBuffer: async () => Buffer.from('%PDF-1.4\nwilly-crash'),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          url,
+          headers: { get: () => 'text/html' },
+          text: async () => options.method === 'HEAD'
+            ? ''
+            : '<html><body><a href="https://rawthrills.com/wp-content/uploads/willy-crash-operator-manual.pdf">Willy Crash Operator Manual PDF</a></body></html>',
+          arrayBuffer: async () => Buffer.from('<html></html>'),
+        };
+      },
+      researchFallback: async () => ({
+        normalizedTitle: 'Willy Crash',
+        manufacturer: 'Raw Thrills',
+        matchType: 'exact_manual',
+        manualReady: true,
+        reviewRequired: false,
+        manualUrl: 'https://rawthrills.com/games/willy-crash-support/',
+        manualSourceUrl: 'https://rawthrills.com/games/willy-crash-support/',
+        supportUrl: 'https://rawthrills.com/games/willy-crash-support/',
+        confidence: 1,
+        candidates: [{
+          bucket: 'verified_pdf_candidate',
+          url: 'https://rawthrills.com/wp-content/uploads/willy-crash-operator-manual.pdf',
+          title: 'Willy Crash Operator Manual',
+          confidence: 0.98,
+          exactManualMatch: true,
+          verified: true,
+        }],
+        citations: [],
+        rawResearchSummary: 'Official support page contains manual download link.',
+      }),
+    });
+
+    assert.equal(result.results[0].status, 'docs_found');
+    assert.equal(result.results[0].manualReady, true);
+    assert.ok(`${result.results[0].manualLibraryRef || ''}`.trim());
+    assert.match(result.results[0].manualStoragePath || '', /^manual-library\//i);
+    const markers = logs.map((entry) => entry[0]);
+    assert.equal(markers.includes('manualResearch:durable_acquisition_attempted'), true);
+    assert.equal(markers.includes('manualResearch:durable_storage_completed'), true);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test('researchAssetTitles logs explicit durable acquisition failure reasons for Down the Clown manual-page-with-download paths', async () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args);
+  try {
+    const result = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
+      companyId: 'company-1',
+      titles: [{ originalTitle: 'Down the Clown', manufacturerHint: 'LAI Games' }],
+      traceId: 'test-down-the-clown-manual-page-diagnostics',
+      storage: createStorageMock(),
+      fetchImpl: async (url, options = {}) => {
+        if (String(url).includes('down-the-clown-install-guide.pdf')) {
+          return {
+            ok: false,
+            status: 404,
+            url,
+            headers: { get: () => 'application/pdf' },
+            text: async () => '',
+            arrayBuffer: async () => Buffer.from(''),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          url,
+          headers: { get: () => 'text/html' },
+          text: async () => options.method === 'HEAD'
+            ? ''
+            : '<html><body><a href="https://laigames.com/downloads/down-the-clown-install-guide.pdf">Down the Clown Install Guide PDF</a></body></html>',
+          arrayBuffer: async () => Buffer.from('<html></html>'),
+        };
+      },
+      researchFallback: async () => ({
+        normalizedTitle: 'Down the Clown',
+        manufacturer: 'LAI Games',
+        matchType: 'manual_page_with_download',
+        manualReady: false,
+        reviewRequired: false,
+        manualUrl: 'https://laigames.com/game/down-the-clown/',
+        manualSourceUrl: 'https://laigames.com/game/down-the-clown/',
+        supportUrl: 'https://laigames.com/game/down-the-clown/',
+        confidence: 0.96,
+        candidates: [{
+          bucket: 'verified_pdf_candidate',
+          url: 'https://laigames.com/downloads/down-the-clown-install-guide.pdf',
+          title: 'Down the Clown Install Guide PDF',
+          confidence: 0.92,
+          verified: true,
+          exactManualMatch: true,
+        }],
+        citations: [],
+        rawResearchSummary: 'Title-specific page contains install guide download link.',
+      }),
+    });
+
+    assert.equal(result.results[0].manualReady, false);
+    assert.equal(result.results[0].status, 'followup_needed');
+    assert.equal(result.results[0].manualLibraryRef, '');
+    const markers = logs.map((entry) => entry[0]);
+    assert.equal(markers.includes('manualResearch:durable_acquisition_attempted'), true);
+    assert.equal(markers.includes('manualResearch:durable_acquisition_failed_reason'), true);
+    assert.equal(markers.includes('manualResearch:exact_manual_terminalized_without_attachment'), true);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
 test('researchAssetTitles persists/consumes answered follow-up fingerprints and avoids identical follow-up loop', async () => {
   const followupAnswer = 'It says Deluxe on the marquee';
   const followupFingerprint = createHash('sha1').update(followupAnswer.toLowerCase()).digest('hex');
