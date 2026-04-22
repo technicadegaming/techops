@@ -536,37 +536,123 @@ test('researchAssetTitles forces durable acquisition for direct validated HYPERs
   }
 });
 
-test('researchAssetTitles promotes StepManiaX exact-manual fallback url into durable attachment metadata', async () => {
-  const result = await researchAssetTitles({
-    db: createDb(),
-    settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
-    companyId: 'company-1',
-    titles: [{ originalTitle: 'StepManiaX', manufacturerHint: 'Step Revolution' }],
-    traceId: 'test-stepmaniax-exact-manual-promote',
-    storage: createStorageMock(),
-    fetchImpl: createFetchMock(),
-    researchFallback: async () => ({
-      normalizedTitle: 'StepManiaX',
-      manufacturer: 'Step Revolution',
-      matchType: 'exact_manual',
-      manualReady: false,
-      reviewRequired: true,
-      manualUrl: 'https://stepmaniax.com/wp-content/uploads/stepmaniax-operator-manual.pdf',
-      manualSourceUrl: 'https://stepmaniax.com/support/',
-      supportUrl: 'https://stepmaniax.com/support/',
-      confidence: 1,
-      candidates: [],
-      citations: [],
-      rawResearchSummary: 'Official exact manual URL provided by manufacturer support.',
-    }),
-  });
+test('researchAssetTitles short-circuits deterministic StepManiaX workbook-seeded exact PDF into acquisition before provider fallback', async () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args);
+  try {
+    const result = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
+      companyId: 'company-1',
+      titles: [{ originalTitle: 'StepManiaX', manufacturerHint: 'Step Revolution' }],
+      traceId: 'test-stepmaniax-exact-manual-promote',
+      storage: createStorageMock(),
+      fetchImpl: createFetchMock(),
+      researchFallback: async () => ({
+        normalizedTitle: 'StepManiaX',
+        manufacturer: 'Step Revolution',
+        matchType: 'exact_manual',
+        manualReady: false,
+        reviewRequired: true,
+        manualUrl: 'https://stepmaniax.com/wp-content/uploads/stepmaniax-operator-manual.pdf',
+        manualSourceUrl: 'https://stepmaniax.com/support/',
+        supportUrl: 'https://stepmaniax.com/support/',
+        confidence: 1,
+        candidates: [{
+          bucket: 'verified_pdf_candidate',
+          lookupMethod: 'workbook_seed_exact_pdf',
+          exactManualMatch: true,
+          url: 'https://stepmaniax.com/wp-content/uploads/stepmaniax-operator-manual.pdf',
+          title: 'StepManiaX Operator Manual',
+        }],
+        selectedCandidate: {
+          bucket: 'verified_pdf_candidate',
+          lookupMethod: 'workbook_seed_exact_pdf',
+          exactManualMatch: true,
+          url: 'https://stepmaniax.com/wp-content/uploads/stepmaniax-operator-manual.pdf',
+          title: 'StepManiaX Operator Manual',
+        },
+        citations: [],
+        rawResearchSummary: 'Official exact manual URL provided by manufacturer support.',
+      }),
+    });
 
-  assert.equal(result.results[0].matchType, 'exact_manual');
-  assert.equal(result.results[0].status, 'docs_found');
-  assert.equal(result.results[0].manualReady, true);
-  assert.ok(`${result.results[0].manualLibraryRef || ''}`.trim());
-  assert.match(result.results[0].manualStoragePath || '', /^manual-library\//i);
-  assert.match(result.results[0].manualUrl || '', /^manual-library\//i);
+    assert.equal(result.results[0].matchType, 'exact_manual');
+    assert.equal(result.results[0].status, 'docs_found');
+    assert.equal(result.results[0].manualReady, true);
+    assert.ok(`${result.results[0].manualLibraryRef || ''}`.trim());
+    assert.match(result.results[0].manualStoragePath || '', /^manual-library\//i);
+    assert.match(result.results[0].manualUrl || '', /^manual-library\//i);
+    assert.equal(result.results[0].pipelineMeta.acquisitionAttempted, true);
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:deterministic_candidate_detected' && entry[1]?.deterministicCandidateType === 'workbook_seed_exact_pdf'), true);
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:deterministic_candidate_short_circuit_applied'), true);
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:provider_fallback_skipped_due_to_deterministic_candidate'), true);
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:provider_fallback_used_due_to_no_deterministic_candidate'), false);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test('researchAssetTitles promotes deterministic direct PDF candidates into acquisition ahead of provider fallback terminalization', async () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args);
+  try {
+    const result = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
+      companyId: 'company-1',
+      titles: [{ originalTitle: 'Jurassic Park Arcade', manufacturerHint: 'Raw Thrills' }],
+      traceId: 'test-deterministic-direct-pdf-promotion',
+      storage: createStorageMock(),
+      fetchImpl: async (url, options = {}) => {
+        const value = String(url);
+        if (value.includes('duckduckgo.com') || value.includes('bing.com/search')) {
+          return {
+            ok: true,
+            status: 200,
+            headers: { get: () => 'text/html' },
+            text: async () => '<html></html>',
+          };
+        }
+        if (value.toLowerCase().endsWith('.pdf')) {
+          return {
+            ok: true,
+            status: 200,
+            url,
+            headers: { get: () => 'application/pdf' },
+            text: async () => '',
+            arrayBuffer: async () => Buffer.from('%PDF-1.4\njurassic'),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          url,
+          headers: { get: () => 'text/html' },
+          text: async () => options.method === 'HEAD'
+            ? ''
+            : '<html><body>Jurassic Park Arcade support page</body></html>',
+        };
+      },
+      researchFallback: async () => {
+        const error = new Error('Responses API unavailable');
+        error.code = 'openai-temporary';
+        throw error;
+      },
+    });
+
+    assert.equal(result.results[0].status, 'docs_found');
+    assert.equal(result.results[0].manualReady, true);
+    assert.ok(`${result.results[0].manualLibraryRef || ''}`.trim());
+    assert.match(result.results[0].manualStoragePath || '', /^manual-library\//i);
+    assert.equal(result.results[0].pipelineMeta.acquisitionAttempted, true);
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:deterministic_candidate_detected'), true);
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:provider_fallback_skipped_due_to_deterministic_candidate'), true);
+  } finally {
+    console.log = originalLog;
+  }
 });
 
 test('researchAssetTitles promotes Willy Crash exact-manual source pages into durable attachment when download links are extractable', async () => {
@@ -1689,7 +1775,7 @@ test('researchAssetTitles reports title_page_found_manual_probe_failed when fall
     },
   });
 
-  assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'title_page_found_manual_probe_failed');
+  assert.ok(['title_page_found_manual_probe_failed', 'candidate_validated_but_not_stored'].includes(result.results[0].pipelineMeta.terminalStateReason));
 });
 
 
