@@ -1361,7 +1361,41 @@ async function researchAssetTitles({
         researchSourceType: stageTwo.sourceType || 'responses_api',
       };
     }
+    const deterministicCandidateState = detectDeterministicCandidate(documentationSuggestions);
+    if (deterministicCandidateState.found) {
+      logManualResearchEvent('deterministic_candidate_detected', {
+        ...logContext,
+        deterministicCandidateType: deterministicCandidateState.deterministicCandidateType,
+        candidateUrl: deterministicCandidateState.candidate?.url || '',
+      });
+      logManualResearchEvent('deterministic_candidate_short_circuit_applied', {
+        ...logContext,
+        deterministicCandidateType: deterministicCandidateState.deterministicCandidateType,
+        candidateUrl: deterministicCandidateState.candidate?.url || '',
+      });
+      logManualResearchEvent('provider_fallback_skipped_due_to_deterministic_candidate', {
+        ...logContext,
+        deterministicCandidateType: deterministicCandidateState.deterministicCandidateType,
+        candidateUrl: deterministicCandidateState.candidate?.url || '',
+      });
+      shouldFallbackToScraping = false;
+    } else if (deterministicCandidateState.skipped) {
+      logManualResearchEvent('deterministic_candidate_detected', {
+        ...logContext,
+        deterministicCandidateType: deterministicCandidateState.deterministicCandidateType,
+        candidateUrl: deterministicCandidateState.candidate?.url || '',
+      });
+      logManualResearchEvent('deterministic_candidate_skipped_reason', {
+        ...logContext,
+        deterministicCandidateType: deterministicCandidateState.deterministicCandidateType,
+        candidateUrl: deterministicCandidateState.candidate?.url || '',
+        reason: deterministicCandidateState.skippedReason,
+      });
+    }
     if (shouldFallbackToScraping) {
+      logManualResearchEvent('provider_fallback_used_due_to_no_deterministic_candidate', {
+        ...logContext,
+      });
       const discoveredFallback = await runDiscoveryFallback({
         settings,
         input: { originalTitle },
@@ -1472,8 +1506,19 @@ async function researchAssetTitles({
         });
       }
     }
-    const selectedCandidateEligibility = isAcquisitionEligibleCandidate(documentationSuggestions[0] || {});
-    acquisitionEligible = documentationSuggestions.length > 0 && selectedCandidateEligibility.eligible;
+    const candidateEligibilityList = documentationSuggestions.map((candidate) => isAcquisitionEligibleCandidate(candidate));
+    const primaryCandidateEligibility = candidateEligibilityList[0] || isAcquisitionEligibleCandidate({});
+    const deterministicEligibleCandidateIndex = documentationSuggestions.findIndex((candidate, index) => {
+      if (!resolveDeterministicCandidateType(candidate)) return false;
+      return candidateEligibilityList[index]?.eligible === true;
+    });
+    const firstEligibleCandidateIndex = primaryCandidateEligibility.eligible
+      ? 0
+      : deterministicEligibleCandidateIndex;
+    const selectedCandidateEligibility = firstEligibleCandidateIndex >= 0
+      ? candidateEligibilityList[firstEligibleCandidateIndex]
+      : primaryCandidateEligibility;
+    acquisitionEligible = firstEligibleCandidateIndex >= 0;
     candidateWasDirectPdf = selectedCandidateEligibility.directManualLike;
     if (summary.matchType === 'exact_manual' || summary.manualReady === true) {
       logManualResearchEvent('exact_manual_detected', {
@@ -1507,7 +1552,7 @@ async function researchAssetTitles({
         candidateUrl: selectedCandidateEligibility.url,
         candidateTier: selectedCandidateEligibility.tier,
         candidateWasDirectPdf,
-        source: normalizeString(documentationSuggestions[0]?.discoverySource || '', 80) || 'ranked_candidate',
+        source: normalizeString(documentationSuggestions[firstEligibleCandidateIndex]?.discoverySource || '', 80) || 'ranked_candidate',
       });
     }
     const reusableCandidate = documentationSuggestions[0] || {};
@@ -1541,17 +1586,34 @@ async function researchAssetTitles({
       acquisitionAttempted = true;
       logManualResearchEvent('durable_acquisition_attempted', {
         ...logContext,
-        candidateCount: documentationSuggestions.length,
-        firstCandidateUrl: documentationSuggestions[0]?.url || '',
+        candidateCount: documentationSuggestions.filter((_, index) => candidateEligibilityList[index]?.eligible).length,
+        firstCandidateUrl: documentationSuggestions[firstEligibleCandidateIndex]?.url || '',
       });
       if (candidateWasDirectPdf) {
         logManualResearchEvent('acquisition_forced_for_direct_pdf', {
           ...logContext,
-          candidateUrl: documentationSuggestions[0]?.url || '',
+          candidateUrl: documentationSuggestions[firstEligibleCandidateIndex]?.url || '',
         });
       }
       for (let index = 0; index < documentationSuggestions.length; index += 1) {
         const candidate = documentationSuggestions[index];
+        const candidateEligibility = candidateEligibilityList[index] || isAcquisitionEligibleCandidate(candidate);
+        if (!candidateEligibility.eligible) {
+          logManualResearchEvent('candidate_skipped_not_acquisition_eligible', {
+            ...logContext,
+            candidateUrl: candidate?.url || '',
+            candidateTier: candidateEligibility.tier || '',
+          });
+          if (resolveDeterministicCandidateType(candidate)) {
+            logManualResearchEvent('deterministic_candidate_rejected_reason', {
+              ...logContext,
+              deterministicCandidateType: resolveDeterministicCandidateType(candidate),
+              candidateUrl: candidate?.url || '',
+              reason: `not_acquisition_eligible:${candidateEligibility.tier || 'unknown'}`,
+            });
+          }
+          continue;
+        }
         const candidateUrlKey = normalizeUrlKey(candidate?.url || '');
         if (candidateUrlKey && deadCandidateUrls.has(candidateUrlKey)) {
           logManualResearchEvent('dead_candidate_skipped_before_selection', {
@@ -2105,6 +2167,48 @@ function shouldRunFallbackScraping({
   if (acceptedManualCandidateCount > 0) return false;
   if (!Array.isArray(returnedCandidates) || !returnedCandidates.length) return true;
   return returnedCandidates.every((candidate = {}) => OPENAI_WEAK_CANDIDATE_BUCKETS.has(`${candidate.bucket || ''}`.trim()));
+}
+
+function resolveDeterministicCandidateType(candidate = {}) {
+  const lookupMethod = normalizeString(candidate?.lookupMethod || '', 80).toLowerCase();
+  const discoverySource = normalizeString(candidate?.discoverySource || '', 120).toLowerCase();
+  const isDirectManual = isDirectManualCandidateUrl(candidate?.url || '')
+    || candidate?.candidateScoringFlags?.isDirectPdf === true
+    || `${candidate?.resourceType || candidate?.sourceType || ''}`.trim().toLowerCase() === 'manual';
+  const exactManual = candidate?.exactManualMatch === true || candidate?.verified === true;
+
+  if (lookupMethod === 'workbook_seed_exact_pdf' && isDirectManual && exactManual) return 'workbook_seed_exact_pdf';
+  if (discoverySource === 'reference_row_manual_url' && isDirectManual && exactManual) return 'reference_row_direct_pdf';
+  if (discoverySource === 'reference_row_source_page' && exactManual) return 'reference_row_manual_url';
+  if (discoverySource === 'reference_row_support_page' && exactManual) return 'reference_row_manual_url';
+  return '';
+}
+
+function detectDeterministicCandidate(documentationSuggestions = []) {
+  const suggestions = Array.isArray(documentationSuggestions) ? documentationSuggestions : [];
+  for (let index = 0; index < suggestions.length; index += 1) {
+    const candidate = suggestions[index] || {};
+    const deterministicType = resolveDeterministicCandidateType(candidate);
+    if (!deterministicType) continue;
+    const eligibility = isAcquisitionEligibleCandidate(candidate);
+    if (!eligibility.eligible) {
+      return {
+        found: false,
+        skipped: true,
+        skippedReason: `not_acquisition_eligible:${eligibility.tier || 'unknown'}`,
+        deterministicCandidateType: deterministicType,
+        candidate,
+      };
+    }
+    return {
+      found: true,
+      deterministicCandidateType: deterministicType,
+      candidate,
+      index,
+      eligibility,
+    };
+  }
+  return { found: false, skipped: false, skippedReason: 'none' };
 }
 
 module.exports = {
