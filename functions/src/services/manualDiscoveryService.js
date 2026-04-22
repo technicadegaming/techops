@@ -2102,12 +2102,15 @@ async function probeAdapterCandidates({
   const orderedCandidates = dedupeByUrl(candidates).slice(0, MAX_ADAPTER_FETCHES);
   for (const candidate of orderedCandidates) {
     if (candidate.referenceRowField === 'manualUrl') {
+      logEvent('reference_row_probe_started', { url: candidate.url, referenceRowId: candidate.referenceRowId || '', referenceRowField: 'manualUrl' });
       logEvent('reference_row_manual_url_probed', { url: candidate.url, referenceRowId: candidate.referenceRowId || '' });
       diagnostics.referenceManualUrlProbeCount = Number(diagnostics.referenceManualUrlProbeCount || 0) + 1;
     } else if (candidate.referenceRowField === 'manualSourceUrl') {
+      logEvent('reference_row_probe_started', { url: candidate.url, referenceRowId: candidate.referenceRowId || '', referenceRowField: 'manualSourceUrl' });
       logEvent('reference_row_source_page_probed', { url: candidate.url, referenceRowId: candidate.referenceRowId || '' });
       diagnostics.referenceSourcePageProbeCount = Number(diagnostics.referenceSourcePageProbeCount || 0) + 1;
     } else if (candidate.referenceRowField === 'supportUrl') {
+      logEvent('reference_row_probe_started', { url: candidate.url, referenceRowId: candidate.referenceRowId || '', referenceRowField: 'supportUrl' });
       logEvent('reference_row_support_page_probed', { url: candidate.url, referenceRowId: candidate.referenceRowId || '' });
       diagnostics.referenceSupportPageProbeCount = Number(diagnostics.referenceSupportPageProbeCount || 0) + 1;
     }
@@ -2157,6 +2160,13 @@ async function probeAdapterCandidates({
             referenceRowField: candidate.referenceRowField,
             status: Number(response.status || 0) || 0,
             reason: 'http_error',
+          });
+          logEvent('reference_row_probe_skipped_reason', {
+            url: candidate.url,
+            referenceRowId: candidate.referenceRowId || '',
+            referenceRowField: candidate.referenceRowField,
+            reason: 'http_error',
+            status: Number(response.status || 0) || 0,
           });
         }
         continue;
@@ -2279,6 +2289,12 @@ async function probeAdapterCandidates({
           referenceRowField: candidate.referenceRowField,
           reason: isAbortLikeError(error) ? 'timeout' : sanitizeDiagnosticValue(error?.message || String(error), 120),
         });
+        logEvent('reference_row_probe_skipped_reason', {
+          url: candidate.url,
+          referenceRowId: candidate.referenceRowId || '',
+          referenceRowField: candidate.referenceRowField,
+          reason: isAbortLikeError(error) ? 'timeout' : sanitizeDiagnosticValue(error?.message || String(error), 120),
+        });
       }
     }
   }
@@ -2372,6 +2388,19 @@ async function discoverManualDocumentation({
   const adapterCandidates = buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleVariants, referenceHints, logEvent });
   const referenceRowCandidates = adapterCandidates.filter((candidate) => candidate.adapter === 'reference_row');
   const referenceRowsRequested = Array.isArray(referenceHints?.referenceRowCandidates) && referenceHints.referenceRowCandidates.length > 0;
+  if (referenceHints) {
+    logEvent('reference_hint_rehydrated', {
+      referenceEntryKey: referenceHints?.entryKey || '',
+      referenceRowHintCount: Array.isArray(referenceHints?.referenceRowCandidates)
+        ? referenceHints.referenceRowCandidates.length
+        : 0,
+      source: referenceHints?.source || 'json_index',
+    });
+  } else {
+    logEvent('reference_hint_missing_reason', {
+      reason: 'no_reference_hints_available',
+    });
+  }
   if (referenceRowCandidates.length) {
     logEvent('reference_row_match_expanded', {
       referenceRowCandidateCount: referenceRowCandidates.length,
@@ -2382,6 +2411,10 @@ async function discoverManualDocumentation({
     logEvent('reference_row_not_matched', {
       title: sanitizeDiagnosticValue(title, 140),
       manufacturer: sanitizeDiagnosticValue(manufacturer, 120),
+      referenceEntryKey: referenceHints?.entryKey || '',
+    });
+    logEvent('reference_row_probe_skipped_reason', {
+      reason: 'reference_rows_not_hydrated_into_adapter_candidates',
       referenceEntryKey: referenceHints?.entryKey || '',
     });
   }
