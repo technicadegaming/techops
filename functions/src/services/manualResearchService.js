@@ -535,6 +535,11 @@ function isJunkSupportResourceUrl(url = '') {
   return JUNK_SUPPORT_LINK_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
+function isBrochureLikeCandidate(candidate = {}) {
+  const url = normalizeUrl(candidate?.url || '');
+  return /(brochure|spec(?:ification)?(?:\s*sheet)?|sell[\s-]?sheet|flyer|catalog)/.test(`${candidate?.title || ''} ${url}`);
+}
+
 function filterSupportResourcesSuggestion(entries = [], logContext = {}) {
   return (Array.isArray(entries) ? entries : []).filter((entry) => {
     const url = normalizeUrl(entry?.url || entry || '');
@@ -555,7 +560,7 @@ function isAcquisitionEligibleCandidate(candidate = {}) {
   const bucket = `${candidate?.candidateBucket || candidate?.bucket || ''}`.trim().toLowerCase();
   const matchType = `${candidate?.matchType || ''}`.trim().toLowerCase();
   const supportOnlyBucket = new Set(['support_product_page', 'weak_lead', 'brochure_or_spec_doc', 'title_specific_support_page']);
-  const brochureLike = /(brochure|spec(?:ification)?(?:\s*sheet)?|sell[\s-]?sheet|flyer|catalog)/.test(`${candidate?.title || ''} ${url}`);
+  const brochureLike = isBrochureLikeCandidate({ ...candidate, url });
   const cachedManual = !!`${candidate?.manualLibraryRef || ''}`.trim() || `${candidate?.cachedManual || ''}` === 'true';
   const hasStoredPath = /^(manual-library\/|companies\/)/i.test(`${candidate?.manualStoragePath || candidate?.url || ''}`.trim());
   if (cachedManual || hasStoredPath || tier === CANDIDATE_TIER.SHARED_LIBRARY_REUSE) {
@@ -1524,9 +1529,10 @@ async function researchAssetTitles({
       if (!resolveDeterministicCandidateType(candidate)) return false;
       return candidateEligibilityList[index]?.eligible === true;
     });
-    const firstEligibleCandidateIndex = primaryCandidateEligibility.eligible
-      ? 0
-      : deterministicEligibleCandidateIndex;
+    const firstEligibleOverallCandidateIndex = candidateEligibilityList.findIndex((candidateEligibility) => candidateEligibility?.eligible === true);
+    const firstEligibleCandidateIndex = deterministicEligibleCandidateIndex >= 0
+      ? deterministicEligibleCandidateIndex
+      : (primaryCandidateEligibility.eligible ? 0 : firstEligibleOverallCandidateIndex);
     const selectedCandidateEligibility = firstEligibleCandidateIndex >= 0
       ? candidateEligibilityList[firstEligibleCandidateIndex]
       : primaryCandidateEligibility;
@@ -1607,21 +1613,45 @@ async function researchAssetTitles({
           candidateUrl: documentationSuggestions[firstEligibleCandidateIndex]?.url || '',
         });
       }
+      const manualGradeCandidateCount = candidateEligibilityList.filter((entry) => entry?.eligible === true).length;
       for (let index = 0; index < documentationSuggestions.length; index += 1) {
         const candidate = documentationSuggestions[index];
         const candidateEligibility = candidateEligibilityList[index] || isAcquisitionEligibleCandidate(candidate);
+        const isDeterministicCandidate = !!resolveDeterministicCandidateType(candidate);
         if (!candidateEligibility.eligible) {
+          if (isBrochureLikeCandidate(candidate)) {
+            logManualResearchEvent('brochure_candidate_rejected', {
+              ...logContext,
+              candidateUrl: candidate?.url || '',
+              candidateTier: candidateEligibility.tier || '',
+              reason: 'brochure_or_sell_sheet',
+            });
+          }
+          logManualResearchEvent('non_manual_candidate_rejected', {
+            ...logContext,
+            candidateUrl: candidate?.url || '',
+            candidateTier: candidateEligibility.tier || '',
+            reason: `not_acquisition_eligible:${candidateEligibility.tier || 'unknown'}`,
+          });
           logManualResearchEvent('candidate_skipped_not_acquisition_eligible', {
             ...logContext,
             candidateUrl: candidate?.url || '',
             candidateTier: candidateEligibility.tier || '',
           });
-          if (resolveDeterministicCandidateType(candidate)) {
+          if (isDeterministicCandidate) {
             logManualResearchEvent('deterministic_candidate_rejected_reason', {
               ...logContext,
               deterministicCandidateType: resolveDeterministicCandidateType(candidate),
               candidateUrl: candidate?.url || '',
               reason: `not_acquisition_eligible:${candidateEligibility.tier || 'unknown'}`,
+            });
+          }
+          if (manualGradeCandidateCount > 0 && index + 1 < documentationSuggestions.length) {
+            logManualResearchEvent('continued_to_next_candidate', {
+              ...logContext,
+              candidateUrl: candidate?.url || '',
+              reason: 'candidate_not_manual_grade_or_not_acquisition_eligible',
+              nextCandidateUrl: documentationSuggestions[index + 1]?.url || '',
             });
           }
           continue;
@@ -1739,6 +1769,26 @@ async function researchAssetTitles({
         failedCandidates.forEach((failed) => {
           const failedUrlKey = normalizeUrlKey(failed?.url || '');
           const httpStatus = Number(failed?.httpStatus || 0) || 0;
+          if (isDeterministicCandidate && failed?.deadLink === true) {
+            logManualResearchEvent('deterministic_candidate_dead_link', {
+              ...logContext,
+              candidateUrl: failed?.url || candidate?.url || '',
+              httpStatus,
+            });
+            if (httpStatus === 404) {
+              logManualResearchEvent('deterministic_candidate_404', {
+                ...logContext,
+                candidateUrl: failed?.url || candidate?.url || '',
+              });
+            }
+          } else if (isDeterministicCandidate && failed?.reason) {
+            logManualResearchEvent('deterministic_candidate_validation_failed_reason', {
+              ...logContext,
+              candidateUrl: failed?.url || candidate?.url || '',
+              reason: failed.reason,
+              httpStatus,
+            });
+          }
           if (!failedUrlKey || failed?.deadLink !== true || !isDeadCandidateStatus(httpStatus)) return;
           deadCandidateUrls.add(failedUrlKey);
           logManualResearchEvent('candidate_marked_dead', {
@@ -1758,6 +1808,21 @@ async function researchAssetTitles({
             });
           }
         });
+        if (!manualLibraryAcquisition?.manualReady && index + 1 < documentationSuggestions.length) {
+          if (isDeterministicCandidate) {
+            logManualResearchEvent('deterministic_candidate_continuation_started', {
+              ...logContext,
+              candidateUrl: candidate?.url || '',
+              nextCandidateUrl: documentationSuggestions[index + 1]?.url || '',
+            });
+          }
+          logManualResearchEvent('continued_to_next_candidate', {
+            ...logContext,
+            candidateUrl: candidate?.url || '',
+            reason: acquisitionError || 'candidate_failed_or_not_durable',
+            nextCandidateUrl: documentationSuggestions[index + 1]?.url || '',
+          });
+        }
         if (!lastFailureState) acquisitionState = 'no_manual';
       }
       if (!manualLibraryAcquisition?.manualReady && lastFailureState) {
@@ -1765,6 +1830,19 @@ async function researchAssetTitles({
         acquisitionError = lastFailureError || acquisitionError;
       }
       if (!manualLibraryAcquisition?.manualReady) {
+        if (manualGradeCandidateCount > 0) {
+          logManualResearchEvent('exhausted_manual_grade_candidates', {
+            ...logContext,
+            attemptedCandidateCount: manualGradeCandidateCount,
+            acquisitionState,
+          });
+          logManualResearchEvent('terminalized_after_exhaustion', {
+            ...logContext,
+            attemptedCandidateCount: manualGradeCandidateCount,
+            acquisitionState,
+            reason: acquisitionError || acquisitionState || 'no_manual_after_attempt',
+          });
+        }
         logManualResearchEvent('durable_acquisition_failed_reason', {
           ...logContext,
           reason: acquisitionError || acquisitionState || 'no_manual_after_attempt',
