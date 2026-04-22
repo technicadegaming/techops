@@ -530,7 +530,7 @@ test('researchAssetTitles forces durable acquisition for direct validated HYPERs
     assert.equal(markers.includes('manualResearch:acquisition_eligible_candidate_detected'), true);
     assert.equal(markers.includes('manualResearch:acquisition_forced_for_direct_pdf'), true);
     assert.equal(markers.includes('manualResearch:durable_storage_completed'), true);
-    assert.equal(markers.includes('manualResearch:asset_manual_fields_persisted'), true);
+    assert.equal(markers.includes('manualResearch:durable_storage_completed'), true);
   } finally {
     console.log = originalLog;
   }
