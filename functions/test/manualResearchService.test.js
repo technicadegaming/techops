@@ -643,6 +643,93 @@ test('researchAssetTitles treats workbook-seeded direct manuals as acquisition-e
   }
 });
 
+test('researchAssetTitles continues after StepManiaX workbook-seeded PDF 404 to alternate manual-grade candidates', async () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args);
+  try {
+    const deadPdf = 'https://stepmaniax.com/wp-content/uploads/stepmaniax-operator-manual.pdf';
+    const liveMirror = 'https://cdn.stepmaniax.com/manuals/stepmaniax-operator-manual-v2.pdf';
+    const result = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
+      companyId: 'company-1',
+      titles: [{ originalTitle: 'StepManiaX', manufacturerHint: 'Step Revolution' }],
+      traceId: 'test-stepmaniax-dead-direct-pdf-continuation',
+      storage: createStorageMock(),
+      fetchImpl: async (url, options = {}) => {
+        const value = String(url);
+        if (value === deadPdf) {
+          return {
+            ok: false,
+            status: 404,
+            url,
+            headers: { get: () => 'application/pdf' },
+            text: async () => '',
+            arrayBuffer: async () => Buffer.from(''),
+          };
+        }
+        if (value === liveMirror) {
+          return {
+            ok: true,
+            status: 200,
+            url,
+            headers: { get: () => 'application/pdf' },
+            text: async () => '',
+            arrayBuffer: async () => Buffer.from('%PDF-1.4\nstepmaniax-live'),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          url,
+          headers: { get: () => 'text/html' },
+          text: async () => options.method === 'HEAD' ? '' : '<html><body>StepManiaX support</body></html>',
+          arrayBuffer: async () => Buffer.from('<html></html>'),
+        };
+      },
+      researchFallback: async () => ({
+        normalizedTitle: 'StepManiaX',
+        manufacturer: 'Step Revolution',
+        matchType: 'exact_manual',
+        manualReady: false,
+        reviewRequired: true,
+        manualUrl: deadPdf,
+        manualSourceUrl: 'https://stepmaniax.com/support/',
+        supportUrl: 'https://stepmaniax.com/support/',
+        confidence: 1,
+        candidates: [
+          {
+            bucket: 'verified_pdf_candidate',
+            lookupMethod: 'workbook_seed_exact_pdf',
+            exactManualMatch: true,
+            verified: true,
+            url: deadPdf,
+            title: 'StepManiaX Operator Manual',
+          },
+          {
+            bucket: 'verified_pdf_candidate',
+            exactManualMatch: true,
+            verified: true,
+            discoverySource: 'adapter:mirror_fallback',
+            url: liveMirror,
+            title: 'StepManiaX Operator Manual Mirror',
+          },
+        ],
+        citations: [],
+        rawResearchSummary: 'Workbook URL is stale; mirror remains live.',
+      }),
+    });
+
+    assert.equal(result.results[0].status, 'docs_found');
+    assert.equal(result.results[0].manualReady, true);
+    assert.ok(`${result.results[0].manualLibraryRef || ''}`.trim());
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:durable_storage_completed'), true);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
 test('researchAssetTitles promotes Angry Birds Coin Crash reference-row direct manual candidates into durable acquisition', async () => {
   const logs = [];
   const originalLog = console.log;
@@ -686,6 +773,153 @@ test('researchAssetTitles promotes Angry Birds Coin Crash reference-row direct m
     assert.match(result.results[0].manualUrl || '', /^manual-library\//i);
     assert.equal(result.results[0].pipelineMeta.acquisitionAttempted, true);
     assert.equal(logs.some((entry) => entry[0] === 'manualResearch:durable_acquisition_attempted'), true);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test('researchAssetTitles rejects Willy Crash brochure PDFs without terminalizing and continues to manual-grade candidates', async () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args);
+  try {
+    const liveManualUrl = 'https://rawthrills.com/wp-content/uploads/willy-crash-operator-manual.pdf';
+    const result = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
+      companyId: 'company-1',
+      titles: [{ originalTitle: 'Willy Crash', manufacturerHint: 'Raw Thrills' }],
+      traceId: 'test-willy-crash-brochure-continuation',
+      storage: createStorageMock(),
+      fetchImpl: async (url) => {
+        if (`${url}`.includes('willy-crash-operator-manual.pdf')) {
+          return {
+            ok: true,
+            status: 200,
+            url,
+            headers: { get: () => 'application/pdf' },
+            text: async () => '',
+            arrayBuffer: async () => Buffer.from('%PDF-1.4\nwilly-manual'),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          url,
+          headers: { get: () => 'text/html' },
+          text: async () => '<html><body>manual support page</body></html>',
+          arrayBuffer: async () => Buffer.from('<html></html>'),
+        };
+      },
+      researchFallback: async () => ({
+        normalizedTitle: 'Willy Crash',
+        manufacturer: 'Raw Thrills',
+        matchType: 'support_only',
+        manualReady: false,
+        reviewRequired: true,
+        manualUrl: '',
+        manualSourceUrl: 'https://rawthrills.com/games/willy-crash-support/',
+        supportUrl: 'https://rawthrills.com/games/willy-crash-support/',
+        confidence: 0.81,
+        candidates: [
+          {
+            bucket: 'brochure_or_spec_doc',
+            url: 'https://www.betson.com/wp-content/uploads/2024/06/willy-crash-sell-sheet.pdf',
+            title: 'Willy Crash Sell Sheet',
+            exactManualMatch: true,
+          },
+          {
+            bucket: 'verified_pdf_candidate',
+            url: liveManualUrl,
+            title: 'Willy Crash Operator Manual',
+            exactManualMatch: true,
+            verified: true,
+            discoverySource: 'adapter:raw_thrills',
+          },
+        ],
+        citations: [],
+        rawResearchSummary: 'Top exact-title hit is a brochure; second candidate is the manual.',
+      }),
+    });
+
+    assert.equal(result.results[0].status, 'docs_found');
+    assert.equal(result.results[0].manualReady, true);
+    assert.ok(`${result.results[0].manualLibraryRef || ''}`.trim());
+    assert.equal(result.results[0].pipelineMeta.acquisitionAttempted, true);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test('researchAssetTitles promotes Angry Birds reference-row manual candidate ahead of weaker support candidates', async () => {
+  const logs = [];
+  const originalLog = console.log;
+  console.log = (...args) => logs.push(args);
+  try {
+    const referenceManualUrl = 'https://cdn.laigames.com/manuals/angry-birds-coin-crash-operator-manual.pdf';
+    const result = await researchAssetTitles({
+      db: createDb(),
+      settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
+      companyId: 'company-1',
+      titles: [{ originalTitle: 'Angry Birds Coin Crash', manufacturerHint: 'LAI Games' }],
+      traceId: 'test-angry-birds-reference-row-promotion-with-noise',
+      storage: createStorageMock(),
+      fetchImpl: async (url) => {
+        if (`${url}` === referenceManualUrl) {
+          return {
+            ok: true,
+            status: 200,
+            url,
+            headers: { get: () => 'application/pdf' },
+            text: async () => '',
+            arrayBuffer: async () => Buffer.from('%PDF-1.4\nangry-birds-manual'),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          url,
+          headers: { get: () => 'text/html' },
+          text: async () => '<html><body>support content</body></html>',
+          arrayBuffer: async () => Buffer.from('<html></html>'),
+        };
+      },
+      researchFallback: async () => ({
+        normalizedTitle: 'Angry Birds Coin Crash',
+        manufacturer: 'LAI Games',
+        matchType: 'support_only',
+        manualReady: false,
+        reviewRequired: true,
+        manualUrl: '',
+        manualSourceUrl: 'https://laigames.com/games/angry-birds-coin-crash/support/',
+        supportUrl: 'https://laigames.com/games/angry-birds-coin-crash/support/',
+        confidence: 0.89,
+        candidates: [
+          {
+            bucket: 'title_specific_support_page',
+            url: 'https://laigames.com/games/angry-birds-coin-crash/support/',
+            title: 'Angry Birds Coin Crash Support',
+            exactManualMatch: true,
+          },
+          {
+            bucket: 'verified_pdf_candidate',
+            discoverySource: 'reference_row_manual_url',
+            url: referenceManualUrl,
+            title: 'Angry Birds Coin Crash Operator Manual',
+            exactManualMatch: true,
+            verified: true,
+          },
+        ],
+        citations: [],
+        rawResearchSummary: 'Reference row direct manual exists and should be promoted.',
+      }),
+    });
+
+    assert.equal(result.results[0].status, 'docs_found');
+    assert.equal(result.results[0].manualReady, true);
+    assert.ok(`${result.results[0].manualLibraryRef || ''}`.trim());
+    assert.equal(logs.some((entry) => entry[0] === 'manualResearch:acquisition_eligible_candidate_detected'), true);
+    assert.equal(result.results[0].pipelineMeta.acquisitionAttempted, true);
   } finally {
     console.log = originalLog;
   }
