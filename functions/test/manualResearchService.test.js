@@ -537,6 +537,67 @@ test('researchAssetTitles forces durable acquisition for direct validated HYPERs
   }
 });
 
+test('researchAssetTitles does not terminalize HYPERshoot to support_only when a direct public PDF is available', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
+    companyId: 'company-1',
+    titles: [{ originalTitle: 'HYPERshoot', manufacturerHint: 'LAI Games' }],
+    traceId: 'test-hypershoot-no-support-only-when-public-pdf',
+    storage: createStorageMock(),
+    fetchImpl: async (url) => ({
+      ok: true,
+      status: 200,
+      url,
+      headers: { get: () => (String(url).toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'text/html') },
+      text: async () => '',
+      arrayBuffer: async () => Uint8Array.from(Buffer.from('%PDF-1.4\nhypershoot')).buffer,
+    }),
+    researchFallback: async () => ({
+      normalizedTitle: 'HYPERshoot',
+      manufacturer: 'LAI Games',
+      matchType: 'support_only',
+      manualReady: false,
+      reviewRequired: true,
+      manualUrl: '',
+      manualSourceUrl: 'https://www.mossdistributing.com/userdocs/documents/',
+      supportUrl: 'https://www.mossdistributing.com/userdocs/documents/',
+      confidence: 0.74,
+      candidates: [
+        {
+          bucket: 'title_specific_support_page',
+          url: 'https://parts.laigames.com/product/hypershoot/',
+          title: 'HYPERshoot Parts',
+          sourceType: 'parts',
+          discoverySource: 'adapter:lai_games',
+        },
+        {
+          bucket: 'verified_pdf_candidate',
+          url: 'https://www.mossdistributing.com/userdocs/documents/MS0225_HYPERSHOOT.PDF',
+          title: 'HYPERshoot Operator Manual',
+          sourceType: 'manual',
+          discoverySource: 'reference_row_manual_url',
+          verified: true,
+          exactManualMatch: true,
+        },
+      ],
+      selectedCandidate: {
+        bucket: 'title_specific_support_page',
+        url: 'https://parts.laigames.com/product/hypershoot/',
+        title: 'HYPERshoot Parts',
+        sourceType: 'parts',
+      },
+      citations: [],
+      rawResearchSummary: 'Support page selected, but direct PDF is publicly reachable.',
+    }),
+  });
+
+  assert.notEqual(result.results[0].manualStatus, 'support_only');
+  assert.notEqual(result.results[0].status, 'support_only');
+  assert.equal(result.results[0].pipelineMeta.acquisitionAttempted, true);
+  assert.equal(result.results[0].pipelineMeta.acquisitionEligible, true);
+});
+
 test('researchAssetTitles short-circuits deterministic StepManiaX workbook-seeded exact PDF into acquisition before provider fallback', async () => {
   const logs = [];
   const originalLog = console.log;

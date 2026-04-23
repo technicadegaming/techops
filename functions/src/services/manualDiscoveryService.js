@@ -161,6 +161,7 @@ const LAI_GENERIC_PARTS_PATH_PATTERNS = [
   /\/(?:balls|cable|cabinet-components|consumables|merchandise)(?:\/|$)/,
   /\/category\//,
   /\/product-category\//,
+  /\/product\/[^/]+\/?$/,
 ];
 
 function buildExactTitleVariants(title, normalizedTitle) {
@@ -465,8 +466,10 @@ function buildManualSearchQueries({
   const primaryTitleVariant = titleQueryVariants[0] || cleanTitle;
   const primaryManufacturerTerm = manufacturerTerms[0] || `${manufacturer || ''}`.trim();
   const deterministicBaselineQueries = titleQueryVariants.flatMap((titleVariant) => ([
+    `"${titleVariant} manual"`,
     `"${titleVariant}" arcade manual`,
     primaryManufacturerTerm ? `"${primaryManufacturerTerm}" "${titleVariant}" arcade manual` : '',
+    primaryManufacturerTerm ? `${titleVariant} ${primaryManufacturerTerm} manual` : '',
     `"${titleVariant}" operator manual`,
     primaryManufacturerTerm ? `"${primaryManufacturerTerm}" "${titleVariant}" operator manual` : '',
     `"${titleVariant}" service manual`,
@@ -963,6 +966,7 @@ function hasManufacturerEvidence(text, manufacturer, manufacturerProfile) {
     ...((manufacturerProfile?.aliases || []).map((alias) => normalizePhrase(alias)))
   ].filter(Boolean);
   return candidates.some((candidate) => normalized.includes(candidate))
+    || KNOWN_DISTRIBUTOR_DOMAINS.some((domain) => normalized.includes(normalizePhrase(domain)))
     || (manufacturerProfile?.sourceTokens || []).some((token) => normalized.includes(normalizePhrase(token)));
 }
 
@@ -1890,15 +1894,15 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleV
         },
         {
           adapter: 'lai_games',
-          type: 'support_page',
-          label: `${titleVariant} parts`,
-          url: `https://parts.laigames.com/product/${slug}/`
-        },
-        {
-          adapter: 'lai_games',
           type: 'direct_pdf',
           label: `${titleVariant} operator manual`,
           url: `https://laigames.com/wp-content/uploads/${slug}-operator-manual.pdf`
+        },
+        {
+          adapter: 'lai_games',
+          type: 'support_page',
+          label: `${titleVariant} parts`,
+          url: `https://parts.laigames.com/product/${slug}/`
         },
       ];
     }),
@@ -2070,8 +2074,8 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleV
 
   const orderedReferenceRows = dedupeByUrl(referenceAdapterRows).sort((a, b) => {
     if (a.type === b.type) return 0;
-    if (a.type === 'support_page') return -1;
-    if (b.type === 'support_page') return 1;
+    if (a.type === 'direct_pdf') return -1;
+    if (b.type === 'direct_pdf') return 1;
     return 0;
   });
 

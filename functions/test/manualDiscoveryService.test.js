@@ -126,6 +126,22 @@ test('buildManualSearchQueries always includes both title-only and title+manufac
   assert.equal(baseline.some((entry) => /"lai games"\s+"virtual rabbids"\s+install guide/.test(entry)), true);
   assert.equal(baseline.includes('"virtual rabbids" pdf'), true);
   assert.equal(baseline.some((entry) => /"lai games"\s+"virtual rabbids"\s+pdf/.test(entry)), true);
+  assert.equal(baseline.includes('"virtual rabbids manual"'), true);
+  assert.equal(baseline.some((entry) => entry.includes('virtual rabbids lai games manual')), true);
+});
+
+test('buildManualSearchQueries includes exact-title manual baseline variants for HYPERshoot families', () => {
+  const profile = getManufacturerProfile('LAI Games', 'HYPERshoot');
+  const queries = buildManualSearchQueries({
+    manufacturer: 'LAI Games',
+    title: 'HYPERshoot',
+    manufacturerProfile: profile,
+  });
+
+  const baseline = queries.broadFirstQueries.map((entry) => entry.toLowerCase());
+  assert.equal(baseline.includes('"hypershoot manual"'), true);
+  assert.equal(baseline.includes('"hypershoot" arcade manual'), true);
+  assert.equal(baseline.includes('hypershoot lai games manual') || baseline.includes('hypershoot lai manual'), true);
 });
 
 test('buildManufacturerDiscoveryAdapters exposes deterministic candidates for Bay Tek and Raw Thrills', () => {
@@ -157,6 +173,22 @@ test('buildManufacturerDiscoveryAdapters includes Sega and Elaut title-specific 
   assert.equal(sega.some((entry) => /segaarcade\.com\/wp-content\/uploads\/power-roll-operator-manual\.pdf/.test(entry.url)), true);
   assert.equal(elaut.some((entry) => entry.url === 'https://www.elaut.com/product/wizard-of-oz/'), true);
   assert.equal(elaut.some((entry) => /elaut\.com\/wp-content\/uploads\/wizard-of-oz-operator-manual\.pdf/.test(entry.url)), true);
+});
+
+test('buildManufacturerDiscoveryAdapters prioritizes LAI direct PDF candidates ahead of parts taxonomy pages', () => {
+  const adapters = buildManufacturerDiscoveryAdapters({
+    title: 'HYPERshoot',
+    manufacturerProfile: getManufacturerProfile('LAI Games', 'HYPERshoot'),
+    referenceHints: {
+      preferredManufacturerDomains: ['laigames.com'],
+      likelySlugPatterns: ['hypershoot'],
+    },
+  });
+  const directPdfIndex = adapters.findIndex((entry) => /laigames\.com\/wp-content\/uploads\/hypershoot-operator-manual\.pdf/i.test(entry.url));
+  const partsIndex = adapters.findIndex((entry) => /parts\.laigames\.com\/product\/hypershoot\/?$/i.test(entry.url));
+  assert.equal(directPdfIndex >= 0, true);
+  assert.equal(partsIndex >= 0, true);
+  assert.equal(directPdfIndex < partsIndex, true);
 });
 
 test('buildManufacturerDiscoverySeedPages and adapters include broader manufacturer-specific probes for unresolved backlog families', () => {
