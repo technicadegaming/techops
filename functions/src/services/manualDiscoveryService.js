@@ -1348,8 +1348,11 @@ async function extractManualLinksFromHtmlPage({
     const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
     const hostTrusted = Array.from(trustedDomains).some((domain) => host === domain || host.endsWith(`.${domain}`));
     if (!hostTrusted) return false;
+    const normalized = normalizePhrase(`${row?.title || ''} ${url}`);
+    if (classifyCommerceNavigationUrl(url)) return false;
     return /\.(pdf|docx?)($|[?#])/i.test(url)
-      || /manual|operator|service-manual|download/.test(normalizePhrase(`${row?.title || ''} ${url}`));
+      || /manual|operator|service-manual|download/.test(normalized)
+      || /\/(?:manuals?|downloads?|documents?|support)\/[^?#]*$/.test(url.toLowerCase());
   };
   classified.forEach((row) => {
     const rejection = classifyCommerceNavigationUrl(row.url);
@@ -1364,13 +1367,18 @@ async function extractManualLinksFromHtmlPage({
 
   const accepted = classified
     .filter((row) => (row.classification.includeManual || trustedFollowupManual(row)) && !classifyCommerceNavigationUrl(row.url))
-    .slice(0, 3)
+    .slice(0, 8)
     .map((row) => ({
       title: [pageTitle, row.title].filter(Boolean).join(' - '),
       url: row.url,
-      sourceType: row.classification.sourceType,
+      sourceType: trustedFollowupManual(row)
+        ? (row.classification.sourceType || 'manufacturer')
+        : row.classification.sourceType,
       discoverySource: 'html_followup',
       extractedFromTrustedTitlePage: trustedFollowupManual(row),
+      matchType: trustedFollowupManual(row) && !/\.(pdf|docx?)($|[?#])/i.test(row.url)
+        ? 'manual_page_with_download'
+        : 'exact_manual',
     }));
 
   accepted.forEach((entry) => {

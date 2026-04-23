@@ -276,28 +276,28 @@ function deriveDetailedTerminalReason({
   deadCandidateUrls = new Set(),
 } = {}) {
   if (summary.manualReady === true) return 'docs_found_after_durable_storage';
-  if (fallbackTerminalReason === 'title_page_found_manual_probe_failed') return 'title_page_found_no_extractable_manual_links';
+  if (fallbackTerminalReason === 'title_page_found_manual_probe_failed') return 'trusted_title_page_found_but_no_manual_candidate_materialized';
   if (fallbackTerminalReason) return fallbackTerminalReason;
   if (stageOne.referenceHintSource === 'none' && stageOne.referenceHintsExpected === true) {
-    return 'reference_hints_expected_but_not_loaded';
+    return 'reference_hints_available_but_not_hydrated';
   }
   const referenceProbeCount = Number(fallbackDiagnostics?.referenceManualUrlProbeCount || 0)
     + Number(fallbackDiagnostics?.referenceSourcePageProbeCount || 0)
     + Number(fallbackDiagnostics?.referenceSupportPageProbeCount || 0);
-  if (stageOne.referenceHints && referenceProbeCount === 0) return 'reference_hints_loaded_but_no_reference_probes_started';
+  if (stageOne.referenceHints && referenceProbeCount === 0) return 'reference_hints_hydrated_but_no_reference_probes_started';
   if (!acquisitionEligible && documentationSuggestions.length > 0) {
-    if (documentationSuggestions.some((entry) => isBrochureLikeCandidate(entry)) && continuationSuggestions.length === 0) {
-      return 'brochure_selected_no_manual_continuation_used';
+    if (documentationSuggestions.every((entry) => !isManualGradeFinalCandidate(entry, { deadCandidateUrls }).manualGrade)) {
+      return 'brochure_or_non_manual_candidates_only';
     }
-    return 'valid_candidate_selected_but_not_acquisition_eligible';
+    return 'final_candidate_not_manual_grade';
   }
   if (acquisitionAttempted && (acquisitionState === 'failed' || acquisitionState === 'timed_out' || acquisitionError)) {
-    return 'acquisition_attempt_failed_after_valid_candidate';
+    return 'acquisition_attempt_failed_after_manual_grade_selection';
   }
   if (deadCandidateUrls.size > 0
     && deterministicCandidateState?.deterministicCandidateType === 'workbook_seed_exact_pdf'
     && continuationSuggestions.length === 0) {
-    return 'dead_seeded_pdf_no_continuation_used';
+    return 'dead_seeded_pdf_no_usable_continuation';
   }
   if (continuationSuggestions.length > 0 && !continuationUsed && !summary.manualReady) {
     return 'continuation_candidates_generated_but_not_used';
@@ -308,6 +308,65 @@ function deriveDetailedTerminalReason({
   }
   if (deadCandidateUrls.size > 0 && documentationSuggestions.length === 0) return 'dead-candidate-only';
   return `no_durable_manual:${acquisitionState || acquisitionSkippedReason || 'unknown'}`;
+}
+
+function isHardIneligibleFinalCandidate(candidate = {}, { deadCandidateUrls = new Set() } = {}) {
+  const manualLibraryRef = `${candidate?.manualLibraryRef || ''}`.trim();
+  const manualStoragePath = `${candidate?.manualStoragePath || ''}`.trim();
+  if (manualLibraryRef || /^(manual-library\/|companies\/)/i.test(manualStoragePath)) {
+    return { ineligible: false, reason: '' };
+  }
+  const url = normalizeUrl(candidate?.url || '');
+  const urlKey = normalizeUrlKey(url);
+  const title = normalizeString(candidate?.title || '', 220).toLowerCase();
+  const bucket = `${candidate?.candidateBucket || candidate?.bucket || ''}`.trim().toLowerCase();
+  const sourceType = `${candidate?.sourceType || candidate?.resourceType || ''}`.trim().toLowerCase();
+  const discoverySource = `${candidate?.discoverySource || ''}`.trim().toLowerCase();
+  const matchType = `${candidate?.matchType || ''}`.trim().toLowerCase();
+  const nonManualType = `${candidate?.documentType || candidate?.docType || ''}`.trim().toLowerCase();
+  const text = `${title} ${url} ${bucket} ${sourceType} ${matchType} ${nonManualType}`;
+  if (!url) return { ineligible: true, reason: 'invalid_candidate_url' };
+  if (urlKey && deadCandidateUrls.has(urlKey)) return { ineligible: true, reason: 'dead_link_candidate' };
+  if (/(brochure|spec(?:ification)?(?:\s*sheet)?|sell[\s-]?sheet|flyer|catalog)/.test(text)) return { ineligible: true, reason: 'brochure_or_sell_sheet' };
+  if (/(marketing|promo|teaser|one[-\s]?pager|datasheet)/.test(text)) return { ineligible: true, reason: 'marketing_or_non_manual_document' };
+  if (/(vendor)/.test(text) && !/(manual|operator|service)/.test(text)) return { ineligible: true, reason: 'generic_vendor_page' };
+  if (/(arcade room|installations?)/.test(text) && !/manual/.test(text)) return { ineligible: true, reason: 'arcade_installation_page' };
+  if (/parts/.test(sourceType) || /parts|taxonomy|shop-all-parts|product-category/.test(text)) return { ineligible: true, reason: 'parts_taxonomy_or_store_page' };
+  if (/support/.test(sourceType) && !/(manual|operator|service|download)/.test(text)) return { ineligible: true, reason: 'support_without_manual_evidence' };
+  if (/(cart|checkout|login|register|my-account|account)/.test(text)) return { ineligible: true, reason: 'commerce_or_navigation_page' };
+  if (/(brochure_or_spec_doc|weak_lead)/.test(bucket)) return { ineligible: true, reason: 'explicit_non_manual_bucket' };
+  if (/(brochure|spec_doc|sell_sheet|flyer|catalog|marketing)/.test(nonManualType)) return { ineligible: true, reason: 'explicit_non_manual_document_type' };
+  if (discoverySource === 'adapter:lai_seed' && /parts\.laigames\.com/.test(url)) return { ineligible: true, reason: 'lai_parts_page' };
+  return { ineligible: false, reason: '' };
+}
+
+function isManualGradeFinalCandidate(candidate = {}, { deadCandidateUrls = new Set() } = {}) {
+  const hardIneligible = isHardIneligibleFinalCandidate(candidate, { deadCandidateUrls });
+  if (hardIneligible.ineligible) return { manualGrade: false, reason: hardIneligible.reason };
+  const tier = classifyCandidateTier(candidate);
+  const url = normalizeUrl(candidate?.url || '');
+  const bucket = `${candidate?.candidateBucket || candidate?.bucket || ''}`.trim().toLowerCase();
+  const matchType = `${candidate?.matchType || ''}`.trim().toLowerCase();
+  const directManualLike = isDirectManualCandidateUrl(url)
+    || candidate?.candidateScoringFlags?.isDirectPdf === true
+    || `${candidate?.resourceType || candidate?.sourceType || ''}`.trim().toLowerCase() === 'manual';
+  const manualPageEvidence = /manual|operator|service manual|download/.test(`${candidate?.title || ''} ${url}`.toLowerCase());
+  const validatedTier = [
+    CANDIDATE_TIER.EXACT_TITLE_VALIDATED_MANUAL,
+    CANDIDATE_TIER.EXACT_TITLE_UNVALIDATED_CANDIDATE,
+    CANDIDATE_TIER.SHARED_LIBRARY_REUSE,
+  ].includes(tier);
+  const manualGrade = directManualLike
+    || matchType === 'manual_page_with_download'
+    || matchType === 'exact_manual'
+    || validatedTier
+    || (bucket === 'verified_pdf_candidate' && manualPageEvidence);
+  return {
+    manualGrade: !!manualGrade,
+    reason: manualGrade ? '' : 'final_candidate_not_manual_grade',
+    tier,
+    directManualLike,
+  };
 }
 
 function prioritizeDocumentationSuggestions({
@@ -345,6 +404,20 @@ function prioritizeDocumentationSuggestions({
     });
   }
   rows.sort(compareRankedCandidates);
+  const finalSelectableRows = rows.filter((row) => isManualGradeFinalCandidate(row.candidate, { deadCandidateUrls: deadSet }).manualGrade);
+  if (finalSelectableRows.length) {
+    const [topSelectable] = finalSelectableRows;
+    const topIndex = rows.findIndex((row) => row.urlKey === topSelectable.urlKey);
+    if (topIndex > 0) {
+      const [promoted] = rows.splice(topIndex, 1);
+      rows.unshift(promoted);
+      logEvent('manual_grade_candidate_promoted_for_final_selection', {
+        ...logContext,
+        candidateUrl: promoted.candidate?.url || '',
+        candidateTier: promoted.tier,
+      });
+    }
+  }
   const deadRows = rows.filter((row) => row.dead);
   const staleTopDead = deadRows[0] || null;
   deadRows.forEach((row) => {
@@ -780,6 +853,32 @@ function buildContinuationSuggestions({
   const referenceRows = Array.isArray(stageOne.referenceHints?.referenceRowCandidates)
     ? stageOne.referenceHints.referenceRowCandidates
     : [];
+  const hintManualUrl = normalizeUrl(stageOne.referenceHints?.manualUrl || '');
+  const hintManualSourceUrl = normalizeUrl(stageOne.referenceHints?.manualSourceUrl || '');
+  const hintSupportUrl = normalizeUrl(stageOne.referenceHints?.supportUrl || '');
+  if (hintManualSourceUrl) {
+    pushContinuation({
+      url: hintManualSourceUrl,
+      sourcePageUrl: hintManualSourceUrl,
+      discoverySource: 'reference_hint_source_page',
+      continuationLogEvent: 'reference_source_continuation_started',
+    });
+  }
+  if (hintSupportUrl) {
+    pushContinuation({
+      url: hintSupportUrl,
+      sourcePageUrl: hintSupportUrl,
+      discoverySource: 'reference_hint_support_page',
+      continuationLogEvent: 'support_page_continuation_started',
+    });
+  }
+  if (hintManualUrl) {
+    pushContinuation({
+      url: hintManualUrl,
+      sourcePageUrl: hintManualSourceUrl || hintSupportUrl || summary.manualSourceUrl || summary.supportUrl || '',
+      discoverySource: 'reference_hint_manual_url',
+    });
+  }
   referenceRows.forEach((row = {}) => {
     if (row.manualSourceUrl) {
       pushContinuation({
@@ -836,11 +935,22 @@ function buildContinuationSuggestions({
     });
   });
 
-  return out;
+  return out.sort((a, b) => {
+    const sourceA = `${a?.discoverySource || ''}`;
+    const sourceB = `${b?.discoverySource || ''}`;
+    const priority = (source) => {
+      if (source.includes('source_page')) return 0;
+      if (source.includes('support_page')) return 1;
+      if (source.includes('manual_url')) return 2;
+      return 3;
+    };
+    return priority(sourceA) - priority(sourceB);
+  });
 }
 
 function isAcquisitionEligibleCandidate(candidate = {}) {
   const tier = classifyCandidateTier(candidate);
+  const manualGradeGate = isManualGradeFinalCandidate(candidate);
   const url = normalizeUrl(candidate?.url || '');
   const bucket = `${candidate?.candidateBucket || candidate?.bucket || ''}`.trim().toLowerCase();
   const matchType = `${candidate?.matchType || ''}`.trim().toLowerCase();
@@ -871,10 +981,14 @@ function isAcquisitionEligibleCandidate(candidate = {}) {
     || normalizeString(candidate?.discoverySource || '', 120).toLowerCase() === 'reference_row_manual_url'
   ) && directManualLike;
   return {
-    eligible: !!url && !brochureLike && (manualPageWithDownloadContract || directManualLike || deterministicDirectManual || (!supportOnlyBucket.has(bucket) && validatedManualTier)),
+    eligible: !!url
+      && manualGradeGate.manualGrade
+      && !brochureLike
+      && (manualPageWithDownloadContract || directManualLike || deterministicDirectManual || (!supportOnlyBucket.has(bucket) && validatedManualTier)),
     tier,
     directManualLike,
     url,
+    ineligibleReason: manualGradeGate.manualGrade ? '' : manualGradeGate.reason,
   };
 }
 
@@ -1393,53 +1507,78 @@ async function researchAssetTitles({
       companyId,
       logContext,
     });
-    if (!stageOne.referenceHints) {
-      const rowReferenceRows = Array.isArray(row?.referenceRowCandidates)
-        ? row.referenceRowCandidates
-        : (Array.isArray(row?.manualLookupReferenceRows) ? row.manualLookupReferenceRows : []);
-      const fallbackReferenceHints = rowReferenceRows.length
-        ? {
-          source: normalizeString(row?.referenceHintSource || row?.manualLookupReferenceHintSource || '', 80) || 'row_rehydrated',
-          entryKey: normalizeString(row?.referenceEntryKey || row?.manualLookupReferenceEntryKey || '', 160),
-          referenceRowCandidates: rowReferenceRows.map((entry = {}) => ({
-            sourceRowId: normalizeString(entry.sourceRowId || entry.rowId || '', 160),
-            manufacturer: normalizeString(entry.manufacturer || stageOne.manufacturer || '', 160),
-            originalTitle: normalizeString(entry.originalTitle || originalTitle, 220),
-            normalizedTitle: normalizeString(entry.normalizedTitle || stageOne.normalizedTitle || originalTitle, 220),
-            manualUrl: normalizeUrl(entry.manualUrl || ''),
-            manualSourceUrl: normalizeUrl(entry.manualSourceUrl || ''),
-            supportUrl: normalizeUrl(entry.supportUrl || ''),
-          })),
-          preferredManufacturerDomains: normalizeUrlArray(row?.referenceDomainsUsed || row?.referenceDomains || [], 8).map((value) => {
-            try { return new URL(value).hostname.replace(/^www\./, ''); } catch { return ''; }
-          }).filter(Boolean),
-          likelySlugPatterns: Array.isArray(row?.referenceSlugPatternsUsed) ? row.referenceSlugPatternsUsed.slice(0, 12) : [],
-        }
-        : null;
-      if (fallbackReferenceHints) {
-        stageOne.referenceHints = fallbackReferenceHints;
-        stageOne.referenceHintSource = fallbackReferenceHints.source;
-        stageOne.referenceHit = true;
-        stageOne.referenceEntryKey = fallbackReferenceHints.entryKey || stageOne.referenceEntryKey || '';
-        logManualResearchEvent('reference_hint_rehydrated_from_row', {
-          ...logContext,
-          referenceHintSource: stageOne.referenceHintSource,
-          referenceEntryKey: stageOne.referenceEntryKey,
-          referenceRowCandidateCount: fallbackReferenceHints.referenceRowCandidates.length,
-        });
-        stageOne.normalizedHintBundle = buildNormalizedHintBundle({
-          originalTitle,
-          normalizedTitle: stageOne.normalizedTitle,
-          manufacturer: stageOne.manufacturer,
-          titleFamily: stageOne.titleFamily,
-          referenceHints: stageOne.referenceHints,
-          referenceHintSource: stageOne.referenceHintSource,
-          referenceEntryKey: stageOne.referenceEntryKey,
-          rowHintSource: 'row_rehydrated',
-        });
+    const rowReferenceRows = Array.isArray(row?.referenceRowCandidates)
+      ? row.referenceRowCandidates
+      : (Array.isArray(row?.manualLookupReferenceRows) ? row.manualLookupReferenceRows : []);
+    const rowHintBundle = rowReferenceRows.length
+      ? {
+        source: normalizeString(row?.referenceHintSource || row?.manualLookupReferenceHintSource || '', 80) || 'row_rehydrated',
+        entryKey: normalizeString(row?.referenceEntryKey || row?.manualLookupReferenceEntryKey || '', 160),
+        referenceRowCandidates: rowReferenceRows.map((entry = {}) => ({
+          sourceRowId: normalizeString(entry.sourceRowId || entry.rowId || '', 160),
+          manufacturer: normalizeString(entry.manufacturer || stageOne.manufacturer || '', 160),
+          originalTitle: normalizeString(entry.originalTitle || originalTitle, 220),
+          normalizedTitle: normalizeString(entry.normalizedTitle || stageOne.normalizedTitle || originalTitle, 220),
+          manualUrl: normalizeUrl(entry.manualUrl || ''),
+          manualSourceUrl: normalizeUrl(entry.manualSourceUrl || ''),
+          supportUrl: normalizeUrl(entry.supportUrl || ''),
+        })),
+        preferredManufacturerDomains: normalizeUrlArray(row?.referenceDomainsUsed || row?.referenceDomains || [], 8).map((value) => {
+          try { return new URL(value).hostname.replace(/^www\./, ''); } catch { return ''; }
+        }).filter(Boolean),
+        likelySlugPatterns: Array.isArray(row?.referenceSlugPatternsUsed) ? row.referenceSlugPatternsUsed.slice(0, 12) : [],
       }
+      : null;
+    if (rowHintBundle && (!stageOne.referenceHints || !Array.isArray(stageOne.referenceHints.referenceRowCandidates) || !stageOne.referenceHints.referenceRowCandidates.length)) {
+      stageOne.referenceHints = rowHintBundle;
+      stageOne.referenceHintSource = rowHintBundle.source;
+      stageOne.referenceHit = true;
+      stageOne.referenceEntryKey = rowHintBundle.entryKey || stageOne.referenceEntryKey || '';
+      logManualResearchEvent('reference_hint_rehydrated_from_row', {
+        ...logContext,
+        referenceHintSource: stageOne.referenceHintSource,
+        referenceEntryKey: stageOne.referenceEntryKey,
+        referenceRowCandidateCount: rowHintBundle.referenceRowCandidates.length,
+      });
+    } else if (rowHintBundle && stageOne.referenceHints) {
+      const mergedRows = [
+        ...(Array.isArray(stageOne.referenceHints.referenceRowCandidates) ? stageOne.referenceHints.referenceRowCandidates : []),
+        ...rowHintBundle.referenceRowCandidates,
+      ];
+      stageOne.referenceHints = {
+        ...stageOne.referenceHints,
+        referenceRowCandidates: mergedRows,
+        preferredManufacturerDomains: Array.from(new Set([
+          ...((stageOne.referenceHints.preferredManufacturerDomains || [])),
+          ...(rowHintBundle.preferredManufacturerDomains || []),
+        ])).slice(0, 10),
+        likelySlugPatterns: Array.from(new Set([
+          ...((stageOne.referenceHints.likelySlugPatterns || [])),
+          ...(rowHintBundle.likelySlugPatterns || []),
+        ])).slice(0, 20),
+      };
+      logManualResearchEvent('reference_hint_row_context_merged', {
+        ...logContext,
+        referenceHintSource: stageOne.referenceHintSource || rowHintBundle.source,
+        mergedReferenceRowCandidateCount: stageOne.referenceHints.referenceRowCandidates.length,
+      });
+    } else if (row?.referenceHintsExpected === true && !stageOne.referenceHints) {
+      logManualResearchEvent('reference_hints_available_but_not_hydrated', {
+        ...logContext,
+        reason: 'referenceHintsExpected_true_but_no_hint_payload',
+      });
     }
-    stageOne.referenceHintsExpected = row?.referenceHintsExpected === true;
+    stageOne.referenceHintsExpected = row?.referenceHintsExpected === true || !!rowHintBundle;
+    stageOne.normalizedHintBundle = buildNormalizedHintBundle({
+      originalTitle,
+      normalizedTitle: stageOne.normalizedTitle,
+      manufacturer: stageOne.manufacturer,
+      titleFamily: stageOne.titleFamily,
+      referenceHints: stageOne.referenceHints,
+      referenceHintSource: stageOne.referenceHintSource,
+      referenceEntryKey: stageOne.referenceEntryKey,
+      rowHintSource: rowHintBundle ? 'row_rehydrated' : '',
+    });
     const pipelineTrace = buildPipelineTrace({ originalTitle, stageOne, row });
     recordTraceStage({
       trace: pipelineTrace,
@@ -1963,6 +2102,7 @@ async function researchAssetTitles({
     let lastFailureError = '';
     documentationSuggestions = documentationSuggestions.filter((candidate) => {
       const tier = classifyCandidateTier(candidate);
+      const hardGate = isHardIneligibleFinalCandidate(candidate, { deadCandidateUrls });
       logManualResearchEvent('candidate_validation_tier', {
         ...logContext,
         title: originalTitle,
@@ -1971,6 +2111,15 @@ async function researchAssetTitles({
         candidateUrl: candidate?.url || '',
         candidateTier: tier,
       });
+      if (hardGate.ineligible) {
+        logManualResearchEvent('final_candidate_hard_ineligible', {
+          ...logContext,
+          candidateUrl: candidate?.url || '',
+          candidateTier: tier,
+          reason: hardGate.reason,
+        });
+        return false;
+      }
       if (tier === CANDIDATE_TIER.GENERATED_VENDOR_GUESS && candidate?.verified !== true) {
         logManualResearchEvent('selected_candidate_rejected_unvalidated', {
           ...logContext,
