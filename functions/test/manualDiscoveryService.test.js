@@ -1792,6 +1792,24 @@ test('discoverManualDocumentation probes reference row candidates first for HYPE
   assert.equal(rabbits.documentationLinks.some((row) => /virtualrabbidsthebigridemanual16\.pdf$/i.test(row.url)), true);
 });
 
+test('extractManualLinksFromHtmlPage accepts trusted distributor direct PDFs from LAI title pages', async () => {
+  const extracted = await extractManualLinksFromHtmlPage({
+    pageUrl: 'https://laigames.com/games/hypershoot/support/',
+    pageTitle: 'HYPERshoot support',
+    manufacturer: 'LAI Games',
+    titleVariants: ['HYPERshoot', 'Hyper Shoot'],
+    manufacturerProfile: getManufacturerProfile('LAI Games', 'HYPERshoot'),
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => 'text/html' },
+      text: async () => '<a href="https://mossdistributing.com/wp-content/uploads/hypershoot-operator-manual.pdf">Download</a>',
+    }),
+    logger: console,
+  });
+  assert.equal(extracted.some((entry) => /mossdistributing\.com\/wp-content\/uploads\/hypershoot-operator-manual\.pdf/i.test(entry.url)), true);
+});
+
 test('discoverManualDocumentation probes reference rows first for Jurassic Park and King Kong Raw Thrills entries', async () => {
   const events = [];
   const fetchImpl = async (_url, options = {}) => {

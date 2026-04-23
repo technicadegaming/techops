@@ -1323,6 +1323,34 @@ async function extractManualLinksFromHtmlPage({
         manufacturerProfile
       })
     }));
+  const trustedPageHost = (() => {
+    try {
+      return new URL(pageUrl).hostname.toLowerCase().replace(/^www\./, '');
+    } catch {
+      return '';
+    }
+  })();
+  const trustedDomains = new Set([
+    ...KNOWN_DISTRIBUTOR_DOMAINS,
+    ...(Array.isArray(manufacturerProfile?.preferredSourceTokens) ? manufacturerProfile.preferredSourceTokens : []),
+    ...(Array.isArray(manufacturerProfile?.sourceTokens) ? manufacturerProfile.sourceTokens : []),
+    trustedPageHost,
+  ].map((value) => `${value || ''}`.toLowerCase().replace(/^www\./, '')).filter(Boolean));
+  const trustedFollowupManual = (row = {}) => {
+    const url = `${row?.url || ''}`.trim();
+    if (!url || hasJunkManualCandidateUrl(url)) return false;
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return false;
+    }
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    const hostTrusted = Array.from(trustedDomains).some((domain) => host === domain || host.endsWith(`.${domain}`));
+    if (!hostTrusted) return false;
+    return /\.(pdf|docx?)($|[?#])/i.test(url)
+      || /manual|operator|service-manual|download/.test(normalizePhrase(`${row?.title || ''} ${url}`));
+  };
   classified.forEach((row) => {
     const rejection = classifyCommerceNavigationUrl(row.url);
     if (rejection === 'junk_support_page') {
@@ -1335,13 +1363,14 @@ async function extractManualLinksFromHtmlPage({
   });
 
   const accepted = classified
-    .filter((row) => row.classification.includeManual && !classifyCommerceNavigationUrl(row.url))
+    .filter((row) => (row.classification.includeManual || trustedFollowupManual(row)) && !classifyCommerceNavigationUrl(row.url))
     .slice(0, 3)
     .map((row) => ({
       title: [pageTitle, row.title].filter(Boolean).join(' - '),
       url: row.url,
       sourceType: row.classification.sourceType,
-      discoverySource: 'html_followup'
+      discoverySource: 'html_followup',
+      extractedFromTrustedTitlePage: trustedFollowupManual(row),
     }));
 
   accepted.forEach((entry) => {
@@ -1971,9 +2000,28 @@ function buildManufacturerDiscoveryAdapters({ title, manufacturerProfile, titleV
     ? referenceHints.referenceRowCandidates.slice(0, 20)
     : [];
   const referenceRowAdapterRows = [];
+  const manufacturerMatchesReferenceRow = (rowManufacturer = '') => {
+    const rowNormalized = normalizePhrase(rowManufacturer);
+    const profileKey = normalizePhrase(manufacturerProfile?.key || '');
+    if (!rowNormalized || !profileKey) return true;
+    if (rowNormalized === profileKey) return true;
+    const profileAliases = Array.from(new Set([
+      ...(Array.isArray(manufacturerProfile?.aliases) ? manufacturerProfile.aliases : []),
+      manufacturerProfile?.label || '',
+      manufacturerProfile?.displayName || '',
+      manufacturerProfile?.key || '',
+    ].map((value) => normalizePhrase(value)).filter(Boolean)));
+    return profileAliases.includes(rowNormalized) || rowNormalized.includes(profileKey) || profileKey.includes(rowNormalized);
+  };
   referenceRowCandidates.forEach((row = {}) => {
-    const rowManufacturer = normalizePhrase(row.manufacturer || '');
-    if (manufacturerProfile?.key && rowManufacturer && rowManufacturer !== manufacturerProfile.key) return;
+    if (!manufacturerMatchesReferenceRow(row.manufacturer || '')) {
+      logEvent('reference_row_filtered_out', {
+        reason: 'manufacturer_mismatch',
+        rowManufacturer: sanitizeDiagnosticValue(row.manufacturer || '', 120),
+        manufacturerProfile: sanitizeDiagnosticValue(manufacturerProfile?.key || '', 120),
+      });
+      return;
+    }
     const referenceRowId = sanitizeDiagnosticValue(row.sourceRowId || row.rowId || '', 120);
     const rowTitle = sanitizeDiagnosticValue(row.normalizedTitle || row.originalTitle || title, 120);
     if (row.manualUrl) {
