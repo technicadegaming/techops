@@ -2264,7 +2264,7 @@ test('researchAssetTitles reports title_page_found_no_extractable_manual_links w
   assert.ok(`${result.results[0].pipelineMeta.terminalStateReason || ''}`.length > 0);
   assert.notEqual(result.results[0].pipelineMeta.terminalStateReason, 'docs_found_after_durable_storage');
   assert.equal(
-    ['title_page_found_no_extractable_manual_links', 'reference_hints_loaded_but_no_reference_probes_started']
+    ['trusted_title_page_found_but_no_manual_candidate_materialized', 'reference_hints_hydrated_but_no_reference_probes_started']
       .includes(result.results[0].pipelineMeta.terminalStateReason),
     true
   );
