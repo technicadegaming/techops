@@ -310,6 +310,25 @@ function deriveDetailedTerminalReason({
   return `no_durable_manual:${acquisitionState || acquisitionSkippedReason || 'unknown'}`;
 }
 
+function deriveManualReviewState({
+  summary = {},
+  terminalStateReason = '',
+  stageOne = {},
+  documentationSuggestions = [],
+} = {}) {
+  if (summary?.manualReady === true && `${summary?.status || ''}`.trim() === 'docs_found') return 'manual_attached';
+  const reason = normalizeString(terminalStateReason, 140).toLowerCase();
+  if (reason.includes('brochure')) return 'brochure_only_evidence';
+  if (reason.includes('hint') || reason.includes('reference_row_not_matched')) return 'hint_hydration_issue';
+  if (reason.includes('dead') || reason.includes('404') || reason.includes('continuation')) return 'dead_seeded_pdf_needs_source_followup';
+  if (reason.includes('close_title_specific_hit_no_manual_extracted') || reason.includes('title_clarification')) return 'needs_title_clarification';
+  if (stageOne?.referenceHintsExpected === true
+    && !stageOne?.referenceHints
+    && `${stageOne?.referenceHintSource || ''}`.trim() === 'none') return 'hint_hydration_issue';
+  if (!documentationSuggestions.length && `${summary?.status || ''}`.trim() !== 'docs_found') return 'queued_for_review';
+  return 'queued_for_review';
+}
+
 function isHardIneligibleFinalCandidate(candidate = {}, { deadCandidateUrls = new Set() } = {}) {
   const manualLibraryRef = `${candidate?.manualLibraryRef || ''}`.trim();
   const manualStoragePath = `${candidate?.manualStoragePath || ''}`.trim();
@@ -2740,6 +2759,12 @@ async function researchAssetTitles({
         deterministicCandidateState: preContinuationDeterministicState,
         deadCandidateUrls,
       });
+    const manualReviewState = deriveManualReviewState({
+      summary,
+      terminalStateReason,
+      stageOne,
+      documentationSuggestions,
+    });
     recordTraceStage({
       trace: pipelineTrace,
       stage: 'continuation_candidates_after_failure_or_rejection',
@@ -2914,6 +2939,7 @@ async function researchAssetTitles({
       supportContactsSuggestion,
       manualMatchSummary: {
         ...summary,
+        manualReviewState,
       },
       pipelineMeta: {
         stage1MatchType: stageOne.summary.matchType || '',
@@ -2959,6 +2985,7 @@ async function researchAssetTitles({
         rawCandidateFingerprint,
         candidateDelta,
         pipelineTrace,
+        manualReviewState,
       },
       locationId: normalizeString(locationId, 120),
       previousQueryPlanFingerprint: queryPlanFingerprint,

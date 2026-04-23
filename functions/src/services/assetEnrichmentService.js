@@ -1366,6 +1366,17 @@ function deriveDocumentationReviewState(asset = {}) {
   return current || 'idle';
 }
 
+function deriveManualReviewState(asset = {}) {
+  const explicit = `${asset.manualReviewState || asset.manualMatchSummary?.manualReviewState || ''}`.trim();
+  if (explicit) return explicit;
+  if (`${asset.manualStatus || ''}`.trim() === 'attached' || `${asset.enrichmentStatus || ''}`.trim() === 'docs_found') return 'manual_attached';
+  if (`${asset.enrichmentTerminalReason || ''}`.includes('brochure')) return 'brochure_only_evidence';
+  if (`${asset.enrichmentTerminalReason || ''}`.includes('hint')) return 'hint_hydration_issue';
+  if (`${asset.enrichmentTerminalReason || ''}`.includes('dead') || `${asset.enrichmentTerminalReason || ''}`.includes('404')) return 'dead_seeded_pdf_needs_source_followup';
+  if (`${asset.enrichmentStatus || ''}`.trim() === 'followup_needed') return 'needs_title_clarification';
+  return 'queued_for_review';
+}
+
 function cleanFinalEnrichmentResult(asset = {}) {
   const initialDocumentationSuggestions = cleanDocumentationSuggestions(asset.documentationSuggestions || []);
   const rehydratedDocumentationSuggestions = rehydrateSeededManualDocumentationSuggestions({
@@ -1411,7 +1422,13 @@ function cleanFinalEnrichmentResult(asset = {}) {
     manualMatchSummary,
     enrichmentFollowupQuestion: enrichmentStatus === 'docs_found' ? '' : enrichmentFollowupQuestion,
     enrichmentStatus,
-    reviewState
+    reviewState,
+    manualReviewState: deriveManualReviewState({
+      ...asset,
+      enrichmentStatus,
+      reviewState,
+      manualMatchSummary,
+    }),
   };
 }
 
@@ -2362,6 +2379,12 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       enrichmentErrorCode: '',
       enrichmentErrorMessage: '',
       reviewState: finalReviewState,
+      manualReviewState: cleanedResult.manualReviewState || pipelineMeta.manualReviewState || deriveManualReviewState({
+        enrichmentStatus: finalStatus,
+        manualStatus: deriveManualStatus({ manualFields: finalManualFields, cleanedResult, asset }),
+        enrichmentTerminalReason: `${pipelineMeta.terminalStateReason || ''}`.trim(),
+      }),
+      enrichmentTerminalReason: `${pipelineMeta.terminalStateReason || ''}`.trim(),
       manualStatus: deriveManualStatus({ manualFields: finalManualFields, cleanedResult, asset }),
       manualMatchSummary: finalManualMatchSummary,
       manualLinks: finalManualFields.manualLinks,

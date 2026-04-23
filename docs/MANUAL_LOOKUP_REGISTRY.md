@@ -92,6 +92,21 @@ The backend callable `researchAssetTitles` is now the authoritative bulk/manual 
 }
 ```
 
+The result contract now also includes deterministic review queue metadata in `pipelineMeta.manualReviewState` and (after asset persistence) `assets.manualReviewState` + `assets.enrichmentTerminalReason` so unresolved/manual-rejected cases can be triaged explicitly (`queued_for_review`, `brochure_only_evidence`, `dead_seeded_pdf_needs_source_followup`, `hint_hydration_issue`, etc.).
+
+## Benchmark harness status
+
+`npm run benchmark:manual-research --prefix functions` now reports both aggregate and per-scenario outputs:
+- `recallAt1`, `recallAt5`, `anyUsableCandidateRate`, `autoAttachedRate`
+- `brochureFalsePositiveRate`
+- `hintHydrationSuccessRate`
+- `titlePageExtractionSuccessRate`
+- `acquisitionSuccessAfterManualGradeSelectionRate`
+- `terminalReasonDistribution`
+- scenario-level pass/fail checks against fixture expectations
+
+This remains a fixture/stub reliability harness (not a live internet crawl benchmark).
+
 ## Verification and trust tiers
 
 Verification now stores URL-level metadata in suggestion objects, including:

@@ -151,6 +151,7 @@ function renderAssetScanChips(asset, { openTasks = [], overduePm = [] } = {}) {
   else if (manualStatus === 'support_only') chips.push(renderAuditChip('support only', 'info'));
   else chips.push(renderAuditChip('no manual', 'warn'));
   if (['needs_review', 'pending_review'].includes((asset.reviewState || ''))) chips.push(renderAuditChip('review needed', 'warn'));
+  if (asset.manualReviewState) chips.push(renderAuditChip(`manual ${`${asset.manualReviewState}`.replace(/_/g, ' ')}`, 'info'));
   if (['queued', 'searching_docs', 'in_progress'].includes(getEffectiveEnrichmentStatus(asset))) chips.push(renderAuditChip('enrichment running', 'info'));
   if (getEffectiveEnrichmentStatus(asset) === 'retry_needed') chips.push(renderAuditChip('retry needed', 'warn'));
   if (openTasks.length) chips.push(renderAuditChip('open issue', 'bad'));
@@ -790,6 +791,8 @@ export function renderAssets(el, state, actions) {
             <div class="tiny">Owners: ${(asset.ownerWorkers || []).join(', ') || 'unassigned'} | Urgency flags: ${openTasks.filter((task) => ['high', 'critical'].includes(task.severity)).length}</div>
             <div class="tiny">Quick stats: open ${openTasks.length} | overdue PM ${overduePm.length} | repeat failures ${recurring.reduce((sum, row) => sum + row.count, 0)} | recent repairs ${completedTasks.length}</div>
             <div class="tiny">Manual outcome: ${manualStatus === 'attached' ? 'manual attached' : manualStatus === 'support_only' ? 'support only' : manualStatus === 'review_needed' ? 'manual candidate needs review' : 'no manual found'}</div>
+            ${asset.enrichmentTerminalReason ? `<div class="tiny">Terminal reason: ${asset.enrichmentTerminalReason.replace(/_/g, ' ')}</div>` : ''}
+            ${asset.manualReviewState ? `<div class="tiny">Manual review state: ${asset.manualReviewState.replace(/_/g, ' ')}</div>` : ''}
             ${renderAssetScanChips(asset, { docsStatus, openTasks, overduePm })}
             <div class="action-row">
               ${openTasks[0] ? `<a href="?tab=operations&taskId=${encodeURIComponent(openTasks[0].id)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open active task</a>` : ''}
