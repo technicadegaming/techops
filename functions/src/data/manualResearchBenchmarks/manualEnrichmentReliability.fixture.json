@@ -1,0 +1,62 @@
+{
+  "scenarios": [
+    {
+      "id": "healthy_jurassic_park",
+      "set": "healthy_controls",
+      "title": "Jurassic Park Arcade",
+      "manufacturer": "Raw Thrills",
+      "expected": { "manualReady": true, "reviewRequired": false, "allowBrochureWinner": false }
+    },
+    {
+      "id": "healthy_quik_drop",
+      "set": "healthy_controls",
+      "title": "Quik Drop",
+      "manufacturer": "Bay Tek Games",
+      "expected": { "manualReady": true, "reviewRequired": false, "allowBrochureWinner": false }
+    },
+    {
+      "id": "anchor_stepmaniax",
+      "set": "anchor_failures",
+      "title": "StepManiaX",
+      "manufacturer": "Step Revolution",
+      "expected": {
+        "manualReady": true,
+        "mustIncludeTerminalReasons": ["terminalized_after_continuation_exhaustion", "docs_found_after_durable_storage"],
+        "mustHaveContinuationCandidates": true
+      }
+    },
+    {
+      "id": "anchor_willy_crash",
+      "set": "anchor_failures",
+      "title": "Willy Crash",
+      "manufacturer": "Raw Thrills",
+      "expected": {
+        "manualReady": false,
+        "allowBrochureWinner": false,
+        "allowedTerminalReasons": ["brochure_only_evidence", "brochure_selected_no_manual_continuation_used", "terminalized_after_continuation_exhaustion"]
+      }
+    },
+    {
+      "id": "anchor_angry_birds_coin_crash",
+      "set": "anchor_failures",
+      "title": "Angry Birds Coin Crash",
+      "manufacturer": "LAI Games",
+      "expected": {
+        "manualReady": true,
+        "mustLoadReferenceHints": true,
+        "minReferenceProbeCount": 1
+      }
+    },
+    {
+      "id": "anchor_hypershoot",
+      "set": "anchor_failures",
+      "title": "HYPERshoot",
+      "manufacturer": "LAI Games",
+      "expected": {
+        "manualReady": true,
+        "forbiddenTerminalReasons": ["title_page_found_manual_probe_failed", "support_only"],
+        "mustHaveTitlePageExtraction": true
+      }
+    }
+  ]
+}
