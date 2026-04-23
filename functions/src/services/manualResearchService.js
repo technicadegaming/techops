@@ -169,6 +169,94 @@ function classifyFallbackTerminalReason({ stage2ErrorCode = '', fallbackDiagnost
   return '';
 }
 
+function buildPipelineTrace({ originalTitle = '', stageOne = {}, row = {} } = {}) {
+  return {
+    schemaVersion: 'manual-research-trace-v1',
+    stages: {},
+    continuity: {
+      workbookDirectManualUrl: normalizeUrl(stageOne?.summary?.manualUrl || ''),
+      workbookSourcePageUrl: normalizeUrl(stageOne?.summary?.manualSourceUrl || ''),
+      workbookSupportPageUrl: normalizeUrl(stageOne?.summary?.supportUrl || ''),
+      referenceManualUrl: normalizeUrl(stageOne?.referenceHints?.manualUrl || ''),
+      referenceSourcePageUrl: normalizeUrl(stageOne?.referenceHints?.manualSourceUrl || ''),
+      referenceSupportPageUrl: normalizeUrl(stageOne?.referenceHints?.supportUrl || ''),
+      titlePageDiscoveredManualLinks: [],
+      brochureClassifiedUrls: [],
+      deadLinkSuppressionUrls: [],
+      continuationCandidateUrls: [],
+      continuationCandidatesUsed: false,
+      referenceHintsExpected: row?.referenceHintsExpected === true,
+    },
+    diagnostics: {},
+    summary: {
+      originalTitle: normalizeString(originalTitle, 160),
+      normalizedTitle: normalizeString(stageOne?.normalizedTitle || originalTitle, 160),
+      manufacturer: normalizeString(stageOne?.manufacturer || '', 120),
+    },
+  };
+}
+
+function recordTraceStage({ trace = null, stage = '', payload = {}, logContext = {} } = {}) {
+  if (!trace || !stage) return;
+  trace.stages[stage] = payload;
+  logManualResearchEvent('pipeline_trace_stage', {
+    ...logContext,
+    stage,
+    payload,
+  });
+}
+
+function deriveDetailedTerminalReason({
+  summary = {},
+  fallbackTerminalReason = '',
+  fallbackDiagnostics = {},
+  stageOne = {},
+  acquisitionEligible = false,
+  acquisitionAttempted = false,
+  acquisitionState = '',
+  acquisitionError = '',
+  acquisitionSkippedReason = '',
+  documentationSuggestions = [],
+  continuationSuggestions = [],
+  continuationUsed = false,
+  deterministicCandidateState = null,
+  deadCandidateUrls = new Set(),
+} = {}) {
+  if (summary.manualReady === true) return 'docs_found_after_durable_storage';
+  if (fallbackTerminalReason === 'title_page_found_manual_probe_failed') return 'title_page_found_no_extractable_manual_links';
+  if (fallbackTerminalReason) return fallbackTerminalReason;
+  if (stageOne.referenceHintSource === 'none' && stageOne.referenceHintsExpected === true) {
+    return 'reference_hints_expected_but_not_loaded';
+  }
+  const referenceProbeCount = Number(fallbackDiagnostics?.referenceManualUrlProbeCount || 0)
+    + Number(fallbackDiagnostics?.referenceSourcePageProbeCount || 0)
+    + Number(fallbackDiagnostics?.referenceSupportPageProbeCount || 0);
+  if (stageOne.referenceHints && referenceProbeCount === 0) return 'reference_hints_loaded_but_no_reference_probes_started';
+  if (!acquisitionEligible && documentationSuggestions.length > 0) {
+    if (documentationSuggestions.some((entry) => isBrochureLikeCandidate(entry)) && continuationSuggestions.length === 0) {
+      return 'brochure_selected_no_manual_continuation_used';
+    }
+    return 'valid_candidate_selected_but_not_acquisition_eligible';
+  }
+  if (acquisitionAttempted && (acquisitionState === 'failed' || acquisitionState === 'timed_out' || acquisitionError)) {
+    return 'acquisition_attempt_failed_after_valid_candidate';
+  }
+  if (deadCandidateUrls.size > 0
+    && deterministicCandidateState?.deterministicCandidateType === 'workbook_seed_exact_pdf'
+    && continuationSuggestions.length === 0) {
+    return 'dead_seeded_pdf_no_continuation_used';
+  }
+  if (continuationSuggestions.length > 0 && !continuationUsed && !summary.manualReady) {
+    return 'continuation_candidates_generated_but_not_used';
+  }
+  if (acquisitionAttempted && !summary.manualReady) return 'terminalized_after_continuation_exhaustion';
+  if (!deterministicCandidateState?.found && Number(fallbackDiagnostics?.providerFallbackInvoked ? 1 : 0) > 0) {
+    return 'provider_only_fallback_used_due_to_missing_deterministic_state';
+  }
+  if (deadCandidateUrls.size > 0 && documentationSuggestions.length === 0) return 'dead-candidate-only';
+  return `no_durable_manual:${acquisitionState || acquisitionSkippedReason || 'unknown'}`;
+}
+
 function prioritizeDocumentationSuggestions({
   documentationSuggestions = [],
   deadCandidateUrls = new Set(),
@@ -1205,6 +1293,34 @@ async function researchAssetTitles({
       companyId,
       logContext,
     });
+    stageOne.referenceHintsExpected = row?.referenceHintsExpected === true;
+    const pipelineTrace = buildPipelineTrace({ originalTitle, stageOne, row });
+    recordTraceStage({
+      trace: pipelineTrace,
+      stage: 'normalized_input_aliases',
+      logContext,
+      payload: {
+        originalTitle,
+        normalizedTitle: stageOne.normalizedTitle,
+        canonicalTitleFamily: stageOne.canonicalTitleFamily,
+        aliases: (stageOne.titleFamily?.alternateTitles || []).slice(0, 10),
+        manufacturerHint: normalizeString(row?.manufacturerHint || '', 120),
+        manufacturerResolved: stageOne.manufacturer || '',
+      },
+    });
+    recordTraceStage({
+      trace: pipelineTrace,
+      stage: 'hints_loaded',
+      logContext,
+      payload: {
+        referenceHintSource: stageOne.referenceHintSource || 'none',
+        referenceHit: stageOne.referenceHit === true,
+        referenceEntryKey: stageOne.referenceEntryKey || '',
+        referenceRowCandidateCount: Array.isArray(stageOne.referenceHints?.referenceRowCandidates)
+          ? stageOne.referenceHints.referenceRowCandidates.length
+          : 0,
+      },
+    });
 
     let summary = {
       ...stageOne.summary,
@@ -1227,6 +1343,34 @@ async function researchAssetTitles({
     let stage2ErrorCode = '';
     let fallbackDiagnostics = {};
     const stage2Planned = stageOne.discoverySkippedBecauseTrustedCatalogMatched !== true;
+    recordTraceStage({
+      trace: pipelineTrace,
+      stage: 'seed_urls_loaded_at_start',
+      logContext,
+      payload: {
+        workbook: {
+          manualUrl: normalizeUrl(summary.manualUrl || ''),
+          sourcePageUrl: normalizeUrl(summary.manualSourceUrl || ''),
+          supportPageUrl: normalizeUrl(summary.supportUrl || ''),
+        },
+        reference: {
+          manualUrl: normalizeUrl(stageOne.referenceHints?.manualUrl || ''),
+          sourcePageUrl: normalizeUrl(stageOne.referenceHints?.manualSourceUrl || ''),
+          supportPageUrl: normalizeUrl(stageOne.referenceHints?.supportUrl || ''),
+        },
+      },
+    });
+    recordTraceStage({
+      trace: pipelineTrace,
+      stage: 'query_plan_produced',
+      logContext,
+      payload: {
+        stage2Planned,
+        trustedCatalogShortCircuit: stageOne.discoverySkippedBecauseTrustedCatalogMatched === true,
+        referenceDomainHints: (stageOne.referenceHints?.preferredManufacturerDomains || []).slice(0, 8),
+        referenceSlugHints: (stageOne.referenceHints?.likelySlugPatterns || []).slice(0, 8),
+      },
+    });
 
     logManualResearchEvent('stage1_result', {
       ...logContext,
@@ -1541,6 +1685,16 @@ async function researchAssetTitles({
       }).map(withSuggestionBucket);
       stageOne.searchEvidence = discoveredFallback.searchEvidence;
       fallbackDiagnostics = discoveredFallback.fallbackDiagnostics || {};
+      recordTraceStage({
+        trace: pipelineTrace,
+        stage: 'discovery_outputs',
+        logContext,
+        payload: {
+          documentationLinksDiscovered: discoveredFallback.documentationSuggestions.map((entry) => entry.url).slice(0, 20),
+          supportLinksDiscovered: discoveredFallback.supportResourcesSuggestion.map((entry) => entry.url).slice(0, 20),
+          diagnostics: fallbackDiagnostics,
+        },
+      });
     }
     if (stageOne.referenceHints) {
       logManualResearchEvent('reference_hint_rehydrated', {
@@ -1557,18 +1711,19 @@ async function researchAssetTitles({
       });
     }
 
+    const continuationSuggestions = [];
     const preContinuationDeterministicState = detectDeterministicCandidate(documentationSuggestions);
     const shouldExpandContinuationCandidates = preContinuationDeterministicState.found
       || documentationSuggestions.some((entry) => isBrochureLikeCandidate(entry))
       || !!stageOne.referenceHints;
     if (shouldExpandContinuationCandidates) {
-      const continuationSuggestions = buildContinuationSuggestions({
+      continuationSuggestions.push(...buildContinuationSuggestions({
         stageOne,
         summary,
         supportResourcesSuggestion,
         documentationSuggestions,
         logContext,
-      });
+      }));
       if (continuationSuggestions.length) {
         documentationSuggestions = mergeDocumentationSuggestions({
           existingSuggestions: documentationSuggestions,
@@ -1577,6 +1732,22 @@ async function researchAssetTitles({
         }).map(withSuggestionBucket);
       }
     }
+    pipelineTrace.continuity.continuationCandidateUrls = continuationSuggestions.map((entry) => entry.url).slice(0, 30);
+    recordTraceStage({
+      trace: pipelineTrace,
+      stage: 'candidate_set_before_ranking',
+      logContext,
+      payload: {
+        candidateCount: documentationSuggestions.length,
+        candidates: documentationSuggestions.map((entry) => ({
+          url: entry?.url || '',
+          bucket: classifySuggestionBucket(entry),
+          discoverySource: normalizeString(entry?.discoverySource || '', 80),
+          brochureLike: isBrochureLikeCandidate(entry),
+          continuationCandidate: entry?.continuationCandidate === true,
+        })).slice(0, 40),
+      },
+    });
 
     const deadCandidateUrls = new Set([...persistedDeadCandidateUrls]);
     documentationSuggestions = prioritizeDocumentationSuggestions({
@@ -1607,7 +1778,29 @@ async function researchAssetTitles({
           ? selectedSuggestion.discoveryCandidateScoreContributions
           : [],
       });
+      recordTraceStage({
+        trace: pipelineTrace,
+        stage: 'ranking_selection_decision',
+        logContext,
+        payload: {
+          selectedCandidateUrl: selectedSuggestion?.url || '',
+          selectedCandidateTier: classifyCandidateTier(selectedSuggestion),
+          selectedDiscoverySource: selectedSource,
+          brochureLikeSelected: isBrochureLikeCandidate(selectedSuggestion),
+          candidateCountRanked: documentationSuggestions.length,
+        },
+      });
     }
+    pipelineTrace.continuity.titlePageDiscoveredManualLinks = documentationSuggestions
+      .filter((entry) => `${entry?.discoverySource || ''}`.toLowerCase() === 'html_followup')
+      .map((entry) => entry?.url || '')
+      .filter(Boolean)
+      .slice(0, 20);
+    pipelineTrace.continuity.brochureClassifiedUrls = documentationSuggestions
+      .filter((entry) => isBrochureLikeCandidate(entry))
+      .map((entry) => entry?.url || '')
+      .filter(Boolean)
+      .slice(0, 20);
 
     let manualLibraryAcquisition = null;
     let acquiredCandidateIndex = -1;
@@ -1679,6 +1872,24 @@ async function researchAssetTitles({
       : primaryCandidateEligibility;
     acquisitionEligible = firstEligibleCandidateIndex >= 0;
     candidateWasDirectPdf = selectedCandidateEligibility.directManualLike;
+    recordTraceStage({
+      trace: pipelineTrace,
+      stage: 'acquisition_eligibility',
+      logContext,
+      payload: {
+        acquisitionEligible,
+        firstEligibleCandidateIndex,
+        selectedCandidateUrl: documentationSuggestions[firstEligibleCandidateIndex]?.url || documentationSuggestions[0]?.url || '',
+        selectedCandidateTier: selectedCandidateEligibility.tier || '',
+        candidateEligibility: documentationSuggestions.map((entry, index) => ({
+          url: entry?.url || '',
+          eligible: candidateEligibilityList[index]?.eligible === true,
+          tier: candidateEligibilityList[index]?.tier || '',
+          brochureLike: isBrochureLikeCandidate(entry),
+          continuationCandidate: entry?.continuationCandidate === true,
+        })).slice(0, 40),
+      },
+    });
     if (summary.matchType === 'exact_manual' || summary.manualReady === true) {
       logManualResearchEvent('exact_manual_detected', {
         ...logContext,
@@ -2080,6 +2291,10 @@ async function researchAssetTitles({
         manualUrl: '',
       };
     }
+    const continuationCandidatesUsed = acquiredCandidateIndex >= 0
+      ? documentationSuggestions[acquiredCandidateIndex]?.continuationCandidate === true
+      : false;
+    pipelineTrace.continuity.continuationCandidatesUsed = continuationCandidatesUsed;
     if (durableStorageCompleted === true && openedFromStoragePreferred !== true) {
       logManualResearchEvent('storageMetadataPresentButExternalUsed', {
         ...logContext,
@@ -2103,6 +2318,7 @@ async function researchAssetTitles({
         return !(key && deadCandidateUrls.has(key));
       })
       .map(withSuggestionBucket);
+    pipelineTrace.continuity.deadLinkSuppressionUrls = Array.from(deadCandidateUrls).slice(0, 40);
     supportResourcesSuggestion = supportResourcesSuggestion
       .filter((entry) => {
         const key = normalizeUrlKey(entry?.url || '');
@@ -2202,20 +2418,60 @@ async function researchAssetTitles({
       documentationCount: documentationSuggestions.length,
       supportCount: supportResourcesSuggestion.length,
     });
-    const selectedTier = classifyCandidateTier(documentationSuggestions[0] || {});
-    const deadRetryUsedAlternate = deadCandidateUrls.size > 0 && !!documentationSuggestions.length;
-    const exactTitleUnvalidated404 = deadCandidateUrls.size > 0
-      && selectedTier === CANDIDATE_TIER.EXACT_TITLE_UNVALIDATED_CANDIDATE;
     const terminalStateReason = fallbackTerminalReason
-      || (summary.manualReady === true
-      ? 'docs_found_after_durable_storage'
-      : (exactTitleUnvalidated404
-        ? 'exact_title_candidate_unvalidated_then_404'
-        : (deadRetryUsedAlternate
-          ? 'dead_candidate_retry_to_alternate'
-          : (acquisitionError ? 'acquisition-failed' : (acquisitionEligible
-            ? 'candidate_validated_but_not_stored'
-            : (documentationSuggestions.length ? 'docs_discovered_candidate_only' : (deadCandidateUrls.size > 0 ? 'dead-candidate-only' : `no_durable_manual:${acquisitionState}`)))))));
+      || deriveDetailedTerminalReason({
+        summary,
+        fallbackTerminalReason,
+        fallbackDiagnostics,
+        stageOne,
+        acquisitionEligible,
+        acquisitionAttempted,
+        acquisitionState,
+        acquisitionError,
+        acquisitionSkippedReason,
+        documentationSuggestions,
+        continuationSuggestions,
+        continuationUsed: continuationCandidatesUsed,
+        deterministicCandidateState: preContinuationDeterministicState,
+        deadCandidateUrls,
+      });
+    recordTraceStage({
+      trace: pipelineTrace,
+      stage: 'continuation_candidates_after_failure_or_rejection',
+      logContext,
+      payload: {
+        continuationCandidateCount: continuationSuggestions.length,
+        continuationCandidates: continuationSuggestions.map((entry) => ({
+          url: entry?.url || '',
+          discoverySource: normalizeString(entry?.discoverySource || '', 80),
+          bucket: classifySuggestionBucket(entry),
+        })).slice(0, 30),
+        continuationCandidatesUsed,
+      },
+    });
+    recordTraceStage({
+      trace: pipelineTrace,
+      stage: 'acquisition_attempt_results',
+      logContext,
+      payload: {
+        acquisitionAttempted,
+        acquisitionEligible,
+        acquisitionState,
+        acquisitionError,
+        acquiredCandidateIndex,
+      },
+    });
+    recordTraceStage({
+      trace: pipelineTrace,
+      stage: 'terminal_reason_status_mapping',
+      logContext,
+      payload: {
+        terminalStateReason,
+        finalStatus: summary.status || '',
+        manualReady: summary.manualReady === true,
+        acquisitionState,
+      },
+    });
     if (stage2ErrorCode === 'openai-config-missing' || stage2ErrorCode === 'openai-auth-invalid') {
       logManualResearchEvent(stage2ErrorCode, {
         ...logContext,
@@ -2397,6 +2653,7 @@ async function researchAssetTitles({
         candidateFingerprint,
         rawCandidateFingerprint,
         candidateDelta,
+        pipelineTrace,
       },
       locationId: normalizeString(locationId, 120),
       previousQueryPlanFingerprint: queryPlanFingerprint,
