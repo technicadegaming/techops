@@ -157,6 +157,14 @@ The following always remain review-required context and must **not** be promoted
 - `family_match_needs_review`
 - `unresolved`
 
+Manual-library acquisition now enforces the same durability rule at write-time: support-only/source-only/brochure/vendor/store/navigation/generic-support candidates are rejected before any shared `manualLibrary` record is created or overwritten.
+
+## Manual-library integrity scanning / quarantine
+
+- Use `node functions/scripts/reportManualLibraryIntegrity.js` to scan all `manualLibrary` rows and emit suspicious records (non-mutating by default).
+- Use `node functions/scripts/reportManualLibraryIntegrity.js --apply` to mark suspicious rows with review metadata (`integrityFlagged`, `quarantined`, `integrityFlags`, `integrityReviewSummary`).
+- The integrity scanner is additive and safe-by-default: it does not auto-delete rows and does not silently rewrite canonical/manual attachment fields.
+
 ## Internal manual reuse
 
 - Approved manuals already stored for the same company/manufacturer/title family are reused before Stage 2 web research runs.

@@ -2,6 +2,19 @@ const admin = require('firebase-admin');
 const { createHash } = require('node:crypto');
 
 const COLLECTION = 'manualLibrary';
+const NON_DURABLE_MATCH_TYPES = new Set([
+  'unresolved',
+  'support only',
+  'title specific source',
+  'title specific support page',
+  'brochure or spec doc',
+  'vendor',
+  'store',
+  'navigation',
+  'generic support',
+]);
+const BROCHURE_HINT_PATTERN = /(brochure|spec(?:ification)?(?:\s*sheet)?|sell[\s-]?sheet|flyer|catalog|promo|marketing)/i;
+const WRONG_FAMILY_HINT_PATTERN = /(support|help|blog|news|parts|store|vendor|shop|product-category|taxonomy|checkout|cart|login)/i;
 
 function normalizeString(value = '', max = 240) {
   return `${value || ''}`.trim().slice(0, max);
@@ -28,6 +41,102 @@ function normalizeUrl(value = '') {
   } catch {
     return '';
   }
+}
+
+function tokenizePhrase(value = '') {
+  return normalizePhrase(value)
+    .split(' ')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length >= 3);
+}
+
+function tokenOverlapRatio(a = '', b = '') {
+  const aTokens = tokenizePhrase(a);
+  const bTokens = tokenizePhrase(b);
+  if (!aTokens.length || !bTokens.length) return 0;
+  const bSet = new Set(bTokens);
+  const overlap = aTokens.filter((token) => bSet.has(token)).length;
+  return overlap / Math.max(aTokens.length, bTokens.length);
+}
+
+function assessManualLibraryCandidateIntegrity({ candidate = {}, context = {} } = {}) {
+  const matchType = normalizePhrase(candidate.matchType || context.matchType || '');
+  const sourceType = normalizePhrase(candidate.sourceType || candidate.resourceType || context.sourceType || '');
+  const cachedManual = candidate.cachedManual === true || `${candidate.cachedManual || ''}` === 'true';
+  const reusableManualRef = normalizeString(candidate.manualLibraryRef || candidate.manualStoragePath || '', 500);
+  if (cachedManual || reusableManualRef || sourceType === 'manual library') {
+    return {
+      durableAllowed: true,
+      flags: [],
+      reason: 'already_durable_manual_evidence',
+    };
+  }
+  const textBlob = [
+    candidate.reason,
+    candidate.notes,
+    candidate.title,
+    candidate.sourceTitle,
+    candidate.url,
+    candidate.resolvedDownloadUrl,
+    candidate.originalDownloadUrl,
+    sourceType,
+    matchType,
+  ].join(' ');
+  const hasDirectManualSignal = /\.pdf($|[?#])/i.test(`${candidate.url || candidate.resolvedDownloadUrl || candidate.originalDownloadUrl || ''}`)
+    || /manual|operator|service/i.test(textBlob);
+  const flags = [];
+  if (NON_DURABLE_MATCH_TYPES.has(matchType)) flags.push(`non_durable_match_type:${matchType}`);
+  if (sourceType && /support|vendor|store|navigation|generic/.test(sourceType) && !hasDirectManualSignal) flags.push(`non_manual_source_type:${sourceType}`);
+  if (BROCHURE_HINT_PATTERN.test(textBlob)) flags.push('brochure_like_signal');
+  if (WRONG_FAMILY_HINT_PATTERN.test(textBlob) && !/manual|operator|service/i.test(textBlob)) flags.push('generic_support_or_navigation_signal');
+  const durableAllowed = flags.length === 0;
+  return {
+    durableAllowed,
+    flags,
+    reason: durableAllowed ? 'manual_grade_candidate' : 'blocked_non_durable_manual_candidate',
+  };
+}
+
+function assessManualLibraryRecordIntegrity(record = {}) {
+  const canonicalTitle = normalizeString(record.canonicalTitle || '', 240);
+  const familyTitle = normalizeString(record.familyTitle || '', 240);
+  const sourceTitle = normalizeString(record.sourceTitle || record.title || '', 240);
+  const manufacturer = normalizeString(record.manufacturer || '', 240);
+  const sourceManufacturer = normalizeString(record.sourceManufacturer || record.manualManufacturer || '', 240);
+  const sourceUrl = normalizeString(record.sourcePageUrl || record.originalDownloadUrl || record.resolvedDownloadUrl || '', 2000);
+  const matchType = normalizePhrase(record.matchType || '');
+  const provenance = normalizePhrase(record.provenance || record.source || '');
+  const notesBlob = `${record.notes || ''} ${record.reason || ''}`;
+  const flags = [];
+
+  const titleOverlap = tokenOverlapRatio(canonicalTitle || familyTitle, sourceTitle);
+  if (sourceTitle && titleOverlap > 0 && titleOverlap < 0.34) flags.push('title_source_mismatch');
+  if (sourceTitle && !titleOverlap && canonicalTitle) flags.push('title_source_no_overlap');
+
+  const manufacturerOverlap = tokenOverlapRatio(manufacturer, sourceManufacturer);
+  if (manufacturer && sourceManufacturer && manufacturerOverlap < 0.34) flags.push('manufacturer_mismatch');
+
+  const sourceBlob = `${sourceTitle} ${sourceUrl} ${notesBlob}`;
+  if (BROCHURE_HINT_PATTERN.test(sourceBlob)) flags.push('brochure_like_document');
+  if (WRONG_FAMILY_HINT_PATTERN.test(sourceBlob) && !/manual|operator|service/i.test(sourceBlob)) flags.push('wrong_family_or_navigation_source');
+  if (NON_DURABLE_MATCH_TYPES.has(matchType)) flags.push(`non_durable_match_type:${matchType}`);
+  if (!matchType && !/manual|trusted|catalog|approved/.test(provenance)) flags.push('weak_match_provenance');
+  if (!(record.approved === true || record.approvalState === 'approved') && record.reviewRequired !== true) flags.push('missing_review_controls');
+
+  return {
+    suspicious: flags.length > 0,
+    flags,
+    reviewSummary: {
+      canonicalTitle,
+      familyTitle,
+      sourceTitle,
+      manufacturer,
+      sourceManufacturer,
+      sourceUrl,
+      matchType,
+      provenance,
+    },
+  };
 }
 
 function createManualLibraryId({ normalizedManufacturer = '', canonicalTitle = '', variant = '', sha256 = '', resolvedDownloadUrl = '' } = {}) {
@@ -138,7 +247,10 @@ async function writeManualLibraryRecord({ db, record = {}, manualLibraryId = '' 
 
 module.exports = {
   COLLECTION,
+  assessManualLibraryCandidateIntegrity,
+  assessManualLibraryRecordIntegrity,
   buildManualLibraryStoragePath,
+  NON_DURABLE_MATCH_TYPES,
   createManualLibraryId,
   findApprovedManualLibraryRecord,
   findManualLibraryRecordByDownloadUrl,

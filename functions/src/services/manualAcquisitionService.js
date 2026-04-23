@@ -5,6 +5,8 @@ const {
   findManualLibraryRecordByDownloadUrl,
   findManualLibraryRecordBySha,
   findApprovedManualLibraryRecord,
+  assessManualLibraryCandidateIntegrity,
+  assessManualLibraryRecordIntegrity,
   buildAliasKeys,
   normalizePhrase,
   normalizeUrl,
@@ -110,8 +112,16 @@ async function acquireManualToLibrary({
 
   const approvedHit = await findApprovedManualLibraryRecord({ db, canonicalTitle, manufacturer, familyTitle });
   if (approvedHit) {
+    const integrity = assessManualLibraryRecordIntegrity(approvedHit);
     logEvent('existing_library_hit', { canonicalTitle, manufacturer, manualLibraryId: approvedHit.id, reusedExisting: true });
-    return { manualReady: true, reusedExisting: true, manualLibrary: approvedHit, manualUrl: approvedHit.storagePath, manualSourceUrl: approvedHit.sourcePageUrl || sourcePageUrl };
+    return {
+      manualReady: true,
+      reusedExisting: true,
+      manualLibrary: approvedHit,
+      manualUrl: approvedHit.storagePath,
+      manualSourceUrl: approvedHit.sourcePageUrl || sourcePageUrl,
+      integrity,
+    };
   }
 
   let candidates = [];
@@ -152,8 +162,16 @@ async function acquireManualToLibrary({
     }
     const existingByUrl = await findManualLibraryRecordByDownloadUrl(db, normalizedCandidateUrl);
     if (existingByUrl) {
+      const integrity = assessManualLibraryRecordIntegrity(existingByUrl);
       logEvent('existing_library_hit', { canonicalTitle, manufacturer, resolvedDownloadUrl: normalizedCandidateUrl, manualLibraryId: existingByUrl.id, reusedExisting: true });
-      return { manualReady: true, reusedExisting: true, manualLibrary: existingByUrl, manualUrl: existingByUrl.storagePath, manualSourceUrl: existingByUrl.sourcePageUrl || sourcePageUrl };
+      return {
+        manualReady: true,
+        reusedExisting: true,
+        manualLibrary: existingByUrl,
+        manualUrl: existingByUrl.storagePath,
+        manualSourceUrl: existingByUrl.sourcePageUrl || sourcePageUrl,
+        integrity,
+      };
     }
     logEvent('download_candidate_found', { canonicalTitle, manufacturer, sourcePageUrl, originalDownloadUrl: normalizedCandidateUrl, candidateCount: candidates.length });
     const download = await downloadManualCandidate(normalizedCandidateUrl, fetchImpl, context.downloadTimeoutMs).catch((error) => {
@@ -170,6 +188,29 @@ async function acquireManualToLibrary({
       return null;
     });
     if (!download) continue;
+    const integrityGate = assessManualLibraryCandidateIntegrity({
+      candidate: {
+        ...candidateLink,
+        ...candidate,
+        resolvedDownloadUrl: download.resolvedDownloadUrl,
+        originalDownloadUrl: download.originalDownloadUrl,
+      },
+      context,
+    });
+    if (!integrityGate.durableAllowed) {
+      logEvent('download_candidate_rejected', {
+        canonicalTitle,
+        originalDownloadUrl: normalizedCandidateUrl,
+        rejectionReasons: integrityGate.flags,
+      });
+      failedCandidates.push({
+        url: normalizedCandidateUrl,
+        status: 'ineligible_non_durable_candidate',
+        reason: integrityGate.flags.join(','),
+        deadLink: false,
+      });
+      continue;
+    }
     logEvent('acquisition_download_succeeded', {
       canonicalTitle,
       originalDownloadUrl: normalizedCandidateUrl,
@@ -193,8 +234,17 @@ async function acquireManualToLibrary({
     logEvent('file_downloaded', { canonicalTitle, resolvedDownloadUrl: download.resolvedDownloadUrl, sha256, fileSize: download.buffer.length });
     const existingByHash = await findManualLibraryRecordBySha(db, sha256);
     if (existingByHash) {
+      const integrity = assessManualLibraryRecordIntegrity(existingByHash);
       logEvent('file_reused_by_hash', { canonicalTitle, resolvedDownloadUrl: download.resolvedDownloadUrl, sha256, storagePath: existingByHash.storagePath, reusedExisting: true });
-      return { manualReady: true, reusedExisting: true, manualLibrary: existingByHash, manualUrl: existingByHash.storagePath, manualSourceUrl: existingByHash.sourcePageUrl || sourcePageUrl, failedCandidates };
+      return {
+        manualReady: true,
+        reusedExisting: true,
+        manualLibrary: existingByHash,
+        manualUrl: existingByHash.storagePath,
+        manualSourceUrl: existingByHash.sourcePageUrl || sourcePageUrl,
+        failedCandidates,
+        integrity,
+      };
     }
     const storagePath = buildManualLibraryStoragePath({ normalizedManufacturer, canonicalTitle, sha256, extension: download.extension });
     logEvent('durable_storage_write_started', {
@@ -253,6 +303,10 @@ async function acquireManualToLibrary({
         trustedCatalogSourceRowId: context.trustedCatalogSourceRowId || '',
         source: context.source || '',
         notes: context.notes || '',
+        integrityStatus: 'ok',
+        integrityFlagged: false,
+        quarantined: false,
+        integrityFlags: [],
       },
     });
     logEvent('manual_library_record_persisted', { canonicalTitle, storagePath, sha256, manualLibraryId: record.id });

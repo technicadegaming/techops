@@ -179,6 +179,35 @@ test('source page with junk links does not create a manual record', async () => 
   assert.equal(saves.length, 0);
 });
 
+test('acquisition blocks non-durable support-only candidates from creating manual library truth', async () => {
+  const db = createDb();
+  const saves = [];
+  const result = await acquireManualToLibrary({
+    db,
+    storage: createStorage(saves),
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      url: 'https://example.com/files/willy-crash-support.pdf',
+      headers: { get: () => 'application/pdf' },
+      arrayBuffer: async () => Buffer.from('%PDF-1.4\nsupport manual')
+    }),
+    candidate: { url: 'https://example.com/files/willy-crash-support.pdf', sourceType: 'support' },
+    context: {
+      originalTitle: 'Willy Crash',
+      canonicalTitle: 'Willy Crash',
+      manufacturer: 'Raw Thrills',
+      familyTitle: 'Willy Crash',
+      matchType: 'support_only',
+      confidence: 0.51,
+    }
+  });
+  assert.equal(result.manualReady, false);
+  assert.equal(Object.keys(db.state.manualLibrary).length, 0);
+  assert.equal(saves.length, 0);
+  assert.equal(result.failedCandidates.some((entry) => entry.status === 'ineligible_non_durable_candidate'), true);
+});
+
 test('buildManualLibraryStoragePath uses shared library path convention', () => {
   assert.equal(buildManualLibraryStoragePath({ normalizedManufacturer: 'Raw Thrills', canonicalTitle: 'Fast & Furious Arcade', sha256: 'abc123', extension: 'pdf' }), 'manual-library/raw-thrills/fast-furious-arcade/abc123.pdf');
 });
