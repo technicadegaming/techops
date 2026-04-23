@@ -786,6 +786,12 @@ test('researchAssetTitles continues after StepManiaX workbook-seeded PDF 404 to 
     assert.equal(result.results[0].status, 'docs_found');
     assert.equal(result.results[0].manualReady, true);
     assert.ok(`${result.results[0].manualLibraryRef || ''}`.trim());
+    assert.match(
+      result.results[0].pipelineMeta.pipelineTrace.stages.seed_urls_loaded_at_start.workbook.manualUrl,
+      /stepmaniax|steprevolution/i
+    );
+    assert.equal(typeof result.results[0].pipelineMeta.pipelineTrace.stages.continuation_candidates_after_failure_or_rejection.continuationCandidateCount, 'number');
+    assert.equal(result.results[0].pipelineMeta.pipelineTrace.summary.normalizedTitle, 'StepManiaX');
     assert.equal(logs.some((entry) => entry[0] === 'manualResearch:durable_storage_completed'), true);
     assert.equal(logs.some((entry) => entry[0] === 'manualResearch:durable_storage_completed'), true);
   } finally {
@@ -910,6 +916,9 @@ test('researchAssetTitles rejects Willy Crash brochure PDFs without terminalizin
     assert.equal(result.results[0].manualReady, true);
     assert.ok(`${result.results[0].manualLibraryRef || ''}`.trim());
     assert.equal(result.results[0].pipelineMeta.acquisitionAttempted, true);
+    assert.equal(result.results[0].pipelineMeta.pipelineTrace.stages.ranking_selection_decision.brochureLikeSelected, false);
+    assert.equal(result.results[0].pipelineMeta.pipelineTrace.stages.acquisition_eligibility.acquisitionEligible, true);
+    assert.equal(Array.isArray(result.results[0].pipelineMeta.pipelineTrace.continuity.brochureClassifiedUrls), true);
     assert.equal(logs.some((entry) => entry[0] === 'manualResearch:durable_storage_completed'), true);
   } finally {
     console.log = originalLog;
@@ -1049,6 +1058,80 @@ test('researchAssetTitles promotes deterministic direct PDF candidates into acqu
   } finally {
     console.log = originalLog;
   }
+});
+
+test('researchAssetTitles exposes healthy Jurassic Park stage trace with durable terminal mapping', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true, manualResearchWebSearchEnabled: true },
+    companyId: 'company-1',
+    titles: [{ originalTitle: 'Jurassic Park Arcade', manufacturerHint: 'Raw Thrills' }],
+    traceId: 'test-jurassic-trace-healthy-control',
+    storage: createStorageMock(),
+    fetchImpl: createFetchMock(),
+    researchFallback: async () => ({
+      normalizedTitle: 'Jurassic Park Arcade',
+      manufacturer: 'Raw Thrills',
+      matchType: 'exact_manual',
+      manualReady: false,
+      reviewRequired: true,
+      manualUrl: 'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf',
+      manualSourceUrl: 'https://rawthrills.com/games/jurassic-park-arcade/',
+      supportUrl: 'https://rawthrills.com/support/',
+      confidence: 0.96,
+      candidates: [{
+        bucket: 'verified_pdf_candidate',
+        exactManualMatch: true,
+        verified: true,
+        url: 'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf',
+        title: 'Jurassic Park Arcade Operator Manual',
+      }],
+      citations: [],
+      rawResearchSummary: 'Healthy deterministic control path.',
+    }),
+  });
+
+  const trace = result.results[0].pipelineMeta.pipelineTrace;
+  assert.equal(result.results[0].status, 'docs_found');
+  assert.equal(result.results[0].manualReady, true);
+  assert.equal(trace.stages.normalized_input_aliases.normalizedTitle, 'Jurassic Park Arcade');
+  assert.equal(trace.stages.acquisition_attempt_results.acquisitionState, 'succeeded');
+  assert.equal(trace.stages.terminal_reason_status_mapping.terminalStateReason, 'docs_found_after_durable_storage');
+});
+
+test('researchAssetTitles classifies missing expected reference hydration separately from generic unresolved states', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{
+      originalTitle: 'Angry Birds Coin Crash Custom',
+      manufacturerHint: 'LAI Games',
+      referenceHintsExpected: true,
+    }],
+    traceId: 'test-angry-birds-reference-hydration-missing',
+    storage: createStorageMock(),
+    fetchImpl: createFetchMock(),
+    researchFallback: async () => ({
+      normalizedTitle: 'Angry Birds Coin Crash',
+      manufacturer: 'LAI Games',
+      matchType: 'support_only',
+      manualReady: false,
+      reviewRequired: true,
+      manualUrl: '',
+      manualSourceUrl: 'https://laigames.com/games/angry-birds-coin-crash/support/',
+      supportUrl: 'https://laigames.com/games/angry-birds-coin-crash/support/',
+      confidence: 0.51,
+      candidates: [],
+      citations: [],
+      rawResearchSummary: 'No hydrated reference hints in this run.',
+    }),
+  });
+
+  const trace = result.results[0].pipelineMeta.pipelineTrace;
+  assert.equal(trace.continuity.referenceHintsExpected, true);
+  assert.equal(typeof trace.stages.hints_loaded.referenceHintSource, 'string');
+  assert.ok(`${result.results[0].pipelineMeta.terminalStateReason || ''}`.length > 0);
 });
 
 test('researchAssetTitles promotes Willy Crash exact-manual source pages into durable attachment when download links are extractable', async () => {
@@ -1865,6 +1948,12 @@ test('stage 2 support-only context never produces docs_found semantics', async (
   assert.equal(result.results[0].manualUrl, '');
   assert.notEqual(result.results[0].matchType, 'exact_manual');
   assert.notEqual(result.results[0].status, 'docs_found');
+  assert.equal(result.results[0].pipelineMeta.pipelineTrace.stages.hints_loaded.referenceHintSource, 'json_index');
+  assert.equal(
+    ['valid_candidate_selected_but_not_acquisition_eligible', 'manufacturer-adapter-no-better-candidate']
+      .includes(result.results[0].pipelineMeta.terminalStateReason),
+    true
+  );
 });
 
 test('manual-like candidate URL that is dead never promotes docs_found and remains followup_needed', async () => {
@@ -2084,7 +2173,7 @@ test('OpenAI auth/config failures are logged and fall back to scraping without t
     assert.equal(
       [
         'no_durable_manual:skipped',
-        'title_page_found_manual_probe_failed',
+        'title_page_found_no_extractable_manual_links',
         'deterministic-search-no-results',
         'guessed-pdf-404-no-better-candidate',
         'manufacturer-adapter-no-better-candidate'
@@ -2143,7 +2232,7 @@ test('researchAssetTitles reports deterministic-search-no-results terminal reaso
   assert.equal(result.results[0].pipelineMeta.terminalStateReason, 'deterministic-search-no-results');
 });
 
-test('researchAssetTitles reports title_page_found_manual_probe_failed when fallback finds exact-title support page but no manual extraction', async () => {
+test('researchAssetTitles reports title_page_found_no_extractable_manual_links when fallback finds exact-title support page but no manual extraction', async () => {
   const result = await researchAssetTitles({
     db: createDb(),
     settings: { aiEnabled: true },
@@ -2174,6 +2263,11 @@ test('researchAssetTitles reports title_page_found_manual_probe_failed when fall
 
   assert.ok(`${result.results[0].pipelineMeta.terminalStateReason || ''}`.length > 0);
   assert.notEqual(result.results[0].pipelineMeta.terminalStateReason, 'docs_found_after_durable_storage');
+  assert.equal(
+    ['title_page_found_no_extractable_manual_links', 'reference_hints_loaded_but_no_reference_probes_started']
+      .includes(result.results[0].pipelineMeta.terminalStateReason),
+    true
+  );
 });
 
 
