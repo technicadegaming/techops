@@ -65,6 +65,8 @@ Examples:
 - `operationsActions.js`, `assetActions.js`, `adminActions.js`: action factories that let shell controllers pass shared dependencies/state into more focused feature behavior.
 - `locationContext.js`, `workspaceReadiness.js`, `notifications.js`, `workflow.js`, `reportingSummary.js`, `documentationSuggestions.js`, `assetIntake.js`: smaller reusable domain helpers.
 
+Manual reliability workflow note: `assets.js` now surfaces backend-provided `manualReviewState` + `enrichmentTerminalReason` so unresolved manual cases are explainable/reviewable instead of only showing generic `reviewState`.
+
 **Practical rule:** if you are adding logic for one area of the product, prefer placing pure helpers, rendering, and area-specific actions in `src/features/*` instead of expanding `src/app.js`.
 
 ## Core service/domain modules outside `src/app/*`

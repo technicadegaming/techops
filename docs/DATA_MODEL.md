@@ -69,7 +69,7 @@ If you are onboarding to the repo, read `README.md` first for the documentation 
 
 ### `assets`
 - **Purpose:** equipment/asset registry.
-- **Key fields (confirmed):** core identity fields such as `id`, `companyId`, `name`, `manufacturer`, `model`, `serialNumber`, `status`, `category`, `locationId`, `locationName`, `ownerWorkers`, `notes`; documentation/enrichment fields such as `manualLinks`, `manualLibraryRef`, `manualStoragePath`, `approvedManualIds`, `documentationSuggestions`, `supportResourcesSuggestion`, `supportContactsSuggestion`, `enrichmentStatus`, `enrichmentRequestedAt`, `enrichmentLastRunAt`, `reviewState`; service history fields such as `history` and `attachmentRefs`.
+- **Key fields (confirmed):** core identity fields such as `id`, `companyId`, `name`, `manufacturer`, `model`, `serialNumber`, `status`, `category`, `locationId`, `locationName`, `ownerWorkers`, `notes`; documentation/enrichment fields such as `manualLinks`, `manualLibraryRef`, `manualStoragePath`, `approvedManualIds`, `documentationSuggestions`, `supportResourcesSuggestion`, `supportContactsSuggestion`, `enrichmentStatus`, `enrichmentTerminalReason`, `enrichmentRequestedAt`, `enrichmentLastRunAt`, `reviewState`, `manualReviewState`; service history fields such as `history` and `attachmentRefs`.
 - **Tenant scoping:** company-scoped.
 - **Relationships:** tasks link to assets via `assetId`; manuals and troubleshooting library entries frequently point back to an asset.
 - **Rules/roles:** company lead+ can create/update via rules; manager+ is additionally required for some AI/manual tooling in functions.
@@ -91,7 +91,7 @@ If you are onboarding to the repo, read `README.md` first for the documentation 
 
 ### `manualLibrary`
 - **Purpose:** canonical shared manual/document registry reused across assets and companies when the same manual has already been acquired.
-- **Key fields (confirmed):** `canonicalTitle`, `familyTitle`, `manufacturer`, `normalizedManufacturer`, `variant`, `sourcePageUrl`, `originalDownloadUrl`, `resolvedDownloadUrl`, `storagePath`, `contentType`, `fileSize`, `sha256`, `extension`, `matchType`, `matchConfidence`, `approvalState`, `approved`, `reviewRequired`, `catalogEntryId`.
+- **Key fields (confirmed):** `canonicalTitle`, `familyTitle`, `manufacturer`, `normalizedManufacturer`, `variant`, `sourcePageUrl`, `originalDownloadUrl`, `resolvedDownloadUrl`, `storagePath`, `contentType`, `fileSize`, `sha256`, `extension`, `matchType`, `matchConfidence`, `approvalState`, `approved`, `reviewRequired`, `catalogEntryId`, plus additive provenance/classification metadata used by deterministic manual-vs-non-manual gating and review workflows.
 - **Tenant scoping:** shared library collection rather than company-scoped operational data; assets link into it through `manualLibraryRef` and `manualStoragePath`.
 - **Relationships:** `manualLibrary` is the canonical shared manual identity; company/asset approval flows still materialize approved records into `manuals` for tenant-scoped ingestion history and chunk extraction.
 - **Current usage:** asset enrichment and manual acquisition reuse approved `manualLibrary` hits before re-downloading manuals, and approved asset attachments persist `manualLibraryRef` / `manualStoragePath` back onto the asset.

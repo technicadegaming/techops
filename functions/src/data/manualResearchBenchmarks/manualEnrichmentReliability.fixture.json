@@ -57,6 +57,16 @@
         "forbiddenTerminalReasons": ["title_page_found_manual_probe_failed", "support_only"],
         "mustHaveTitlePageExtraction": true
       }
+    },
+    {
+      "id": "ambiguous_publicly_missing_manual",
+      "set": "ambiguous_cases",
+      "title": "Redemption Unknown Prototype",
+      "manufacturer": "Unknown",
+      "expected": {
+        "manualReady": false,
+        "allowBrochureWinner": false
+      }
     }
   ]
 }
