@@ -4,7 +4,9 @@ const {
   normalizeUrl,
   createManualLibraryId,
   writeManualLibraryRecord,
-  findApprovedManualLibraryRecord
+  findApprovedManualLibraryRecord,
+  assessManualLibraryCandidateIntegrity,
+  assessManualLibraryRecordIntegrity,
 } = require('../src/services/manualLibraryService');
 
 test('normalizeUrl strips fragments for manual-library dedupe', () => {
@@ -87,4 +89,35 @@ test('findApprovedManualLibraryRecord reuses approved manual via normalized alia
     alternateTitles: ['King Kong of Skull Island VR']
   });
   assert.equal(hit?.id, 'manual-approved');
+});
+
+test('assessManualLibraryCandidateIntegrity blocks non-durable match outcomes', () => {
+  const blocked = assessManualLibraryCandidateIntegrity({
+    candidate: {
+      matchType: 'support_only',
+      sourceType: 'support',
+      title: 'Generic Support Hub',
+      url: 'https://example.com/support',
+    },
+    context: { confidence: 0.55 },
+  });
+  assert.equal(blocked.durableAllowed, false);
+  assert.ok(blocked.flags.some((entry) => entry.includes('non_durable_match_type')));
+});
+
+test('assessManualLibraryRecordIntegrity flags suspicious wrong-family and brochure-like rows', () => {
+  const integrity = assessManualLibraryRecordIntegrity({
+    canonicalTitle: 'Willy Crash',
+    sourceTitle: 'King Kong Sell Sheet',
+    manufacturer: 'Raw Thrills',
+    sourceManufacturer: 'Bay Tek Games',
+    sourcePageUrl: 'https://example.com/store/brochure/king-kong',
+    matchType: 'support_only',
+    approvalState: 'pending',
+    approved: false,
+    reviewRequired: false,
+  });
+  assert.equal(integrity.suspicious, true);
+  assert.ok(integrity.flags.includes('brochure_like_document'));
+  assert.ok(integrity.flags.some((entry) => entry.includes('non_durable_match_type')));
 });

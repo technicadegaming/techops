@@ -64,8 +64,10 @@ This file is an implementation-aware recovery snapshot, not a future roadmap. It
 3. Manual/AI flows are broad and feature-rich; retain high test coverage discipline for callable contracts and policy gating before changing enrichment behavior.
 4. Manual enrichment now persists explicit `manualReviewState` and `enrichmentTerminalReason` on assets to prevent ambiguous unresolved outcomes; these states should be treated as operational queue inputs, not just diagnostics metadata.
 5. `benchmark:manual-research` now emits per-scenario checks and richer metrics (`recallAt5`, hint hydration, title-page extraction, acquisition-after-selection), but it still runs in a fixture/stub harness and should not be treated as a production live-web success rate.
+6. Manual-library integrity checks now exist and are intentionally conservative: suspicious durable rows are flagged/quarantined for operator review, not auto-deleted or silently rewritten.
 
 ## Recovery hardening changes made in this snapshot
 
 - Aligned emulator/rules test project defaults to `scootbusiness-d3112` to match active repo/backend configuration and reduce onboarding confusion.
 - Removed `CNAME` from `.gitignore` so custom-domain tracking remains explicit and reviewable in git history.
+- Added manual-library integrity guardrails to block non-durable candidate promotion and a report utility (`functions/scripts/reportManualLibraryIntegrity.js`) to detect/optionally flag suspicious rows.

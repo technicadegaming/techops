@@ -92,6 +92,9 @@ If you are onboarding to the repo, read `README.md` first for the documentation 
 ### `manualLibrary`
 - **Purpose:** canonical shared manual/document registry reused across assets and companies when the same manual has already been acquired.
 - **Key fields (confirmed):** `canonicalTitle`, `familyTitle`, `manufacturer`, `normalizedManufacturer`, `variant`, `sourcePageUrl`, `originalDownloadUrl`, `resolvedDownloadUrl`, `storagePath`, `contentType`, `fileSize`, `sha256`, `extension`, `matchType`, `matchConfidence`, `approvalState`, `approved`, `reviewRequired`, `catalogEntryId`, plus additive provenance/classification metadata used by deterministic manual-vs-non-manual gating and review workflows.
+- **Integrity guardrails (confirmed):**
+  - Non-durable outcomes (`unresolved`, `support_only`, `title_specific_source`, brochure/vendor/store/navigation/generic-support families) are blocked from creating/updating durable manual-library truth.
+  - Rows can now be flagged for review with `integrityFlagged`, `quarantined`, `integrityStatus`, `integrityFlags`, and `integrityReviewSummary` without auto-delete behavior.
 - **Tenant scoping:** shared library collection rather than company-scoped operational data; assets link into it through `manualLibraryRef` and `manualStoragePath`.
 - **Relationships:** `manualLibrary` is the canonical shared manual identity; company/asset approval flows still materialize approved records into `manuals` for tenant-scoped ingestion history and chunk extraction.
 - **Current usage:** asset enrichment and manual acquisition reuse approved `manualLibrary` hits before re-downloading manuals, and approved asset attachments persist `manualLibraryRef` / `manualStoragePath` back onto the asset.

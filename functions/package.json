@@ -11,6 +11,7 @@
     "manual-catalog:import": "node scripts/importManualLookupWorkbook.js",
     "manual-catalog:import-trusted": "node scripts/importTrustedManualCatalog.js",
     "manual-catalog:extract-reference": "node scripts/extractManualLookupReferenceHints.js",
+    "manual-library:integrity-report": "node scripts/reportManualLibraryIntegrity.js",
     "benchmark:manual-research": "node scripts/runManualResearchBenchmark.js"
   },
   "dependencies": {
