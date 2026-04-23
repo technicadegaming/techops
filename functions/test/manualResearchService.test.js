@@ -2544,3 +2544,40 @@ test('researchAssetTitles loads reference hints from json index and reports refe
   assert.equal(typeof result.results[0].pipelineMeta.referenceEntryKey, 'string');
   assert.equal(typeof result.results[0].pipelineMeta.titlePageFirstApplied, 'boolean');
 });
+
+test('researchAssetTitles carries normalized hint bundle into pipeline trace for authoritative hint hydration', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{ originalTitle: 'Angry Birds Coin Crash', manufacturerHint: 'LAI Games' }],
+    traceId: 'reference-hint-bundle-trace',
+    fetchImpl: createFetchMock(),
+    storage: createStorageMock(),
+    researchFallback: async () => ({
+      normalizedTitle: 'Angry Birds Coin Crash',
+      manufacturer: 'LAI Games',
+      confidence: 0.8,
+      matchType: 'exact_manual',
+      manualReady: true,
+      reviewRequired: false,
+      manualUrl: 'https://www.betson.com/wp-content/uploads/angry-birds-coin-crash-operator-manual.pdf',
+      candidates: [{
+        bucket: 'verified_pdf_candidate',
+        title: 'Angry Birds Coin Crash Operator Manual',
+        url: 'https://www.betson.com/wp-content/uploads/angry-birds-coin-crash-operator-manual.pdf',
+      }],
+      selectedCandidate: {
+        bucket: 'verified_pdf_candidate',
+        title: 'Angry Birds Coin Crash Operator Manual',
+        url: 'https://www.betson.com/wp-content/uploads/angry-birds-coin-crash-operator-manual.pdf',
+      },
+      citations: [{ url: 'https://www.betson.com/', title: 'Betson Manuals' }],
+    }),
+  });
+
+  const trace = result.results[0].pipelineMeta.pipelineTrace;
+  assert.equal(Boolean(trace.continuity.normalizedHintBundle), true);
+  assert.equal(trace.stages.hints_loaded.normalizedHintBundlePresent, true);
+  assert.equal(trace.continuity.normalizedHintBundle.input.normalizedTitle.length > 0, true);
+});

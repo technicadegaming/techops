@@ -192,6 +192,7 @@ function buildPipelineTrace({ originalTitle = '', stageOne = {}, row = {} } = {}
       continuationCandidateUrls: [],
       continuationCandidatesUsed: false,
       referenceHintsExpected: row?.referenceHintsExpected === true,
+      normalizedHintBundle: stageOne?.normalizedHintBundle || null,
     },
     diagnostics: {},
     summary: {
@@ -199,6 +200,52 @@ function buildPipelineTrace({ originalTitle = '', stageOne = {}, row = {} } = {}
       normalizedTitle: normalizeString(stageOne?.normalizedTitle || originalTitle, 160),
       manufacturer: normalizeString(stageOne?.manufacturer || '', 120),
     },
+  };
+}
+
+function buildNormalizedHintBundle({
+  originalTitle = '',
+  normalizedTitle = '',
+  manufacturer = '',
+  titleFamily = null,
+  referenceHints = null,
+  referenceHintSource = 'none',
+  referenceEntryKey = '',
+  rowHintSource = '',
+} = {}) {
+  return {
+    input: {
+      originalTitle: normalizeString(originalTitle, 180),
+      normalizedTitle: normalizeString(normalizedTitle || originalTitle, 180),
+      manufacturer: normalizeManufacturerName(manufacturer || ''),
+      aliases: Array.from(new Set(expandArcadeTitleAliases([
+        originalTitle,
+        normalizedTitle,
+        ...(Array.isArray(titleFamily?.alternateTitles) ? titleFamily.alternateTitles : []),
+      ]).map((value) => normalizeString(value, 180)).filter(Boolean))).slice(0, 20),
+      familyTitles: Array.from(new Set([
+        normalizeString(titleFamily?.canonicalTitle || '', 180),
+        normalizeString(titleFamily?.familyTitle || '', 180),
+      ].filter(Boolean))).slice(0, 10),
+    },
+    hints: referenceHints ? {
+      source: normalizeString(referenceHintSource || 'json_index', 80) || 'json_index',
+      entryKey: normalizeString(referenceEntryKey || '', 180),
+      rowHintSource: normalizeString(rowHintSource || '', 80),
+      lookupRowsUsed: Number(referenceHints.lookupRowsUsed || 0),
+      preferredManufacturerDomains: Array.isArray(referenceHints.preferredManufacturerDomains)
+        ? referenceHints.preferredManufacturerDomains.slice(0, 12)
+        : [],
+      likelySlugPatterns: Array.isArray(referenceHints.likelySlugPatterns)
+        ? referenceHints.likelySlugPatterns.slice(0, 20)
+        : [],
+      likelyManualFilenamePatterns: Array.isArray(referenceHints.likelyManualFilenamePatterns)
+        ? referenceHints.likelyManualFilenamePatterns.slice(0, 20)
+        : [],
+      referenceRowCandidates: Array.isArray(referenceHints.referenceRowCandidates)
+        ? referenceHints.referenceRowCandidates.slice(0, 30)
+        : [],
+    } : null,
   };
 }
 
@@ -1115,6 +1162,15 @@ async function runStageOneLookup({
     discoverySkippedBecauseTrustedCatalogMatched: trustedCatalogEnabled && trustedCatalogSelected,
     searchEvidence: [],
     stage: 'stage1',
+    normalizedHintBundle: buildNormalizedHintBundle({
+      originalTitle: input.originalTitle,
+      normalizedTitle,
+      manufacturer,
+      titleFamily,
+      referenceHints,
+      referenceHintSource: referenceLookup?.source || 'none',
+      referenceEntryKey: referenceLookup?.entry?.entryKey || '',
+    }),
   };
 }
 
@@ -1371,6 +1427,16 @@ async function researchAssetTitles({
           referenceEntryKey: stageOne.referenceEntryKey,
           referenceRowCandidateCount: fallbackReferenceHints.referenceRowCandidates.length,
         });
+        stageOne.normalizedHintBundle = buildNormalizedHintBundle({
+          originalTitle,
+          normalizedTitle: stageOne.normalizedTitle,
+          manufacturer: stageOne.manufacturer,
+          titleFamily: stageOne.titleFamily,
+          referenceHints: stageOne.referenceHints,
+          referenceHintSource: stageOne.referenceHintSource,
+          referenceEntryKey: stageOne.referenceEntryKey,
+          rowHintSource: 'row_rehydrated',
+        });
       }
     }
     stageOne.referenceHintsExpected = row?.referenceHintsExpected === true;
@@ -1399,6 +1465,7 @@ async function researchAssetTitles({
         referenceRowCandidateCount: Array.isArray(stageOne.referenceHints?.referenceRowCandidates)
           ? stageOne.referenceHints.referenceRowCandidates.length
           : 0,
+        normalizedHintBundlePresent: !!stageOne.normalizedHintBundle,
       },
     });
 
