@@ -98,6 +98,12 @@ function normalizeErrorMessage(error, max = 220) {
   return normalizeString(error?.message || String(error || ''), max);
 }
 
+function normalizeUrlArray(values = [], max = 20) {
+  return Array.from(new Set((Array.isArray(values) ? values : [])
+    .map((value) => normalizeUrl(value))
+    .filter(Boolean))).slice(0, max);
+}
+
 function fingerprint(value = '') {
   const normalized = normalizeString(value, 500).toLowerCase();
   if (!normalized) return '';
@@ -276,6 +282,21 @@ function prioritizeDocumentationSuggestions({
     });
     return { ...ranked, index };
   });
+  const hasNonBrochureLiveCandidate = rows.some((row) => !row.dead && !isBrochureLikeCandidate(row.candidate));
+  if (hasNonBrochureLiveCandidate) {
+    rows.forEach((row) => {
+      if (!row.dead && isBrochureLikeCandidate(row.candidate)) {
+        row.tierRank = Math.max(row.tierRank, 6);
+        row.score -= 60;
+        logEvent('brochure_candidate_excluded_from_final_selection', {
+          ...logContext,
+          candidateUrl: row.candidate?.url || '',
+          candidateTier: row.tier,
+          reason: 'brochure_hard_ineligible_for_final_manual_selection',
+        });
+      }
+    });
+  }
   rows.sort(compareRankedCandidates);
   const deadRows = rows.filter((row) => row.dead);
   const staleTopDead = deadRows[0] || null;
@@ -587,6 +608,29 @@ function mapResearchResultToSuggestions(result = {}, manufacturerProfile = {}) {
     });
   }
   return { documentationSuggestions, supportResourcesSuggestion };
+}
+
+function deriveContinuationContext({ summary = {}, stageOne = {}, candidate = {} } = {}) {
+  const referenceRows = Array.isArray(stageOne?.referenceHints?.referenceRowCandidates)
+    ? stageOne.referenceHints.referenceRowCandidates
+    : [];
+  const firstReferenceSource = referenceRows
+    .map((row = {}) => normalizeUrl(row.manualSourceUrl || row.supportUrl || row.manualUrl || ''))
+    .find(Boolean) || '';
+  const fallbackSource = normalizeUrl(
+    candidate?.sourcePageUrl
+    || summary.manualSourceUrl
+    || summary.supportUrl
+    || stageOne?.summary?.manualSourceUrl
+    || stageOne?.summary?.supportUrl
+    || firstReferenceSource
+    || ''
+  );
+  return {
+    sourcePageUrl: fallbackSource,
+    manualSourceUrl: normalizeUrl(summary.manualSourceUrl || stageOne?.summary?.manualSourceUrl || ''),
+    supportUrl: normalizeUrl(summary.supportUrl || stageOne?.summary?.supportUrl || ''),
+  };
 }
 
 function isLikelyManualResearchUrl(url = '', { title = '', manufacturer = '', titleVariants = [], manufacturerProfile = null } = {}) {
@@ -1293,6 +1337,42 @@ async function researchAssetTitles({
       companyId,
       logContext,
     });
+    if (!stageOne.referenceHints) {
+      const rowReferenceRows = Array.isArray(row?.referenceRowCandidates)
+        ? row.referenceRowCandidates
+        : (Array.isArray(row?.manualLookupReferenceRows) ? row.manualLookupReferenceRows : []);
+      const fallbackReferenceHints = rowReferenceRows.length
+        ? {
+          source: normalizeString(row?.referenceHintSource || row?.manualLookupReferenceHintSource || '', 80) || 'row_rehydrated',
+          entryKey: normalizeString(row?.referenceEntryKey || row?.manualLookupReferenceEntryKey || '', 160),
+          referenceRowCandidates: rowReferenceRows.map((entry = {}) => ({
+            sourceRowId: normalizeString(entry.sourceRowId || entry.rowId || '', 160),
+            manufacturer: normalizeString(entry.manufacturer || stageOne.manufacturer || '', 160),
+            originalTitle: normalizeString(entry.originalTitle || originalTitle, 220),
+            normalizedTitle: normalizeString(entry.normalizedTitle || stageOne.normalizedTitle || originalTitle, 220),
+            manualUrl: normalizeUrl(entry.manualUrl || ''),
+            manualSourceUrl: normalizeUrl(entry.manualSourceUrl || ''),
+            supportUrl: normalizeUrl(entry.supportUrl || ''),
+          })),
+          preferredManufacturerDomains: normalizeUrlArray(row?.referenceDomainsUsed || row?.referenceDomains || [], 8).map((value) => {
+            try { return new URL(value).hostname.replace(/^www\./, ''); } catch { return ''; }
+          }).filter(Boolean),
+          likelySlugPatterns: Array.isArray(row?.referenceSlugPatternsUsed) ? row.referenceSlugPatternsUsed.slice(0, 12) : [],
+        }
+        : null;
+      if (fallbackReferenceHints) {
+        stageOne.referenceHints = fallbackReferenceHints;
+        stageOne.referenceHintSource = fallbackReferenceHints.source;
+        stageOne.referenceHit = true;
+        stageOne.referenceEntryKey = fallbackReferenceHints.entryKey || stageOne.referenceEntryKey || '';
+        logManualResearchEvent('reference_hint_rehydrated_from_row', {
+          ...logContext,
+          referenceHintSource: stageOne.referenceHintSource,
+          referenceEntryKey: stageOne.referenceEntryKey,
+          referenceRowCandidateCount: fallbackReferenceHints.referenceRowCandidates.length,
+        });
+      }
+    }
     stageOne.referenceHintsExpected = row?.referenceHintsExpected === true;
     const pipelineTrace = buildPipelineTrace({ originalTitle, stageOne, row });
     recordTraceStage({
@@ -1857,6 +1937,15 @@ async function researchAssetTitles({
         });
       }
     }
+    documentationSuggestions = documentationSuggestions.map((candidate) => {
+      const continuationContext = deriveContinuationContext({ summary, stageOne, candidate });
+      return {
+        ...candidate,
+        sourcePageUrl: normalizeUrl(candidate?.sourcePageUrl || continuationContext.sourcePageUrl || ''),
+        manualSourceUrl: normalizeUrl(candidate?.manualSourceUrl || continuationContext.manualSourceUrl || ''),
+        supportUrl: normalizeUrl(candidate?.supportUrl || continuationContext.supportUrl || ''),
+      };
+    });
     const candidateEligibilityList = documentationSuggestions.map((candidate) => isAcquisitionEligibleCandidate(candidate));
     const primaryCandidateEligibility = candidateEligibilityList[0] || isAcquisitionEligibleCandidate({});
     const deterministicEligibleCandidateIndex = documentationSuggestions.findIndex((candidate, index) => {
