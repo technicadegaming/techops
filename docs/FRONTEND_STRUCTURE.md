@@ -66,6 +66,7 @@ Examples:
 - `locationContext.js`, `workspaceReadiness.js`, `notifications.js`, `workflow.js`, `reportingSummary.js`, `documentationSuggestions.js`, `assetIntake.js`: smaller reusable domain helpers.
 
 Manual reliability workflow note: `assets.js` now surfaces backend-provided `manualReviewState` + `enrichmentTerminalReason` so unresolved manual cases are explainable/reviewable instead of only showing generic `reviewState`.
+Manual review queue helpers now live in `src/features/manualReviewQueue.js` so queue classification/evidence derivation stays feature-local instead of increasing shell complexity.
 
 **Practical rule:** if you are adding logic for one area of the product, prefer placing pure helpers, rendering, and area-specific actions in `src/features/*` instead of expanding `src/app.js`.
 

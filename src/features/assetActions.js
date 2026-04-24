@@ -800,6 +800,59 @@ export function createAssetActions(deps) {
       await refreshData();
       render();
     },
+    rejectManualCandidate: async (id, index) => {
+      if (!isAdmin(state.permissions)) return;
+      const current = state.assets.find((asset) => asset.id === id) || {};
+      const suggestions = Array.isArray(current.documentationSuggestions) ? current.documentationSuggestions : [];
+      const selected = suggestions[index];
+      const url = `${selected?.url || ''}`.trim();
+      if (!url) return;
+      const rejected = Array.from(new Set([...(current.reviewRejectedSuggestionUrls || []), url]));
+      const selectedUrls = (current.reviewSelectedSuggestionUrls || []).filter((entry) => `${entry || ''}`.trim() !== url);
+      const approvedUrls = (current.reviewApprovedSuggestionUrls || []).filter((entry) => `${entry || ''}`.trim() !== url);
+      const patch = {
+        reviewRejectedSuggestionUrls: rejected,
+        reviewSelectedSuggestionUrls: selectedUrls,
+        reviewApprovedSuggestionUrls: approvedUrls,
+        reviewState: 'pending_review',
+        reviewLastAction: 'asset_reject_single_manual_candidate',
+        manualReviewState: 'queued_for_review'
+      };
+      await upsertEntity('assets', id, { ...current, ...patch, manualStatus: deriveManualStatus({ ...current, ...patch }) }, state.user);
+      setAssetActionFeedback(id, 'Marked candidate as rejected for this asset review.', 'info');
+      await refreshData();
+      render();
+    },
+    setManualReviewState: async (id, manualReviewState, notes = '') => {
+      if (!isManager(state.permissions)) return;
+      const current = state.assets.find((asset) => asset.id === id) || {};
+      const normalizedState = `${manualReviewState || ''}`.trim();
+      if (!normalizedState) return;
+      const patch = {
+        manualReviewState: normalizedState,
+        reviewState: normalizedState === 'queued_for_review' ? 'pending_review' : (current.reviewState || 'pending_review'),
+        reviewReason: `${notes || current.reviewReason || ''}`.trim()
+      };
+      await upsertEntity('assets', id, { ...current, ...patch, manualStatus: deriveManualStatus({ ...current, ...patch }) }, state.user);
+      setAssetActionFeedback(id, `Manual review state updated to ${normalizedState.replace(/_/g, ' ')}.`, 'success');
+      await refreshData();
+      render();
+    },
+    flagManualLibraryRow: async (id) => {
+      if (!isManager(state.permissions)) return;
+      const current = state.assets.find((asset) => asset.id === id) || {};
+      const patch = {
+        manualLibraryFlagged: true,
+        manualLibraryFlaggedAt: new Date().toISOString(),
+        manualLibraryFlagReason: 'operator_flagged_suspect_manual_library_row',
+        manualReviewState: 'queued_for_review',
+        reviewState: 'pending_review'
+      };
+      await upsertEntity('assets', id, { ...current, ...patch }, state.user);
+      setAssetActionFeedback(id, 'Flagged this manual-library linkage for follow-up.', 'warn');
+      await refreshData();
+      render();
+    },
     applySingleSupportSuggestion: async (id, index) => {
       if (!isAdmin(state.permissions)) return;
       const current = state.assets.find((asset) => asset.id === id) || {};
