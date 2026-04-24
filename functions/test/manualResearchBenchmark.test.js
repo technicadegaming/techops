@@ -19,4 +19,8 @@ test('manual research benchmark runner emits reliability summary metrics', async
   assert.equal(typeof parsed.summary.autoAttachedRate, 'number');
   assert.equal(typeof parsed.summary.brochureFalsePositiveRate, 'number');
   assert.equal(typeof parsed.summary.terminalReasonDistribution, 'object');
+  assert.equal(typeof parsed.setMetrics.healthyControlPassRate, 'number');
+  assert.equal(typeof parsed.setMetrics.anchorFailurePassRate, 'number');
+  assert.equal(typeof parsed.setMetrics.ambiguousTruthfulnessRate, 'number');
+  assert.equal(typeof parsed.humanSummary, 'string');
 });

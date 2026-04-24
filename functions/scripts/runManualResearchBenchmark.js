@@ -92,6 +92,34 @@ function createFetchStub() {
 
 function buildSyntheticResult(scenario = {}) {
   const id = `${scenario.id || ''}`.toLowerCase();
+  if (id.includes('jurassic')) {
+    return {
+      manualReady: true,
+      reviewRequired: false,
+      matchType: 'exact_manual',
+      manualUrl: 'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf',
+      manualSourceUrl: 'https://rawthrills.com/games/jurassic-park-arcade-support/',
+      candidates: [{
+        title: 'Jurassic Park Arcade Operator Manual',
+        url: 'https://rawthrills.com/wp-content/uploads/jurassic-park-arcade-operator-manual.pdf',
+        bucket: 'verified_pdf_candidate',
+      }],
+    };
+  }
+  if (id.includes('quik_drop')) {
+    return {
+      manualReady: true,
+      reviewRequired: false,
+      matchType: 'exact_manual',
+      manualUrl: 'https://parts.baytekent.com/assets/manuals/quik-drop-operator-manual.pdf',
+      manualSourceUrl: 'https://parts.baytekent.com/support/quik-drop',
+      candidates: [{
+        title: 'Quik Drop Operator Manual',
+        url: 'https://parts.baytekent.com/assets/manuals/quik-drop-operator-manual.pdf',
+        bucket: 'verified_pdf_candidate',
+      }],
+    };
+  }
   if (id.includes('willy')) {
     return {
       manualReady: false,
@@ -123,10 +151,11 @@ function buildSyntheticResult(scenario = {}) {
       manualReady: true,
       reviewRequired: false,
       matchType: 'exact_manual',
-      manualUrl: 'https://example.com/manuals/angry-birds-coin-crash-operator.pdf',
+      manualUrl: 'https://laigames.com/wp-content/uploads/angry-birds-coin-crash-operator-manual.pdf',
+      manualSourceUrl: 'https://laigames.com/support/',
       candidates: [{
         title: 'Angry Birds Coin Crash Operator Manual',
-        url: 'https://example.com/manuals/angry-birds-coin-crash-operator.pdf',
+        url: 'https://laigames.com/wp-content/uploads/angry-birds-coin-crash-operator-manual.pdf',
         bucket: 'verified_pdf_candidate',
       }],
     };
@@ -181,9 +210,14 @@ function evaluateScenario({ scenario, entry }) {
   const brochureWinner = /(brochure|sell\s*sheet|flyer|catalog|spec)/i.test(selectedText);
   const checks = {
     manualReady: typeof expected.manualReady !== 'boolean' ? true : entry.manualReady === expected.manualReady,
+    reviewRequired: typeof expected.reviewRequired !== 'boolean' ? true : entry.reviewRequired === expected.reviewRequired,
+    allowManualReady: typeof expected.allowManualReady !== 'boolean' ? true : entry.manualReady === expected.allowManualReady,
     terminalReason: !Array.isArray(expected.allowedTerminalReasons) || !expected.allowedTerminalReasons.length
       ? true
       : expected.allowedTerminalReasons.includes(terminalReason),
+    mustIncludeTerminalReasons: !Array.isArray(expected.mustIncludeTerminalReasons) || !expected.mustIncludeTerminalReasons.length
+      ? true
+      : expected.mustIncludeTerminalReasons.includes(terminalReason),
     forbiddenTerminalReason: !Array.isArray(expected.forbiddenTerminalReasons) || !expected.forbiddenTerminalReasons.length
       ? true
       : !expected.forbiddenTerminalReasons.includes(terminalReason),
@@ -199,8 +233,11 @@ function evaluateScenario({ scenario, entry }) {
     titlePageExtraction: expected.mustHaveTitlePageExtraction === true
       ? entry?.pipelineMeta?.sourcePageExtracted === true
       : true,
+    durableAttachment: expected.mustBeDurable === true
+      ? Boolean(`${entry?.manualStoragePath || ''}`.trim()) || Boolean(`${entry?.manualLibraryRef || ''}`.trim())
+      : true,
     brochureWinner: expected.allowBrochureWinner === false ? !brochureWinner : true,
-    anyUsableCandidate: hasUsableCandidate,
+    anyUsableCandidate: expected.mustHaveUsableCandidate === true ? hasUsableCandidate : true,
   };
   return {
     id: scenario.id,
@@ -215,8 +252,36 @@ function evaluateScenario({ scenario, entry }) {
     brochureWinner,
     hasUsableCandidate,
     checks,
+    truth: scenario.truth || {},
+    truthAligned: scenario.set === 'ambiguous_cases'
+      ? (entry.reviewRequired === true && entry.manualReady !== true)
+      : (entry.manualReady === true),
     passed: Object.values(checks).every(Boolean),
   };
+}
+
+function createSetSummary(setScenarioResults = []) {
+  const total = setScenarioResults.length;
+  const passed = setScenarioResults.filter((row) => row.passed).length;
+  return {
+    total,
+    passed,
+    passRate: Number(((passed / (total || 1))).toFixed(4)),
+  };
+}
+
+function renderHumanSummary({ summary, setMetrics, scenarioResults }) {
+  const lines = [
+    'Manual Research Benchmark (gold-set aligned)',
+    `Scenarios: ${summary.total} | Pass rate: ${(summary.scenarioPassRate * 100).toFixed(1)}%`,
+    `Healthy controls: ${(setMetrics.healthyControlPassRate * 100).toFixed(1)}% | Anchors: ${(setMetrics.anchorFailurePassRate * 100).toFixed(1)}% | Ambiguous truthfulness: ${(setMetrics.ambiguousTruthfulnessRate * 100).toFixed(1)}%`,
+    `Recall@1: ${(summary.recallAt1 * 100).toFixed(1)}% | Recall@5: ${(summary.recallAt5 * 100).toFixed(1)}% | Auto-attach: ${(summary.autoAttachedRate * 100).toFixed(1)}%`,
+  ];
+  const failing = scenarioResults.filter((row) => !row.passed);
+  if (failing.length) {
+    lines.push(`Failing scenarios (${failing.length}): ${failing.map((row) => row.id).join(', ')}`);
+  }
+  return lines.join('\n');
 }
 
 async function run() {
@@ -271,8 +336,35 @@ async function run() {
       summary[metric] = Number((summary[metric] / denominator).toFixed(4));
     });
 
+  const healthySummary = createSetSummary(scenarioResults.filter((row) => row.set === 'healthy_controls'));
+  const anchorSummary = createSetSummary(scenarioResults.filter((row) => row.set === 'anchor_failures'));
+  const ambiguousRows = scenarioResults.filter((row) => row.set === 'ambiguous_cases');
+  const ambiguousTruthfulCount = ambiguousRows.filter((row) => row.truthAligned).length;
+  const ambiguousTruthfulnessRate = Number((ambiguousTruthfulCount / (ambiguousRows.length || 1)).toFixed(4));
+  const setMetrics = {
+    healthyControls: healthySummary,
+    anchorFailures: anchorSummary,
+    ambiguousCases: {
+      total: ambiguousRows.length,
+      truthful: ambiguousTruthfulCount,
+      truthfulnessRate: ambiguousTruthfulnessRate,
+    },
+    healthyControlPassRate: healthySummary.passRate,
+    anchorFailurePassRate: anchorSummary.passRate,
+    ambiguousTruthfulnessRate,
+  };
+
+  const report = {
+    ok: true,
+    summary,
+    setMetrics,
+    scenarioResults,
+    humanSummary: renderHumanSummary({ summary, setMetrics, scenarioResults }),
+    generatedAt: new Date().toISOString(),
+  };
   console.log = originalConsoleLog;
-  process.stdout.write(`${JSON.stringify({ ok: true, summary, scenarioResults }, null, 2)}\n`);
+  process.stderr.write(`${report.humanSummary}\n`);
+  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 }
 
 run().catch((error) => {

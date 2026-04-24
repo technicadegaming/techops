@@ -1,28 +1,54 @@
 {
+  "version": "manual-goldset-v1",
   "scenarios": [
     {
       "id": "healthy_jurassic_park",
       "set": "healthy_controls",
       "title": "Jurassic Park Arcade",
       "manufacturer": "Raw Thrills",
-      "expected": { "manualReady": true, "reviewRequired": false, "allowBrochureWinner": false }
+      "truth": {
+        "knownProjectTruth": "attached_manual_library_backed",
+        "source": "live_asset_export_and_manual_library"
+      },
+      "expected": {
+        "manualReady": true,
+        "reviewRequired": false,
+        "allowBrochureWinner": false,
+        "mustBeDurable": true,
+        "mustHaveUsableCandidate": true
+      }
     },
     {
       "id": "healthy_quik_drop",
       "set": "healthy_controls",
       "title": "Quik Drop",
       "manufacturer": "Bay Tek Games",
-      "expected": { "manualReady": true, "reviewRequired": false, "allowBrochureWinner": false }
+      "truth": {
+        "knownProjectTruth": "attached_manual_library_backed",
+        "source": "live_asset_export_and_manual_library"
+      },
+      "expected": {
+        "manualReady": true,
+        "reviewRequired": false,
+        "allowBrochureWinner": false,
+        "mustBeDurable": true,
+        "mustHaveUsableCandidate": true
+      }
     },
     {
       "id": "anchor_stepmaniax",
       "set": "anchor_failures",
       "title": "StepManiaX",
       "manufacturer": "Step Revolution",
+      "truth": {
+        "knownProjectTruth": "manual_exists_publicly_and_should_attach_or_truthfully_queue",
+        "source": "manual_lookup_registry_reference_hints"
+      },
       "expected": {
         "manualReady": true,
         "mustIncludeTerminalReasons": ["terminalized_after_continuation_exhaustion", "docs_found_after_durable_storage"],
-        "mustHaveContinuationCandidates": true
+        "mustHaveContinuationCandidates": true,
+        "mustHaveUsableCandidate": true
       }
     },
     {
@@ -30,10 +56,20 @@
       "set": "anchor_failures",
       "title": "Willy Crash",
       "manufacturer": "Raw Thrills",
+      "truth": {
+        "knownProjectTruth": "brochure_candidates_should_not_win",
+        "source": "manual_research_service_anchor_regression"
+      },
       "expected": {
         "manualReady": false,
         "allowBrochureWinner": false,
-        "allowedTerminalReasons": ["brochure_only_evidence", "brochure_selected_no_manual_continuation_used", "terminalized_after_continuation_exhaustion"]
+        "mustHaveUsableCandidate": false,
+        "allowedTerminalReasons": [
+          "brochure_only_evidence",
+          "brochure_selected_no_manual_continuation_used",
+          "terminalized_after_continuation_exhaustion",
+          "manufacturer-adapter-no-better-candidate"
+        ]
       }
     },
     {
@@ -41,10 +77,15 @@
       "set": "anchor_failures",
       "title": "Angry Birds Coin Crash",
       "manufacturer": "LAI Games",
+      "truth": {
+        "knownProjectTruth": "manual_exists_publicly_and_should_attach_or_truthfully_queue",
+        "source": "manual_research_service_anchor_regression"
+      },
       "expected": {
         "manualReady": true,
         "mustLoadReferenceHints": true,
-        "minReferenceProbeCount": 1
+        "minReferenceProbeCount": 1,
+        "mustHaveUsableCandidate": true
       }
     },
     {
@@ -52,10 +93,15 @@
       "set": "anchor_failures",
       "title": "HYPERshoot",
       "manufacturer": "LAI Games",
+      "truth": {
+        "knownProjectTruth": "direct_pdf_candidate_should_survive",
+        "source": "manual_research_service_anchor_regression"
+      },
       "expected": {
         "manualReady": true,
         "forbiddenTerminalReasons": ["title_page_found_manual_probe_failed", "support_only"],
-        "mustHaveTitlePageExtraction": true
+        "mustHaveTitlePageExtraction": true,
+        "mustHaveUsableCandidate": true
       }
     },
     {
@@ -63,9 +109,20 @@
       "set": "ambiguous_cases",
       "title": "Redemption Unknown Prototype",
       "manufacturer": "Unknown",
+      "truth": {
+        "knownProjectTruth": "no_reliable_public_manual",
+        "source": "manual_review_sampling"
+      },
       "expected": {
-        "manualReady": false,
-        "allowBrochureWinner": false
+        "reviewRequired": true,
+        "allowBrochureWinner": false,
+        "allowManualReady": false,
+        "mustHaveUsableCandidate": false,
+        "allowedTerminalReasons": [
+          "deterministic-search-no-results",
+          "terminalized_after_continuation_exhaustion",
+          "support_only"
+        ]
       }
     }
   ]
