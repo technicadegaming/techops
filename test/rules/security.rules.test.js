@@ -330,6 +330,29 @@ test('storage: manuals path allows same-company access and blocks cross-company 
   await assertFails(uploadString(ref(staffBStorage, 'companies/company-a/manuals/asset-1/manual-2/source.pdf'), 'blocked'));
 });
 
+test('storage: asset-manual-bootstrap path allows same-company access and blocks unauthorized reads', async () => {
+  await seedMembership({ uid: 'staff-a', companyId: 'company-a', role: 'staff' });
+  await seedMembership({ uid: 'staff-b', companyId: 'company-b', role: 'staff' });
+  const testEnv = await rulesTestEnvPromise;
+
+  const staffAStorage = testEnv.authenticatedContext('staff-a').storage();
+  const staffBStorage = testEnv.authenticatedContext('staff-b').storage();
+  const ownPath = 'companies/company-a/asset-manual-bootstrap/asset-1/manual.pdf';
+  const crossCompanyPath = 'companies/company-b/asset-manual-bootstrap/asset-2/manual.pdf';
+
+  await assertSucceeds(uploadString(ref(staffAStorage, ownPath), 'manual-pdf'));
+  await assertSucceeds(getBytes(ref(staffAStorage, ownPath)));
+
+  await assertFails(getBytes(ref(staffBStorage, ownPath)));
+  await assertFails(uploadString(ref(staffBStorage, 'companies/company-a/asset-manual-bootstrap/asset-1/blocked.pdf'), 'blocked'));
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await uploadString(ref(context.storage(), crossCompanyPath), 'manual-pdf-b');
+  });
+  await assertSucceeds(getBytes(ref(staffBStorage, crossCompanyPath)));
+  await assertFails(getBytes(ref(staffAStorage, crossCompanyPath)));
+});
+
 test('storage: shared manual-library path allows enabled signed-in reads but blocks writes', async () => {
   await seedMembership({ uid: 'staff-a', companyId: 'company-a', role: 'staff' });
   const testEnv = await rulesTestEnvPromise;
