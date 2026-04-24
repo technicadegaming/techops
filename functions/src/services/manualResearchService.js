@@ -60,6 +60,114 @@ const CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const MANUAL_ACQUISITION_TIMEOUT_MS = 15000;
 const MANUFACTURER_ONLY_FOLLOWUP_QUESTION = 'Manufacturer is already confirmed. What exact model/title/version or cabinet nameplate text is printed on the game?';
 const TRUSTED_CATALOG_MIN_CONFIDENCE = TRUSTED_CATALOG_DEFAULT_CONFIDENCE_THRESHOLD;
+const POSITIVE_MANUAL_KEYWORD_PATTERN = /\b(operator manual|service manual|install(?:ation)? manual|parts manual|owners? manual|manual|operator|service|install(?:ation)?|setup|troubleshoot(?:ing)?|download|pdf)\b/i;
+const NEGATIVE_NON_MANUAL_KEYWORD_PATTERN = /\b(brochure|sell[\s-]?sheet|flyer|catalog|datasheet|spec(?:ification)?(?:\s*sheet)?|marketing|promo|teaser|vendor|store|cart|checkout|login|register|account|room installation|installations?)\b/i;
+
+function readCandidateTextField(candidate = {}, keys = []) {
+  if (!candidate || typeof candidate !== 'object') return '';
+  for (const key of keys) {
+    const value = candidate?.[key];
+    if (typeof value === 'string' && value.trim()) return normalizeString(value, 1200);
+  }
+  return '';
+}
+
+function parseFinalCandidateEvidence(candidate = {}, { manufacturer = '', titleVariants = [] } = {}) {
+  const url = normalizeUrl(candidate?.url || '');
+  let host = '';
+  let path = '';
+  let filename = '';
+  try {
+    const parsed = new URL(url);
+    host = parsed.hostname.toLowerCase();
+    path = parsed.pathname || '';
+    const parts = path.split('/').filter(Boolean);
+    filename = decodeURIComponent(parts[parts.length - 1] || '').toLowerCase();
+  } catch {
+    // keep normalized empty defaults
+  }
+
+  const contentType = readCandidateTextField(candidate, ['contentType', 'mimeType', 'content_type']).toLowerCase();
+  const htmlTitle = readCandidateTextField(candidate, ['htmlTitle', 'pageTitle', 'metaTitle', 'title']);
+  const pdfMetadata = candidate?.pdfMetadata && typeof candidate.pdfMetadata === 'object' ? candidate.pdfMetadata : {};
+  const pdfMetadataText = normalizeString([
+    pdfMetadata?.title,
+    pdfMetadata?.subject,
+    pdfMetadata?.keywords,
+    pdfMetadata?.author,
+    candidate?.pdfTitle,
+  ].filter(Boolean).join(' '), 1200);
+  const firstPageText = readCandidateTextField(candidate, ['firstPageText', 'pdfFirstPageText', 'firstPage', 'snippet']);
+  const ocrText = readCandidateTextField(candidate, ['ocrText', 'ocrFirstPageText', 'imageOcrText']);
+  const combinedText = normalizeString([
+    candidate?.title,
+    htmlTitle,
+    filename,
+    contentType,
+    pdfMetadataText,
+    firstPageText,
+    ocrText,
+    path,
+  ].filter(Boolean).join(' '), 3000).toLowerCase();
+
+  const normalizedManufacturer = normalizeManufacturerName(manufacturer || '');
+  const manufacturerTokens = normalizeString(normalizedManufacturer, 180)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(' ')
+    .filter((token) => token.length >= 2);
+  const manufacturerMatchSignals = manufacturerTokens.filter((token) => combinedText.includes(token));
+
+  const normalizedVariants = Array.from(new Set((Array.isArray(titleVariants) ? titleVariants : [])
+    .map((value) => normalizeString(value, 180).toLowerCase())
+    .filter(Boolean)));
+  const titleMatchSignals = normalizedVariants.filter((variant) => {
+    const normalizedVariant = variant.replace(/[^a-z0-9]+/g, ' ').trim();
+    return normalizedVariant && combinedText.includes(normalizedVariant);
+  }).slice(0, 8);
+
+  const positiveManualKeywords = Array.from(new Set((combinedText.match(new RegExp(POSITIVE_MANUAL_KEYWORD_PATTERN.source, 'gi')) || [])
+    .map((entry) => normalizeString(entry, 40).toLowerCase())));
+  const negativeKeywords = Array.from(new Set((combinedText.match(new RegExp(NEGATIVE_NON_MANUAL_KEYWORD_PATTERN.source, 'gi')) || [])
+    .map((entry) => normalizeString(entry, 40).toLowerCase())));
+  return {
+    url,
+    host,
+    path: normalizeString(path, 260).toLowerCase(),
+    filename: normalizeString(filename, 180).toLowerCase(),
+    contentType,
+    htmlTitle,
+    pdfMetadata,
+    pdfMetadataText,
+    firstPageText,
+    ocrText,
+    manufacturerMatchSignals,
+    titleMatchSignals,
+    positiveManualKeywords,
+    negativeKeywords,
+    combinedText,
+  };
+}
+
+function classifyDocumentPageType(candidate = {}, parsedEvidence = null) {
+  const evidence = parsedEvidence || parseFinalCandidateEvidence(candidate);
+  const text = evidence.combinedText;
+  if (!evidence.url) return 'unknown';
+  if (/404|not found/.test(text)) return 'unknown';
+  if (/(operator manual|operations manual|owner'?s manual)/.test(text)) return 'operator_manual';
+  if (/service manual|maintenance manual/.test(text)) return 'service_manual';
+  if (/install(?:ation)? manual|installation guide|setup guide/.test(text)) return 'install_manual';
+  if (/parts manual|parts list|spare parts manual/.test(text)) return 'parts_manual';
+  if (/brochure/.test(text)) return 'brochure';
+  if (/sell[\s-]?sheet|spec(?:ification)?(?:\s*sheet)?|datasheet/.test(text)) return 'sell_sheet';
+  if (/flyer/.test(text)) return 'flyer';
+  if (/catalog/.test(text)) return 'catalog';
+  if (/(cart|checkout|my-account|login|register|shop|store)/.test(text)) return 'store_commerce_page';
+  if (/support/.test(text) && !POSITIVE_MANUAL_KEYWORD_PATTERN.test(text)) return 'generic_support_page';
+  if (/vendor|distributor|reseller/.test(text) && !POSITIVE_MANUAL_KEYWORD_PATTERN.test(text)) return 'vendor_page';
+  if (evidence.contentType.includes('html') && !POSITIVE_MANUAL_KEYWORD_PATTERN.test(text)) return 'vendor_page';
+  return 'unknown';
+}
 
 function logManualResearchEvent(event, payload = {}) {
   try {
@@ -435,9 +543,25 @@ function isHardIneligibleFinalCandidate(candidate = {}, { deadCandidateUrls = ne
   const discoverySource = `${candidate?.discoverySource || ''}`.trim().toLowerCase();
   const matchType = `${candidate?.matchType || ''}`.trim().toLowerCase();
   const nonManualType = `${candidate?.documentType || candidate?.docType || ''}`.trim().toLowerCase();
-  const text = `${title} ${url} ${bucket} ${sourceType} ${matchType} ${nonManualType}`;
+  const titleVariants = [
+    candidate?.title,
+    candidate?.normalizedTitle,
+    candidate?.originalTitle,
+  ].filter(Boolean);
+  const evidence = parseFinalCandidateEvidence(candidate, {
+    manufacturer: candidate?.manufacturer || '',
+    titleVariants,
+  });
+  const documentType = classifyDocumentPageType(candidate, evidence);
+  const text = `${title} ${url} ${bucket} ${sourceType} ${matchType} ${nonManualType} ${documentType} ${evidence.combinedText}`;
   if (!url) return { ineligible: true, reason: 'invalid_candidate_url' };
   if (urlKey && deadCandidateUrls.has(urlKey)) return { ineligible: true, reason: 'dead_link_candidate' };
+  if ((candidate?.deadPage === true || candidate?.deadLink === true || Number(candidate?.httpStatus || 0) === 404 || Number(candidate?.httpStatus || 0) === 410)) {
+    return { ineligible: true, reason: 'dead_link_candidate' };
+  }
+  if (['brochure', 'sell_sheet', 'flyer', 'catalog', 'vendor_page', 'generic_support_page', 'store_commerce_page'].includes(documentType)) {
+    return { ineligible: true, reason: `document_type_${documentType}` };
+  }
   if (/(brochure|spec(?:ification)?(?:\s*sheet)?|sell[\s-]?sheet|flyer|catalog)/.test(text)) return { ineligible: true, reason: 'brochure_or_sell_sheet' };
   if (/(marketing|promo|teaser|one[-\s]?pager|datasheet)/.test(text)) return { ineligible: true, reason: 'marketing_or_non_manual_document' };
   if (/(vendor)/.test(text) && !/(manual|operator|service)/.test(text)) return { ineligible: true, reason: 'generic_vendor_page' };
@@ -454,6 +578,11 @@ function isHardIneligibleFinalCandidate(candidate = {}, { deadCandidateUrls = ne
 function isManualGradeFinalCandidate(candidate = {}, { deadCandidateUrls = new Set() } = {}) {
   const hardIneligible = isHardIneligibleFinalCandidate(candidate, { deadCandidateUrls });
   if (hardIneligible.ineligible) return { manualGrade: false, reason: hardIneligible.reason };
+  const evidence = parseFinalCandidateEvidence(candidate, {
+    manufacturer: candidate?.manufacturer || '',
+    titleVariants: [candidate?.title, candidate?.normalizedTitle, candidate?.originalTitle].filter(Boolean),
+  });
+  const documentType = classifyDocumentPageType(candidate, evidence);
   const tier = classifyCandidateTier(candidate);
   const url = normalizeUrl(candidate?.url || '');
   const bucket = `${candidate?.candidateBucket || candidate?.bucket || ''}`.trim().toLowerCase();
@@ -467,9 +596,11 @@ function isManualGradeFinalCandidate(candidate = {}, { deadCandidateUrls = new S
     CANDIDATE_TIER.EXACT_TITLE_UNVALIDATED_CANDIDATE,
     CANDIDATE_TIER.SHARED_LIBRARY_REUSE,
   ].includes(tier);
+  const manualGradeDocType = ['operator_manual', 'service_manual', 'install_manual', 'parts_manual'].includes(documentType);
   const manualGrade = directManualLike
     || matchType === 'manual_page_with_download'
     || matchType === 'exact_manual'
+    || manualGradeDocType
     || validatedTier
     || (bucket === 'verified_pdf_candidate' && manualPageEvidence);
   return {
@@ -477,6 +608,7 @@ function isManualGradeFinalCandidate(candidate = {}, { deadCandidateUrls = new S
     reason: manualGrade ? '' : 'final_candidate_not_manual_grade',
     tier,
     directManualLike,
+    documentType,
   };
 }
 
@@ -964,6 +1096,10 @@ function buildContinuationSuggestions({
   const referenceRows = Array.isArray(stageOne.referenceHints?.referenceRowCandidates)
     ? stageOne.referenceHints.referenceRowCandidates
     : [];
+  const bundleRows = Array.isArray(stageOne.normalizedHintBundle?.hints?.referenceRowCandidates)
+    ? stageOne.normalizedHintBundle.hints.referenceRowCandidates
+    : [];
+  const combinedReferenceRows = [...referenceRows, ...bundleRows];
   const hintManualUrl = normalizeUrl(stageOne.referenceHints?.manualUrl || '');
   const hintManualSourceUrl = normalizeUrl(stageOne.referenceHints?.manualSourceUrl || '');
   const hintSupportUrl = normalizeUrl(stageOne.referenceHints?.supportUrl || '');
@@ -990,7 +1126,7 @@ function buildContinuationSuggestions({
       discoverySource: 'reference_hint_manual_url',
     });
   }
-  referenceRows.forEach((row = {}) => {
+  combinedReferenceRows.forEach((row = {}) => {
     if (row.manualSourceUrl) {
       pushContinuation({
         url: row.manualSourceUrl,
@@ -1017,6 +1153,24 @@ function buildContinuationSuggestions({
         discoverySource: 'reference_row_manual_url_continuation',
       });
     }
+  });
+
+  (Array.isArray(documentationSuggestions) ? documentationSuggestions : []).forEach((entry = {}) => {
+    const sourceCandidates = [
+      { url: entry.sourcePageUrl, source: 'candidate_source_page' },
+      { url: entry.manualSourceUrl, source: 'candidate_manual_source_page' },
+      { url: entry.supportUrl, source: 'candidate_support_page' },
+    ];
+    sourceCandidates.forEach((sourceEntry) => {
+      if (!sourceEntry.url) return;
+      pushContinuation({
+        url: sourceEntry.url,
+        sourcePageUrl: sourceEntry.url,
+        title: entry.title || summary.normalizedTitle || '',
+        discoverySource: sourceEntry.source,
+        continuationLogEvent: 'support_page_continuation_started',
+      });
+    });
   });
 
   if (summary.manualSourceUrl) {
@@ -2172,6 +2326,30 @@ async function researchAssetTitles({
         }).map(withSuggestionBucket);
       }
     }
+    documentationSuggestions = documentationSuggestions.map((entry) => {
+      const parsedEvidence = parseFinalCandidateEvidence(entry, {
+        manufacturer: summary.manufacturer || stageOne.manufacturer || '',
+        titleVariants: [summary.normalizedTitle, summary.originalTitle, originalTitle, entry?.title].filter(Boolean),
+      });
+      return {
+        ...entry,
+        documentType: classifyDocumentPageType(entry, parsedEvidence),
+        candidateEvidence: {
+          host: parsedEvidence.host,
+          path: parsedEvidence.path,
+          filename: parsedEvidence.filename,
+          contentType: parsedEvidence.contentType,
+          htmlTitle: parsedEvidence.htmlTitle,
+          pdfMetadata: parsedEvidence.pdfMetadata,
+          firstPageText: parsedEvidence.firstPageText,
+          ocrText: parsedEvidence.ocrText,
+          manufacturerMatchSignals: parsedEvidence.manufacturerMatchSignals,
+          titleMatchSignals: parsedEvidence.titleMatchSignals,
+          positiveManualKeywords: parsedEvidence.positiveManualKeywords,
+          negativeKeywords: parsedEvidence.negativeKeywords,
+        },
+      };
+    });
     pipelineTrace.continuity.continuationCandidateUrls = continuationSuggestions.map((entry) => entry.url).slice(0, 30);
     recordTraceStage({
       trace: pipelineTrace,
