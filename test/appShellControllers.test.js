@@ -1509,10 +1509,13 @@ test('admin CSV import bootstrap mode attaches direct manual hints immediately a
   assert.equal(bootstrapCalls[0].assetId, 'quick-drop');
   assert.deepEqual(enrichCalls, []);
   assert.match(state.adminUi.importSummary, /Bootstrap attached 1, failed 0/);
-  assert.match(state.adminUi.importSummary, /Queued for research 0/);
+  assert.match(state.adminUi.importSummary, /skipped enrichment\/research queueing/);
+  assert.equal(state.adminUi.importProgress.totalRows, 1);
+  assert.equal(state.adminUi.importProgress.completedRows, 1);
+  assert.equal(state.adminUi.importProgress.directManualsAttached, 1);
 });
 
-test('admin CSV import bootstrap mode falls back to enrichment when attach fails', async () => {
+test('admin CSV import bootstrap mode keeps processing when attach fails and does not trigger enrichment', async () => {
   const { createAdminActions } = await loadAdminActions();
   const enrichCalls = [];
   const state = {
@@ -1553,9 +1556,10 @@ test('admin CSV import bootstrap mode falls back to enrichment when attach fails
     manualHintUrl: 'https://manuals.example/quick-drop.pdf'
   }], { bootstrapAttachManualsFromCsvHints: true });
 
-  assert.deepEqual(enrichCalls, ['quick-drop']);
+  assert.deepEqual(enrichCalls, []);
   assert.match(state.adminUi.importSummary, /Bootstrap attached 0, failed 1/);
-  assert.match(state.adminUi.importSummary, /Queued for research 1/);
+  assert.match(state.adminUi.importSummary, /skipped enrichment\/research queueing/);
+  assert.equal(state.adminUi.importProgress.directManualAttachFailed, 1);
 });
 test('admin CSV import reconciles recent intake rows from refreshed asset enrichment state', async () => {
   const { createAdminActions } = await loadAdminActions();
