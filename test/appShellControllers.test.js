@@ -64,6 +64,10 @@ async function loadAssetActions() {
   return import('../src/features/assetActions.js');
 }
 
+async function loadAdminActions() {
+  return import('../src/features/adminActions.js');
+}
+
 async function loadManufacturerNormalizationHelpers() {
   return import('../src/features/manufacturerNormalization.js');
 }
@@ -1338,14 +1342,14 @@ test('assets view renders bulk visible doc re-search action and disables it whil
   assert.match(el.innerHTML, /Re-searching docs: 1 \/ 2 complete/);
 });
 
-test('asset actions bulk doc re-search uses visible ids, skips in-progress assets, and records progress summary', async () => {
+test('asset actions bulk doc re-search uses visible ids, processes queued imports, and records progress summary', async () => {
   const { createAssetActions } = await loadAssetActions();
   const state = {
     assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
     assetUi: {},
     assets: [
       { id: 'asset-a', name: 'Asset A', enrichmentStatus: 'idle' },
-      { id: 'asset-b', name: 'Asset B', enrichmentStatus: 'searching_docs' },
+      { id: 'asset-b', name: 'Asset B', enrichmentStatus: 'queued' },
       { id: 'asset-c', name: 'Asset C', enrichmentStatus: 'idle' }
     ],
     companyLocations: [],
@@ -1388,13 +1392,69 @@ test('asset actions bulk doc re-search uses visible ids, skips in-progress asset
 
   await actions.runBulkAssetEnrichment(['asset-a', 'asset-b', 'asset-c'], { confirmStart: false, requestDelayMs: 0 });
 
-  assert.deepEqual(enrichCalls, ['asset-a', 'asset-c']);
+  assert.deepEqual(enrichCalls, ['asset-a', 'asset-b', 'asset-c']);
   assert.equal(state.assetUi.bulkDocRerunStatus, 'idle');
   assert.equal(state.assetUi.bulkDocRerunProgress.totalTargeted, 3);
-  assert.equal(state.assetUi.bulkDocRerunProgress.succeeded, 1);
+  assert.equal(state.assetUi.bulkDocRerunProgress.succeeded, 2);
   assert.equal(state.assetUi.bulkDocRerunProgress.failed, 1);
-  assert.equal(state.assetUi.bulkDocRerunProgress.skipped, 1);
-  assert.match(state.assetUi.bulkDocRerunSummary, /Succeeded 1, failed 1, skipped 1/);
+  assert.equal(state.assetUi.bulkDocRerunProgress.skipped, 0);
+  assert.match(state.assetUi.bulkDocRerunSummary, /Succeeded 2, failed 1, skipped 0/);
+});
+
+test('admin CSV import queues truthful enrichment status, starts enrichment, and keeps hint URLs non-authoritative', async () => {
+  const { createAdminActions } = await loadAdminActions();
+  const assets = [];
+  const enrichCalls = [];
+  const state = {
+    user: { uid: 'user-1' },
+    adminUi: { importPreview: 'Preview rows' }
+  };
+
+  const actions = createAdminActions({
+    state,
+    render: () => {},
+    refreshData: async () => {},
+    runAction: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async (collection, id, payload) => {
+      if (collection === 'assets') assets.push({ id, payload });
+    },
+    clearEntitySet: async () => 0,
+    saveAppSettings: async () => {},
+    exportBackupJson: async () => ({}),
+    buildAssetsCsv: () => '',
+    buildTasksCsv: () => '',
+    buildAuditCsv: () => '',
+    buildWorkersCsv: () => '',
+    buildMembersCsv: () => '',
+    buildInvitesCsv: () => '',
+    buildLocationsCsv: () => '',
+    buildCompanyBackupBundle: () => ({}),
+    downloadFile: () => {},
+    downloadJson: () => {},
+    normalizeAssetId: (value) => `${value || ''}`.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    enrichAssetDocumentation: async (assetId) => { enrichCalls.push(assetId); },
+    createCompanyInvite: async () => ({}),
+    revokeInvite: async () => {}
+  });
+
+  await actions.importAssets([{
+    'asset name': 'Quick Drop',
+    manufacturer: 'Bay Tek',
+    manualHintUrl: 'https://manuals.example/quick-drop.pdf',
+    manualSourceHintUrl: 'https://manuals.example/quick-drop',
+    supportHintUrl: 'https://support.example/quick-drop'
+  }]);
+
+  assert.equal(assets.length, 1);
+  assert.equal(assets[0].payload.enrichmentStatus, 'queued');
+  assert.equal(assets[0].payload.manualHintUrl, 'https://manuals.example/quick-drop.pdf');
+  assert.equal(assets[0].payload.manualSourceHintUrl, 'https://manuals.example/quick-drop');
+  assert.equal(assets[0].payload.supportHintUrl, 'https://support.example/quick-drop');
+  assert.equal(assets[0].payload.manualLibraryRef, undefined);
+  assert.equal(assets[0].payload.manualStoragePath, undefined);
+  assert.deepEqual(enrichCalls, ['quick-drop']);
+  assert.match(state.adminUi.importSummary, /Enrichment started 1, completed 1, failed 0/);
 });
 
 test('admin source no longer exposes a duplicate asset documentation review section', () => {

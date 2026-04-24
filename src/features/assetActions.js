@@ -66,7 +66,7 @@ export function createAssetActions(deps) {
       ...(current?.maintenancePlan?.nextDueAt ? { nextDueAt: current.maintenancePlan.nextDueAt } : {})
     };
   };
-  const ACTIVE_ENRICHMENT_STATUSES = new Set(['queued', 'searching_docs', 'in_progress']);
+  const ACTIVE_ENRICHMENT_STATUSES = new Set(['searching_docs', 'in_progress']);
   const pause = (ms = 0) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 
   const setAssetActionFeedback = (assetId, message, tone = 'info') => {

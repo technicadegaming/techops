@@ -303,6 +303,7 @@ async function render() {
     downloadFile,
     downloadJson,
     normalizeAssetId,
+    enrichAssetDocumentation,
     createCompanyInvite,
     revokeInvite
   });
