@@ -18,6 +18,8 @@ Lookup now runs as a two-stage pipeline shared by single-entry preview, Assets b
 
 Fresh asset CSV intake is intentionally split from this result contract: operator uploads should provide source-of-truth asset identity fields plus optional search hints (`manualHintUrl`, `manualSourceHintUrl`, `supportHintUrl`, aliases/vendor metadata). System-managed enrichment output fields (`manualUrl`, `manualSourceUrl`, `supportUrl`, review/match status fields) remain authoritative only when written by backend enrichment/manual-acquisition persistence. Intake now marks imported rows as `queued` and immediately starts enrichment when available, so hint-only rows do not remain in a fake `searching_docs` state.
 
+CSV direct-manual hints now have a guarded fast path: when `manualHintUrl` looks like a direct manual candidate, enrichment attempts it early, but only promotes it to durable attachment after normal fetch + verification + manual-grade checks succeed. Failed direct-hint attempts remain non-authoritative and are surfaced in terminal reasons (`csv_direct_manual_hint_failed_fetch`, `csv_direct_manual_hint_failed_validation`).
+
 ## Catalog import workflow
 
 1. Update `functions/src/data/manualLookupWorkbookSeed.json` from the latest approved workbook rows.
