@@ -23,6 +23,7 @@ export function createAdminController({
   downloadJson,
   normalizeAssetId,
   enrichAssetDocumentation,
+  bootstrapAttachAssetManualFromCsvHint,
   createCompanyInvite,
   revokeInvite
 }) {
@@ -48,6 +49,7 @@ export function createAdminController({
     downloadJson,
     normalizeAssetId,
     enrichAssetDocumentation,
+    bootstrapAttachAssetManualFromCsvHint,
     createCompanyInvite,
     revokeInvite
   });

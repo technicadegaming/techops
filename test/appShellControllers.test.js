@@ -1454,9 +1454,109 @@ test('admin CSV import queues truthful enrichment status, starts enrichment, and
   assert.equal(assets[0].payload.manualLibraryRef, undefined);
   assert.equal(assets[0].payload.manualStoragePath, undefined);
   assert.deepEqual(enrichCalls, ['quick-drop']);
-  assert.match(state.adminUi.importSummary, /Enrichment started 1, completed 1, failed 0/);
+  assert.match(state.adminUi.importSummary, /Queued for research 1\. Enrichment started 1, completed 1, failed 0/);
 });
 
+
+
+test('admin CSV import bootstrap mode attaches direct manual hints immediately and skips enrichment fallback', async () => {
+  const { createAdminActions } = await loadAdminActions();
+  const enrichCalls = [];
+  const bootstrapCalls = [];
+  const state = {
+    user: { uid: 'admin-1' },
+    adminUi: { importPreview: 'Preview rows' }
+  };
+
+  const actions = createAdminActions({
+    state,
+    render: () => {},
+    refreshData: async () => {},
+    runAction: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    clearEntitySet: async () => 0,
+    saveAppSettings: async () => {},
+    exportBackupJson: async () => ({}),
+    buildAssetsCsv: () => '',
+    buildTasksCsv: () => '',
+    buildAuditCsv: () => '',
+    buildWorkersCsv: () => '',
+    buildMembersCsv: () => '',
+    buildInvitesCsv: () => '',
+    buildLocationsCsv: () => '',
+    buildCompanyBackupBundle: () => ({}),
+    downloadFile: () => {},
+    downloadJson: () => {},
+    normalizeAssetId: (value) => `${value || ''}`.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    enrichAssetDocumentation: async (assetId) => { enrichCalls.push(assetId); },
+    bootstrapAttachAssetManualFromCsvHint: async (payload) => {
+      bootstrapCalls.push(payload);
+      return { attached: true };
+    },
+    createCompanyInvite: async () => ({}),
+    revokeInvite: async () => {}
+  });
+
+  await actions.importAssets([{
+    'asset name': 'Quick Drop',
+    manufacturer: 'Bay Tek',
+    manualHintUrl: 'https://manuals.example/quick-drop.pdf',
+    manualSourceHintUrl: 'https://manuals.example/quick-drop'
+  }], { bootstrapAttachManualsFromCsvHints: true });
+
+  assert.equal(bootstrapCalls.length, 1);
+  assert.equal(bootstrapCalls[0].assetId, 'quick-drop');
+  assert.deepEqual(enrichCalls, []);
+  assert.match(state.adminUi.importSummary, /Bootstrap attached 1, failed 0/);
+  assert.match(state.adminUi.importSummary, /Queued for research 0/);
+});
+
+test('admin CSV import bootstrap mode falls back to enrichment when attach fails', async () => {
+  const { createAdminActions } = await loadAdminActions();
+  const enrichCalls = [];
+  const state = {
+    user: { uid: 'admin-1' },
+    adminUi: { importPreview: 'Preview rows' }
+  };
+
+  const actions = createAdminActions({
+    state,
+    render: () => {},
+    refreshData: async () => {},
+    runAction: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    clearEntitySet: async () => 0,
+    saveAppSettings: async () => {},
+    exportBackupJson: async () => ({}),
+    buildAssetsCsv: () => '',
+    buildTasksCsv: () => '',
+    buildAuditCsv: () => '',
+    buildWorkersCsv: () => '',
+    buildMembersCsv: () => '',
+    buildInvitesCsv: () => '',
+    buildLocationsCsv: () => '',
+    buildCompanyBackupBundle: () => ({}),
+    downloadFile: () => {},
+    downloadJson: () => {},
+    normalizeAssetId: (value) => `${value || ''}`.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    enrichAssetDocumentation: async (assetId) => { enrichCalls.push(assetId); },
+    bootstrapAttachAssetManualFromCsvHint: async () => ({ attached: false, status: 'bootstrap_attach_failed_validation' }),
+    createCompanyInvite: async () => ({}),
+    revokeInvite: async () => {}
+  });
+
+  await actions.importAssets([{
+    'asset name': 'Quick Drop',
+    manufacturer: 'Bay Tek',
+    manualHintUrl: 'https://manuals.example/quick-drop.pdf'
+  }], { bootstrapAttachManualsFromCsvHints: true });
+
+  assert.deepEqual(enrichCalls, ['quick-drop']);
+  assert.match(state.adminUi.importSummary, /Bootstrap attached 0, failed 1/);
+  assert.match(state.adminUi.importSummary, /Queued for research 1/);
+});
 test('admin CSV import reconciles recent intake rows from refreshed asset enrichment state', async () => {
   const { createAdminActions } = await loadAdminActions();
   const state = {

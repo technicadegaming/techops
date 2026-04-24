@@ -41,6 +41,7 @@ import {
   analyzeTaskTroubleshooting,
   answerTaskFollowup,
   approveAssetManual,
+  bootstrapAttachAssetManualFromCsvHint,
   enrichAssetDocumentation,
   previewAssetDocumentationLookup,
   researchAssetTitles,
@@ -304,6 +305,7 @@ async function render() {
     downloadJson,
     normalizeAssetId,
     enrichAssetDocumentation,
+    bootstrapAttachAssetManualFromCsvHint,
     createCompanyInvite,
     revokeInvite
   });

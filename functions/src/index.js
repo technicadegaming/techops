@@ -9,6 +9,7 @@ const {
   canRunAssetEnrichment,
   canRunManualAi,
   canSaveToTroubleshootingLibrary,
+  normalizeRole,
 } = require('./lib/permissions');
 const {
   authorizeAssetEnrichment,
@@ -31,6 +32,9 @@ const { researchAssetTitles } = require('./services/manualResearchService');
 const {
   finalizeOnboardingBootstrap,
 } = require('./services/onboardingBootstrapService');
+const {
+  bootstrapAttachManualFromCsvHint,
+} = require('./services/csvBootstrapManualAttachService');
 const { OPENAI_API_KEY } = require('./services/openaiService');
 
 admin.initializeApp();
@@ -407,6 +411,41 @@ exports.enrichAssetDocumentation = onCall({ secrets: [OPENAI_API_KEY] }, async (
     triggerSource: normalizeAssetEnrichmentTriggerSource(request.data?.trigger),
     followupAnswer: `${request.data?.followupAnswer || ''}`.trim(),
     traceId: request.rawRequest.headers['x-cloud-trace-context'] || `asset-${Date.now()}`,
+  });
+});
+
+
+exports.bootstrapAttachAssetManualFromCsvHint = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+  assertString(request.data?.assetId, 'assetId');
+  assertString(request.data?.manualHintUrl, 'manualHintUrl');
+
+  const authz = await authorizeAssetEnrichment({
+    db,
+    assetId: request.data.assetId,
+    uid: request.auth.uid,
+    getUserRole,
+  });
+
+  if (!authz.allowed) {
+    if (authz.scope === 'asset_not_found') throw new HttpsError('not-found', 'Asset not found');
+    throw new HttpsError('permission-denied', 'Insufficient role for bootstrap manual attach');
+  }
+
+  const isGlobalAdmin = isGlobalAdminRole(authz.globalRole);
+  const isCompanyAdmin = normalizeRole(authz.companyRole || '') === 'admin';
+  if (!isGlobalAdmin && !isCompanyAdmin) {
+    throw new HttpsError('permission-denied', 'Bootstrap manual attach is restricted to admins.');
+  }
+
+  return bootstrapAttachManualFromCsvHint({
+    db,
+    storage: admin.storage(),
+    assetId: request.data.assetId,
+    userId: request.auth.uid,
+    manualHintUrl: request.data.manualHintUrl,
+    manualSourceHintUrl: request.data.manualSourceHintUrl || '',
+    supportHintUrl: request.data.supportHintUrl || '',
   });
 });
 
