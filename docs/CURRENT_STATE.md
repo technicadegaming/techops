@@ -68,6 +68,7 @@ This file is an implementation-aware recovery snapshot, not a future roadmap. It
 7. Manual-library integrity checks now exist and are intentionally conservative: suspicious durable rows are flagged/quarantined for operator review, not auto-deleted or silently rewritten.
 8. Asset/task maintenance scaffolding is intentionally lightweight: `assets.maintenancePlan` metadata and task-card asset context panels improve technician workflow now, but full PM auto-generation/work-order/vendor loops remain future-phase work.
 9. Asset CSV intake template is now v2: source-of-truth asset fields plus optional manual-search hints only. Legacy manual/support result columns are accepted for backward compatibility but imported as non-authoritative hints, with durable manual attachment still written by enrichment (`persistDurableManualToAsset` path). CSV import now writes a truthful pending state (`enrichmentStatus=queued`) and immediately triggers enrichment per imported asset when the client runner is available, so hint-backed rows do not get stranded in fake `searching_docs`.
+10. CSV-provided direct manual hints (`manualHintUrl`) now enter an early, validated acquisition lane: if fetch + validation passes they can auto-promote to durable `manualLibrary` attachment, otherwise they remain hints and terminal reasons explicitly record the failure mode (`csv_direct_manual_hint_failed_fetch` / `csv_direct_manual_hint_failed_validation`).
 
 ## Recovery hardening changes made in this snapshot
 

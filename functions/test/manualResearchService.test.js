@@ -2098,6 +2098,122 @@ test('manual-like candidate URL that is dead never promotes docs_found and remai
   assert.equal(result.results[0].pipelineMeta.acquisitionState, 'no_manual');
 });
 
+test('csv direct manual hint promotes to durable attachment when fetch + validation succeed', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{
+      originalTitle: 'CSV Hint Racer X',
+      manufacturerHint: 'Indie Arcade Co',
+      manualHintUrl: 'https://docs.example.com/csv-hint-racer-x-operator-manual.pdf',
+      manualSourceHintUrl: 'https://docs.example.com/csv-hint-racer-x-support/',
+    }],
+    traceId: 'test-csv-direct-hint-promoted',
+    fetchImpl: createFetchMock(),
+    storage: createStorageMock(),
+    researchFallback: async () => ({
+      normalizedTitle: 'CSV Hint Racer X',
+      manufacturer: 'Indie Arcade Co',
+      matchType: 'support_only',
+      manualReady: false,
+      reviewRequired: true,
+      confidence: 0.5,
+      candidates: [],
+      citations: [],
+      rawResearchSummary: 'No additional candidates.',
+    }),
+  });
+
+  assert.equal(result.results[0].status, 'docs_found');
+  assert.equal(result.results[0].manualReady, true);
+  assert.match(result.results[0].manualStoragePath, /^manual-library\//);
+  assert.ok(`${result.results[0].pipelineMeta.terminalStateReason || ''}`.length > 0);
+});
+
+test('csv direct brochure-like hint does not auto-attach and remains followup-needed', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{
+      originalTitle: 'Angry Birds Coin Crash',
+      manufacturerHint: 'LAI Games',
+      manualHintUrl: 'https://cdn.example.com/angry-birds-coin-crash-sell-sheet.pdf',
+      manualSourceHintUrl: 'https://laigames.com/games/angry-birds-coin-crash/',
+    }],
+    traceId: 'test-csv-direct-hint-brochure',
+    storage: createStorageMock(),
+    fetchImpl: async (url, options = {}) => ({
+      ok: true,
+      status: 200,
+      url,
+      headers: { get: () => options.method === 'HEAD' ? 'application/pdf' : 'text/html' },
+      text: async () => 'Sell sheet and marketing flyer.',
+      arrayBuffer: async () => Buffer.from('%PDF-1.4 brochure'),
+    }),
+    researchFallback: async () => ({
+      normalizedTitle: 'Angry Birds Coin Crash',
+      manufacturer: 'LAI Games',
+      matchType: 'support_only',
+      manualReady: false,
+      reviewRequired: true,
+      confidence: 0.51,
+      candidates: [],
+      citations: [],
+      rawResearchSummary: 'No valid manual candidate.',
+    }),
+  });
+
+  assert.equal(result.results[0].manualReady, false);
+  assert.equal(result.results[0].status, 'followup_needed');
+  assert.equal(result.results[0].manualLibraryRef, '');
+  assert.equal(result.results[0].manualStoragePath, '');
+  assert.notEqual(result.results[0].status, 'docs_found');
+});
+
+test('csv direct manual hint failed fetch is surfaced in terminal reason', async () => {
+  const result = await researchAssetTitles({
+    db: createDb(),
+    settings: { aiEnabled: true },
+    companyId: 'company-1',
+    titles: [{
+      originalTitle: 'HYPERshoot',
+      manufacturerHint: 'LAI Games',
+      manualHintUrl: 'https://mossdistributing.com/manuals/hypershoot-operator-manual.pdf',
+      manualSourceHintUrl: 'https://mossdistributing.com/hypershoot/',
+    }],
+    traceId: 'test-csv-direct-hint-fetch-fail',
+    storage: createStorageMock(),
+    fetchImpl: async (url) => ({
+      ok: false,
+      status: 404,
+      url,
+      headers: { get: () => 'application/pdf' },
+      text: async () => '',
+      arrayBuffer: async () => Buffer.from(''),
+    }),
+    researchFallback: async () => ({
+      normalizedTitle: 'HYPERshoot',
+      manufacturer: 'LAI Games',
+      matchType: 'support_only',
+      manualReady: false,
+      reviewRequired: true,
+      confidence: 0.49,
+      candidates: [],
+      citations: [],
+      rawResearchSummary: 'No manual after 404.',
+    }),
+  });
+
+  assert.equal(result.results[0].manualReady, false);
+  assert.equal(['followup_needed', 'no_match_yet'].includes(result.results[0].status), true);
+  assert.equal(
+    ['csv_direct_manual_hint_failed_fetch', 'reference-manual-url-404'].includes(result.results[0].pipelineMeta.terminalStateReason),
+    true
+  );
+});
+
 test('source page that exists but has no downloadable manual stays support/followup and never attaches', async () => {
   const result = await researchAssetTitles({
     db: createDb(),

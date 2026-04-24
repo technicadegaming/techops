@@ -474,8 +474,18 @@ function deriveDetailedTerminalReason({
   continuationUsed = false,
   deterministicCandidateState = null,
   deadCandidateUrls = new Set(),
+  csvDirectHintState = null,
 } = {}) {
-  if (summary.manualReady === true) return 'docs_found_after_durable_storage';
+  if (summary.manualReady === true) {
+    if (csvDirectHintState?.promoted === true) return 'csv_direct_manual_hint_promoted_to_attachment';
+    return 'docs_found_after_durable_storage';
+  }
+  if (csvDirectHintState?.attempted === true && csvDirectHintState?.failedFetch === true) {
+    return 'csv_direct_manual_hint_failed_fetch';
+  }
+  if (csvDirectHintState?.attempted === true && csvDirectHintState?.failedValidation === true) {
+    return 'csv_direct_manual_hint_failed_validation';
+  }
   if (fallbackTerminalReason === 'title_page_found_manual_probe_failed') return 'trusted_title_page_found_but_no_manual_candidate_materialized';
   if (fallbackTerminalReason) return fallbackTerminalReason;
   if (stageOne.referenceHintSource === 'none' && stageOne.referenceHintsExpected === true) {
@@ -1243,6 +1253,7 @@ function isAcquisitionEligibleCandidate(candidate = {}) {
   ].includes(tier);
   const deterministicDirectManual = (
     normalizeString(candidate?.lookupMethod || '', 80).toLowerCase() === 'workbook_seed_exact_pdf'
+    || normalizeString(candidate?.lookupMethod || '', 80).toLowerCase() === 'csv_direct_manual_hint'
     || normalizeString(candidate?.discoverySource || '', 120).toLowerCase() === 'reference_row_manual_url'
   ) && directManualLike;
   return {
@@ -1839,9 +1850,9 @@ async function researchAssetTitles({
         manufacturer: stageOne.manufacturer || normalizeString(row?.manufacturerHint || '', 120),
         originalTitle,
         normalizedTitle: stageOne.normalizedTitle || originalTitle,
-        manualUrl: normalizeUrl(row?.manualUrl || stageOne?.summary?.manualUrl || ''),
-        manualSourceUrl: normalizeUrl(row?.manualSourceUrl || stageOne?.summary?.manualSourceUrl || ''),
-        supportUrl: normalizeUrl(row?.supportUrl || stageOne?.summary?.supportUrl || ''),
+        manualUrl: normalizeUrl(row?.manualHintUrl || row?.manualUrl || stageOne?.summary?.manualUrl || ''),
+        manualSourceUrl: normalizeUrl(row?.manualSourceHintUrl || row?.manualSourceUrl || stageOne?.summary?.manualSourceUrl || ''),
+        supportUrl: normalizeUrl(row?.supportHintUrl || row?.supportUrl || stageOne?.summary?.supportUrl || ''),
       })],
       preferredManufacturerDomains: normalizeUrlArray([
         ...(Array.isArray(row?.referenceDomainsUsed) ? row.referenceDomainsUsed : []),
@@ -1931,6 +1942,63 @@ async function researchAssetTitles({
     let documentationSuggestions = stageOne.documentationSuggestions;
     let supportResourcesSuggestion = stageOne.supportResourcesSuggestion;
     let supportContactsSuggestion = stageOne.supportContactsSuggestion;
+    const csvDirectManualHintUrl = normalizeUrl(row?.manualHintUrl || '');
+    const csvDirectManualSourceHintUrl = normalizeUrl(row?.manualSourceHintUrl || row?.supportHintUrl || '');
+    let csvDirectHintState = {
+      attempted: false,
+      validated: false,
+      failedFetch: false,
+      failedValidation: false,
+      promoted: false,
+      candidateUrl: csvDirectManualHintUrl,
+    };
+    if (isDirectManualCandidateUrl(csvDirectManualHintUrl)) {
+      csvDirectHintState.attempted = true;
+      const normalizedCsvDirectHintSuggestions = normalizeDocumentationSuggestions({
+        links: [{
+          title: `${originalTitle} CSV intake manual hint`,
+          url: csvDirectManualHintUrl,
+          sourcePageUrl: csvDirectManualSourceHintUrl || csvDirectManualHintUrl,
+          sourceType: 'manual',
+          resourceType: 'manual',
+          discoverySource: 'csv_direct_manual_hint',
+          lookupMethod: 'csv_direct_manual_hint',
+          trustedSource: false,
+        }],
+        confidence: 0.7,
+        asset: { name: originalTitle, manufacturer: stageOne.manufacturer },
+        normalizedName: stageOne.normalizedTitle,
+        manufacturerSuggestion: stageOne.manufacturer,
+      }).map((entry) => ({
+        ...entry,
+        exactTitleMatch: true,
+        exactManualMatch: true,
+        trustedSource: false,
+        discoverySource: 'csv_direct_manual_hint',
+        lookupMethod: 'csv_direct_manual_hint',
+        sourcePageUrl: entry.sourcePageUrl || csvDirectManualSourceHintUrl || csvDirectManualHintUrl,
+      }));
+      const verifiedCsvDirectHintSuggestions = normalizedCsvDirectHintSuggestions.length
+        ? await verifyDocumentationSuggestions(normalizedCsvDirectHintSuggestions, fetchImpl)
+        : [];
+      const verifiedCsvHint = verifiedCsvDirectHintSuggestions.filter((entry) => entry.verified && entry.exactManualMatch);
+      csvDirectHintState.validated = verifiedCsvHint.length > 0;
+      csvDirectHintState.failedFetch = verifiedCsvDirectHintSuggestions.length === 0
+        || verifiedCsvDirectHintSuggestions.some((entry) => entry?.deadPage === true || entry?.unreachable === true || entry?.deadLink === true);
+      csvDirectHintState.failedValidation = csvDirectHintState.attempted && !csvDirectHintState.validated && !csvDirectHintState.failedFetch;
+      documentationSuggestions = mergeDocumentationSuggestions({
+        existingSuggestions: verifiedCsvHint,
+        nextSuggestions: documentationSuggestions,
+        preserveExistingCandidates: true,
+      });
+      logManualResearchEvent('csv_direct_manual_hint_processed', {
+        ...logContext,
+        candidateUrl: csvDirectManualHintUrl,
+        validated: csvDirectHintState.validated,
+        failedFetch: csvDirectHintState.failedFetch,
+        failedValidation: csvDirectHintState.failedValidation,
+      });
+    }
     const stage2CandidateAudit = [];
     let stage2ReturnedCandidates = [];
     let stage2SelectedCandidate = null;
@@ -2747,6 +2815,9 @@ async function researchAssetTitles({
           return null;
         });
         if (manualLibraryAcquisition?.manualReady && manualLibraryAcquisition.manualLibrary) {
+          if (`${candidate?.discoverySource || ''}`.toLowerCase() === 'csv_direct_manual_hint') {
+            csvDirectHintState.promoted = true;
+          }
           if (`${candidate?.discoverySource || ''}`.startsWith('reference_row_')) {
             logManualResearchEvent('reference_row_candidate_promoted_validated', {
               ...logContext,
@@ -3071,6 +3142,7 @@ async function researchAssetTitles({
         continuationUsed: continuationCandidatesUsed,
         deterministicCandidateState: preContinuationDeterministicState,
         deadCandidateUrls,
+        csvDirectHintState,
       });
     const manualReviewState = deriveManualReviewState({
       summary,
@@ -3343,6 +3415,7 @@ function resolveDeterministicCandidateType(candidate = {}) {
   const exactManual = candidate?.exactManualMatch === true || candidate?.verified === true;
 
   if (lookupMethod === 'workbook_seed_exact_pdf' && isDirectManual && exactManual) return 'workbook_seed_exact_pdf';
+  if (lookupMethod === 'csv_direct_manual_hint' && isDirectManual && exactManual) return 'csv_direct_manual_hint';
   if (lookupMethod === 'reference_row_manual_url' && isDirectManual && exactManual) return 'reference_row_direct_pdf';
   if (discoverySource === 'reference_row_manual_url' && isDirectManual && exactManual) return 'reference_row_direct_pdf';
   if (discoverySource === 'reference_row_source_page' && exactManual) return 'reference_row_manual_url';
