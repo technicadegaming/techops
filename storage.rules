@@ -5,6 +5,7 @@ service firebase.storage {
     // - Company evidence must live under companies/{companyId}/evidence/**
     // - Company backup bundles must live under companies/{companyId}/backups/**
     // - Company manuals must live under companies/{companyId}/manuals/**
+    // - Bootstrap-attached manuals must live under companies/{companyId}/asset-manual-bootstrap/**
     // - Access is resolved from users/{uid} and companyMemberships/{companyId}_{uid}
 
     function signedIn() {
@@ -90,6 +91,15 @@ service firebase.storage {
     }
 
     match /companies/{companyId}/manuals/{allPaths=**} {
+      allow read, write: if canAccessCompanyEvidence(companyId);
+      allow delete: if isGlobalAdmin()
+        || (
+          isActiveCompanyMember(companyId)
+          && companyRole(companyId) in ['owner', 'admin', 'manager']
+        );
+    }
+
+    match /companies/{companyId}/asset-manual-bootstrap/{allPaths=**} {
       allow read, write: if canAccessCompanyEvidence(companyId);
       allow delete: if isGlobalAdmin()
         || (
