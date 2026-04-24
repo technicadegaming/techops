@@ -115,6 +115,8 @@ Operational review routing still uses `manualReviewState` for detailed queue buc
 - `acquisitionSuccessAfterManualGradeSelectionRate`
 - `terminalReasonDistribution`
 - scenario-level pass/fail checks against fixture expectations
+- gold-set bucket rates: `healthyControlPassRate`, `anchorFailurePassRate`, `ambiguousTruthfulnessRate`
+- compact human-readable terminal summary in addition to machine-readable JSON output
 
 This remains a fixture/stub reliability harness (not a live internet crawl benchmark).
 
