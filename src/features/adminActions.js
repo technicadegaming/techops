@@ -33,8 +33,8 @@ export function createAdminActions(deps) {
     state.adminUi = { ...(state.adminUi || {}), tone, message };
   };
 
-  const setImportFeedback = ({ tone = 'info', summary = '', preview = '' } = {}) => {
-    state.adminUi = { ...(state.adminUi || {}), importTone: tone, importSummary: summary, importPreview: preview };
+  const setImportFeedback = ({ tone = 'info', summary = '', preview = '', progress = null } = {}) => {
+    state.adminUi = { ...(state.adminUi || {}), importTone: tone, importSummary: summary, importPreview: preview, importProgress: progress };
     render();
   };
   const normalizeStatusKey = (value = '') => `${value || ''}`.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_');
@@ -46,6 +46,8 @@ export function createAdminActions(deps) {
     verified_manual_found: 'docs found / attached',
     followup_needed: 'follow-up needed',
     no_match_yet: 'no match yet',
+    imported_no_direct_manual: 'imported (no direct manual URL)',
+    imported_manual_attach_failed: 'imported (manual attach failed)',
     deterministic_search_no_results: 'no match yet',
     title_page_found_manual_probe_failed: 'follow-up needed',
     idle: 'not started'
@@ -267,8 +269,29 @@ export function createAdminActions(deps) {
       let enrichmentFailed = 0;
       let bootstrapAttached = 0;
       let bootstrapFailed = 0;
+      let bootstrapNoDirectManualUrl = 0;
+      let completedRows = 0;
       const bootstrapMode = options.bootstrapAttachManualsFromCsvHints === true;
       const importedRowLinks = [];
+      const emitProgress = () => {
+        const summary = bootstrapMode
+          ? `Bootstrap import running: ${completedRows}/${rows.length} rows completed. Imported assets ${imported}. Attached ${bootstrapAttached}. Attach failed ${bootstrapFailed}. No direct manual URL ${bootstrapNoDirectManualUrl}.`
+          : `Assets import running: ${completedRows}/${rows.length} rows completed. Imported assets ${imported}. Queued for research ${enrichmentQueued}.`;
+        setImportFeedback({
+          tone: 'info',
+          summary,
+          preview: state.adminUi?.importPreview || '',
+          progress: {
+            totalRows: rows.length,
+            importedAssets: imported,
+            directManualsAttached: bootstrapAttached,
+            directManualAttachFailed: bootstrapFailed,
+            noDirectManualUrl: bootstrapNoDirectManualUrl,
+            completedRows,
+          }
+        });
+      };
+      emitProgress();
       for (const row of rows) {
         const mapped = buildAssetImportRow({
           name: row['asset name'] || row.name || '',
@@ -299,6 +322,8 @@ export function createAdminActions(deps) {
         const id = `${mapped.assetId || normalizeAssetId(mapped['asset name'] || '')}`.trim();
         if (!id) {
           skipped += 1;
+          completedRows += 1;
+          emitProgress();
           continue;
         }
         const manualHintUrl = `${mapped.manualHintUrl || ''}`.trim();
@@ -346,7 +371,7 @@ export function createAdminActions(deps) {
           enrichmentConfidence: Number(mapped.matchConfidence || 0) || null,
           matchNotes: mapped.matchNotes || '',
           importSource: 'assets_csv_v2',
-          enrichmentStatus: 'queued',
+          enrichmentStatus: bootstrapMode ? 'imported_no_direct_manual' : 'queued',
           enrichmentRequestedAt: new Date().toISOString()
         }, 'import assets'), state.user);
         let intakeStatusBadge = 'queued';
@@ -369,23 +394,39 @@ export function createAdminActions(deps) {
               intakeStatusLabel = 'docs found / attached';
             } else {
               bootstrapFailed += 1;
+              await upsertEntity('assets', id, withRequiredCompanyId({
+                id,
+                enrichmentStatus: 'imported_manual_attach_failed',
+                enrichmentTerminalReason: `${bootstrapResult?.status || 'bootstrap_attach_failed'}`.slice(0, 120),
+                manualReady: false,
+              }, 'mark bootstrap attach failure'), state.user);
             }
           } catch (error) {
             bootstrapFailed += 1;
+            await upsertEntity('assets', id, withRequiredCompanyId({
+              id,
+              enrichmentStatus: 'imported_manual_attach_failed',
+              enrichmentTerminalReason: 'bootstrap_attach_exception',
+              manualReady: false,
+            }, 'mark bootstrap attach failure'), state.user);
             console.error('[import_asset_bootstrap_attach]', { assetId: id, error });
           }
         }
 
         if (!bootstrapAttachedForAsset) {
-          enrichmentQueued += 1;
-          if (typeof enrichAssetDocumentation === 'function') {
-            try {
-              enrichmentStarted += 1;
-              await enrichAssetDocumentation(id, { trigger: bootstrapMode ? 'csv_import_bootstrap_fallback' : 'csv_import' });
-              enrichmentCompleted += 1;
-            } catch (error) {
-              enrichmentFailed += 1;
-              console.error('[import_asset_enrichment]', { assetId: id, error });
+          if (bootstrapMode) {
+            if (!manualHintUrl) bootstrapNoDirectManualUrl += 1;
+          } else {
+            enrichmentQueued += 1;
+            if (typeof enrichAssetDocumentation === 'function') {
+              try {
+                enrichmentStarted += 1;
+                await enrichAssetDocumentation(id, { trigger: 'csv_import' });
+                enrichmentCompleted += 1;
+              } catch (error) {
+                enrichmentFailed += 1;
+                console.error('[import_asset_enrichment]', { assetId: id, error });
+              }
             }
           }
         }
@@ -397,18 +438,32 @@ export function createAdminActions(deps) {
           intakeStatusBadge,
           intakeStatusLabel,
         });
+        completedRows += 1;
+        emitProgress();
       }
       await upsertEntity('importHistory', `import-assets-${Date.now()}`, { type: 'assets', rowCount: rows.length }, state.user);
       const bootstrapSummary = bootstrapMode
-        ? ` Bootstrap attached ${bootstrapAttached}, failed ${bootstrapFailed}.`
+        ? ` Bootstrap attached ${bootstrapAttached}, failed ${bootstrapFailed}, no direct manual URL ${bootstrapNoDirectManualUrl}.`
         : '';
       const enrichmentSummary = typeof enrichAssetDocumentation === 'function'
-        ? ` Queued for research ${enrichmentQueued}. Enrichment started ${enrichmentStarted}, completed ${enrichmentCompleted}, failed ${enrichmentFailed}.`
-        : ` Queued for research ${enrichmentQueued}; no inline runner is configured in this session.`;
+        ? (bootstrapMode
+          ? ' Direct bootstrap mode skipped enrichment/research queueing.'
+          : ` Queued for research ${enrichmentQueued}. Enrichment started ${enrichmentStarted}, completed ${enrichmentCompleted}, failed ${enrichmentFailed}.`)
+        : (bootstrapMode
+          ? ' Direct bootstrap mode skipped enrichment/research queueing.'
+          : ` Queued for research ${enrichmentQueued}; no inline runner is configured in this session.`);
       setImportFeedback({
         tone: imported ? (enrichmentFailed ? 'info' : 'success') : 'error',
         summary: `Assets import complete. Imported ${imported}${skipped ? `, skipped ${skipped}` : ''}.${bootstrapSummary}${enrichmentSummary}`,
-        preview: state.adminUi?.importPreview || ''
+        preview: state.adminUi?.importPreview || '',
+        progress: {
+          totalRows: rows.length,
+          importedAssets: imported,
+          directManualsAttached: bootstrapAttached,
+          directManualAttachFailed: bootstrapFailed,
+          noDirectManualUrl: bootstrapNoDirectManualUrl,
+          completedRows,
+        }
       });
       setAdminFeedback({
         tone: imported ? (enrichmentFailed ? 'info' : 'success') : 'error',

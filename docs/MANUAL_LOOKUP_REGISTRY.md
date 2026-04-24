@@ -20,7 +20,7 @@ Fresh asset CSV intake is intentionally split from this result contract: operato
 
 CSV direct-manual hints now have a guarded fast path: when `manualHintUrl` looks like a direct manual candidate, enrichment attempts it early, but only promotes it to durable attachment after normal fetch + verification + manual-grade checks succeed. Failed direct-hint attempts remain non-authoritative and are surfaced in terminal reasons (`csv_direct_manual_hint_failed_fetch`, `csv_direct_manual_hint_failed_validation`).
 
-For temporary testing/bootstrap use, Admin import also exposes an explicit admin-only override mode that attempts immediate direct attach from CSV `manualHintUrl` values at intake time. Successful rows are intentionally marked as bootstrap provenance (`sourceType=csv_bootstrap_manual`, `attachmentMode=csv_bootstrap`, `manualProvenance=csv_manual_hint_direct_attach`) so they remain distinguishable from normal research/verification outcomes.
+For temporary testing/bootstrap use, Admin import also exposes an explicit admin-only override mode that attempts immediate direct attach from CSV `manualHintUrl` values at intake time. Successful rows are intentionally marked as bootstrap provenance (`sourceType=csv_direct_bootstrap_manual`, `attachmentMode=csv_direct_bootstrap`, `manualProvenance=csv_direct_manual_import`) so they remain distinguishable from normal research/verification outcomes, and this mode intentionally does not queue enrichment fallback from import.
 
 ## Catalog import workflow
 
