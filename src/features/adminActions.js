@@ -36,6 +36,30 @@ export function createAdminActions(deps) {
     state.adminUi = { ...(state.adminUi || {}), importTone: tone, importSummary: summary, importPreview: preview };
     render();
   };
+  const normalizeStatusKey = (value = '') => `${value || ''}`.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  const STATUS_LABELS = {
+    queued: 'queued',
+    searching_docs: 'searching',
+    in_progress: 'searching',
+    docs_found: 'docs found / attached',
+    verified_manual_found: 'docs found / attached',
+    followup_needed: 'follow-up needed',
+    no_match_yet: 'no match yet',
+    deterministic_search_no_results: 'no match yet',
+    title_page_found_manual_probe_failed: 'follow-up needed',
+    idle: 'not started'
+  };
+  const mapRowStatusFromAsset = (asset = {}) => {
+    const status = normalizeStatusKey(asset?.enrichmentStatus || 'idle') || 'idle';
+    const badge = ['searching_docs', 'in_progress'].includes(status) ? 'searching' : (status === 'queued' ? 'queued' : status);
+    return {
+      intakeStatusBadge: badge,
+      intakeStatusLabel: STATUS_LABELS[status] || status.replace(/_/g, ' '),
+      enrichmentStatus: asset?.enrichmentStatus || 'idle',
+      reviewState: asset?.reviewState || '',
+      manualReviewState: asset?.manualReviewState || ''
+    };
+  };
 
   return {
     setImportFeedback,
@@ -240,6 +264,7 @@ export function createAdminActions(deps) {
       let enrichmentQueued = 0;
       let enrichmentCompleted = 0;
       let enrichmentFailed = 0;
+      const importedRowLinks = [];
       for (const row of rows) {
         const mapped = buildAssetImportRow({
           name: row['asset name'] || row.name || '',
@@ -320,6 +345,7 @@ export function createAdminActions(deps) {
           enrichmentStatus: 'queued',
           enrichmentRequestedAt: new Date().toISOString()
         }, 'import assets'), state.user);
+        importedRowLinks.push({ name: mapped['asset name'] || id, manufacturer: mapped.manufacturer || '', assetId: id, intakeStatusBadge: 'queued', intakeStatusLabel: 'queued' });
         imported += 1;
         enrichmentQueued += 1;
         if (typeof enrichAssetDocumentation === 'function') {
@@ -349,6 +375,19 @@ export function createAdminActions(deps) {
           : 'No asset rows were imported.'
       });
       await refreshData();
+      const assetById = new Map((state.assets || []).map((asset) => [asset.id, asset]));
+      const reconciledRows = importedRowLinks.map((row) => {
+        const linked = assetById.get(row.assetId);
+        if (!linked) return row;
+        return { ...row, ...mapRowStatusFromAsset(linked) };
+      });
+      state.assetUi = {
+        ...(state.assetUi || {}),
+        recentIntakeRows: [
+          ...(Array.isArray(state.assetUi?.recentIntakeRows) ? state.assetUi.recentIntakeRows : []),
+          ...reconciledRows
+        ]
+      };
       render();
     },
     importEmployees: async (rows) => {
