@@ -249,6 +249,98 @@ function buildNormalizedHintBundle({
   };
 }
 
+function normalizeReferenceRowCandidate(entry = {}, {
+  fallbackManufacturer = '',
+  fallbackOriginalTitle = '',
+  fallbackNormalizedTitle = '',
+} = {}) {
+  return {
+    sourceRowId: normalizeString(entry.sourceRowId || entry.rowId || entry.id || '', 160),
+    manufacturer: normalizeString(entry.manufacturer || fallbackManufacturer || '', 160),
+    originalTitle: normalizeString(entry.originalTitle || fallbackOriginalTitle || '', 220),
+    normalizedTitle: normalizeString(entry.normalizedTitle || fallbackNormalizedTitle || fallbackOriginalTitle || '', 220),
+    manualUrl: normalizeUrl(entry.manualUrl || ''),
+    manualSourceUrl: normalizeUrl(entry.manualSourceUrl || ''),
+    supportUrl: normalizeUrl(entry.supportUrl || ''),
+  };
+}
+
+function mergeAuthoritativeReferenceHints({
+  bundles = [],
+  originalTitle = '',
+  normalizedTitle = '',
+  manufacturer = '',
+  logContext = {},
+} = {}) {
+  const mergedRows = [];
+  const preferredManufacturerDomains = new Set();
+  const likelySlugPatterns = new Set();
+  const likelyManualFilenamePatterns = new Set();
+  const seenRowSignatures = new Set();
+  const sourceChain = [];
+  let entryKey = '';
+
+  (Array.isArray(bundles) ? bundles : []).forEach((bundle = {}) => {
+    if (!bundle || typeof bundle !== 'object') return;
+    const source = normalizeString(bundle.source || '', 80);
+    if (source && !sourceChain.includes(source)) sourceChain.push(source);
+    if (!entryKey) entryKey = normalizeString(bundle.entryKey || '', 160);
+    (Array.isArray(bundle.preferredManufacturerDomains) ? bundle.preferredManufacturerDomains : [])
+      .map((value) => normalizeString(value, 180).replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, ''))
+      .filter(Boolean)
+      .forEach((value) => preferredManufacturerDomains.add(value));
+    (Array.isArray(bundle.likelySlugPatterns) ? bundle.likelySlugPatterns : [])
+      .map((value) => normalizeString(value, 140).toLowerCase())
+      .filter(Boolean)
+      .forEach((value) => likelySlugPatterns.add(value));
+    (Array.isArray(bundle.likelyManualFilenamePatterns) ? bundle.likelyManualFilenamePatterns : [])
+      .map((value) => normalizeString(value, 180).toLowerCase())
+      .filter(Boolean)
+      .forEach((value) => likelyManualFilenamePatterns.add(value));
+    (Array.isArray(bundle.referenceRowCandidates) ? bundle.referenceRowCandidates : []).forEach((entry) => {
+      const normalized = normalizeReferenceRowCandidate(entry, {
+        fallbackManufacturer: manufacturer,
+        fallbackOriginalTitle: originalTitle,
+        fallbackNormalizedTitle: normalizedTitle,
+      });
+      const hasEvidence = !!(normalized.manualUrl || normalized.manualSourceUrl || normalized.supportUrl);
+      if (!hasEvidence) {
+        logManualResearchEvent('reference_hint_row_filtered', {
+          ...logContext,
+          reason: 'row_missing_manual_or_support_urls',
+          source: source || 'unknown',
+          sourceRowId: normalized.sourceRowId || '',
+        });
+        return;
+      }
+      const signature = [
+        normalized.sourceRowId,
+        normalized.manualUrl,
+        normalized.manualSourceUrl,
+        normalized.supportUrl,
+      ].join('|').toLowerCase();
+      if (!signature || seenRowSignatures.has(signature)) return;
+      seenRowSignatures.add(signature);
+      mergedRows.push(normalized);
+    });
+  });
+
+  if (!mergedRows.length
+    && !preferredManufacturerDomains.size
+    && !likelySlugPatterns.size
+    && !likelyManualFilenamePatterns.size) return null;
+  const preferredSource = sourceChain.find((value) => value !== 'workbook_context') || sourceChain[0] || 'none';
+  return {
+    source: preferredSource,
+    sourceChain: sourceChain.slice(0, 6),
+    entryKey,
+    referenceRowCandidates: mergedRows.slice(0, 40),
+    preferredManufacturerDomains: Array.from(preferredManufacturerDomains).slice(0, 12),
+    likelySlugPatterns: Array.from(likelySlugPatterns).slice(0, 24),
+    likelyManualFilenamePatterns: Array.from(likelyManualFilenamePatterns).slice(0, 24),
+  };
+}
+
 function recordTraceStage({ trace = null, stage = '', payload = {}, logContext = {} } = {}) {
   if (!trace || !stage) return;
   trace.stages[stage] = payload;
@@ -1065,7 +1157,9 @@ async function runStageOneLookup({
     manufacturer,
     alternateNames: titleFamily.alternateTitles || [],
   });
-  const referenceHints = referenceLookup?.hints || null;
+  let referenceHints = referenceLookup?.hints || null;
+  let referenceHintSource = referenceLookup?.source || 'none';
+  let referenceEntryKey = referenceLookup?.entry?.entryKey || '';
   if (referenceLookup) {
     logManualResearchEvent('reference_index_entry_count', {
       ...logContext,
@@ -1125,6 +1219,46 @@ async function runStageOneLookup({
       normalizedTitle,
       manufacturer,
     });
+    const manufacturerDomains = Array.from(new Set([
+      ...(Array.isArray(manufacturerProfile?.preferredSourceTokens) ? manufacturerProfile.preferredSourceTokens : []),
+      ...(Array.isArray(manufacturerProfile?.sourceTokens) ? manufacturerProfile.sourceTokens : []),
+      ...(Array.isArray(manufacturerProfile?.authorizedSourceTokens) ? manufacturerProfile.authorizedSourceTokens : []),
+    ].map((value) => normalizeString(value, 180).replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, ''))
+      .filter((value) => value.includes('.')))).slice(0, 8);
+    const manufacturerSeedHints = {
+      source: 'manufacturer_profile_seed',
+      entryKey: '',
+      preferredManufacturerDomains: manufacturerDomains,
+      likelySlugPatterns: Array.from(new Set(
+        expandArcadeTitleAliases([
+          input.originalTitle,
+          normalizedTitle,
+          ...(Array.isArray(titleFamily?.alternateTitles) ? titleFamily.alternateTitles : []),
+        ])
+          .map((value) => normalizeString(value, 180).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''))
+          .filter(Boolean)
+      )).slice(0, 10),
+      likelyManualFilenamePatterns: Array.from(new Set(
+        expandArcadeTitleAliases([input.originalTitle, normalizedTitle])
+          .map((value) => normalizeString(value, 180).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''))
+          .filter(Boolean)
+          .map((slug) => `${slug}-operator-manual.pdf`)
+      )).slice(0, 10),
+      referenceRowCandidates: [],
+    };
+    if (manufacturerSeedHints.preferredManufacturerDomains.length && manufacturerSeedHints.likelySlugPatterns.length) {
+      referenceHints = manufacturerSeedHints;
+      referenceHintSource = 'manufacturer_profile_seed';
+      referenceEntryKey = '';
+      logManualResearchEvent('reference_hint_seeded_from_manufacturer_profile', {
+        ...logContext,
+        title: input.originalTitle,
+        normalizedTitle,
+        manufacturer,
+        preferredManufacturerDomains: manufacturerSeedHints.preferredManufacturerDomains.slice(0, 6),
+        likelySlugPatterns: manufacturerSeedHints.likelySlugPatterns.slice(0, 6),
+      });
+    }
   }
 
   logManualResearchEvent('trusted_catalog_lookup_started', {
@@ -1288,9 +1422,9 @@ async function runStageOneLookup({
     trustedCatalogMatch,
     trustedCatalogSelected,
     trustedCatalogSuggestion,
-    referenceHints: referenceHints ? { ...referenceHints, source: referenceLookup?.source || 'json_index' } : null,
-    referenceHintSource: referenceLookup?.source || 'none',
-    referenceEntryKey: referenceLookup?.entry?.entryKey || '',
+    referenceHints: referenceHints ? { ...referenceHints, source: referenceHintSource || referenceHints.source || 'json_index' } : null,
+    referenceHintSource,
+    referenceEntryKey,
     referenceHit: !!referenceHints,
     discoverySkippedBecauseTrustedCatalogMatched: trustedCatalogEnabled && trustedCatalogSelected,
     searchEvidence: [],
@@ -1301,8 +1435,8 @@ async function runStageOneLookup({
       manufacturer,
       titleFamily,
       referenceHints,
-      referenceHintSource: referenceLookup?.source || 'none',
-      referenceEntryKey: referenceLookup?.entry?.entryKey || '',
+      referenceHintSource,
+      referenceEntryKey,
     }),
   };
 }
@@ -1533,14 +1667,10 @@ async function researchAssetTitles({
       ? {
         source: normalizeString(row?.referenceHintSource || row?.manualLookupReferenceHintSource || '', 80) || 'row_rehydrated',
         entryKey: normalizeString(row?.referenceEntryKey || row?.manualLookupReferenceEntryKey || '', 160),
-        referenceRowCandidates: rowReferenceRows.map((entry = {}) => ({
-          sourceRowId: normalizeString(entry.sourceRowId || entry.rowId || '', 160),
-          manufacturer: normalizeString(entry.manufacturer || stageOne.manufacturer || '', 160),
-          originalTitle: normalizeString(entry.originalTitle || originalTitle, 220),
-          normalizedTitle: normalizeString(entry.normalizedTitle || stageOne.normalizedTitle || originalTitle, 220),
-          manualUrl: normalizeUrl(entry.manualUrl || ''),
-          manualSourceUrl: normalizeUrl(entry.manualSourceUrl || ''),
-          supportUrl: normalizeUrl(entry.supportUrl || ''),
+        referenceRowCandidates: rowReferenceRows.map((entry = {}) => normalizeReferenceRowCandidate(entry, {
+          fallbackManufacturer: stageOne.manufacturer,
+          fallbackOriginalTitle: originalTitle,
+          fallbackNormalizedTitle: stageOne.normalizedTitle || originalTitle,
         })),
         preferredManufacturerDomains: normalizeUrlArray(row?.referenceDomainsUsed || row?.referenceDomains || [], 8).map((value) => {
           try { return new URL(value).hostname.replace(/^www\./, ''); } catch { return ''; }
@@ -1548,38 +1678,43 @@ async function researchAssetTitles({
         likelySlugPatterns: Array.isArray(row?.referenceSlugPatternsUsed) ? row.referenceSlugPatternsUsed.slice(0, 12) : [],
       }
       : null;
-    if (rowHintBundle && (!stageOne.referenceHints || !Array.isArray(stageOne.referenceHints.referenceRowCandidates) || !stageOne.referenceHints.referenceRowCandidates.length)) {
-      stageOne.referenceHints = rowHintBundle;
-      stageOne.referenceHintSource = rowHintBundle.source;
+    const workbookHintBundle = {
+      source: 'workbook_context',
+      referenceRowCandidates: [normalizeReferenceRowCandidate({
+        sourceRowId: normalizeString(row?.assetId || row?.id || '', 160),
+        manufacturer: stageOne.manufacturer || normalizeString(row?.manufacturerHint || '', 120),
+        originalTitle,
+        normalizedTitle: stageOne.normalizedTitle || originalTitle,
+        manualUrl: normalizeUrl(row?.manualUrl || stageOne?.summary?.manualUrl || ''),
+        manualSourceUrl: normalizeUrl(row?.manualSourceUrl || stageOne?.summary?.manualSourceUrl || ''),
+        supportUrl: normalizeUrl(row?.supportUrl || stageOne?.summary?.supportUrl || ''),
+      })],
+      preferredManufacturerDomains: normalizeUrlArray([
+        ...(Array.isArray(row?.referenceDomainsUsed) ? row.referenceDomainsUsed : []),
+        ...(Array.isArray(row?.referenceDomains) ? row.referenceDomains : []),
+      ], 8).map((value) => {
+        try { return new URL(value).hostname.replace(/^www\./, ''); } catch { return ''; }
+      }).filter(Boolean),
+      likelySlugPatterns: Array.isArray(row?.referenceSlugPatternsUsed) ? row.referenceSlugPatternsUsed.slice(0, 12) : [],
+      likelyManualFilenamePatterns: Array.isArray(row?.referenceManualFilenamePatterns) ? row.referenceManualFilenamePatterns.slice(0, 12) : [],
+    };
+    const authoritativeHintBundle = mergeAuthoritativeReferenceHints({
+      bundles: [stageOne.referenceHints, rowHintBundle, workbookHintBundle],
+      originalTitle,
+      normalizedTitle: stageOne.normalizedTitle || originalTitle,
+      manufacturer: stageOne.manufacturer || normalizeString(row?.manufacturerHint || '', 120),
+      logContext,
+    });
+    if (authoritativeHintBundle) {
+      stageOne.referenceHints = authoritativeHintBundle;
+      stageOne.referenceHintSource = authoritativeHintBundle.source || stageOne.referenceHintSource || 'none';
       stageOne.referenceHit = true;
-      stageOne.referenceEntryKey = rowHintBundle.entryKey || stageOne.referenceEntryKey || '';
-      logManualResearchEvent('reference_hint_rehydrated_from_row', {
+      stageOne.referenceEntryKey = authoritativeHintBundle.entryKey || stageOne.referenceEntryKey || '';
+      logManualResearchEvent('reference_hint_authoritative_bundle_hydrated', {
         ...logContext,
         referenceHintSource: stageOne.referenceHintSource,
         referenceEntryKey: stageOne.referenceEntryKey,
-        referenceRowCandidateCount: rowHintBundle.referenceRowCandidates.length,
-      });
-    } else if (rowHintBundle && stageOne.referenceHints) {
-      const mergedRows = [
-        ...(Array.isArray(stageOne.referenceHints.referenceRowCandidates) ? stageOne.referenceHints.referenceRowCandidates : []),
-        ...rowHintBundle.referenceRowCandidates,
-      ];
-      stageOne.referenceHints = {
-        ...stageOne.referenceHints,
-        referenceRowCandidates: mergedRows,
-        preferredManufacturerDomains: Array.from(new Set([
-          ...((stageOne.referenceHints.preferredManufacturerDomains || [])),
-          ...(rowHintBundle.preferredManufacturerDomains || []),
-        ])).slice(0, 10),
-        likelySlugPatterns: Array.from(new Set([
-          ...((stageOne.referenceHints.likelySlugPatterns || [])),
-          ...(rowHintBundle.likelySlugPatterns || []),
-        ])).slice(0, 20),
-      };
-      logManualResearchEvent('reference_hint_row_context_merged', {
-        ...logContext,
-        referenceHintSource: stageOne.referenceHintSource || rowHintBundle.source,
-        mergedReferenceRowCandidateCount: stageOne.referenceHints.referenceRowCandidates.length,
+        referenceRowCandidateCount: authoritativeHintBundle.referenceRowCandidates.length,
       });
     } else if (row?.referenceHintsExpected === true && !stageOne.referenceHints) {
       logManualResearchEvent('reference_hints_available_but_not_hydrated', {
