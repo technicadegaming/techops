@@ -67,7 +67,68 @@ export function createAssetActions(deps) {
     };
   };
   const ACTIVE_ENRICHMENT_STATUSES = new Set(['searching_docs', 'in_progress']);
+  const IN_PROGRESS_ENRICHMENT_STATUSES = new Set(['queued', 'searching_docs', 'in_progress']);
+  const LOWER_STATUS_LABELS = {
+    queued: 'queued',
+    searching_docs: 'searching',
+    in_progress: 'searching',
+    docs_found: 'docs found / attached',
+    verified_manual_found: 'docs found / attached',
+    followup_needed: 'follow-up needed',
+    no_match_yet: 'no match yet',
+    deterministic_search_no_results: 'no match yet',
+    deterministic_search_no_results_found: 'no match yet',
+    deterministic_search_no_results_terminal: 'no match yet',
+    title_page_found_manual_probe_failed: 'follow-up needed',
+    no_candidate_selected: 'follow-up needed',
+    idle: 'not started'
+  };
   const pause = (ms = 0) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+
+  const normalizeStatusKey = (value = '') => `${value || ''}`.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  const buildAssetLookupMaps = (assets = []) => {
+    const byId = new Map();
+    const byStableKey = new Map();
+    (Array.isArray(assets) ? assets : []).forEach((asset) => {
+      if (asset?.id) byId.set(asset.id, asset);
+      const key = `${asset?.name || ''}|${asset?.manufacturer || ''}`.trim().toLowerCase();
+      if (key && !byStableKey.has(key)) byStableKey.set(key, asset);
+    });
+    return { byId, byStableKey };
+  };
+  const findLinkedAssetForRow = (row = {}, maps = buildAssetLookupMaps([])) => {
+    if (row.assetId && maps.byId.has(row.assetId)) return maps.byId.get(row.assetId);
+    const stableKey = `${row?.name || ''}|${row?.manufacturer || row?.manufacturerSuggestion || ''}`.trim().toLowerCase();
+    if (stableKey && maps.byStableKey.has(stableKey)) return maps.byStableKey.get(stableKey);
+    return null;
+  };
+  const mapLowerRowStatus = (asset = {}) => {
+    const rawStatus = normalizeStatusKey(asset?.enrichmentStatus || 'idle') || 'idle';
+    const manualReviewState = normalizeStatusKey(asset?.manualReviewState || '');
+    const reviewState = normalizeStatusKey(asset?.reviewState || '');
+    let statusKey = rawStatus;
+    if (!IN_PROGRESS_ENRICHMENT_STATUSES.has(rawStatus) && rawStatus !== 'idle') statusKey = rawStatus;
+    if (manualReviewState === 'queued_for_review' || reviewState === 'pending_review') statusKey = 'followup_needed';
+    if ((asset?.manualLibraryRef || asset?.manualStoragePath || (Array.isArray(asset?.manualLinks) && asset.manualLinks.length)) && IN_PROGRESS_ENRICHMENT_STATUSES.has(statusKey)) {
+      statusKey = 'docs_found';
+    }
+    return {
+      linkedAssetId: asset?.id || '',
+      enrichmentStatus: asset?.enrichmentStatus || 'idle',
+      intakeStatusBadge: IN_PROGRESS_ENRICHMENT_STATUSES.has(statusKey) ? (statusKey === 'queued' ? 'queued' : 'searching') : statusKey,
+      intakeStatusLabel: LOWER_STATUS_LABELS[statusKey] || statusKey.replace(/_/g, ' '),
+      reviewState: asset?.reviewState || '',
+      manualReviewState: asset?.manualReviewState || ''
+    };
+  };
+  const reconcileIntakeRowsFromAssets = (rows = [], assets = []) => {
+    const maps = buildAssetLookupMaps(assets);
+    return (Array.isArray(rows) ? rows : []).map((row) => {
+      const linked = findLinkedAssetForRow(row, maps);
+      if (!linked) return row;
+      return { ...row, assetId: linked.id, ...mapLowerRowStatus(linked) };
+    });
+  };
 
   const setAssetActionFeedback = (assetId, message, tone = 'info') => {
     state.assetUi = {
@@ -497,6 +558,7 @@ export function createAssetActions(deps) {
         blockDraftAction(context.message, { debugContext: context });
         return;
       }
+      const importedRows = [];
       for (const row of rows) {
         const desiredId = `${row.assetId || ''}`.trim() || normalizeAssetId(row.name || 'asset');
         const finalId = pickUniqueAssetId(desiredId, state.assets);
@@ -555,9 +617,20 @@ export function createAssetActions(deps) {
           reviewReason: row.rowStatus === 'good_match' ? '' : 'bulk_title_review',
           matchNotes: row.matchNotes || ''
         }, 'bulk import assets'), state.user);
+        importedRows.push({ ...row, assetId: finalId, intakeStatusBadge: 'searching', intakeStatusLabel: 'searching' });
       }
       await refreshData();
-      state.assetUi = { ...(state.assetUi || {}), bulkIntakeRows: [], bulkIntakeStatus: 'imported', bulkIntakeText: '' };
+      const reconciledImportedRows = reconcileIntakeRowsFromAssets(importedRows, state.assets || []);
+      state.assetUi = {
+        ...(state.assetUi || {}),
+        bulkIntakeRows: [],
+        bulkIntakeStatus: 'imported',
+        bulkIntakeText: '',
+        recentIntakeRows: reconcileIntakeRowsFromAssets([
+          ...(Array.isArray(state.assetUi?.recentIntakeRows) ? state.assetUi.recentIntakeRows : []),
+          ...reconciledImportedRows
+        ], state.assets || [])
+      };
       render();
     },
     applyOnboardingReviewEdit: async (index, payload) => {

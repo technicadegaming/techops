@@ -1457,6 +1457,56 @@ test('admin CSV import queues truthful enrichment status, starts enrichment, and
   assert.match(state.adminUi.importSummary, /Enrichment started 1, completed 1, failed 0/);
 });
 
+test('admin CSV import reconciles recent intake rows from refreshed asset enrichment state', async () => {
+  const { createAdminActions } = await loadAdminActions();
+  const state = {
+    user: { uid: 'user-1' },
+    adminUi: { importPreview: '' },
+    assetUi: { recentIntakeRows: [] },
+    assets: []
+  };
+  const actions = createAdminActions({
+    state,
+    render: () => {},
+    refreshData: async () => {
+      state.assets = [{
+        id: 'quick-drop',
+        name: 'Quick Drop',
+        manufacturer: 'Bay Tek',
+        enrichmentStatus: 'deterministic-search-no-results',
+        reviewState: 'pending_review'
+      }];
+    },
+    runAction: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    clearEntitySet: async () => 0,
+    saveAppSettings: async () => {},
+    exportBackupJson: async () => ({}),
+    buildAssetsCsv: () => '',
+    buildTasksCsv: () => '',
+    buildAuditCsv: () => '',
+    buildWorkersCsv: () => '',
+    buildMembersCsv: () => '',
+    buildInvitesCsv: () => '',
+    buildLocationsCsv: () => '',
+    buildCompanyBackupBundle: () => ({}),
+    downloadFile: () => {},
+    downloadJson: () => {},
+    normalizeAssetId: (value) => `${value || ''}`.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    enrichAssetDocumentation: async () => {},
+    createCompanyInvite: async () => ({}),
+    revokeInvite: async () => {}
+  });
+
+  await actions.importAssets([{ 'asset name': 'Quick Drop', manufacturer: 'Bay Tek' }]);
+
+  assert.equal(state.assetUi.recentIntakeRows.length, 1);
+  assert.equal(state.assetUi.recentIntakeRows[0].assetId, 'quick-drop');
+  assert.equal(state.assetUi.recentIntakeRows[0].intakeStatusLabel, 'no match yet');
+  assert.equal(state.assetUi.recentIntakeRows[0].reviewState, 'pending_review');
+});
+
 test('admin source no longer exposes a duplicate asset documentation review section', () => {
   const source = loadAdminSource();
   assert.doesNotMatch(source, /asset_review/);
