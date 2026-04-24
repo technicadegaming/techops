@@ -684,6 +684,8 @@ function scoreManualCandidate(candidate = {}, { titleVariants = [], manufacturer
   const normalizedFileName = normalizePhrase(fileName.replace(/\.[a-z0-9]+$/i, ''));
   const sourceType = `${candidate.sourceType || ''}`.toLowerCase();
   const discoverySource = `${candidate.discoverySource || ''}`.trim();
+  const trustedFollowupMaterialized = candidate.extractedFromTrustedTitlePage === true || candidate.trustedHostCandidate === true;
+  const manualPageWithDownload = `${candidate.matchType || ''}`.toLowerCase() === 'manual_page_with_download';
   const isAdapterGuess = discoverySource.startsWith('adapter:');
   const isDiscovered = !isAdapterGuess;
   const isDirectPdf = /\.pdf($|[?#])/.test(lowerUrl);
@@ -727,6 +729,8 @@ function scoreManualCandidate(candidate = {}, { titleVariants = [], manufacturer
   if (hasStrongTitleFamilyMatch) add('title_family_exact_bonus', 20);
   if (hasPartialTitleFamilyMatch) add('title_family_partial_bonus', 10);
   if (fileNameHasManualIntent) add('manual_filename_bonus', 10);
+  if (trustedFollowupMaterialized) add('trusted_followup_materialized_bonus', 22);
+  if (manualPageWithDownload) add('manual_page_with_download_bonus', 18);
   if (fileNameHasPartNumber) add('manual_part_number_bonus', 22);
   if (fileNameHasRevision) add('manual_revision_bonus', 18);
   if (adapterSlugGuessLike) add('adapter_slug_guess_penalty', -26);
@@ -1281,6 +1285,17 @@ function classifyCommerceNavigationUrl(url = '') {
   }
 }
 
+function classifyFollowupCandidateRejection({ url = '', normalizedText = '' } = {}) {
+  const commerceRejection = classifyCommerceNavigationUrl(url);
+  if (commerceRejection) return commerceRejection;
+  const text = `${normalizedText || ''}`.toLowerCase();
+  if (/(cart|checkout|login|register|account|wishlist|my-account)/.test(text)) return 'commerce_navigation_link';
+  if (/(^|[/_-])(parts?|part-category|product-category|category)([/_-]|$)/.test(text)
+    && !/(manual|operator|service manual|download|pdf|document)/.test(text)) return 'parts_taxonomy_without_manual_evidence';
+  if (/(news|blog|privacy|terms|about|contact|careers?)/.test(text)) return 'non_manual_navigation_page';
+  return '';
+}
+
 async function extractManualLinksFromHtmlPage({
   pageUrl,
   pageTitle,
@@ -1349,24 +1364,35 @@ async function extractManualLinksFromHtmlPage({
     const hostTrusted = Array.from(trustedDomains).some((domain) => host === domain || host.endsWith(`.${domain}`));
     if (!hostTrusted) return false;
     const normalized = normalizePhrase(`${row?.title || ''} ${url}`);
-    if (classifyCommerceNavigationUrl(url)) return false;
+    if (classifyFollowupCandidateRejection({ url, normalizedText: normalized })) return false;
     return /\.(pdf|docx?)($|[?#])/i.test(url)
       || /manual|operator|service-manual|download/.test(normalized)
       || /\/(?:manuals?|downloads?|documents?|support)\/[^?#]*$/.test(url.toLowerCase());
   };
   classified.forEach((row) => {
-    const rejection = classifyCommerceNavigationUrl(row.url);
+    const rejection = classifyFollowupCandidateRejection({
+      url: row.url,
+      normalizedText: normalizePhrase(`${row?.title || ''} ${row?.url || ''}`),
+    });
     if (rejection === 'junk_support_page') {
       logEvent('junk_support_page_rejected', { pageUrl, rejectedUrl: row.url });
     } else if (rejection === 'commerce_navigation_link') {
       logEvent('commerce_navigation_link_rejected', { pageUrl, rejectedUrl: row.url });
     } else if (rejection === 'lai_generic_parts_page') {
       logEvent('lai_generic_parts_page_rejected', { pageUrl, rejectedUrl: row.url });
+    } else if (rejection) {
+      logEvent('followup_manual_candidate_rejected', { pageUrl, rejectedUrl: row.url, reason: rejection });
     }
   });
 
   const accepted = classified
-    .filter((row) => (row.classification.includeManual || trustedFollowupManual(row)) && !classifyCommerceNavigationUrl(row.url))
+    .filter((row) => {
+      if (!(row.classification.includeManual || trustedFollowupManual(row))) return false;
+      return !classifyFollowupCandidateRejection({
+        url: row.url,
+        normalizedText: normalizePhrase(`${row?.title || ''} ${row?.url || ''}`),
+      });
+    })
     .slice(0, 8)
     .map((row) => ({
       title: [pageTitle, row.title].filter(Boolean).join(' - '),
@@ -1376,6 +1402,9 @@ async function extractManualLinksFromHtmlPage({
         : row.classification.sourceType,
       discoverySource: 'html_followup',
       extractedFromTrustedTitlePage: trustedFollowupManual(row),
+      materializedFromPageUrl: pageUrl,
+      materializedFromPageTitle: pageTitle,
+      trustedHostCandidate: trustedFollowupManual(row),
       matchType: trustedFollowupManual(row) && !/\.(pdf|docx?)($|[?#])/i.test(row.url)
         ? 'manual_page_with_download'
         : 'exact_manual',
