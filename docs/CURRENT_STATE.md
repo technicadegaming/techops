@@ -66,9 +66,11 @@ This file is an implementation-aware recovery snapshot, not a future roadmap. It
 5. Assets view now includes an operator-facing manual review queue that groups unresolved/review-needed cases and exposes candidate evidence/provenance, rejection context, and review actions (rerun, approve/reject candidate, needs-title-clarification, manual-library flagging).
 6. `benchmark:manual-research` now uses a gold-set fixture split into `healthy_controls`, `anchor_failures`, and `ambiguous_cases`, and reports bucket-level rates (`healthyControlPassRate`, `anchorFailurePassRate`, `ambiguousTruthfulnessRate`) plus existing retrieval/attachment metrics in JSON and a compact CLI summary. It remains a fixture/stub harness and should not be interpreted as live internet success rate.
 7. Manual-library integrity checks now exist and are intentionally conservative: suspicious durable rows are flagged/quarantined for operator review, not auto-deleted or silently rewritten.
+8. Asset/task maintenance scaffolding is intentionally lightweight: `assets.maintenancePlan` metadata and task-card asset context panels improve technician workflow now, but full PM auto-generation/work-order/vendor loops remain future-phase work.
 
 ## Recovery hardening changes made in this snapshot
 
 - Aligned emulator/rules test project defaults to `scootbusiness-d3112` to match active repo/backend configuration and reduce onboarding confusion.
 - Removed `CNAME` from `.gitignore` so custom-domain tracking remains explicit and reviewable in git history.
 - Added manual-library integrity guardrails to block non-durable candidate promotion and a report utility (`functions/scripts/reportManualLibraryIntegrity.js`) to detect/optionally flag suspicious rows.
+- Added first-pass maintenance workflow scaffolding around assets (`maintenancePlan` interval/checklist/job-plan metadata) and surfaced due-state + cross-linked operations context so technicians can move between manuals, troubleshooting history, PM backlog, and related tasks from either asset or task views.

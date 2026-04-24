@@ -43,6 +43,29 @@ export function createAssetActions(deps) {
     .split(/\r?\n|,/)
     .map((entry) => entry.trim())
     .filter(Boolean);
+  const parseMaintenanceChecklist = (value = '') => `${value || ''}`
+    .split(/\r?\n|,/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .slice(0, 20);
+  const parseMaintenanceIntervalDays = (value) => {
+    const parsed = Number.parseInt(`${value ?? ''}`.trim(), 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return Math.min(parsed, 3650);
+  };
+  const parseMaintenancePlanPatch = (payload = {}, current = {}) => {
+    const intervalDays = parseMaintenanceIntervalDays(payload.maintenanceIntervalDays ?? current?.maintenancePlan?.intervalDays);
+    const checklist = parseMaintenanceChecklist(payload.maintenanceChecklist ?? current?.maintenancePlan?.checklist?.join('\n'));
+    const jobPlanSummary = `${payload.maintenanceJobPlan || current?.maintenancePlan?.jobPlanSummary || ''}`.trim();
+    return {
+      intervalDays,
+      checklist,
+      jobPlanSummary,
+      updatedAt: new Date().toISOString(),
+      ...(current?.maintenancePlan?.lastCompletedAt ? { lastCompletedAt: current.maintenancePlan.lastCompletedAt } : {}),
+      ...(current?.maintenancePlan?.nextDueAt ? { nextDueAt: current.maintenancePlan.nextDueAt } : {})
+    };
+  };
   const ACTIVE_ENRICHMENT_STATUSES = new Set(['queued', 'searching_docs', 'in_progress']);
   const pause = (ms = 0) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
 
@@ -197,6 +220,7 @@ export function createAssetActions(deps) {
         const current = state.assets.find((asset) => asset.id === desiredId) || {};
         const finalId = current.id ? desiredId : pickUniqueAssetId(desiredId, state.assets);
         const draft = state.assetDraft || {};
+        const maintenancePlan = parseMaintenancePlanPatch(payload, current);
         const entityPayload = {
           ...current,
           ...payload,
@@ -242,7 +266,8 @@ export function createAssetActions(deps) {
             supportResourcesSuggestion: Array.isArray(draft.supportResources) && draft.supportResources.length ? draft.supportResources : (current.supportResourcesSuggestion || []),
           }),
           supportContactsSuggestion: Array.isArray(draft.supportContacts) && draft.supportContacts.length ? draft.supportContacts : (current.supportContactsSuggestion || []),
-          notes: `${payload.notes || ''}`.trim() || `${current.notes || ''}`.trim() || (draft.notes ? `${draft.notes}`.trim() : '')
+          notes: `${payload.notes || ''}`.trim() || `${current.notes || ''}`.trim() || (draft.notes ? `${draft.notes}`.trim() : ''),
+          maintenancePlan
         };
         await withTimeout(
           upsertEntity('assets', finalId, withRequiredCompanyId(entityPayload, 'save an asset'), state.user),
@@ -935,7 +960,8 @@ export function createAssetActions(deps) {
           ...current,
           manualLinks: `${payload.manualLinks || ''}`.split(',').map((value) => value.trim()).filter(Boolean),
           ...(`${payload.manualLinks || ''}`.trim() ? {} : { manualLibraryRef: '', manualStoragePath: '' })
-        })
+        }),
+        maintenancePlan: parseMaintenancePlanPatch(payload, current)
       }, state.user);
       if (nextId !== currentId) await deleteEntity('assets', currentId, state.user);
       await refreshData();

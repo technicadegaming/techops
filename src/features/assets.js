@@ -457,6 +457,47 @@ function renderHistoryTimeline(history = []) {
     </div>`).join('');
 }
 
+function getMaintenancePlan(asset = {}) {
+  const plan = asset?.maintenancePlan || {};
+  const intervalDays = Number.parseInt(`${plan.intervalDays ?? ''}`.trim(), 10);
+  const checklist = Array.isArray(plan.checklist) ? plan.checklist.filter(Boolean).slice(0, 20) : [];
+  const jobPlanSummary = `${plan.jobPlanSummary || ''}`.trim();
+  return {
+    intervalDays: Number.isFinite(intervalDays) && intervalDays > 0 ? intervalDays : null,
+    checklist,
+    jobPlanSummary,
+    lastCompletedAt: `${plan.lastCompletedAt || ''}`.trim(),
+    nextDueAt: `${plan.nextDueAt || ''}`.trim()
+  };
+}
+
+function toDateMs(value = '') {
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatDateLabel(value = '') {
+  const parsed = toDateMs(value);
+  if (!parsed) return 'n/a';
+  return new Date(parsed).toLocaleDateString([], { dateStyle: 'medium' });
+}
+
+function getMaintenanceDueState(asset = {}) {
+  const plan = getMaintenancePlan(asset);
+  const now = Date.now();
+  const explicitDueAt = toDateMs(plan.nextDueAt);
+  const lastCompletedAt = toDateMs(plan.lastCompletedAt);
+  const derivedDueAt = plan.intervalDays && lastCompletedAt
+    ? (lastCompletedAt + (plan.intervalDays * 24 * 60 * 60 * 1000))
+    : null;
+  const dueAt = explicitDueAt || derivedDueAt;
+  if (!dueAt) return { tone: 'muted', label: 'no schedule', dueAt: null, plan };
+  if (dueAt < now) return { tone: 'warn', label: 'maintenance overdue', dueAt, plan };
+  const daysUntilDue = Math.ceil((dueAt - now) / (24 * 60 * 60 * 1000));
+  if (daysUntilDue <= 7) return { tone: 'warn', label: `maintenance due in ${daysUntilDue}d`, dueAt, plan };
+  return { tone: 'good', label: `maintenance due ${formatDateLabel(new Date(dueAt).toISOString())}`, dueAt, plan };
+}
+
 function renderPreviewPanel(state) {
   const context = resolveAssetDraftContext(state, state.assetDraft || {});
   const preview = state.assetDraft?.preview || null;
@@ -790,6 +831,9 @@ export function renderAssets(el, state, actions) {
           <input name="status" value="${state.assetDraft?.status || ''}" placeholder="Current status" ${editable ? '' : 'disabled'} />
           <input name="ownerWorkers" value="${state.assetDraft?.ownerWorkers || ''}" placeholder="Assigned workers / owners (comma-separated)" ${editable ? '' : 'disabled'} />
           <input name="manualLinks" value="${state.assetDraft?.manualLinksText || ''}" placeholder="Manual links (comma-separated URLs)" ${editable ? '' : 'disabled'} />
+          <input name="maintenanceIntervalDays" value="${state.assetDraft?.maintenanceIntervalDays || ''}" placeholder="PM interval days (e.g., 30)" ${editable ? '' : 'disabled'} />
+          <textarea name="maintenanceChecklist" placeholder="PM checklist (comma or newline separated)" ${editable ? '' : 'disabled'}>${state.assetDraft?.maintenanceChecklist || ''}</textarea>
+          <textarea name="maintenanceJobPlan" placeholder="Job plan summary for repeat maintenance work" ${editable ? '' : 'disabled'}>${state.assetDraft?.maintenanceJobPlan || ''}</textarea>
           <textarea name="historyNote" placeholder="Service note (added to timeline)" ${editable ? '' : 'disabled'}>${state.assetDraft?.historyNote || ''}</textarea>
           <textarea name="imageRefsText" placeholder="Image references: URLs, filenames, shared-drive refs" ${editable ? '' : 'disabled'}>${state.assetDraft?.imageRefsText || ''}</textarea>
           <textarea name="videoRefsText" placeholder="Video references: URLs or filenames" ${editable ? '' : 'disabled'}>${state.assetDraft?.videoRefsText || ''}</textarea>
@@ -844,7 +888,8 @@ export function renderAssets(el, state, actions) {
         const completedTasks = assetTasks.filter((task) => task.assetId === asset.id && task.status === 'completed').slice(0, 5);
         const aiRuns = state.taskAiRuns.filter((run) => run.assetId === asset.id || assetTasks.find((task) => task.id === run.taskId)?.assetId === asset.id).slice(0, 4);
         const docs = state.manuals.filter((manual) => manual.assetId === asset.id);
-        const overduePm = state.pmSchedules.filter((schedule) => schedule.assetId === asset.id && schedule.status !== 'completed');
+        const openPm = state.pmSchedules.filter((schedule) => schedule.assetId === asset.id && schedule.status !== 'completed');
+        const maintenanceDue = getMaintenanceDueState(asset);
         const recurring = repeatPatterns.filter((pattern) => pattern.assetId === asset.id);
         const library = state.troubleshootingLibrary?.filter((row) => row.assetId === asset.id).slice(0, 5) || [];
         const manualState = getAuthoritativeManualState(asset);
@@ -858,16 +903,25 @@ export function renderAssets(el, state, actions) {
             <div class="tiny"><b>Header</b></div>
             <div class="tiny">Location: ${location.label} | Manufacturer: ${asset.manufacturer || 'n/a'} | Serial: ${asset.serialNumber || 'n/a'}</div>
             <div class="tiny">Owners: ${(asset.ownerWorkers || []).join(', ') || 'unassigned'} | Urgency flags: ${openTasks.filter((task) => ['high', 'critical'].includes(task.severity)).length}</div>
-            <div class="tiny">Quick stats: open ${openTasks.length} | overdue PM ${overduePm.length} | repeat failures ${recurring.reduce((sum, row) => sum + row.count, 0)} | recent repairs ${completedTasks.length}</div>
+            <div class="tiny">Quick stats: open ${openTasks.length} | open PM ${openPm.length} | repeat failures ${recurring.reduce((sum, row) => sum + row.count, 0)} | recent repairs ${completedTasks.length}</div>
+            <div class="tiny">Maintenance plan: ${maintenanceDue.label}${maintenanceDue.dueAt ? ` · due ${formatDateLabel(new Date(maintenanceDue.dueAt).toISOString())}` : ''} · checklist ${maintenanceDue.plan.checklist.length}</div>
             <div class="tiny">Manual outcome: ${manualStatus === MANUAL_STATUS.ATTACHED ? 'manual attached' : manualStatus === MANUAL_STATUS.SUPPORT_CONTEXT_ONLY ? 'support context only' : manualStatus === MANUAL_STATUS.QUEUED_FOR_REVIEW ? 'manual queued for review' : 'no public manual found'}</div>
             ${asset.enrichmentTerminalReason ? `<div class="tiny">Terminal reason: ${asset.enrichmentTerminalReason.replace(/_/g, ' ')}</div>` : ''}
             ${asset.manualReviewState ? `<div class="tiny">Manual review state: ${asset.manualReviewState.replace(/_/g, ' ')}</div>` : ''}
-            ${renderAssetScanChips(asset, { docsStatus, openTasks, overduePm })}
+            ${renderAssetScanChips(asset, { docsStatus, openTasks, overduePm: openPm })}
             <div class="action-row">
               ${openTasks[0] ? `<a href="?tab=operations&taskId=${encodeURIComponent(openTasks[0].id)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open active task</a>` : ''}
               ${completedTasks[0] ? `<a href="?tab=operations&taskId=${encodeURIComponent(completedTasks[0].id)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open latest completed task</a>` : ''}
+              ${openPm[0] ? `<a href="?tab=calendar&pmFilter=overdue&location=${encodeURIComponent(scope.selection?.key || '')}">Open PM queue</a>` : ''}
             </div>
           </div>
+
+          <details><summary>Maintenance scaffold</summary>
+            <div class="tiny" style="margin:8px 0;"><b>Interval:</b> ${maintenanceDue.plan.intervalDays ? `every ${maintenanceDue.plan.intervalDays} day${maintenanceDue.plan.intervalDays === 1 ? '' : 's'}` : 'not configured'}</div>
+            <div class="tiny"><b>Last completed:</b> ${formatDateLabel(maintenanceDue.plan.lastCompletedAt)} | <b>Next due:</b> ${maintenanceDue.dueAt ? formatDateLabel(new Date(maintenanceDue.dueAt).toISOString()) : 'n/a'}</div>
+            <div class="tiny" style="margin:6px 0;"><b>Checklist:</b> ${maintenanceDue.plan.checklist.length ? maintenanceDue.plan.checklist.join(' · ') : 'No checklist steps defined yet.'}</div>
+            <div class="tiny"><b>Job plan summary:</b> ${maintenanceDue.plan.jobPlanSummary || 'No repeatable job plan summary yet.'}</div>
+          </details>
 
           <details><summary>Documentation / AI status (${docsStatus})</summary>
             <div class="tiny" style="margin:8px 0;"><b>Manual status:</b> ${deriveAssetManualStatus(asset).replace('_', ' ')}</div>
@@ -898,7 +952,7 @@ export function renderAssets(el, state, actions) {
           ${recurring.length ? `<div class="tiny"><b>Recurring patterns:</b> ${recurring.map((entry) => `${entry.issueCategory || 'uncategorized'} (${entry.count})`).join(', ')}</div>` : ''}
           ${library.length ? `<div class="tiny"><b>Troubleshooting library:</b> ${library.map((row) => row.successfulFix || row.title).join(' | ')}</div>` : ''}
 
-          ${isAdmin(state.permissions) ? `<details><summary>Edit core fields</summary><form data-edit="${asset.id}" class="grid grid-2"><input name="name" value="${asset.name || ''}" placeholder="Asset name" /><input name="id" value="${asset.id || ''}" placeholder="Asset ID" /><input name="locationName" value="${asset.locationName || ''}" list="assetLocationNames" placeholder="Location" /><input name="serialNumber" value="${asset.serialNumber || ''}" placeholder="Serial number" /><input name="manufacturer" value="${asset.manufacturer || ''}" placeholder="Manufacturer" /><input name="status" value="${asset.status || ''}" placeholder="Status" /><input name="manualLinks" value="${manualState.manualLinks.join(', ')}" placeholder="Manual links (comma-separated)" /><textarea name="notes" placeholder="Notes">${asset.notes || ''}</textarea><button>Save core fields</button></form></details>` : ''}
+          ${isAdmin(state.permissions) ? `<details><summary>Edit core fields</summary><form data-edit="${asset.id}" class="grid grid-2"><input name="name" value="${asset.name || ''}" placeholder="Asset name" /><input name="id" value="${asset.id || ''}" placeholder="Asset ID" /><input name="locationName" value="${asset.locationName || ''}" list="assetLocationNames" placeholder="Location" /><input name="serialNumber" value="${asset.serialNumber || ''}" placeholder="Serial number" /><input name="manufacturer" value="${asset.manufacturer || ''}" placeholder="Manufacturer" /><input name="status" value="${asset.status || ''}" placeholder="Status" /><input name="manualLinks" value="${manualState.manualLinks.join(', ')}" placeholder="Manual links (comma-separated)" /><input name="maintenanceIntervalDays" value="${maintenanceDue.plan.intervalDays || ''}" placeholder="PM interval days" /><textarea name="maintenanceChecklist" placeholder="PM checklist (comma or newline separated)">${maintenanceDue.plan.checklist.join('\n')}</textarea><textarea name="maintenanceJobPlan" placeholder="Repeatable job plan summary">${maintenanceDue.plan.jobPlanSummary || ''}</textarea><textarea name="notes" placeholder="Notes">${asset.notes || ''}</textarea><button>Save core fields</button></form></details>` : ''}
           ${canDelete(state.permissions) ? `<button data-del="${asset.id}" class="danger" type="button">Delete</button>` : ''}
         </details>`;
       } catch (error) {
@@ -916,6 +970,9 @@ export function renderAssets(el, state, actions) {
   const statusInput = form?.querySelector('[name="status"]');
   const ownerWorkersInput = form?.querySelector('[name="ownerWorkers"]');
   const manualLinksInput = form?.querySelector('[name="manualLinks"]');
+  const maintenanceIntervalInput = form?.querySelector('[name="maintenanceIntervalDays"]');
+  const maintenanceChecklistInput = form?.querySelector('[name="maintenanceChecklist"]');
+  const maintenanceJobPlanInput = form?.querySelector('[name="maintenanceJobPlan"]');
   const historyNoteInput = form?.querySelector('[name="historyNote"]');
   const imageRefsInput = form?.querySelector('[name="imageRefsText"]');
   const videoRefsInput = form?.querySelector('[name="videoRefsText"]');
@@ -933,6 +990,9 @@ export function renderAssets(el, state, actions) {
       status: `${state.assetDraft?.status || ''}`,
       ownerWorkers: `${state.assetDraft?.ownerWorkers || ''}`,
       manualLinks: `${state.assetDraft?.manualLinksText || ''}`,
+      maintenanceIntervalDays: `${state.assetDraft?.maintenanceIntervalDays || ''}`,
+      maintenanceChecklist: `${state.assetDraft?.maintenanceChecklist || ''}`,
+      maintenanceJobPlan: `${state.assetDraft?.maintenanceJobPlan || ''}`,
       historyNote: `${state.assetDraft?.historyNote || ''}`,
       imageRefsText: `${state.assetDraft?.imageRefsText || ''}`,
       videoRefsText: `${state.assetDraft?.videoRefsText || ''}`,
@@ -966,6 +1026,9 @@ export function renderAssets(el, state, actions) {
   statusInput?.addEventListener('input', () => actions.updateAssetDraftField('status', statusInput?.value || ''));
   ownerWorkersInput?.addEventListener('input', () => actions.updateAssetDraftField('ownerWorkers', ownerWorkersInput?.value || ''));
   manualLinksInput?.addEventListener('input', () => actions.updateAssetDraftField('manualLinksText', manualLinksInput?.value || ''));
+  maintenanceIntervalInput?.addEventListener('input', () => actions.updateAssetDraftField('maintenanceIntervalDays', maintenanceIntervalInput?.value || ''));
+  maintenanceChecklistInput?.addEventListener('input', () => actions.updateAssetDraftField('maintenanceChecklist', maintenanceChecklistInput?.value || ''));
+  maintenanceJobPlanInput?.addEventListener('input', () => actions.updateAssetDraftField('maintenanceJobPlan', maintenanceJobPlanInput?.value || ''));
   historyNoteInput?.addEventListener('input', () => actions.updateAssetDraftField('historyNote', historyNoteInput?.value || ''));
   imageRefsInput?.addEventListener('input', () => actions.updateAssetDraftField('imageRefsText', imageRefsInput?.value || ''));
   videoRefsInput?.addEventListener('input', () => actions.updateAssetDraftField('videoRefsText', videoRefsInput?.value || ''));
