@@ -178,7 +178,7 @@ test('asset helpers surface attached-manual status when durable metadata exists 
     manualStoragePath: 'manual-library/moss/hypershoot/operator.pdf',
     supportResourcesSuggestion: [{ url: 'https://mossdistributing.com/support/hypershoot', label: 'Support' }],
   };
-  assert.equal(deriveAssetManualStatus(hyperShoot), 'attached');
+  assert.equal(deriveAssetManualStatus(hyperShoot), 'manual_attached');
   assert.equal(getEffectiveEnrichmentStatus(hyperShoot), 'verified_manual_found');
 });
 
@@ -418,7 +418,7 @@ test('asset helpers treat terminal manual outcomes as not-running even when lega
     enrichmentHeartbeatAt: new Date(Date.now() - (4 * 60 * 1000)).toISOString(),
   }), 'followup_needed');
   assert.equal(getEffectiveEnrichmentStatus({
-    manualStatus: 'no_manual',
+    manualStatus: 'no_public_manual',
     enrichmentStatus: 'in_progress',
     enrichmentRequestedAt: new Date(Date.now() - (5 * 60 * 1000)).toISOString(),
     enrichmentHeartbeatAt: new Date(Date.now() - (4 * 60 * 1000)).toISOString(),
@@ -1102,10 +1102,10 @@ test('app shell routes stale bootstrap repairs through the callable flow instead
 
 test('asset manual status derivation distinguishes attached vs support-only vs review-needed vs none', async () => {
   const { deriveAssetManualStatus, filterDisplaySupportResources } = await import('./../src/features/assets.js');
-  assert.equal(deriveAssetManualStatus({ manualLibraryRef: 'manual-1', manualLinks: [] }), 'attached');
-  assert.equal(deriveAssetManualStatus({ documentationSuggestions: [{ url: 'https://example.com/manual.pdf', verified: true, exactTitleMatch: true, exactManualMatch: true }] }), 'review_needed');
-  assert.equal(deriveAssetManualStatus({ supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }] }), 'support_only');
-  assert.equal(deriveAssetManualStatus({ documentationSuggestions: [], supportResourcesSuggestion: [] }), 'no_manual');
+  assert.equal(deriveAssetManualStatus({ manualLibraryRef: 'manual-1', manualLinks: [] }), 'manual_attached');
+  assert.equal(deriveAssetManualStatus({ documentationSuggestions: [{ url: 'https://example.com/manual.pdf', verified: true, exactTitleMatch: true, exactManualMatch: true }] }), 'queued_for_review');
+  assert.equal(deriveAssetManualStatus({ supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }] }), 'support_context_only');
+  assert.equal(deriveAssetManualStatus({ documentationSuggestions: [], supportResourcesSuggestion: [] }), 'no_public_manual');
   assert.equal(deriveAssetManualStatus({
     supportResourcesSuggestion: [
       { url: 'https://parts.laigames.com/balls/', label: 'Balls' },
@@ -1113,7 +1113,7 @@ test('asset manual status derivation distinguishes attached vs support-only vs r
       { url: 'https://parts.laigames.com/login.php', label: 'Sign In' },
       { url: 'https://parts.laigames.com/create_account.php', label: 'Register' },
     ],
-  }), 'no_manual');
+  }), 'no_public_manual');
   assert.deepEqual(filterDisplaySupportResources([
     { url: 'https://parts.laigames.com/balls/', label: 'Balls' },
     { url: 'https://parts.laigames.com/cart.php', label: 'Cart' },
@@ -1125,9 +1125,9 @@ test('asset manual status derivation distinguishes attached vs support-only vs r
 
 test('asset helpers render manual outcome states consistently', async () => {
   const { deriveAssetManualStatus, getEffectiveEnrichmentStatus } = await import('./../src/features/assets.js');
-  assert.equal(deriveAssetManualStatus({ manualLibraryRef: 'manual-1', manualLinks: [] }), 'attached');
+  assert.equal(deriveAssetManualStatus({ manualLibraryRef: 'manual-1', manualLinks: [] }), 'manual_attached');
   assert.equal(getEffectiveEnrichmentStatus({ manualStatus: 'attached', enrichmentStatus: 'in_progress', manualLibraryRef: 'manual-1' }), 'verified_manual_found');
-  assert.equal(deriveAssetManualStatus({ manualStatus: 'support_only', supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }] }), 'support_only');
+  assert.equal(deriveAssetManualStatus({ manualStatus: 'support_only', supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }] }), 'support_context_only');
   assert.equal(getEffectiveEnrichmentStatus({
     manualStatus: 'support_only',
     enrichmentStatus: 'in_progress',
@@ -1135,7 +1135,7 @@ test('asset helpers render manual outcome states consistently', async () => {
     enrichmentRequestedAt: new Date(Date.now() - (5 * 60 * 1000)).toISOString(),
     enrichmentHeartbeatAt: new Date(Date.now() - (4 * 60 * 1000)).toISOString(),
   }), 'followup_needed');
-  assert.equal(deriveAssetManualStatus({ documentationSuggestions: [{ url: 'https://example.com/manual.pdf', verified: true, exactTitleMatch: true, exactManualMatch: true }] }), 'review_needed');
+  assert.equal(deriveAssetManualStatus({ documentationSuggestions: [{ url: 'https://example.com/manual.pdf', verified: true, exactTitleMatch: true, exactManualMatch: true }] }), 'queued_for_review');
   assert.equal(getEffectiveEnrichmentStatus({
     manualStatus: 'review_needed',
     enrichmentStatus: 'searching_docs',
@@ -1143,9 +1143,9 @@ test('asset helpers render manual outcome states consistently', async () => {
     enrichmentRequestedAt: new Date(Date.now() - (5 * 60 * 1000)).toISOString(),
     enrichmentHeartbeatAt: new Date(Date.now() - (4 * 60 * 1000)).toISOString(),
   }), 'followup_needed');
-  assert.equal(deriveAssetManualStatus({ manualStatus: 'no_manual', documentationSuggestions: [], supportResourcesSuggestion: [] }), 'no_manual');
+  assert.equal(deriveAssetManualStatus({ manualStatus: 'no_public_manual', documentationSuggestions: [], supportResourcesSuggestion: [] }), 'no_public_manual');
   assert.equal(getEffectiveEnrichmentStatus({
-    manualStatus: 'no_manual',
+    manualStatus: 'no_public_manual',
     enrichmentStatus: 'in_progress',
     enrichmentRequestedAt: new Date(Date.now() - (5 * 60 * 1000)).toISOString(),
     enrichmentHeartbeatAt: new Date(Date.now() - (4 * 60 * 1000)).toISOString(),

@@ -62,27 +62,27 @@ test('detectDeadPageText identifies common not-found/manual-missing responses', 
 test('resolveForcedTerminalStatus maps terminal manual outcomes to canonical enrichment statuses', () => {
   assert.equal(resolveForcedTerminalStatus({
     asset: {
-      manualStatus: 'no_manual',
+      manualStatus: 'no_public_manual',
       enrichmentStatus: 'searching_docs',
     }
   }), 'no_match_yet');
   assert.equal(resolveForcedTerminalStatus({
     asset: {
-      manualStatus: 'support_only',
+      manualStatus: 'support_context_only',
       enrichmentStatus: 'searching_docs',
       supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }],
     }
   }), 'followup_needed');
   assert.equal(resolveForcedTerminalStatus({
     asset: {
-      manualStatus: 'review_needed',
+      manualStatus: 'queued_for_review',
       enrichmentStatus: 'in_progress',
       documentationSuggestions: [{ url: 'https://example.com/manual.pdf', verified: true, exactTitleMatch: true, exactManualMatch: true }],
     }
   }), 'followup_needed');
   assert.equal(resolveForcedTerminalStatus({
     asset: {
-      manualStatus: 'attached',
+      manualStatus: 'manual_attached',
       enrichmentStatus: 'searching_docs',
       manualLibraryRef: 'manual-1',
     }
@@ -1850,7 +1850,7 @@ test('repairLegacyAssetEnrichmentRecord reapplies durable manual attachment fiel
       manufacturer: 'Raw Thrills',
       enrichmentStatus: 'in_progress',
       reviewState: 'followup_needed',
-      manualStatus: 'review_needed',
+      manualStatus: 'queued_for_review',
       manualLibraryRef: '',
       manualStoragePath: '',
       manualUrl: '',
@@ -1887,7 +1887,7 @@ test('repairLegacyAssetEnrichmentRecord reapplies durable manual attachment fiel
   });
 
   assert.equal(repaired.enrichmentStatus, 'docs_found');
-  assert.equal(repaired.manualStatus, 'attached');
+  assert.equal(repaired.manualStatus, 'manual_attached');
   assert.equal(repaired.reviewState, 'pending_review');
   assert.equal(repaired.manualLibraryRef, 'manual-king-kong-vr');
   assert.equal(repaired.manualStoragePath, 'manual-library/raw-thrills/king-kong/king-kong-vr-service-manual.pdf');
@@ -1926,7 +1926,7 @@ test('finalizeSingleAssetEnrichment forces docs_found when authoritative manual 
   assert.equal(result.finalManualFields.manualReady, true);
   assert.equal(result.finalManualMatchSummary.manualReady, true);
   assert.equal(result.finalManualMatchSummary.manualLibraryRef, 'manual-123');
-  assert.equal(result.updatePayload?.manualStatus || 'attached', 'attached');
+  assert.equal(result.updatePayload?.manualStatus || 'manual_attached', 'manual_attached');
 });
 
 test('finalizeSingleAssetEnrichment strips non-durable searching statuses after completion without manual attachment', () => {
@@ -2010,7 +2010,7 @@ test('repairStaleInProgressAsset terminalizes stale searching_docs records with 
   });
 
   assert.equal(repaired.enrichmentStatus, 'followup_needed');
-  assert.equal(repaired.manualStatus, 'support_only');
+  assert.equal(repaired.manualStatus, 'support_context_only');
   assert.equal(repaired.reviewState, 'followup_needed');
 });
 
@@ -2018,7 +2018,7 @@ test('repairLegacyAssetEnrichmentRecord forces support_only terminal manual outc
   const repaired = await repairLegacyAssetEnrichmentRecord({
     asset: {
       enrichmentStatus: 'in_progress',
-      manualStatus: 'support_only',
+      manualStatus: 'support_context_only',
       supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }],
       documentationSuggestions: [],
       enrichmentFollowupQuestion: '',
@@ -2029,7 +2029,7 @@ test('repairLegacyAssetEnrichmentRecord forces support_only terminal manual outc
     verifySuggestions: async () => [],
   });
 
-  assert.equal(repaired.manualStatus, 'support_only');
+  assert.equal(repaired.manualStatus, 'support_context_only');
   assert.equal(repaired.enrichmentStatus, 'followup_needed');
 });
 
@@ -2038,7 +2038,7 @@ test('planAssetDocumentationStateRepair dry-run reports stale terminal-manual as
     id: 'asset-terminal-1',
     companyId: 'company-1',
     enrichmentStatus: 'in_progress',
-    manualStatus: 'support_only',
+    manualStatus: 'support_context_only',
     supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }],
     documentationSuggestions: [],
     enrichmentFollowupQuestion: '',
@@ -2085,7 +2085,7 @@ test('planAssetDocumentationStateRepair leaves already-clean terminal assets unc
       id: 'asset-clean-1',
       companyId: 'company-1',
       enrichmentStatus: 'followup_needed',
-      manualStatus: 'support_only',
+      manualStatus: 'support_context_only',
       supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }],
     },
     userId: 'user-1',
@@ -2102,7 +2102,7 @@ test('planAssetDocumentationStateRepair preserves attached manual data while cle
       id: 'asset-attached-1',
       companyId: 'company-1',
       enrichmentStatus: 'in_progress',
-      manualStatus: 'attached',
+      manualStatus: 'manual_attached',
       manualLibraryRef: 'manual-1',
       manualStoragePath: 'manual-library/company-1/manual.pdf',
       manualLinks: ['manual-library/company-1/manual.pdf'],
@@ -2115,7 +2115,7 @@ test('planAssetDocumentationStateRepair preserves attached manual data while cle
 
   assert.equal(result.patched, true);
   assert.equal(result.repairedEnrichmentStatus, 'docs_found');
-  assert.equal(result.updatePayload.manualStatus, 'attached');
+  assert.equal(result.updatePayload.manualStatus, 'manual_attached');
   assert.equal(result.updatePayload.manualLibraryRef, 'manual-1');
   assert.equal(result.updatePayload.manualStoragePath, 'manual-library/company-1/manual.pdf');
   assert.deepEqual(result.updatePayload.manualLinks, ['manual-library/company-1/manual.pdf']);
@@ -2139,10 +2139,10 @@ test('planSingleAssetManualLiveRepair clears stale in_progress and finalizes sup
     verifySuggestions: async () => []
   });
 
-  assert.equal(result.finalState.manualStatus, 'support_only');
+  assert.equal(result.finalState.manualStatus, 'support_context_only');
   assert.equal(result.finalState.enrichmentStatus, 'followup_needed');
   assert.equal(result.attachedManual, false);
-  assert.equal(result.updatePayload.manualStatus, 'support_only');
+  assert.equal(result.updatePayload.manualStatus, 'support_context_only');
   assert.equal(result.updatePayload.enrichmentStatus, 'followup_needed');
   assert.equal('notes' in result.updatePayload, false);
   assert.equal('serialNumber' in result.updatePayload, false);
@@ -2176,7 +2176,7 @@ test('planSingleAssetManualLiveRepair preserves exact attached manual outcomes a
     verifySuggestions: async (rows) => rows
   });
 
-  assert.equal(result.finalState.manualStatus, 'attached');
+  assert.equal(result.finalState.manualStatus, 'manual_attached');
   assert.equal(result.finalState.enrichmentStatus, 'docs_found');
   assert.equal(result.attachedManual, true);
   assert.equal(result.manualSource, 'manualLibraryRef');
@@ -2205,7 +2205,7 @@ test('planSingleAssetManualLiveRepair finalizes ambiguous manual-only evidence a
     verifySuggestions: async () => []
   });
 
-  assert.equal(result.finalState.manualStatus, 'no_manual');
+  assert.equal(result.finalState.manualStatus, 'no_public_manual');
   assert.equal(result.finalState.enrichmentStatus, 'no_match_yet');
   assert.equal(result.attachedManual, false);
 });
@@ -2251,7 +2251,7 @@ test('forceTerminalWriteIfStillActive writes cleaned terminal state for stale no
   assert.equal(writes.length > 0, true);
   assert.equal(writes[0].enrichmentStatus, 'followup_needed');
   assert.equal(writes[0].reviewState, 'pending_review');
-  assert.equal(writes[0].manualStatus, 'review_needed');
+  assert.equal(writes[0].manualStatus, 'queued_for_review');
 });
 
 test('enrichAssetDocumentation attaches acquired manual-library metadata for single-asset title-page acquisitions', async () => {
@@ -2571,7 +2571,7 @@ test('enrichAssetDocumentation persists durable HYPERshoot manual attachment for
     manufacturer: 'LAI Games',
     companyId: 'company-1',
     enrichmentStatus: 'searching_docs',
-    manualStatus: 'support_only',
+    manualStatus: 'support_context_only',
     manualLibraryRef: '',
     manualStoragePath: '',
     manualUrl: '',
@@ -2645,7 +2645,7 @@ test('enrichAssetDocumentation persists durable HYPERshoot manual attachment for
     assert.equal(result.status, 'docs_found');
     const finalWrite = assetWrites.at(-1).payload;
     assert.equal(finalWrite.enrichmentStatus, 'docs_found');
-    assert.equal(finalWrite.manualStatus, 'attached');
+    assert.equal(finalWrite.manualStatus, 'manual_attached');
     assert.equal(finalWrite.manualLibraryRef, 'manual-hypershoot');
     assert.equal(finalWrite.manualStoragePath, 'manual-library/lai-games/hypershoot/hypershoot-operator-manual.pdf');
     assert.equal(finalWrite.manualUrl, 'manual-library/lai-games/hypershoot/hypershoot-operator-manual.pdf');
@@ -2664,7 +2664,7 @@ test('enrichAssetDocumentation reopens stale King Kong support state and reattac
     manufacturer: 'Raw Thrills',
     companyId: 'company-1',
     enrichmentStatus: 'followup_needed',
-    manualStatus: 'support_only',
+    manualStatus: 'support_context_only',
     manualLibraryRef: '',
     manualStoragePath: '',
     supportUrl: 'https://rawthrills.com/games/king-kong-of-skull-island-vr/'
@@ -2734,7 +2734,7 @@ test('enrichAssetDocumentation reopens stale King Kong support state and reattac
   assert.equal(result.status, 'docs_found');
   assert.equal(assetWrites.at(-1).payload.manualLibraryRef, 'manual-king-kong-vr');
   assert.equal(assetWrites.at(-1).payload.manualStoragePath, 'manual-library/raw-thrills/king-kong/king-kong-vr-service-manual.pdf');
-  assert.equal(assetWrites.at(-1).payload.manualStatus, 'attached');
+  assert.equal(assetWrites.at(-1).payload.manualStatus, 'manual_attached');
   assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'docs_found');
 });
 
@@ -2853,7 +2853,7 @@ test('enrichAssetDocumentation treats audit-log write failures as non-critical a
   assert.equal(result.status, 'docs_found');
   assert.equal(assetWrites[0].payload.enrichmentStatus, 'searching_docs');
   assert.equal(assetWrites.at(-1).payload.enrichmentStatus, 'docs_found');
-  assert.equal(assetWrites.at(-1).payload.manualStatus, 'attached');
+  assert.equal(assetWrites.at(-1).payload.manualStatus, 'manual_attached');
   assert.equal(assetWrites.at(-1).payload.manualLibraryRef, 'manual-fast-furious');
   assert.equal(assetState.enrichmentStatus, 'docs_found');
 });

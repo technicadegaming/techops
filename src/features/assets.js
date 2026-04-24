@@ -63,7 +63,19 @@ const ENRICHMENT_STATUS_STYLES = {
 
 const STALE_ENRICHMENT_MS = 3 * 60 * 1000;
 const ACTIVE_ENRICHMENT_HEARTBEAT_MS = 2 * 60 * 1000;
-const TERMINAL_MANUAL_STATUSES = new Set(['attached', 'support_only', 'review_needed', 'no_manual']);
+const MANUAL_STATUS = Object.freeze({
+  ATTACHED: 'manual_attached',
+  QUEUED_FOR_REVIEW: 'queued_for_review',
+  SUPPORT_CONTEXT_ONLY: 'support_context_only',
+  NO_PUBLIC_MANUAL: 'no_public_manual',
+});
+const LEGACY_MANUAL_STATUS_MAP = {
+  attached: MANUAL_STATUS.ATTACHED,
+  review_needed: MANUAL_STATUS.QUEUED_FOR_REVIEW,
+  support_only: MANUAL_STATUS.SUPPORT_CONTEXT_ONLY,
+  no_manual: MANUAL_STATUS.NO_PUBLIC_MANUAL,
+};
+const TERMINAL_MANUAL_STATUSES = new Set([...Object.values(MANUAL_STATUS), ...Object.keys(LEGACY_MANUAL_STATUS_MAP)]);
 const LEGACY_STATUS_MAP = {
   needs_follow_up: 'followup_needed',
   docs_found: 'verified_manual_found',
@@ -103,11 +115,11 @@ function hasRecentEnrichmentHeartbeat(asset) {
 
 function getEffectiveEnrichmentStatus(asset = {}) {
   const normalizedStatus = normalizeEnrichmentStatus(asset.enrichmentStatus || 'idle');
-  const explicitManualStatus = `${asset?.manualStatus || ''}`.trim();
+  const explicitManualStatus = normalizeAssetManualStatus(asset?.manualStatus || '');
   const manualStatus = deriveAssetManualStatus(asset);
-  if (manualStatus === 'attached') return 'verified_manual_found';
+  if (manualStatus === MANUAL_STATUS.ATTACHED) return 'verified_manual_found';
   if (TERMINAL_MANUAL_STATUSES.has(explicitManualStatus) && ['queued', 'searching_docs', 'in_progress'].includes(normalizedStatus) && !hasRecentEnrichmentHeartbeat(asset)) {
-    return explicitManualStatus === 'no_manual' ? 'no_match_yet' : 'followup_needed';
+    return explicitManualStatus === MANUAL_STATUS.NO_PUBLIC_MANUAL ? 'no_match_yet' : 'followup_needed';
   }
   const supportLinks = filterDisplaySupportResources(Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []);
   const hasFollowupContext = supportLinks.length || `${asset.supportUrl || ''}`.trim() || `${asset.manualSourceUrl || ''}`.trim() || `${asset.enrichmentFollowupQuestion || ''}`.trim();
@@ -146,9 +158,9 @@ function renderAuditChip(label, tone = 'muted') {
 function renderAssetScanChips(asset, { openTasks = [], overduePm = [] } = {}) {
   const chips = [];
   const manualStatus = deriveAssetManualStatus(asset);
-  if (manualStatus === 'attached') chips.push(renderAuditChip('manual attached', 'good'));
-  else if (manualStatus === 'review_needed') chips.push(renderAuditChip('manual review needed', 'warn'));
-  else if (manualStatus === 'support_only') chips.push(renderAuditChip('support only', 'info'));
+  if (manualStatus === MANUAL_STATUS.ATTACHED) chips.push(renderAuditChip('manual attached', 'good'));
+  else if (manualStatus === MANUAL_STATUS.QUEUED_FOR_REVIEW) chips.push(renderAuditChip('manual queued for review', 'warn'));
+  else if (manualStatus === MANUAL_STATUS.SUPPORT_CONTEXT_ONLY) chips.push(renderAuditChip('support context only', 'info'));
   else chips.push(renderAuditChip('no manual', 'warn'));
   if (['needs_review', 'pending_review'].includes((asset.reviewState || ''))) chips.push(renderAuditChip('review needed', 'warn'));
   if (asset.manualReviewState) chips.push(renderAuditChip(`manual ${`${asset.manualReviewState}`.replace(/_/g, ' ')}`, 'info'));
@@ -341,15 +353,20 @@ function renderCandidateBucket(entry = {}) {
   return 'candidate';
 }
 
+function normalizeAssetManualStatus(value = '') {
+  const normalized = `${value || ''}`.trim();
+  return LEGACY_MANUAL_STATUS_MAP[normalized] || normalized;
+}
+
 function deriveAssetManualStatus(asset = {}) {
-  const explicitStatus = `${asset?.manualStatus || ''}`.trim();
-  if (['attached', 'support_only', 'review_needed', 'no_manual'].includes(explicitStatus)) return explicitStatus;
+  const explicitStatus = normalizeAssetManualStatus(asset?.manualStatus || '');
+  if (Object.values(MANUAL_STATUS).includes(explicitStatus)) return explicitStatus;
   const manualState = getAuthoritativeManualState(asset);
-  if (manualState.hasAttachedManual) return 'attached';
-  if (getReviewableManualCandidateCount(asset) > 0) return 'review_needed';
+  if (manualState.hasAttachedManual) return MANUAL_STATUS.ATTACHED;
+  if (getReviewableManualCandidateCount(asset) > 0) return MANUAL_STATUS.QUEUED_FOR_REVIEW;
   const supportOnlyCount = filterDisplaySupportResources(Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []).length;
-  if (supportOnlyCount > 0) return 'support_only';
-  return 'no_manual';
+  if (supportOnlyCount > 0) return MANUAL_STATUS.SUPPORT_CONTEXT_ONLY;
+  return MANUAL_STATUS.NO_PUBLIC_MANUAL;
 }
 
 function getAuthoritativeManualState(asset = {}) {
@@ -528,13 +545,13 @@ function renderEnrichmentDetails(asset, manager, state) {
     </div>
     ${actionFeedback?.message ? renderInlineFeedback(actionFeedback.message, actionFeedback.tone) : ''}
     ${statusHelp ? renderInlineFeedback(statusHelp, status === 'lookup_failed' ? 'error' : 'info') : ''}
-    ${manualStatus === 'attached'
+    ${manualStatus === MANUAL_STATUS.ATTACHED
       ? renderInlineFeedback(`${linkedManuals.length || manualState.manualLibraryRef ? `${linkedManuals.length || 1} manual link${(linkedManuals.length || 1) === 1 ? '' : 's'}` : 'Shared manual'} attached${manualState.manualLibraryRef ? ` (library ref ${manualState.manualLibraryRef})` : ''}.`, 'success')
-      : manualStatus === 'review_needed'
-        ? renderInlineFeedback('A manual candidate was found, but it still needs review before this asset counts as manual attached.', 'info')
-        : manualStatus === 'support_only'
-          ? renderInlineFeedback('Only support/product resources are linked right now. This asset does not have an attached manual yet.', 'info')
-          : renderInlineFeedback('No manual is applied yet. Start with the best verified manual action below.', 'info')}
+      : manualStatus === MANUAL_STATUS.QUEUED_FOR_REVIEW
+        ? renderInlineFeedback('Manual evidence is queued for review before this asset can be treated as attached.', 'info')
+        : manualStatus === MANUAL_STATUS.SUPPORT_CONTEXT_ONLY
+          ? renderInlineFeedback('Only support/product context is linked right now. This asset does not have an attached manual yet.', 'info')
+          : renderInlineFeedback('No public manual evidence is applied yet. Start with the best verified manual action below.', 'info')}
     <div class="tiny"><b>Model suggestion:</b> ${asset.normalizedName || 'n/a'}${asset.enrichmentConfidence ? ` (${Math.round(Number(asset.enrichmentConfidence) * 100)}% confidence)` : ''}</div>
     <div class="tiny" style="margin-bottom:8px;"><b>Inferred manufacturer:</b> ${normalizeManufacturerDisplayName(asset.manufacturerSuggestion || asset.manufacturer || '') || 'n/a'}${manager && asset.manufacturerSuggestion && normalizeManufacturerDisplayName(asset.manufacturerSuggestion) !== normalizeManufacturerDisplayName(asset.manufacturer) ? ` <button data-apply-enrichment="manufacturer" data-asset-id="${asset.id}" type="button">Apply manufacturer</button>` : ''}</div>
 
@@ -790,7 +807,7 @@ export function renderAssets(el, state, actions) {
             <div class="tiny">Location: ${location.label} | Manufacturer: ${asset.manufacturer || 'n/a'} | Serial: ${asset.serialNumber || 'n/a'}</div>
             <div class="tiny">Owners: ${(asset.ownerWorkers || []).join(', ') || 'unassigned'} | Urgency flags: ${openTasks.filter((task) => ['high', 'critical'].includes(task.severity)).length}</div>
             <div class="tiny">Quick stats: open ${openTasks.length} | overdue PM ${overduePm.length} | repeat failures ${recurring.reduce((sum, row) => sum + row.count, 0)} | recent repairs ${completedTasks.length}</div>
-            <div class="tiny">Manual outcome: ${manualStatus === 'attached' ? 'manual attached' : manualStatus === 'support_only' ? 'support only' : manualStatus === 'review_needed' ? 'manual candidate needs review' : 'no manual found'}</div>
+            <div class="tiny">Manual outcome: ${manualStatus === MANUAL_STATUS.ATTACHED ? 'manual attached' : manualStatus === MANUAL_STATUS.SUPPORT_CONTEXT_ONLY ? 'support context only' : manualStatus === MANUAL_STATUS.QUEUED_FOR_REVIEW ? 'manual queued for review' : 'no public manual found'}</div>
             ${asset.enrichmentTerminalReason ? `<div class="tiny">Terminal reason: ${asset.enrichmentTerminalReason.replace(/_/g, ' ')}</div>` : ''}
             ${asset.manualReviewState ? `<div class="tiny">Manual review state: ${asset.manualReviewState.replace(/_/g, ' ')}</div>` : ''}
             ${renderAssetScanChips(asset, { docsStatus, openTasks, overduePm })}

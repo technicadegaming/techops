@@ -82,7 +82,31 @@ const MANUAL_INTENT_TOKENS = ['manual', 'operator', 'service', 'parts', 'install
 
 const TERMINAL_ENRICHMENT_STATUSES = new Set(['docs_found', 'no_match_yet', 'followup_needed', 'timed_out', 'lookup_failed']);
 const NON_DURABLE_ENRICHMENT_STATUSES = new Set(['searching_docs', 'in_progress', 'queued']);
-const TERMINAL_MANUAL_STATUSES = new Set(['attached', 'support_only', 'review_needed', 'no_manual']);
+const MANUAL_STATUS = Object.freeze({
+  ATTACHED: 'manual_attached',
+  QUEUED_FOR_REVIEW: 'queued_for_review',
+  SUPPORT_CONTEXT_ONLY: 'support_context_only',
+  NO_PUBLIC_MANUAL: 'no_public_manual',
+});
+const LEGACY_MANUAL_STATUS_MAP = Object.freeze({
+  attached: MANUAL_STATUS.ATTACHED,
+  review_needed: MANUAL_STATUS.QUEUED_FOR_REVIEW,
+  support_only: MANUAL_STATUS.SUPPORT_CONTEXT_ONLY,
+  no_manual: MANUAL_STATUS.NO_PUBLIC_MANUAL,
+});
+const TERMINAL_MANUAL_STATUSES = new Set([
+  ...Object.values(MANUAL_STATUS),
+  ...Object.keys(LEGACY_MANUAL_STATUS_MAP),
+]);
+
+function normalizeManualStatus(value = '') {
+  const normalized = `${value || ''}`.trim();
+  return LEGACY_MANUAL_STATUS_MAP[normalized] || normalized;
+}
+
+function isManualAttachedStatus(value = '') {
+  return normalizeManualStatus(value) === MANUAL_STATUS.ATTACHED;
+}
 
 function buildAssetEnrichmentLogger({ traceId = '', assetId = '', triggerSource = '' } = {}) {
   return (event, payload = {}) => {
@@ -137,10 +161,10 @@ function hasTimedOutAcquisition(asset = {}, pipelineMeta = null) {
 }
 
 function resolveForcedTerminalStatus({ asset = {}, pipelineMeta = null } = {}) {
-  const manualStatus = `${asset.manualStatus || ''}`.trim();
-  if (hasAuthoritativeManualAttachment(asset, asset) || manualStatus === 'attached') return 'docs_found';
-  if (manualStatus === 'review_needed' || manualStatus === 'support_only') return 'followup_needed';
-  if (manualStatus === 'no_manual') return 'no_match_yet';
+  const manualStatus = normalizeManualStatus(asset.manualStatus || '');
+  if (hasAuthoritativeManualAttachment(asset, asset) || manualStatus === MANUAL_STATUS.ATTACHED) return 'docs_found';
+  if (manualStatus === MANUAL_STATUS.QUEUED_FOR_REVIEW || manualStatus === MANUAL_STATUS.SUPPORT_CONTEXT_ONLY) return 'followup_needed';
+  if (manualStatus === MANUAL_STATUS.NO_PUBLIC_MANUAL) return 'no_match_yet';
   if (hasTimedOutAcquisition(asset, pipelineMeta)) return hasSupportOrSourceContext(asset) ? 'followup_needed' : 'timed_out';
   if (hasSupportOrSourceContext(asset)) return 'followup_needed';
   return 'no_match_yet';
@@ -1369,7 +1393,7 @@ function deriveDocumentationReviewState(asset = {}) {
 function deriveManualReviewState(asset = {}) {
   const explicit = `${asset.manualReviewState || asset.manualMatchSummary?.manualReviewState || ''}`.trim();
   if (explicit) return explicit;
-  if (`${asset.manualStatus || ''}`.trim() === 'attached' || `${asset.enrichmentStatus || ''}`.trim() === 'docs_found') return 'manual_attached';
+  if (isManualAttachedStatus(asset.manualStatus || '') || `${asset.enrichmentStatus || ''}`.trim() === 'docs_found') return 'manual_attached';
   if (`${asset.enrichmentTerminalReason || ''}`.includes('brochure')) return 'brochure_only_evidence';
   if (`${asset.enrichmentTerminalReason || ''}`.includes('hint')) return 'hint_hydration_issue';
   if (`${asset.enrichmentTerminalReason || ''}`.includes('dead') || `${asset.enrichmentTerminalReason || ''}`.includes('404')) return 'dead_seeded_pdf_needs_source_followup';
@@ -1439,7 +1463,7 @@ async function repairLegacyAssetEnrichmentRecord({ asset = {}, verifySuggestions
       ...asset,
       manualLibraryRef: `${asset.manualLibraryRef || durableEvidence.manualLibraryRef || ''}`.trim(),
       manualStoragePath: `${asset.manualStoragePath || durableEvidence.manualStoragePath || ''}`.trim(),
-      manualStatus: `${asset.manualStatus || ''}`.trim() || 'attached',
+      manualStatus: normalizeManualStatus(asset.manualStatus || '') || MANUAL_STATUS.ATTACHED,
       manualUrl: `${asset.manualUrl || durableEvidence.manualStoragePath || ''}`.trim(),
       enrichmentStatus: `${asset.enrichmentStatus || ''}`.trim() === 'docs_found' ? 'docs_found' : (asset.enrichmentStatus || 'docs_found'),
       enrichmentFollowupQuestion: '',
@@ -1477,24 +1501,24 @@ async function repairLegacyAssetEnrichmentRecord({ asset = {}, verifySuggestions
     : cleaned.enrichmentStatus;
   const repairedManualLibraryRef = `${asset.manualLibraryRef || durableEvidence?.manualLibraryRef || cleaned.manualMatchSummary?.manualLibraryRef || ''}`.trim();
   const repairedManualStoragePath = `${asset.manualStoragePath || durableEvidence?.manualStoragePath || cleaned.manualMatchSummary?.manualStoragePath || ''}`.trim();
-  const repairedManualLinks = manualStatus === 'attached'
+  const repairedManualLinks = manualStatus === MANUAL_STATUS.ATTACHED
     ? Array.from(new Set([repairedManualStoragePath].filter(Boolean)))
     : [];
   return {
     ...cleaned,
     manualStatus,
     enrichmentStatus: repairedEnrichmentStatus,
-    manualLibraryRef: manualStatus === 'attached' ? repairedManualLibraryRef : '',
-    manualStoragePath: manualStatus === 'attached' ? repairedManualStoragePath : '',
-    manualUrl: manualStatus === 'attached' ? repairedManualStoragePath : '',
+    manualLibraryRef: manualStatus === MANUAL_STATUS.ATTACHED ? repairedManualLibraryRef : '',
+    manualStoragePath: manualStatus === MANUAL_STATUS.ATTACHED ? repairedManualStoragePath : '',
+    manualUrl: manualStatus === MANUAL_STATUS.ATTACHED ? repairedManualStoragePath : '',
     manualLinks: repairedManualLinks,
     manualMatchSummary: {
       ...(cleaned.manualMatchSummary || {}),
-      manualReady: manualStatus === 'attached',
-      manualLibraryRef: manualStatus === 'attached' ? repairedManualLibraryRef : '',
-      manualStoragePath: manualStatus === 'attached' ? repairedManualStoragePath : '',
-      manualUrl: manualStatus === 'attached' ? repairedManualStoragePath : '',
-      status: manualStatus === 'attached' ? 'docs_found' : repairedEnrichmentStatus,
+      manualReady: manualStatus === MANUAL_STATUS.ATTACHED,
+      manualLibraryRef: manualStatus === MANUAL_STATUS.ATTACHED ? repairedManualLibraryRef : '',
+      manualStoragePath: manualStatus === MANUAL_STATUS.ATTACHED ? repairedManualStoragePath : '',
+      manualUrl: manualStatus === MANUAL_STATUS.ATTACHED ? repairedManualStoragePath : '',
+      status: manualStatus === MANUAL_STATUS.ATTACHED ? 'docs_found' : repairedEnrichmentStatus,
     },
     enrichmentFailedAt: shouldRetainFailureMetadata ? asset.enrichmentFailedAt : null,
     enrichmentErrorCode: shouldRetainFailureMetadata ? asset.enrichmentErrorCode : '',
@@ -1646,20 +1670,20 @@ async function planSingleAssetManualLiveRepair({
 
   const repaired = await repairLegacyAssetEnrichmentRecord({ asset, verifySuggestions });
   const authoritativeAttached = hasAuthoritativeManualAttachment(asset, repaired);
-  let manualStatus = authoritativeAttached ? 'attached' : '';
+  let manualStatus = authoritativeAttached ? MANUAL_STATUS.ATTACHED : '';
   if (!manualStatus) {
     manualStatus = hasMeaningfulSupportContext(repaired.supportResourcesSuggestion || [])
       || `${repaired.enrichmentFollowupQuestion || ''}`.trim()
       || `${asset.supportUrl || ''}`.trim()
       || `${asset.manualSourceUrl || ''}`.trim()
-      ? 'support_only'
-      : 'no_manual';
+      ? MANUAL_STATUS.SUPPORT_CONTEXT_ONLY
+      : MANUAL_STATUS.NO_PUBLIC_MANUAL;
   }
 
-  const enrichmentStatus = manualStatus === 'attached'
+  const enrichmentStatus = manualStatus === MANUAL_STATUS.ATTACHED
     ? 'docs_found'
-    : (manualStatus === 'support_only' ? 'followup_needed' : 'no_match_yet');
-  const reviewState = manualStatus === 'attached'
+    : (manualStatus === MANUAL_STATUS.SUPPORT_CONTEXT_ONLY ? 'followup_needed' : 'no_match_yet');
+  const reviewState = manualStatus === MANUAL_STATUS.ATTACHED
     ? deriveDocumentationReviewState({
       ...asset,
       ...repaired,
@@ -1667,7 +1691,7 @@ async function planSingleAssetManualLiveRepair({
       manualStatus,
       enrichmentFollowupQuestion: '',
     })
-    : (manualStatus === 'support_only' ? FOLLOWUP_RESEARCH_STATE : NO_MATCH_RESEARCH_STATE);
+    : (manualStatus === MANUAL_STATUS.SUPPORT_CONTEXT_ONLY ? FOLLOWUP_RESEARCH_STATE : NO_MATCH_RESEARCH_STATE);
 
   const writePayload = buildAssetDocumentationRepairWrite({
     repaired: {
@@ -1675,7 +1699,7 @@ async function planSingleAssetManualLiveRepair({
       manualStatus,
       enrichmentStatus,
       reviewState,
-      enrichmentFollowupQuestion: manualStatus === 'attached' ? '' : repaired.enrichmentFollowupQuestion,
+      enrichmentFollowupQuestion: manualStatus === MANUAL_STATUS.ATTACHED ? '' : repaired.enrichmentFollowupQuestion,
       enrichmentRecoveredReason: 'single_asset_live_manual_repair',
       enrichmentRecoveredFromRunId: `${asset.enrichmentRunId || ''}`.trim(),
     },
@@ -1683,15 +1707,15 @@ async function planSingleAssetManualLiveRepair({
   });
 
   const changedFields = listChangedRepairFields({ asset, writePayload });
-  result.attachedManual = manualStatus === 'attached';
+  result.attachedManual = manualStatus === MANUAL_STATUS.ATTACHED;
   result.manualSource = result.attachedManual
     ? (exactManualEvidence || `${asset.manualLibraryRef || asset.manualStoragePath || repaired.manualMatchSummary?.manualLibraryRef || repaired.manualMatchSummary?.manualStoragePath || ''}`.trim() || 'existing_asset_linkage')
-    : (manualStatus === 'support_only' ? 'support_context_only' : 'no_manual_evidence');
+    : (manualStatus === MANUAL_STATUS.SUPPORT_CONTEXT_ONLY ? 'support_context_only' : 'no_manual_evidence');
   result.statusChanged = changedFields.length > 0;
   result.notes.push(
     result.attachedManual
       ? 'Asset was finalized with an exact approved or already-attached manual.'
-      : (manualStatus === 'support_only'
+      : (manualStatus === MANUAL_STATUS.SUPPORT_CONTEXT_ONLY
         ? 'No safe exact manual attachment was available; asset was finalized as support_only.'
         : 'No safe exact manual or support evidence was available; asset was finalized as no_manual.')
   );
@@ -1880,12 +1904,12 @@ function hasAuthoritativeManualAttachment(manualFields = {}, existingAsset = {})
 
 
 function deriveManualStatus({ manualFields = {}, cleanedResult = {}, asset = {} } = {}) {
-  if (hasAuthoritativeManualAttachment(manualFields, asset)) return 'attached';
+  if (hasAuthoritativeManualAttachment(manualFields, asset)) return MANUAL_STATUS.ATTACHED;
   const reviewableCount = cleanDocumentationSuggestions(cleanedResult.documentationSuggestions || []).length;
-  if (reviewableCount > 0) return 'review_needed';
+  if (reviewableCount > 0) return MANUAL_STATUS.QUEUED_FOR_REVIEW;
   const supportCount = cleanSupportResourcesSuggestion(cleanedResult.supportResourcesSuggestion || [], cleanedResult.documentationSuggestions || []).length;
-  if (supportCount > 0) return 'support_only';
-  return 'no_manual';
+  if (supportCount > 0) return MANUAL_STATUS.SUPPORT_CONTEXT_ONLY;
+  return MANUAL_STATUS.NO_PUBLIC_MANUAL;
 }
 
 function deriveDurableManualEvidence(asset = {}) {
@@ -2042,7 +2066,7 @@ async function persistDurableManualToAsset({
       enrichmentStatus: 'docs_found',
       enrichmentFollowupQuestion: '',
     }),
-    manualStatus: 'attached',
+    manualStatus: MANUAL_STATUS.ATTACHED,
     manualMatchSummary: {
       ...(finalManualMatchSummary || {}),
       status: 'docs_found',
