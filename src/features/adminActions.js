@@ -23,6 +23,7 @@ export function createAdminActions(deps) {
     downloadFile,
     downloadJson,
     normalizeAssetId,
+    enrichAssetDocumentation,
     createCompanyInvite,
     revokeInvite
   } = deps;
@@ -235,6 +236,10 @@ export function createAdminActions(deps) {
       }
       let imported = 0;
       let skipped = 0;
+      let enrichmentStarted = 0;
+      let enrichmentQueued = 0;
+      let enrichmentCompleted = 0;
+      let enrichmentFailed = 0;
       for (const row of rows) {
         const mapped = buildAssetImportRow({
           name: row['asset name'] || row.name || '',
@@ -312,14 +317,37 @@ export function createAdminActions(deps) {
           enrichmentConfidence: Number(mapped.matchConfidence || 0) || null,
           matchNotes: mapped.matchNotes || '',
           importSource: 'assets_csv_v2',
-          enrichmentStatus: 'searching_docs',
+          enrichmentStatus: 'queued',
           enrichmentRequestedAt: new Date().toISOString()
         }, 'import assets'), state.user);
         imported += 1;
+        enrichmentQueued += 1;
+        if (typeof enrichAssetDocumentation === 'function') {
+          try {
+            enrichmentStarted += 1;
+            await enrichAssetDocumentation(id, { trigger: 'csv_import' });
+            enrichmentCompleted += 1;
+          } catch (error) {
+            enrichmentFailed += 1;
+            console.error('[import_asset_enrichment]', { assetId: id, error });
+          }
+        }
       }
       await upsertEntity('importHistory', `import-assets-${Date.now()}`, { type: 'assets', rowCount: rows.length }, state.user);
-      setImportFeedback({ tone: imported ? 'success' : 'error', summary: `Assets import complete. Imported ${imported}${skipped ? `, skipped ${skipped}` : ''}.`, preview: state.adminUi?.importPreview || '' });
-      setAdminFeedback({ tone: imported ? 'success' : 'error', message: imported ? `Imported ${imported} asset rows.` : 'No asset rows were imported.' });
+      const enrichmentSummary = typeof enrichAssetDocumentation === 'function'
+        ? ` Enrichment started ${enrichmentStarted}, completed ${enrichmentCompleted}, failed ${enrichmentFailed}.`
+        : ` Enrichment queued ${enrichmentQueued}; no inline runner is configured in this session.`;
+      setImportFeedback({
+        tone: imported ? (enrichmentFailed ? 'info' : 'success') : 'error',
+        summary: `Assets import complete. Imported ${imported}${skipped ? `, skipped ${skipped}` : ''}.${enrichmentSummary}`,
+        preview: state.adminUi?.importPreview || ''
+      });
+      setAdminFeedback({
+        tone: imported ? (enrichmentFailed ? 'info' : 'success') : 'error',
+        message: imported
+          ? `Imported ${imported} asset rows.${enrichmentSummary}`
+          : 'No asset rows were imported.'
+      });
       await refreshData();
       render();
     },
