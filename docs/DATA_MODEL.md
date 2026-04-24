@@ -69,7 +69,7 @@ If you are onboarding to the repo, read `README.md` first for the documentation 
 
 ### `assets`
 - **Purpose:** equipment/asset registry.
-- **Key fields (confirmed):** core identity fields such as `id`, `companyId`, `name`, `manufacturer`, `model`, `serialNumber`, `status`, `category`, `locationId`, `locationName`, `ownerWorkers`, `notes`; documentation/enrichment fields such as `manualLinks`, `manualLibraryRef`, `manualStoragePath`, `approvedManualIds`, `documentationSuggestions`, `supportResourcesSuggestion`, `supportContactsSuggestion`, `enrichmentStatus`, `enrichmentTerminalReason`, `enrichmentRequestedAt`, `enrichmentLastRunAt`, `reviewState`, `manualStatus`, `manualReviewState`, plus additive operator triage fields like `manualLibraryFlagged`, `manualLibraryFlaggedAt`, and `manualLibraryFlagReason`; service history fields such as `history` and `attachmentRefs`.
+- **Key fields (confirmed):** core identity fields such as `id`, `companyId`, `name`, `manufacturer`, `model`, `serialNumber`, `status`, `category`, `locationId`, `locationName`, `ownerWorkers`, `notes`; documentation/enrichment fields such as `manualLinks`, `manualLibraryRef`, `manualStoragePath`, `approvedManualIds`, `documentationSuggestions`, `supportResourcesSuggestion`, `supportContactsSuggestion`, `enrichmentStatus`, `enrichmentTerminalReason`, `enrichmentRequestedAt`, `enrichmentLastRunAt`, `reviewState`, `manualStatus`, `manualReviewState`, plus additive operator triage fields like `manualLibraryFlagged`, `manualLibraryFlaggedAt`, and `manualLibraryFlagReason`; maintenance scaffold fields under `maintenancePlan` (`intervalDays`, `checklist[]`, `jobPlanSummary`, optional `lastCompletedAt`, optional `nextDueAt`); service history fields such as `history` and `attachmentRefs`.
 - **Canonical manual truth model (current):**
   - `manualStatus=manual_attached`: durable storage-backed manual truth (`manualLibraryRef` and/or `manualStoragePath`) is present and asset should read as attached/manual-ready.
   - `manualStatus=queued_for_review`: candidate manual evidence exists but cannot be treated as durable attachment yet.
@@ -78,6 +78,7 @@ If you are onboarding to the repo, read `README.md` first for the documentation 
   - Legacy values (`attached`, `review_needed`, `support_only`, `no_manual`) are normalized to the canonical values above during repair/enrichment writes.
 - **Tenant scoping:** company-scoped.
 - **Relationships:** tasks link to assets via `assetId`; manuals and troubleshooting library entries frequently point back to an asset.
+- **Operational linkage note (current):** asset cards and task cards now both expose maintenance-plan scaffold data and cross-links so technicians can move from one asset to manuals, troubleshooting entries, PM context, and related task history without separate lookups.
 - **Rules/roles:** company lead+ can create/update via rules; manager+ is additionally required for some AI/manual tooling in functions.
 - **Notes:** many asset subfields are **inferred** from UI and function usage rather than schema enforcement.
 

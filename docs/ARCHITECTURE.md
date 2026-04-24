@@ -16,6 +16,9 @@ This repository hosts a Firebase-based multi-tenant operations portal for Scoot 
   - `src/app/actions.js`
   - `src/app/renderApp.js`
 - Feature modules: `src/features/*`
+  - Asset maintenance scaffolding now lives directly in asset/task feature surfaces:
+    - `src/features/assets.js` tracks `assets.maintenancePlan` metadata (`intervalDays`, checklist, job-plan summary, last/next due markers) and renders due-state context alongside manual/troubleshooting details.
+    - `src/features/operations.js` renders an “Asset operations context” panel on each task card so technicians can jump from a task into manual status, troubleshooting-library reuse, related task history, and PM backlog for the same asset.
 
 The app is framework-less JavaScript, intentionally preserved to avoid migration risk.
 

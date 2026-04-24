@@ -532,6 +532,34 @@ function renderExceptionBanner(meta) {
   return `<div class="inline-state ${tone} mt">${notes.join(' ')}</div>`;
 }
 
+function renderAssetOpsContext(taskAsset, state, scope) {
+  if (!taskAsset?.id) return '';
+  const assetId = taskAsset.id;
+  const manualCount = (state.manuals || []).filter((manual) => manual.assetId === assetId).length;
+  const troubleshootingRows = (state.troubleshootingLibrary || []).filter((entry) => entry.assetId === assetId);
+  const relatedTasks = (state.tasks || []).filter((entry) => entry.assetId === assetId);
+  const completedTasks = relatedTasks.filter((entry) => entry.status === 'completed');
+  const openPm = (state.pmSchedules || []).filter((entry) => entry.assetId === assetId && entry.status !== 'completed');
+  const manualState = `${taskAsset.manualStatus || ''}`.trim() || (manualCount ? 'manual_attached' : 'no_public_manual');
+  const latestFix = troubleshootingRows[0];
+  const latestCompletedTask = completedTasks[0];
+  return `<div class="item mt">
+    <div class="row space">
+      <b>Asset operations context</b>
+      <a href="?tab=assets&assetId=${encodeURIComponent(assetId)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open full asset record</a>
+    </div>
+    <div class="kpi-line mt">
+      <span>manual status: ${manualState.replaceAll('_', ' ')}</span>
+      <span>manual docs: ${manualCount}</span>
+      <span>troubleshooting entries: ${troubleshootingRows.length}</span>
+      <span>related tasks: ${relatedTasks.length}</span>
+      <span>open PM: ${openPm.length}</span>
+    </div>
+    ${latestFix ? `<div class="tiny mt"><b>Latest saved fix:</b> ${latestFix.resolutionSummary || latestFix.successfulFix || latestFix.issueSummary || 'saved troubleshooting entry'}.</div>` : '<div class="tiny mt">No saved troubleshooting-library fix yet for this asset.</div>'}
+    ${latestCompletedTask ? `<div class="tiny mt"><b>Latest completed task:</b> <a href="?tab=operations&taskId=${encodeURIComponent(latestCompletedTask.id)}&location=${encodeURIComponent(scope.selection?.key || '')}">${latestCompletedTask.title || latestCompletedTask.id}</a></div>` : '<div class="tiny mt">No completed task history yet for this asset.</div>'}
+  </div>`;
+}
+
 
 function renderAiGuidance(aiState, eligibility, state) {
   if (aiState.status === 'missing_company_context') return 'Task is missing company context. Save again from this workspace to attach company scope.';
@@ -1000,6 +1028,7 @@ export function renderOperations(el, state, actions) {
               <div class="mt"><b>Issue:</b> ${task.description || ''}</div>
               ${task.notes ? `<div class="mt"><b>Current summary:</b> ${task.notes}</div>` : ''}
               <div class="mt"><b>Asset link:</b> ${task.assetId ? `<a href="?tab=assets&assetId=${encodeURIComponent(task.assetId)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open asset record</a>` : 'No linked asset'}</div>
+              ${renderAssetOpsContext(taskAsset, state, scope)}
               <div class="mt"><b>Service timeline</b>${renderTimeline(task)}</div>
               <div class="mt"><b>Recorded references</b>${renderAttachments(task.attachments || {}, 'No image, video, or evidence references on this task yet.')}</div>
               ${renderUploadedEvidence(task, state, editable)}

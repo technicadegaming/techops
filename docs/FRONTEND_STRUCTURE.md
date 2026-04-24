@@ -67,6 +67,7 @@ Examples:
 
 Manual reliability workflow note: `assets.js` now surfaces backend-provided `manualReviewState` + `enrichmentTerminalReason` so unresolved manual cases are explainable/reviewable instead of only showing generic `reviewState`.
 Manual review queue helpers now live in `src/features/manualReviewQueue.js` so queue classification/evidence derivation stays feature-local instead of increasing shell complexity.
+Maintenance workflow note: `assets.js` now also carries a first-pass maintenance scaffold (`maintenancePlan` interval/checklist/job-plan metadata + due-state rendering), while `operations.js` task cards include an asset-operations context panel (manual state, troubleshooting reuse, related-task history, PM backlog quick context).
 
 **Practical rule:** if you are adding logic for one area of the product, prefer placing pure helpers, rendering, and area-specific actions in `src/features/*` instead of expanding `src/app.js`.
 
