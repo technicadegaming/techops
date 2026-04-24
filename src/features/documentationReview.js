@@ -1,8 +1,14 @@
 import { sortDocumentationSuggestions } from './documentationSuggestions.js';
 
 export function deriveManualStatus(asset = {}) {
-  const explicitStatus = `${asset?.manualStatus || ''}`.trim();
-  if (['attached', 'support_only', 'review_needed', 'no_manual'].includes(explicitStatus)) return explicitStatus;
+  const explicitStatusRaw = `${asset?.manualStatus || ''}`.trim();
+  const explicitStatus = ({
+    attached: 'manual_attached',
+    review_needed: 'queued_for_review',
+    support_only: 'support_context_only',
+    no_manual: 'no_public_manual',
+  })[explicitStatusRaw] || explicitStatusRaw;
+  if (['manual_attached', 'support_context_only', 'queued_for_review', 'no_public_manual'].includes(explicitStatus)) return explicitStatus;
   const manualLibraryRef = `${asset?.manualLibraryRef || ''}`.trim();
   const manualStoragePath = `${asset?.manualStoragePath || ''}`.trim();
   const manualLinks = Array.isArray(asset?.manualLinks)
@@ -10,12 +16,12 @@ export function deriveManualStatus(asset = {}) {
       .map((entry) => `${entry || ''}`.trim())
       .filter((entry) => entry.startsWith('manual-library/') || entry.startsWith('companies/'))
     : [];
-  if (manualLibraryRef || manualStoragePath || manualLinks.length) return 'attached';
+  if (manualLibraryRef || manualStoragePath || manualLinks.length) return 'manual_attached';
   const reviewableSuggestions = getReviewableDocumentationSuggestions(asset);
-  if (reviewableSuggestions.length) return 'review_needed';
+  if (reviewableSuggestions.length) return 'queued_for_review';
   const supportLinks = (Array.isArray(asset?.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []).filter((entry) => !entry?.deadPage && !entry?.unreachable && `${entry?.url || entry || ''}`.trim());
-  if (supportLinks.length) return 'support_only';
-  return 'no_manual';
+  if (supportLinks.length) return 'support_context_only';
+  return 'no_public_manual';
 }
 
 export function isManualReadyMatch(entry = {}) {

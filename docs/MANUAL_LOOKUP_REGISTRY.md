@@ -94,6 +94,17 @@ The backend callable `researchAssetTitles` is now the authoritative bulk/manual 
 
 The result contract now also includes deterministic review queue metadata in `pipelineMeta.manualReviewState` and (after asset persistence) `assets.manualReviewState` + `assets.enrichmentTerminalReason` so unresolved/manual-rejected cases can be triaged explicitly (`queued_for_review`, `brochure_only_evidence`, `dead_seeded_pdf_needs_source_followup`, `hint_hydration_issue`, etc.).
 
+## Canonical persisted manual lifecycle state
+
+Asset persistence now uses a normalized `manualStatus` lifecycle model so attachment/review/unresolved semantics are consistent across fresh enrichment and repair/backfill paths:
+
+- `manual_attached`: durable manual attached (`manualLibraryRef`/`manualStoragePath` evidence exists).
+- `queued_for_review`: manual-like evidence exists, but attachment is not yet durable/approved.
+- `support_context_only`: only support/source context exists, without durable manual truth.
+- `no_public_manual`: no manual or support context currently available.
+
+Operational review routing still uses `manualReviewState` for detailed queue buckets (`needs_title_clarification`, `brochure_only_evidence`, `hint_hydration_issue`, `dead_seeded_pdf_needs_source_followup`, etc.), while `enrichmentTerminalReason` keeps the low-level reason code.
+
 ## Benchmark harness status
 
 `npm run benchmark:manual-research --prefix functions` now reports both aggregate and per-scenario outputs:

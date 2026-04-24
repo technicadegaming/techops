@@ -204,10 +204,10 @@ function deriveManualStatusFromAsset(asset = {}) {
   const manualLibraryRef = normalizeString(asset?.manualLibraryRef, 180);
   const manualStoragePath = normalizeString(asset?.manualStoragePath, 500);
   const manualLinks = Array.isArray(asset?.manualLinks) ? asset.manualLinks.map((entry) => normalizeString(entry, 500)).filter(Boolean) : [];
-  if (manualLibraryRef || manualStoragePath || manualLinks.length) return 'attached';
+  if (manualLibraryRef || manualStoragePath || manualLinks.length) return 'manual_attached';
   const supportLinks = Array.isArray(asset?.supportResourcesSuggestion) ? asset.supportResourcesSuggestion.filter((entry) => normalizeString(entry?.url || entry, 500)) : [];
-  if (supportLinks.length) return 'support_only';
-  return 'no_manual';
+  if (supportLinks.length) return 'support_context_only';
+  return 'no_public_manual';
 }
 
 async function materializeApprovedManualForAsset({
@@ -506,7 +506,7 @@ async function approveAssetManual({
     manualSourceUrl: library.sourcePageUrl || matchedSuggestion.sourcePageUrl || '',
     docsLastReviewedAt: now,
     enrichmentStatus: 'docs_found',
-    manualStatus: 'attached',
+    manualStatus: 'manual_attached',
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedBy: userId
   };

@@ -147,7 +147,7 @@ test('approved manual metadata preserves type, variant, family, manufacturer, an
   assert.equal(manual.matchConfidence, 0.88);
   assert.match(manual.storagePath, /^manual-library\/raw-thrills\//);
   assert.equal(writes.assets.asset1.manualLibraryRef?.length > 0, true);
-  assert.equal(writes.assets.asset1.manualStatus, 'attached');
+  assert.equal(writes.assets.asset1.manualStatus, 'manual_attached');
   const materializedManual = Object.values(writes.manuals)[0];
   assert.equal(materializedManual.manualLibraryRef, writes.assets.asset1.manualLibraryRef);
   assert.match(materializedManual.storagePath, /^companies\/company-a\/manuals\/asset1\/manual-/);

@@ -129,7 +129,7 @@ export function createAssetActions(deps) {
       const normalized = `${value || ''}`.trim().toLowerCase();
       return normalized.startsWith('manual-library/') || normalized.startsWith('companies/');
     });
-    const hasAttachedManual = manualStatus === 'attached' || !!(manualLibraryRef || manualStoragePath || hasStoredManualLink);
+    const hasAttachedManual = manualStatus === 'manual_attached' || manualStatus === 'attached' || !!(manualLibraryRef || manualStoragePath || hasStoredManualLink);
 
     if (hasAttachedManual || status === 'docs_found' || status === 'verified_manual_found') {
       return {
