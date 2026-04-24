@@ -55,6 +55,11 @@ async function loadAssetDraftContextHelpers() {
   return import('../src/features/assetDraftContext.js');
 }
 
+
+async function loadOnboardingView() {
+  return import('../src/onboarding.js');
+}
+
 async function loadAssetActions() {
   return import('../src/features/assetActions.js');
 }
@@ -99,6 +104,11 @@ function createSectionElement(id) {
     }
   };
 }
+
+test('onboarding view module loads without syntax errors', async () => {
+  const onboarding = await loadOnboardingView();
+  assert.equal(typeof onboarding.renderOnboarding, 'function');
+});
 
 
 test('asset helpers prefer authoritative manual attachment fields over legacy searching state', async () => {
