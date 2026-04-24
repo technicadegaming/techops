@@ -1352,6 +1352,19 @@ test('researchAssetTitles logs explicit durable acquisition failure reasons for 
     assert.equal(result.results[0].manualReady, false);
     assert.equal(result.results[0].status, 'followup_needed');
     assert.equal(result.results[0].manualLibraryRef, '');
+    assert.equal(
+      [
+        'selected_manual_fetch_failed',
+        'selected_manual_validation_failed',
+        'selected_manual_acquisition_failed',
+        'selected_manual_selected_but_no_durable_fields_written',
+      ].includes(result.results[0].pipelineMeta.terminalStateReason),
+      true,
+    );
+    assert.equal(
+      ['fetch_failed', 'validation_failed', 'acquisition_failed'].includes(result.results[0].pipelineMeta.postSelectionState),
+      true,
+    );
     const markers = logs.map((entry) => entry[0]);
     assert.equal(markers.includes('manualResearch:durable_acquisition_attempted'), true);
     assert.equal(markers.includes('manualResearch:durable_acquisition_failed_reason'), true);

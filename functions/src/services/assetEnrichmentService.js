@@ -1393,7 +1393,13 @@ function deriveDocumentationReviewState(asset = {}) {
 function deriveManualReviewState(asset = {}) {
   const explicit = `${asset.manualReviewState || asset.manualMatchSummary?.manualReviewState || ''}`.trim();
   if (explicit) return explicit;
-  if (isManualAttachedStatus(asset.manualStatus || '') || `${asset.enrichmentStatus || ''}`.trim() === 'docs_found') return 'manual_attached';
+  const hasDurableFields = !!(
+    `${asset.manualLibraryRef || asset.manualMatchSummary?.manualLibraryRef || ''}`.trim()
+    && `${asset.manualStoragePath || asset.manualMatchSummary?.manualStoragePath || ''}`.trim()
+    && `${asset.manualUrl || asset.manualMatchSummary?.manualUrl || ''}`.trim()
+  );
+  if ((isManualAttachedStatus(asset.manualStatus || '') || `${asset.enrichmentStatus || ''}`.trim() === 'docs_found') && hasDurableFields) return 'manual_attached';
+  if ((isManualAttachedStatus(asset.manualStatus || '') || `${asset.enrichmentStatus || ''}`.trim() === 'docs_found') && !hasDurableFields) return 'selected_manual_terminalized_inconsistently';
   if (`${asset.enrichmentTerminalReason || ''}`.includes('brochure')) return 'brochure_only_evidence';
   if (`${asset.enrichmentTerminalReason || ''}`.includes('hint')) return 'hint_hydration_issue';
   if (`${asset.enrichmentTerminalReason || ''}`.includes('dead') || `${asset.enrichmentTerminalReason || ''}`.includes('404')) return 'dead_seeded_pdf_needs_source_followup';

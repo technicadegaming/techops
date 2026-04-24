@@ -14,7 +14,7 @@
         "manualReady": true,
         "reviewRequired": false,
         "allowBrochureWinner": false,
-        "mustBeDurable": true,
+        "requireDurableOrExplicitPostSelectionFailure": true,
         "mustHaveUsableCandidate": true
       }
     },
@@ -31,7 +31,7 @@
         "manualReady": true,
         "reviewRequired": false,
         "allowBrochureWinner": false,
-        "mustBeDurable": true,
+        "requireDurableOrExplicitPostSelectionFailure": true,
         "mustHaveUsableCandidate": true
       }
     },
@@ -45,8 +45,17 @@
         "source": "manual_lookup_registry_reference_hints"
       },
       "expected": {
-        "manualReady": true,
-        "mustIncludeTerminalReasons": ["terminalized_after_continuation_exhaustion", "docs_found_after_durable_storage"],
+        "mustIncludeTerminalReasons": [
+          "docs_found_after_durable_storage",
+          "selected_manual_fetch_failed",
+          "selected_manual_validation_failed",
+          "selected_manual_acquisition_failed",
+          "selected_manual_storage_write_failed",
+          "selected_manual_asset_persist_failed",
+          "selected_manual_selected_but_no_durable_fields_written",
+          "selected_manual_terminalized_inconsistently"
+        ],
+        "requireDurableOrExplicitPostSelectionFailure": true,
         "mustHaveContinuationCandidates": true,
         "mustHaveUsableCandidate": true
       }
