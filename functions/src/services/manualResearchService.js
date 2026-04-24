@@ -475,7 +475,9 @@ function deriveDetailedTerminalReason({
   deterministicCandidateState = null,
   deadCandidateUrls = new Set(),
   csvDirectHintState = null,
+  postSelectionFailureReason = '',
 } = {}) {
+  if (postSelectionFailureReason) return postSelectionFailureReason;
   if (summary.manualReady === true) {
     if (csvDirectHintState?.promoted === true) return 'csv_direct_manual_hint_promoted_to_attachment';
     return 'docs_found_after_durable_storage';
@@ -520,13 +522,65 @@ function deriveDetailedTerminalReason({
   return `no_durable_manual:${acquisitionState || acquisitionSkippedReason || 'unknown'}`;
 }
 
+function resolvePostSelectionFailureReason({
+  acquisitionState = '',
+  acquisitionError = '',
+  acquisitionFailedCandidates = [],
+  selectedCandidatePresent = false,
+  durableStorageCompleted = false,
+  summary = {},
+} = {}) {
+  if (durableStorageCompleted && summary?.manualReady === true) return '';
+  if (!selectedCandidatePresent) return '';
+  const failedCandidates = Array.isArray(acquisitionFailedCandidates) ? acquisitionFailedCandidates : [];
+  const failedReasonText = failedCandidates
+    .map((entry) => normalizeString(entry?.reason || '', 220).toLowerCase())
+    .filter(Boolean)
+    .join(' ');
+  const failedStatuses = new Set(failedCandidates.map((entry) => `${entry?.status || ''}`.trim().toLowerCase()).filter(Boolean));
+  if (`${acquisitionState || ''}`.trim() === 'timed_out') return 'selected_manual_fetch_failed';
+  if (`${acquisitionState || ''}`.trim() === 'failed' && acquisitionError) return 'selected_manual_fetch_failed';
+  if (failedStatuses.has('dead_link') || failedStatuses.has('download_failed')) return 'selected_manual_fetch_failed';
+  if (failedStatuses.has('unusable') && failedReasonText.includes('not_a_manual_document')) return 'selected_manual_validation_failed';
+  if (failedStatuses.has('ineligible_non_durable_candidate')) return 'selected_manual_validation_failed';
+  if (failedReasonText.includes('storage') || failedReasonText.includes('firestore') || failedReasonText.includes('permission')) {
+    return 'selected_manual_storage_write_failed';
+  }
+  if (`${acquisitionState || ''}`.trim() === 'no_manual') return 'selected_manual_acquisition_failed';
+  return 'selected_manual_selected_but_no_durable_fields_written';
+}
+
+function derivePostSelectionStage({
+  selectedCandidatePresent = false,
+  acquisitionAttempted = false,
+  acquisitionState = '',
+  durableStorageCompleted = false,
+  summary = {},
+  postSelectionFailureReason = '',
+} = {}) {
+  if (!selectedCandidatePresent) return 'not_started';
+  if (summary?.manualReady === true && durableStorageCompleted === true) return 'asset_persist_succeeded';
+  if (postSelectionFailureReason === 'selected_manual_asset_persist_failed') return 'asset_persist_failed';
+  if (!acquisitionAttempted) return 'candidate_selected';
+  if (`${acquisitionState || ''}`.trim() === 'started') return 'acquisition_started';
+  if (`${acquisitionState || ''}`.trim() === 'timed_out' || `${acquisitionState || ''}`.trim() === 'failed') return 'fetch_failed';
+  if (`${acquisitionState || ''}`.trim() === 'no_manual') return 'acquisition_failed';
+  return 'validation_failed';
+}
+
 function deriveManualReviewState({
   summary = {},
   terminalStateReason = '',
   stageOne = {},
   documentationSuggestions = [],
 } = {}) {
-  if (summary?.manualReady === true && `${summary?.status || ''}`.trim() === 'docs_found') return 'manual_attached';
+  const hasDurableManualFields = !!(
+    `${summary?.manualLibraryRef || ''}`.trim()
+    && `${summary?.manualStoragePath || ''}`.trim()
+    && `${summary?.manualUrl || ''}`.trim()
+  );
+  if (summary?.manualReady === true && `${summary?.status || ''}`.trim() === 'docs_found' && hasDurableManualFields) return 'manual_attached';
+  if (summary?.manualReady === true && !hasDurableManualFields) return 'selected_manual_terminalized_inconsistently';
   const reason = normalizeString(terminalStateReason, 140).toLowerCase();
   if (reason.includes('brochure')) return 'brochure_only_evidence';
   if (reason.includes('hint') || reason.includes('reference_row_not_matched')) return 'hint_hydration_issue';
@@ -2498,6 +2552,9 @@ async function researchAssetTitles({
     let durableStorageCompleted = false;
     let openedFromStoragePreferred = false;
     let acquisitionError = '';
+    let acquisitionFailedCandidates = [];
+    let postSelectionFailureReason = '';
+    let postSelectionState = documentationSuggestions.length ? 'candidate_selected' : 'not_started';
     let lastFailureState = '';
     let lastFailureError = '';
     documentationSuggestions = documentationSuggestions.filter((candidate) => {
@@ -2595,6 +2652,17 @@ async function researchAssetTitles({
         })).slice(0, 40),
       },
     });
+    if (postSelectionState === 'candidate_selected') {
+      recordTraceStage({
+        trace: pipelineTrace,
+        stage: 'candidate_selected',
+        logContext,
+        payload: {
+          selectedCandidateUrl: documentationSuggestions[firstEligibleCandidateIndex]?.url || documentationSuggestions[0]?.url || '',
+          selectedCandidateTier: selectedCandidateEligibility.tier || '',
+        },
+      });
+    }
     if (summary.matchType === 'exact_manual' || summary.manualReady === true) {
       logManualResearchEvent('exact_manual_detected', {
         ...logContext,
@@ -2649,6 +2717,7 @@ async function researchAssetTitles({
       };
       acquisitionState = 'reused_existing_durable_storage';
       durableStorageCompleted = true;
+      postSelectionState = 'asset_persist_succeeded';
       openedFromStoragePreferred = true;
       logManualResearchEvent('durable_storage_completed', {
         ...logContext,
@@ -2659,6 +2728,16 @@ async function researchAssetTitles({
     } else if (acquisitionEligible) {
       acquisitionState = 'started';
       acquisitionAttempted = true;
+      postSelectionState = 'fetch_started';
+      recordTraceStage({
+        trace: pipelineTrace,
+        stage: 'fetch_started',
+        logContext,
+        payload: {
+          selectedCandidateUrl: documentationSuggestions[firstEligibleCandidateIndex]?.url || '',
+          candidateCount: documentationSuggestions.length,
+        },
+      });
       logManualResearchEvent('durable_acquisition_attempted', {
         ...logContext,
         candidateCount: documentationSuggestions.filter((_, index) => candidateEligibilityList[index]?.eligible).length,
@@ -2802,6 +2881,7 @@ async function researchAssetTitles({
         ).catch((error) => {
           acquisitionError = normalizeErrorMessage(error);
           acquisitionState = `${error?.code || ''}` === 'deadline-exceeded' ? 'timed_out' : 'failed';
+          postSelectionState = 'fetch_failed';
           lastFailureState = acquisitionState;
           lastFailureError = acquisitionError;
           logManualResearchEvent(acquisitionState === 'timed_out' ? 'manual_acquisition_timeout' : 'manual_acquisition_failed', {
@@ -2828,11 +2908,13 @@ async function researchAssetTitles({
           acquiredCandidateIndex = index;
           acquisitionState = 'succeeded';
           durableStorageCompleted = true;
+          postSelectionState = 'asset_persist_succeeded';
           break;
         }
         const failedCandidates = Array.isArray(manualLibraryAcquisition?.failedCandidates)
           ? manualLibraryAcquisition.failedCandidates
           : [];
+        acquisitionFailedCandidates = acquisitionFailedCandidates.concat(failedCandidates);
         failedCandidates.forEach((failed) => {
           const failedUrlKey = normalizeUrlKey(failed?.url || '');
           const httpStatus = Number(failed?.httpStatus || 0) || 0;
@@ -2898,10 +2980,21 @@ async function researchAssetTitles({
           });
         }
         if (!lastFailureState) acquisitionState = 'no_manual';
+        if (failedCandidates.length) {
+          const hasFetchFailure = failedCandidates.some((entry) => ['dead_link', 'download_failed'].includes(`${entry?.status || ''}`));
+          postSelectionState = hasFetchFailure ? 'fetch_failed' : 'validation_failed';
+        } else if (!postSelectionState || postSelectionState === 'fetch_started') {
+          postSelectionState = 'acquisition_failed';
+        }
       }
       if (!manualLibraryAcquisition?.manualReady && lastFailureState) {
         acquisitionState = lastFailureState;
         acquisitionError = lastFailureError || acquisitionError;
+        if (postSelectionState === 'fetch_started') {
+          postSelectionState = acquisitionState === 'timed_out' || acquisitionState === 'failed'
+            ? 'fetch_failed'
+            : 'acquisition_failed';
+        }
       }
       if (!manualLibraryAcquisition?.manualReady) {
         if (manualGradeCandidateCount > 0) {
@@ -2971,6 +3064,7 @@ async function researchAssetTitles({
         manualStoragePath: library.storagePath || '',
         manualVariant: library.variant || '',
       };
+      postSelectionState = 'asset_persist_started';
       logManualResearchEvent('durable_storage_completed', {
         ...logContext,
         manualLibraryRef: library.id,
@@ -2984,12 +3078,21 @@ async function researchAssetTitles({
         manualStoragePath: library.storagePath || '',
         cachedManual: true,
       } : entry).map(withSuggestionBucket);
+      postSelectionState = 'asset_persist_succeeded';
     } else if (!durableStorageCompleted) {
+      postSelectionFailureReason = resolvePostSelectionFailureReason({
+        acquisitionState,
+        acquisitionError,
+        acquisitionFailedCandidates,
+        selectedCandidatePresent: documentationSuggestions.length > 0,
+        durableStorageCompleted,
+        summary,
+      });
       logManualResearchEvent('exact_manual_terminalized_without_attachment', {
         ...logContext,
         matchType: summary.matchType || '',
         manualReady: summary.manualReady === true,
-        reason: acquisitionError || acquisitionSkippedReason || acquisitionState || 'no_durable_storage',
+        reason: postSelectionFailureReason || acquisitionError || acquisitionSkippedReason || acquisitionState || 'no_durable_storage',
       });
       summary = {
         ...summary,
@@ -2997,7 +3100,17 @@ async function researchAssetTitles({
         status: (summary.supportUrl || supportResourcesSuggestion.length || acquisitionError) ? 'followup_needed' : 'no_match_yet',
         reviewRequired: true,
         manualUrl: '',
+        manualLibraryRef: '',
+        manualStoragePath: '',
       };
+      postSelectionState = derivePostSelectionStage({
+        selectedCandidatePresent: documentationSuggestions.length > 0,
+        acquisitionAttempted,
+        acquisitionState,
+        durableStorageCompleted,
+        summary,
+        postSelectionFailureReason,
+      });
     }
     const continuationCandidatesUsed = acquiredCandidateIndex >= 0
       ? documentationSuggestions[acquiredCandidateIndex]?.continuationCandidate === true
@@ -3119,6 +3232,8 @@ async function researchAssetTitles({
       manualLibraryRef: summary.manualLibraryRef || '',
       manualStoragePath: summary.manualStoragePath || '',
       acquisitionError,
+      postSelectionState,
+      postSelectionFailureReason,
     });
     const fallbackTerminalReason = classifyFallbackTerminalReason({
       stage2ErrorCode,
@@ -3126,6 +3241,15 @@ async function researchAssetTitles({
       documentationCount: documentationSuggestions.length,
       supportCount: supportResourcesSuggestion.length,
     });
+    const hasDurableManualFields = !!(
+      `${summary.manualLibraryRef || ''}`.trim()
+      && `${summary.manualStoragePath || ''}`.trim()
+      && `${summary.manualUrl || ''}`.trim()
+    );
+    if (summary.manualReady === true && !hasDurableManualFields && !postSelectionFailureReason) {
+      postSelectionFailureReason = 'selected_manual_terminalized_inconsistently';
+      postSelectionState = 'asset_persist_failed';
+    }
     const terminalStateReason = fallbackTerminalReason
       || deriveDetailedTerminalReason({
         summary,
@@ -3143,6 +3267,7 @@ async function researchAssetTitles({
         deterministicCandidateState: preContinuationDeterministicState,
         deadCandidateUrls,
         csvDirectHintState,
+        postSelectionFailureReason,
       });
     const manualReviewState = deriveManualReviewState({
       summary,
@@ -3178,6 +3303,31 @@ async function researchAssetTitles({
     });
     recordTraceStage({
       trace: pipelineTrace,
+      stage: 'post_selection_state_machine',
+      logContext,
+      payload: {
+        selectedCandidate: documentationSuggestions[0]?.url || '',
+        postSelectionState,
+        postSelectionFailureReason,
+        stages: {
+          candidate_selected: documentationSuggestions.length > 0,
+          fetch_started: acquisitionAttempted === true,
+          fetch_succeeded: acquisitionAttempted === true && !['failed', 'timed_out'].includes(`${acquisitionState || ''}`),
+          fetch_failed: ['failed', 'timed_out'].includes(`${acquisitionState || ''}`) || postSelectionFailureReason === 'selected_manual_fetch_failed',
+          validation_succeeded: (acquisitionState === 'succeeded' || durableStorageCompleted === true)
+            && postSelectionFailureReason !== 'selected_manual_validation_failed',
+          validation_failed: postSelectionFailureReason === 'selected_manual_validation_failed',
+          acquisition_started: acquisitionAttempted === true,
+          acquisition_succeeded: durableStorageCompleted === true,
+          acquisition_failed: acquisitionAttempted === true && durableStorageCompleted !== true,
+          asset_persist_started: acquisitionState === 'succeeded' || durableStorageCompleted === true,
+          asset_persist_succeeded: summary.manualReady === true && hasDurableManualFields,
+          asset_persist_failed: summary.manualReady !== true && !!postSelectionFailureReason,
+        },
+      },
+    });
+    recordTraceStage({
+      trace: pipelineTrace,
       stage: 'terminal_reason_status_mapping',
       logContext,
       payload: {
@@ -3185,6 +3335,8 @@ async function researchAssetTitles({
         finalStatus: summary.status || '',
         manualReady: summary.manualReady === true,
         acquisitionState,
+        postSelectionState,
+        postSelectionFailureReason,
       },
     });
     if (stage2ErrorCode === 'openai-config-missing' || stage2ErrorCode === 'openai-auth-invalid') {
@@ -3268,6 +3420,8 @@ async function researchAssetTitles({
       manualStoragePath: summary.manualStoragePath || '',
       acquisitionState,
       terminalStateReason,
+      postSelectionState,
+      postSelectionFailureReason,
       elapsedMs: Date.now() - startedAt,
     });
     logManualResearchEvent('run_summary', {
@@ -3296,6 +3450,8 @@ async function researchAssetTitles({
       deadCandidatesSuppressedCount: deadCandidateUrls.size,
       acquisitionState,
       terminalReason: terminalStateReason,
+      postSelectionState,
+      postSelectionFailureReason,
       candidateWasDirectPdf,
       acquisitionEligible,
       acquisitionAttempted,
@@ -3340,6 +3496,8 @@ async function researchAssetTitles({
         storageMetadataPresentButExternalUsed: durableStorageCompleted === true && openedFromStoragePreferred !== true,
         acquisitionState,
         acquisitionError,
+        postSelectionState,
+        postSelectionFailureReason,
         manualLibraryRef: summary.manualLibraryRef || '',
         manualStoragePath: summary.manualStoragePath || '',
         searchEvidence: Array.isArray(stageOne.searchEvidence) ? stageOne.searchEvidence : [],

@@ -236,6 +236,12 @@ function evaluateScenario({ scenario, entry }) {
     durableAttachment: expected.mustBeDurable === true
       ? Boolean(`${entry?.manualStoragePath || ''}`.trim()) || Boolean(`${entry?.manualLibraryRef || ''}`.trim())
       : true,
+    durableOrExplicitPostSelectionFailure: expected.requireDurableOrExplicitPostSelectionFailure === true
+      ? (
+        (Boolean(`${entry?.manualStoragePath || ''}`.trim()) && Boolean(`${entry?.manualLibraryRef || ''}`.trim()))
+        || /^selected_manual_/.test(terminalReason)
+      )
+      : true,
     brochureWinner: expected.allowBrochureWinner === false ? !brochureWinner : true,
     anyUsableCandidate: expected.mustHaveUsableCandidate === true ? hasUsableCandidate : true,
   };

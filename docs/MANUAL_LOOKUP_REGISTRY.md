@@ -109,6 +109,17 @@ Asset persistence now uses a normalized `manualStatus` lifecycle model so attach
 
 Operational review routing still uses `manualReviewState` for detailed queue buckets (`needs_title_clarification`, `brochure_only_evidence`, `hint_hydration_issue`, `dead_seeded_pdf_needs_source_followup`, etc.), while `enrichmentTerminalReason` keeps the low-level reason code.
 
+Post-selection failures now use explicit terminal reasons tied to the exact stage that failed after a candidate was selected:
+- `selected_manual_fetch_failed`
+- `selected_manual_validation_failed`
+- `selected_manual_acquisition_failed`
+- `selected_manual_storage_write_failed`
+- `selected_manual_asset_persist_failed`
+- `selected_manual_selected_but_no_durable_fields_written`
+- `selected_manual_terminalized_inconsistently`
+
+These reasons are emitted in `pipelineMeta.terminalStateReason` and paired with `pipelineMeta.postSelectionState` / `pipelineTrace.stages.post_selection_state_machine` so triage can distinguish retrieval misses from post-selection durability failures.
+
 ## Benchmark harness status
 
 `npm run benchmark:manual-research --prefix functions` now reports both aggregate and per-scenario outputs:
