@@ -66,6 +66,16 @@ export function createAdminActions(deps) {
 
   return {
     setImportFeedback,
+    setImportConfig: (patch = {}) => {
+      state.adminUi = {
+        ...(state.adminUi || {}),
+        importConfig: {
+          ...(state.adminUi?.importConfig || { bootstrapAttachManualsFromCsvHints: false }),
+          ...patch
+        }
+      };
+      render();
+    },
     setAdminSection: (section) => {
       state.adminSection = section || 'company';
       render();
@@ -272,10 +282,17 @@ export function createAdminActions(deps) {
       let bootstrapNoDirectManualUrl = 0;
       let completedRows = 0;
       const bootstrapMode = options.bootstrapAttachManualsFromCsvHints === true;
+      state.adminUi = {
+        ...(state.adminUi || {}),
+        importConfig: {
+          ...(state.adminUi?.importConfig || { bootstrapAttachManualsFromCsvHints: false }),
+          bootstrapAttachManualsFromCsvHints: bootstrapMode
+        }
+      };
       const importedRowLinks = [];
       const emitProgress = () => {
         const summary = bootstrapMode
-          ? `Bootstrap import running: ${completedRows}/${rows.length} rows completed. Imported assets ${imported}. Attached ${bootstrapAttached}. Attach failed ${bootstrapFailed}. No direct manual URL ${bootstrapNoDirectManualUrl}.`
+          ? `Importing in direct CSV bootstrap mode: ${completedRows}/${rows.length} rows completed. Imported assets ${imported}. Attached ${bootstrapAttached}. Attach failed ${bootstrapFailed}. No direct manual URL ${bootstrapNoDirectManualUrl}.`
           : `Assets import running: ${completedRows}/${rows.length} rows completed. Imported assets ${imported}. Queued for research ${enrichmentQueued}.`;
         setImportFeedback({
           tone: 'info',
@@ -288,6 +305,8 @@ export function createAdminActions(deps) {
             directManualAttachFailed: bootstrapFailed,
             noDirectManualUrl: bootstrapNoDirectManualUrl,
             completedRows,
+            bootstrapMode,
+            isRunning: completedRows < rows.length,
           }
         });
       };
@@ -463,6 +482,8 @@ export function createAdminActions(deps) {
           directManualAttachFailed: bootstrapFailed,
           noDirectManualUrl: bootstrapNoDirectManualUrl,
           completedRows,
+          bootstrapMode,
+          isRunning: false,
         }
       });
       setAdminFeedback({

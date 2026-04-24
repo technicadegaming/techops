@@ -1510,9 +1510,12 @@ test('admin CSV import bootstrap mode attaches direct manual hints immediately a
   assert.deepEqual(enrichCalls, []);
   assert.match(state.adminUi.importSummary, /Bootstrap attached 1, failed 0/);
   assert.match(state.adminUi.importSummary, /skipped enrichment\/research queueing/);
+  assert.equal(state.adminUi.importConfig.bootstrapAttachManualsFromCsvHints, true);
   assert.equal(state.adminUi.importProgress.totalRows, 1);
   assert.equal(state.adminUi.importProgress.completedRows, 1);
   assert.equal(state.adminUi.importProgress.directManualsAttached, 1);
+  assert.equal(state.adminUi.importProgress.bootstrapMode, true);
+  assert.equal(state.adminUi.importProgress.isRunning, false);
 });
 
 test('admin CSV import bootstrap mode keeps processing when attach fails and does not trigger enrichment', async () => {
@@ -1605,10 +1608,23 @@ test('admin CSV import reconciles recent intake rows from refreshed asset enrich
 
   await actions.importAssets([{ 'asset name': 'Quick Drop', manufacturer: 'Bay Tek' }]);
 
+  assert.equal(state.adminUi.importConfig.bootstrapAttachManualsFromCsvHints, false);
+  assert.equal(state.adminUi.importProgress.bootstrapMode, false);
   assert.equal(state.assetUi.recentIntakeRows.length, 1);
   assert.equal(state.assetUi.recentIntakeRows[0].assetId, 'quick-drop');
   assert.equal(state.assetUi.recentIntakeRows[0].intakeStatusLabel, 'no match yet');
   assert.equal(state.assetUi.recentIntakeRows[0].reviewState, 'pending_review');
+});
+
+test('admin source keeps bootstrap checkbox and mode text tied to import config and progress state', () => {
+  const source = loadAdminSource();
+  assert.match(source, /const bootstrapModeActive = importProgress\?\.isRunning/);
+  assert.match(source, /id="bootstrapAttachManualsFromCsvHints" type="checkbox" \$\{bootstrapModeActive \? 'checked' : ''\} \$\{importProgress\?\.isRunning \? 'disabled' : ''\}/);
+  assert.match(source, /mode locked while import is running/);
+  assert.match(source, /Mode: direct CSV bootstrap/);
+  const captureIndex = source.indexOf("const bootstrapAttachManualsFromCsvHints = el.querySelector('#bootstrapAttachManualsFromCsvHints')?.checked === true;");
+  const previewIndex = source.indexOf("actions.setImportFeedback({ tone: rows.length ? 'info' : 'error'");
+  assert.ok(captureIndex >= 0 && previewIndex >= 0 && captureIndex < previewIndex);
 });
 
 test('admin source no longer exposes a duplicate asset documentation review section', () => {
