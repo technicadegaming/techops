@@ -12,6 +12,11 @@ import { sortDocumentationSuggestions } from './documentationSuggestions.js';
 import { getReviewableDocumentationSuggestions } from './documentationReview.js';
 import { buildAssetDraftContextDebug, doesPreviewContextMatch, resolveAssetDraftContext } from './assetDraftContext.js';
 import { normalizeManufacturerDisplayName } from './manufacturerNormalization.js';
+import {
+  buildManualReviewQueue,
+  formatManualReviewLabel,
+  summarizeManualReviewEvidence
+} from './manualReviewQueue.js';
 
 function renderAssetCardFallback(asset, error) {
   const id = `${asset?.id || 'unknown'}`;
@@ -525,6 +530,7 @@ function renderEnrichmentDetails(asset, manager, state) {
   const linkedManuals = manualState.manualLinks;
   const linkedSupport = filterDisplaySupportResources(Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []);
   const manualStatus = deriveAssetManualStatus(asset);
+  const reviewEvidence = summarizeManualReviewEvidence(asset);
   const actionFeedback = state?.assetUi?.lastActionByAsset?.[asset.id] || null;
   const statusHelp = status === 'retry_needed'
     ? 'The last enrichment run appears stale. Attached manuals remain authoritative; otherwise retry or clear the stuck state.'
@@ -552,6 +558,12 @@ function renderEnrichmentDetails(asset, manager, state) {
         : manualStatus === MANUAL_STATUS.SUPPORT_CONTEXT_ONLY
           ? renderInlineFeedback('Only support/product context is linked right now. This asset does not have an attached manual yet.', 'info')
           : renderInlineFeedback('No public manual evidence is applied yet. Start with the best verified manual action below.', 'info')}
+    <div class="tiny" style="margin:6px 0;"><b>Manual provenance:</b> ${reviewEvidence.hasManualLibraryEntry
+      ? `library ref ${asset.manualLibraryRef || 'n/a'} | storage path ${asset.manualStoragePath || 'n/a'}`
+      : 'No shared manual-library link yet.'}</div>
+    ${reviewEvidence.selectedCandidateUrl ? `<div class="tiny"><b>Selected candidate:</b> <a href="${reviewEvidence.selectedCandidateUrl}" target="_blank" rel="noopener">${reviewEvidence.selectedCandidateTitle || reviewEvidence.selectedCandidateUrl}</a></div>` : '<div class="tiny"><b>Selected candidate:</b> n/a</div>'}
+    ${reviewEvidence.evidenceRows.length ? `<div class="tiny" style="margin:4px 0;"><b>Top evidence:</b> ${reviewEvidence.evidenceRows.map((row) => `<a href="${row.url}" target="_blank" rel="noopener">${row.title}</a> (${row.provenance}${row.score ? ` | score ${Math.round(Number(row.score))}` : ''})`).join(' · ')}</div>` : ''}
+    ${reviewEvidence.rejectionReasons.length ? `<div class="tiny" style="margin:4px 0;"><b>Candidate rejection reasons:</b> ${reviewEvidence.rejectionReasons.join(' · ')}</div>` : ''}
     <div class="tiny"><b>Model suggestion:</b> ${asset.normalizedName || 'n/a'}${asset.enrichmentConfidence ? ` (${Math.round(Number(asset.enrichmentConfidence) * 100)}% confidence)` : ''}</div>
     <div class="tiny" style="margin-bottom:8px;"><b>Inferred manufacturer:</b> ${normalizeManufacturerDisplayName(asset.manufacturerSuggestion || asset.manufacturer || '') || 'n/a'}${manager && asset.manufacturerSuggestion && normalizeManufacturerDisplayName(asset.manufacturerSuggestion) !== normalizeManufacturerDisplayName(asset.manufacturer) ? ` <button data-apply-enrichment="manufacturer" data-asset-id="${asset.id}" type="button">Apply manufacturer</button>` : ''}</div>
 
@@ -661,6 +673,7 @@ export function renderAssets(el, state, actions) {
   const bulkDocRerunRunning = state.assetUi?.bulkDocRerunStatus === 'running';
   const bulkDocRerunProgress = state.assetUi?.bulkDocRerunProgress || null;
   const bulkDocRerunCurrentLabel = `${bulkDocRerunProgress?.currentAssetName || bulkDocRerunProgress?.currentAssetId || ''}`.trim();
+  const manualReviewQueue = buildManualReviewQueue(scope.scopedAssets || [], getEffectiveEnrichmentStatus);
 
   el.innerHTML = `
     <h2>Assets</h2>
@@ -721,6 +734,45 @@ export function renderAssets(el, state, actions) {
       ${state.assetUi?.bulkDocRerunSummary ? `<div class="tiny mt">${state.assetUi.bulkDocRerunSummary}</div>` : ''}
     </div>
     ${assetFilter === 'missing_docs' ? '<div class="inline-state warn">Showing assets missing docs only.</div>' : ''}
+    <div class="item" style="margin-bottom:12px; overflow:auto;">
+      <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+        <div>
+          <b>Manual review queue</b>
+          <div class="tiny">Unresolved/manual-review-needed assets with candidate evidence, provenance, and next actions.</div>
+        </div>
+        <div class="tiny">Queue items: ${manualReviewQueue.length}</div>
+      </div>
+      ${manualReviewQueue.length ? `<table class="tiny" style="width:100%; border-collapse:collapse; margin-top:8px;"><thead><tr><th>Asset</th><th>Context</th><th>Status</th><th>Selected candidate</th><th>Top evidence + provenance</th><th>Rejected reasons</th><th>Manual-library</th><th>Case bucket</th><th>Actions</th></tr></thead><tbody>${manualReviewQueue.map((item) => {
+        const asset = item.asset || {};
+        const location = getAssetLocationRecord(state, asset);
+        const evidenceSummary = item.evidenceRows.length
+          ? item.evidenceRows.map((row) => `<div><a href="${row.url}" target="_blank" rel="noopener">${row.title}</a><div>${row.provenance}${row.score ? ` · score ${Math.round(Number(row.score))}` : ''}</div></div>`).join('')
+          : 'No candidate evidence';
+        const rejectionSummary = item.rejectionReasons.length ? item.rejectionReasons.join('<br/>') : 'No explicit rejection reasons recorded';
+        const candidateLabel = item.selectedCandidateUrl
+          ? `<a href="${item.selectedCandidateUrl}" target="_blank" rel="noopener">${item.selectedCandidateTitle || item.selectedCandidateUrl}</a>`
+          : 'n/a';
+        return `<tr>
+          <td><b>${asset.name || asset.id}</b><div>${asset.manufacturer || 'n/a'}</div><div><a href="#asset-${asset.id}">Open details</a></div></td>
+          <td>${location.label}<div>${asset.companyName || state.company?.name || 'company scope'}</div></td>
+          <td>manual: ${formatManualReviewLabel(item.manualStatus)}<br/>review: ${formatManualReviewLabel(item.manualReviewState)}<br/>enrichment: ${formatManualReviewLabel(item.effectiveStatus)}<br/>terminal: ${formatManualReviewLabel(item.enrichmentTerminalReason)}</td>
+          <td>${candidateLabel}</td>
+          <td>${evidenceSummary}</td>
+          <td>${rejectionSummary}</td>
+          <td>${item.hasManualLibraryEntry ? 'linked' : 'none'}</td>
+          <td>${formatManualReviewLabel(item.caseType)}</td>
+          <td style="min-width:220px;">
+            <div style="display:flex; gap:4px; flex-wrap:wrap;">
+              <button type="button" data-enrich="${asset.id}" class="primary">Rerun lookup</button>
+              <button type="button" data-queue-approve="${asset.id}" data-queue-candidate-url="${encodeURIComponent(item.selectedCandidateUrl || '')}" ${item.selectedCandidateUrl ? '' : 'disabled'}>Approve candidate</button>
+              <button type="button" data-queue-reject="${asset.id}" data-queue-candidate-url="${encodeURIComponent(item.selectedCandidateUrl || '')}" ${item.selectedCandidateUrl ? '' : 'disabled'}>Reject candidate</button>
+              <button type="button" data-queue-needs-title="${asset.id}">Needs title clarification</button>
+              <button type="button" data-queue-flag-library="${asset.id}" ${item.hasManualLibraryEntry ? '' : 'disabled'}>Flag manual-library row</button>
+            </div>
+          </td>
+        </tr>`;
+      }).join('')}</tbody></table>` : '<div class="tiny" style="margin-top:8px;">No unresolved manual review queue items in this scope.</div>'}
+    </div>
     <form id="assetForm" class="grid grid-2" style="margin-bottom:12px; border:1px solid #e5e7eb; border-radius:10px; padding:10px;">
       <div class="tiny" style="grid-column:1/-1; font-weight:700;">Quick add asset</div>
       <input name="name" value="${state.assetDraft?.name || ''}" placeholder="Asset name *" required ${editable ? '' : 'disabled'} />
@@ -990,6 +1042,26 @@ export function renderAssets(el, state, actions) {
   }));
   el.querySelectorAll('[data-apply-docs]').forEach((button) => button.addEventListener('click', () => actions.applyDocSuggestions(button.dataset.applyDocs)));
   el.querySelectorAll('[data-apply-doc-item]').forEach((button) => button.addEventListener('click', () => actions.applySingleDocSuggestion(button.dataset.applyDocItem, Number(button.dataset.docIndex))));
+  el.querySelectorAll('[data-queue-approve]').forEach((button) => button.addEventListener('click', () => {
+    const assetId = button.dataset.queueApprove;
+    const candidateUrl = decodeURIComponent(button.dataset.queueCandidateUrl || '');
+    const asset = (state.assets || []).find((entry) => entry.id === assetId);
+    const suggestions = Array.isArray(asset?.documentationSuggestions) ? asset.documentationSuggestions : [];
+    const index = suggestions.findIndex((entry) => `${entry?.url || ''}`.trim() === candidateUrl);
+    if (index < 0) return;
+    actions.applySingleDocSuggestion(assetId, index);
+  }));
+  el.querySelectorAll('[data-queue-reject]').forEach((button) => button.addEventListener('click', () => {
+    const assetId = button.dataset.queueReject;
+    const candidateUrl = decodeURIComponent(button.dataset.queueCandidateUrl || '');
+    const asset = (state.assets || []).find((entry) => entry.id === assetId);
+    const suggestions = Array.isArray(asset?.documentationSuggestions) ? asset.documentationSuggestions : [];
+    const index = suggestions.findIndex((entry) => `${entry?.url || ''}`.trim() === candidateUrl);
+    if (index < 0) return;
+    actions.rejectManualCandidate(assetId, index);
+  }));
+  el.querySelectorAll('[data-queue-needs-title]').forEach((button) => button.addEventListener('click', () => actions.setManualReviewState(button.dataset.queueNeedsTitle, 'needs_title_clarification', 'operator_marked_title_clarification_needed')));
+  el.querySelectorAll('[data-queue-flag-library]').forEach((button) => button.addEventListener('click', () => actions.flagManualLibraryRow(button.dataset.queueFlagLibrary)));
   el.querySelectorAll('[data-apply-support-item]').forEach((button) => button.addEventListener('click', () => actions.applySingleSupportSuggestion(button.dataset.applySupportItem, Number(button.dataset.supportIndex))));
   el.querySelectorAll('[data-remove-manual]').forEach((button) => button.addEventListener('click', () => actions.removeManualLink(button.dataset.removeManual, decodeURIComponent(button.dataset.url || ''))));
   el.querySelectorAll('[data-manual-storage-path]').forEach((link) => link.addEventListener('click', async (event) => {

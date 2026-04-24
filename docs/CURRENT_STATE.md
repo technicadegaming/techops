@@ -63,8 +63,9 @@ This file is an implementation-aware recovery snapshot, not a future roadmap. It
 2. App shell remains intentionally centralized in `src/app.js`; future changes should keep extracting seam-by-seam into `src/app/*` and `src/features/*` rather than widening shell responsibilities.
 3. Manual/AI flows are broad and feature-rich; retain high test coverage discipline for callable contracts and policy gating before changing enrichment behavior.
 4. Manual enrichment now persists canonical `manualStatus` (`manual_attached`, `queued_for_review`, `support_context_only`, `no_public_manual`) plus explicit `manualReviewState` and `enrichmentTerminalReason` so attached/review/unresolved semantics are consistent and triageable.
-5. `benchmark:manual-research` now uses a gold-set fixture split into `healthy_controls`, `anchor_failures`, and `ambiguous_cases`, and reports bucket-level rates (`healthyControlPassRate`, `anchorFailurePassRate`, `ambiguousTruthfulnessRate`) plus existing retrieval/attachment metrics in JSON and a compact CLI summary. It remains a fixture/stub harness and should not be interpreted as live internet success rate.
-6. Manual-library integrity checks now exist and are intentionally conservative: suspicious durable rows are flagged/quarantined for operator review, not auto-deleted or silently rewritten.
+5. Assets view now includes an operator-facing manual review queue that groups unresolved/review-needed cases and exposes candidate evidence/provenance, rejection context, and review actions (rerun, approve/reject candidate, needs-title-clarification, manual-library flagging).
+6. `benchmark:manual-research` now uses a gold-set fixture split into `healthy_controls`, `anchor_failures`, and `ambiguous_cases`, and reports bucket-level rates (`healthyControlPassRate`, `anchorFailurePassRate`, `ambiguousTruthfulnessRate`) plus existing retrieval/attachment metrics in JSON and a compact CLI summary. It remains a fixture/stub harness and should not be interpreted as live internet success rate.
+7. Manual-library integrity checks now exist and are intentionally conservative: suspicious durable rows are flagged/quarantined for operator review, not auto-deleted or silently rewritten.
 
 ## Recovery hardening changes made in this snapshot
 
