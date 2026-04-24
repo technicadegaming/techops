@@ -24,6 +24,7 @@ export function createAdminActions(deps) {
     downloadJson,
     normalizeAssetId,
     enrichAssetDocumentation,
+    bootstrapAttachAssetManualFromCsvHint,
     createCompanyInvite,
     revokeInvite
   } = deps;
@@ -253,7 +254,7 @@ export function createAdminActions(deps) {
     },
     downloadAssetTemplate: () => downloadFile('asset-template.csv', ASSET_CSV_TEMPLATE, 'text/csv'),
     downloadEmployeeTemplate: () => downloadFile('employee-template.csv', 'name,email,role,enabled,available,shift start,skills,location,phone\n', 'text/csv'),
-    importAssets: async (rows) => {
+    importAssets: async (rows, options = {}) => {
       if (!rows.length) {
         setImportFeedback({ tone: 'error', summary: 'No asset rows were imported.', preview: state.adminUi?.importPreview || '' });
         return;
@@ -264,6 +265,9 @@ export function createAdminActions(deps) {
       let enrichmentQueued = 0;
       let enrichmentCompleted = 0;
       let enrichmentFailed = 0;
+      let bootstrapAttached = 0;
+      let bootstrapFailed = 0;
+      const bootstrapMode = options.bootstrapAttachManualsFromCsvHints === true;
       const importedRowLinks = [];
       for (const row of rows) {
         const mapped = buildAssetImportRow({
@@ -345,33 +349,71 @@ export function createAdminActions(deps) {
           enrichmentStatus: 'queued',
           enrichmentRequestedAt: new Date().toISOString()
         }, 'import assets'), state.user);
-        importedRowLinks.push({ name: mapped['asset name'] || id, manufacturer: mapped.manufacturer || '', assetId: id, intakeStatusBadge: 'queued', intakeStatusLabel: 'queued' });
+        let intakeStatusBadge = 'queued';
+        let intakeStatusLabel = 'queued';
         imported += 1;
-        enrichmentQueued += 1;
-        if (typeof enrichAssetDocumentation === 'function') {
+
+        let bootstrapAttachedForAsset = false;
+        if (bootstrapMode && manualHintUrl && typeof bootstrapAttachAssetManualFromCsvHint === 'function') {
           try {
-            enrichmentStarted += 1;
-            await enrichAssetDocumentation(id, { trigger: 'csv_import' });
-            enrichmentCompleted += 1;
+            const bootstrapResult = await bootstrapAttachAssetManualFromCsvHint({
+              assetId: id,
+              manualHintUrl,
+              manualSourceHintUrl,
+              supportHintUrl,
+            });
+            bootstrapAttachedForAsset = bootstrapResult?.attached === true;
+            if (bootstrapAttachedForAsset) {
+              bootstrapAttached += 1;
+              intakeStatusBadge = 'docs_found';
+              intakeStatusLabel = 'docs found / attached';
+            } else {
+              bootstrapFailed += 1;
+            }
           } catch (error) {
-            enrichmentFailed += 1;
-            console.error('[import_asset_enrichment]', { assetId: id, error });
+            bootstrapFailed += 1;
+            console.error('[import_asset_bootstrap_attach]', { assetId: id, error });
           }
         }
+
+        if (!bootstrapAttachedForAsset) {
+          enrichmentQueued += 1;
+          if (typeof enrichAssetDocumentation === 'function') {
+            try {
+              enrichmentStarted += 1;
+              await enrichAssetDocumentation(id, { trigger: bootstrapMode ? 'csv_import_bootstrap_fallback' : 'csv_import' });
+              enrichmentCompleted += 1;
+            } catch (error) {
+              enrichmentFailed += 1;
+              console.error('[import_asset_enrichment]', { assetId: id, error });
+            }
+          }
+        }
+
+        importedRowLinks.push({
+          name: mapped['asset name'] || id,
+          manufacturer: mapped.manufacturer || '',
+          assetId: id,
+          intakeStatusBadge,
+          intakeStatusLabel,
+        });
       }
       await upsertEntity('importHistory', `import-assets-${Date.now()}`, { type: 'assets', rowCount: rows.length }, state.user);
+      const bootstrapSummary = bootstrapMode
+        ? ` Bootstrap attached ${bootstrapAttached}, failed ${bootstrapFailed}.`
+        : '';
       const enrichmentSummary = typeof enrichAssetDocumentation === 'function'
-        ? ` Enrichment started ${enrichmentStarted}, completed ${enrichmentCompleted}, failed ${enrichmentFailed}.`
-        : ` Enrichment queued ${enrichmentQueued}; no inline runner is configured in this session.`;
+        ? ` Queued for research ${enrichmentQueued}. Enrichment started ${enrichmentStarted}, completed ${enrichmentCompleted}, failed ${enrichmentFailed}.`
+        : ` Queued for research ${enrichmentQueued}; no inline runner is configured in this session.`;
       setImportFeedback({
         tone: imported ? (enrichmentFailed ? 'info' : 'success') : 'error',
-        summary: `Assets import complete. Imported ${imported}${skipped ? `, skipped ${skipped}` : ''}.${enrichmentSummary}`,
+        summary: `Assets import complete. Imported ${imported}${skipped ? `, skipped ${skipped}` : ''}.${bootstrapSummary}${enrichmentSummary}`,
         preview: state.adminUi?.importPreview || ''
       });
       setAdminFeedback({
         tone: imported ? (enrichmentFailed ? 'info' : 'success') : 'error',
         message: imported
-          ? `Imported ${imported} asset rows.${enrichmentSummary}`
+          ? `Imported ${imported} asset rows.${bootstrapSummary}${enrichmentSummary}`
           : 'No asset rows were imported.'
       });
       await refreshData();

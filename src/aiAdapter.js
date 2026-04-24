@@ -34,6 +34,10 @@ export function enrichAssetDocumentation(assetId, options = {}) {
   return call('enrichAssetDocumentation', { assetId, ...options });
 }
 
+export function bootstrapAttachAssetManualFromCsvHint(payload) {
+  return call('bootstrapAttachAssetManualFromCsvHint', payload);
+}
+
 export function previewAssetDocumentationLookup(payload) {
   return call('previewAssetDocumentationLookup', payload);
 }
