@@ -1,10 +1,10 @@
-const BASE_TEMPLATE_COLUMNS = ['asset name', 'assetId', 'manufacturer', 'model', 'serial', 'location', 'zone', 'notes', 'category', 'status'];
-const OPTIONAL_TEMPLATE_COLUMNS = ['originalTitle', 'normalizedTitle', 'manufacturerInferred', 'manualUrl', 'manualSourceUrl', 'supportUrl', 'supportEmail', 'supportPhone', 'matchType', 'manualReady', 'reviewRequired', 'matchConfidence', 'matchNotes', 'alternateNames', 'normalizedName'];
+const BASE_TEMPLATE_COLUMNS = ['asset name', 'assetId', 'manufacturer', 'model', 'serial', 'location', 'zone', 'category', 'status', 'notes'];
+const OPTIONAL_TEMPLATE_COLUMNS = ['alternateNames', 'subtitleOrVersion', 'playerCount', 'cabinetType', 'vendorOrDistributor', 'manualHintUrl', 'manualSourceHintUrl', 'supportHintUrl', 'manufacturerWebsite', 'externalAssetKey'];
 
 export const ASSET_IMPORT_COLUMNS = [...BASE_TEMPLATE_COLUMNS, ...OPTIONAL_TEMPLATE_COLUMNS];
 export const LEGACY_ASSET_IMPORT_COLUMNS = ['name', 'manufacturer', 'locationName', 'serialNumber', 'model', 'category'];
 export const ASSET_TEMPLATE_HEADER = ASSET_IMPORT_COLUMNS.join(',');
-export const ASSET_CSV_TEMPLATE = `${ASSET_TEMPLATE_HEADER}\nJurassic Park,jurassic-park-01,Raw Thrills,Jurassic Park Arcade,SN-202,Main Floor,Arcade Row,Imported from reviewed bulk intake,Arcade,active,Jurassic Park,Jurassic Park Arcade,false,https://rawthrills.com/wp-content/uploads/2019/07/JurassicPark-Operators-Manual.pdf,https://rawthrills.com/games/jurassic-park-arcade/,https://rawthrills.com/service/,support@rawthrills.com,(847) 459-5000,exact_manual,true,false,0.96,Strong title and manufacturer match from official support page,Jurassic Park Arcade,Jurassic Park Arcade\nQuick Drop,,Bay Tek Games,,QD-102,Prize Midway,Redemption Lane,Legacy template-compatible sample,Redemption,active,Quick Drop,Quik Drop,true,https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf,https://www.baytekent.com/games/quik-drop/,https://www.baytekent.com/contact-us/,support@baytekent.com,,exact_manual,true,false,0.93,Generated assetId when blank during import,Quick Drop,Quik Drop`;
+export const ASSET_CSV_TEMPLATE = `${ASSET_TEMPLATE_HEADER}\nJurassic Park,jurassic-park-01,Raw Thrills,Jurassic Park Arcade,SN-202,Main Floor,Arcade Row,Arcade,active,Imported during opening intake,Jurassic Park Arcade|JP Arcade,DX,2,Sit-down,Betson,https://rawthrills.com/wp-content/uploads/2019/07/JurassicPark-Operators-Manual.pdf,https://rawthrills.com/games/jurassic-park-arcade/,https://rawthrills.com/service/,https://rawthrills.com,jp-rawthrills-arcade\nQuick Drop,,Bay Tek Games,,QD-102,Prize Midway,Redemption Lane,Redemption,active,Asset ID auto-generated when blank,Quik Drop,,1,Upright,Betson,https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf,https://www.baytekent.com/games/quik-drop/,https://www.baytekent.com/contact-us/,https://www.baytekent.com,legacy-quick-drop`;
 
 const KNOWN_MANUFACTURERS = ['betson', 'raw thrills', 'sega', 'adrenaline amusements', 'ice', 'namco', 'wells gardner', 'elaut', 'stern', 'atari', 'bay tek games', 'baytek', 'andel', 'universal space', 'adrenaline', 'ubisoft'];
 
@@ -23,6 +23,15 @@ const CSV_ALIASES = {
   normalizedTitle: ['normalizedtitle', 'normalized title'],
   manufacturerInferred: ['manufacturerinferred', 'manufacturer inferred'],
   alternateNames: ['alternatenames', 'alternate names'],
+  subtitleOrVersion: ['subtitleorversion', 'subtitle or version'],
+  playerCount: ['playercount', 'player count'],
+  cabinetType: ['cabinettype', 'cabinet type'],
+  vendorOrDistributor: ['vendorordistributor', 'vendor or distributor'],
+  manualHintUrl: ['manualhinturl', 'manual hint url'],
+  manualSourceHintUrl: ['manualsourcehinturl', 'manual source hint url'],
+  supportHintUrl: ['supporthinturl', 'support hint url'],
+  manufacturerWebsite: ['manufacturerwebsite', 'manufacturer website'],
+  externalAssetKey: ['externalassetkey', 'external asset key'],
   normalizedName: ['normalizedname', 'normalized name'],
   manualUrl: ['manualurl', 'manual url'],
   manualSourceUrl: ['manualsourceurl', 'manual source url'],
@@ -128,11 +137,9 @@ function getHeaderValue(raw = {}, key) {
 
 export function normalizeAssetCandidate(raw = {}, { defaultLocationName = '' } = {}) {
   const alternateNames = dedupeValues(`${raw.alternateNames || ''}`.split(/[|;]+|,/));
-  const supportEmail = normalizeField(raw.supportEmail || '');
-  const supportPhone = normalizeField(raw.supportPhone || '');
-  const supportUrl = normalizeUrl(raw.supportUrl || '');
-  const manualUrl = normalizeUrl(raw.manualUrl || '');
-  const manualSourceUrl = normalizeUrl(raw.manualSourceUrl || '');
+  const manualHintUrl = normalizeUrl(raw.manualHintUrl || raw.manualUrl || '');
+  const manualSourceHintUrl = normalizeUrl(raw.manualSourceHintUrl || raw.manualSourceUrl || '');
+  const supportHintUrl = normalizeUrl(raw.supportHintUrl || raw.supportUrl || '');
   const base = {
     name: normalizeField(raw.name || raw.assetName || raw.originalTitle || ''),
     assetId: normalizeField(raw.assetId || raw.id || ''),
@@ -146,14 +153,23 @@ export function normalizeAssetCandidate(raw = {}, { defaultLocationName = '' } =
     status: normalizeField(raw.status || '') || 'active',
     originalTitle: normalizeField(raw.originalTitle || raw.name || raw.assetName || ''),
     alternateNames,
+    subtitleOrVersion: normalizeField(raw.subtitleOrVersion || ''),
+    playerCount: normalizeField(raw.playerCount || ''),
+    cabinetType: normalizeField(raw.cabinetType || ''),
+    vendorOrDistributor: normalizeField(raw.vendorOrDistributor || ''),
+    manualHintUrl,
+    manualSourceHintUrl,
+    supportHintUrl,
+    manufacturerWebsite: normalizeField(raw.manufacturerWebsite || ''),
+    externalAssetKey: normalizeField(raw.externalAssetKey || ''),
+    supportEmail: normalizeField(raw.supportEmail || ''),
+    supportPhone: normalizeField(raw.supportPhone || ''),
     normalizedTitle: normalizeField(raw.normalizedTitle || raw.normalizedName || ''),
     normalizedName: normalizeField(raw.normalizedName || raw.normalizedTitle || ''),
     manufacturerInferred: normalizeField(raw.manufacturerInferred || ''),
-    manualUrl,
-    manualSourceUrl,
-    supportEmail,
-    supportPhone,
-    supportUrl,
+    legacyManualUrl: normalizeUrl(raw.manualUrl || ''),
+    legacyManualSourceUrl: normalizeUrl(raw.manualSourceUrl || ''),
+    legacySupportUrl: normalizeUrl(raw.supportUrl || ''),
     matchType: normalizeField(raw.matchType || ''),
     manualReady: normalizeField(raw.manualReady || ''),
     reviewRequired: normalizeField(raw.reviewRequired || ''),
@@ -174,8 +190,8 @@ export function normalizeAssetCandidate(raw = {}, { defaultLocationName = '' } =
     manufacturerSuggestion,
     categorySuggestion,
     normalizationConfidence: base.manufacturer ? 'high' : manufacturerInference.confidence,
-    reviewNeeded: !base.manufacturer || !!manufacturerSuggestion || !!categorySuggestion || !base.manualUrl,
-    rowStatus: base.manualUrl ? 'good_match' : ((base.manufacturer || manufacturerSuggestion || supportUrl) ? 'needs_review' : 'unresolved')
+    reviewNeeded: !base.manufacturer || !!manufacturerSuggestion || !!categorySuggestion,
+    rowStatus: (base.manufacturer || manufacturerSuggestion || supportHintUrl || manualHintUrl || manualSourceHintUrl) ? 'needs_review' : 'unresolved'
   };
 }
 
@@ -261,6 +277,15 @@ export function parseAssetCsv(text = '', options = {}) {
       category: getHeaderValue(raw, 'category'),
       status: getHeaderValue(raw, 'status'),
       alternateNames: getHeaderValue(raw, 'alternateNames'),
+      subtitleOrVersion: getHeaderValue(raw, 'subtitleOrVersion'),
+      playerCount: getHeaderValue(raw, 'playerCount'),
+      cabinetType: getHeaderValue(raw, 'cabinetType'),
+      vendorOrDistributor: getHeaderValue(raw, 'vendorOrDistributor'),
+      manualHintUrl: getHeaderValue(raw, 'manualHintUrl'),
+      manualSourceHintUrl: getHeaderValue(raw, 'manualSourceHintUrl'),
+      supportHintUrl: getHeaderValue(raw, 'supportHintUrl'),
+      manufacturerWebsite: getHeaderValue(raw, 'manufacturerWebsite'),
+      externalAssetKey: getHeaderValue(raw, 'externalAssetKey'),
       originalTitle: getHeaderValue(raw, 'originalTitle'),
       normalizedTitle: getHeaderValue(raw, 'normalizedTitle') || getHeaderValue(raw, 'normalizedName'),
       manufacturerInferred: getHeaderValue(raw, 'manufacturerInferred'),
@@ -306,7 +331,7 @@ export function mapPreviewToAssetIntakeRow(row = {}, preview = {}) {
   const confidence = Number(engine.confidence || preview.confidence || 0);
   const supportEmail = row.supportEmail || engine.supportEmail || extractContactValue(supportContacts, ['email']);
   const supportPhone = row.supportPhone || engine.supportPhone || extractContactValue(supportContacts, ['phone', 'telephone']);
-  const supportUrl = row.supportUrl || normalizeUrl(engine.supportUrl || bestSupport?.url || '');
+  const supportHintUrl = row.supportHintUrl || normalizeUrl(engine.supportUrl || bestSupport?.url || '');
   const manualReady = typeof engine.manualReady === 'boolean' ? engine.manualReady : false;
   const matchNotes = row.matchNotes || engine.matchNotes || [
     preview.status ? `status: ${preview.status}` : '',
@@ -324,11 +349,11 @@ export function mapPreviewToAssetIntakeRow(row = {}, preview = {}) {
     manufacturerSuggestion: engine.manufacturer || preview.likelyManufacturer || row.manufacturerSuggestion || '',
     category: row.category || preview.likelyCategory || row.categorySuggestion || '',
     categorySuggestion: preview.likelyCategory || row.categorySuggestion || '',
-    manualUrl: row.manualUrl || normalizeUrl(engine.manualUrl || ''),
-    manualSourceUrl: row.manualSourceUrl || normalizeUrl(engine.manualSourceUrl || ''),
+    manualHintUrl: row.manualHintUrl || normalizeUrl(engine.manualUrl || ''),
+    manualSourceHintUrl: row.manualSourceHintUrl || normalizeUrl(engine.manualSourceUrl || ''),
     supportEmail,
     supportPhone,
-    supportUrl,
+    supportHintUrl,
     matchConfidence: confidence ? confidence.toFixed(2) : row.matchConfidence || '',
     searchEvidence: Array.isArray(engine.searchEvidence) ? engine.searchEvidence : (Array.isArray(preview.searchHints) ? preview.searchHints : []),
     status: engine.status || preview.status || row.status || '',
@@ -342,14 +367,14 @@ export function mapPreviewToAssetIntakeRow(row = {}, preview = {}) {
     reviewRequired: typeof engine.reviewRequired === 'boolean' ? engine.reviewRequired : !manualReady,
     rowStatus: classifyRowStatus({
       confidence,
-      supportUrl,
+      supportUrl: supportHintUrl,
       manufacturer: row.manufacturer || engine.manufacturer || preview.likelyManufacturer || '',
       manualReady,
       matchType: engine.matchType || preview.matchType || ''
     }),
     reviewNeeded: typeof engine.reviewRequired === 'boolean'
       ? engine.reviewRequired
-      : classifyRowStatus({ confidence, supportUrl, manufacturer: row.manufacturer || engine.manufacturer || preview.likelyManufacturer || '', manualReady, matchType: engine.matchType || preview.matchType || '' }) !== 'good_match'
+      : classifyRowStatus({ confidence, supportUrl: supportHintUrl, manufacturer: row.manufacturer || engine.manufacturer || preview.likelyManufacturer || '', manualReady, matchType: engine.matchType || preview.matchType || '' }) !== 'good_match'
   };
 }
 
@@ -396,24 +421,19 @@ export function buildAssetImportRow(row = {}) {
     serial: row.serialNumber || '',
     location: row.locationName || '',
     zone: row.zone || '',
-    notes: row.notes || '',
     category: row.category || '',
     status: row.status || 'active',
-    originalTitle: row.originalTitle || row.name || '',
-    normalizedTitle: row.normalizedTitle || row.normalizedName || '',
-    manufacturerInferred: row.manufacturerInferred === true ? 'true' : (row.manufacturerInferred === false ? 'false' : (row.manufacturerInferred || '')),
+    notes: row.notes || '',
     alternateNames: dedupeValues(row.alternateNames || []).join('|'),
-    normalizedName: row.normalizedTitle || row.normalizedName || '',
-    matchType: row.matchType || '',
-    manualReady: row.manualReady === true ? 'true' : (row.manualReady === false ? 'false' : (row.manualReady || '')),
-    reviewRequired: row.reviewRequired === true ? 'true' : (row.reviewRequired === false ? 'false' : (row.reviewRequired || '')),
-    manualUrl: row.manualUrl || '',
-    manualSourceUrl: row.manualSourceUrl || '',
-    supportEmail: row.supportEmail || '',
-    supportPhone: row.supportPhone || '',
-    supportUrl: row.supportUrl || '',
-    matchConfidence: row.matchConfidence || (Number.isFinite(Number(row.confidence)) && Number(row.confidence) > 0 ? Number(row.confidence).toFixed(2) : ''),
-    matchNotes: row.matchNotes || ''
+    subtitleOrVersion: row.subtitleOrVersion || '',
+    playerCount: row.playerCount || '',
+    cabinetType: row.cabinetType || '',
+    vendorOrDistributor: row.vendorOrDistributor || '',
+    manualHintUrl: row.manualHintUrl || row.manualUrl || '',
+    manualSourceHintUrl: row.manualSourceHintUrl || row.manualSourceUrl || '',
+    supportHintUrl: row.supportHintUrl || row.supportUrl || '',
+    manufacturerWebsite: row.manufacturerWebsite || '',
+    externalAssetKey: row.externalAssetKey || ''
   };
 }
 

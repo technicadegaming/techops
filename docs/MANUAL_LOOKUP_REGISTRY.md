@@ -16,6 +16,8 @@ Lookup now runs as a two-stage pipeline shared by single-entry preview, Assets b
    - Logs `manualResearch:stage2_*` markers so operators can confirm when fallback started, skipped, returned, or failed validation.
    - Returns structured JSON that keeps manual, source, and support links separate, but backend verification/classification still makes the final manual-ready decision.
 
+Fresh asset CSV intake is intentionally split from this result contract: operator uploads should provide source-of-truth asset identity fields plus optional search hints (`manualHintUrl`, `manualSourceHintUrl`, `supportHintUrl`, aliases/vendor metadata). System-managed enrichment output fields (`manualUrl`, `manualSourceUrl`, `supportUrl`, review/match status fields) remain authoritative only when written by backend enrichment/manual-acquisition persistence.
+
 ## Catalog import workflow
 
 1. Update `functions/src/data/manualLookupWorkbookSeed.json` from the latest approved workbook rows.

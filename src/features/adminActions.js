@@ -248,13 +248,18 @@ export function createAdminActions(deps) {
           category: row.category || row.type || '',
           status: row.status || 'active',
           alternateNames: `${row.alternateNames || ''}`.split(/[|,;]+/).map((value) => value.trim()).filter(Boolean),
-          normalizedName: row.normalizedName || '',
-          manualUrl: row.manualUrl || '',
-          manualSourceUrl: row.manualSourceUrl || '',
+          subtitleOrVersion: row.subtitleOrVersion || '',
+          playerCount: row.playerCount || '',
+          cabinetType: row.cabinetType || '',
+          vendorOrDistributor: row.vendorOrDistributor || '',
+          manualHintUrl: row.manualHintUrl || row.manualUrl || '',
+          manualSourceHintUrl: row.manualSourceHintUrl || row.manualSourceUrl || '',
+          supportHintUrl: row.supportHintUrl || row.supportUrl || '',
+          manufacturerWebsite: row.manufacturerWebsite || '',
+          externalAssetKey: row.externalAssetKey || '',
           supportEmail: row.supportEmail || '',
           supportPhone: row.supportPhone || '',
-          supportUrl: row.supportUrl || '',
-          matchConfidence: row.matchConfidence || '',
+          matchConfidence: row.matchConfidence || row.enrichmentConfidence || '',
           matchNotes: row.matchNotes || ''
         });
         const id = `${mapped.assetId || normalizeAssetId(mapped['asset name'] || '')}`.trim();
@@ -262,9 +267,24 @@ export function createAdminActions(deps) {
           skipped += 1;
           continue;
         }
+        const manualHintUrl = `${mapped.manualHintUrl || ''}`.trim();
+        const manualSourceHintUrl = `${mapped.manualSourceHintUrl || ''}`.trim();
+        const supportHintUrl = `${mapped.supportHintUrl || ''}`.trim();
+        const documentationSuggestions = manualHintUrl
+          ? [{
+            title: 'CSV intake manual hint',
+            url: manualHintUrl,
+            sourcePageUrl: manualSourceHintUrl || supportHintUrl,
+            sourceType: 'intake_hint',
+            verified: false,
+            trustedSource: false,
+            exactManualMatch: false,
+            exactTitleMatch: false
+          }]
+          : [];
         const supportContacts = [];
-        if (mapped.supportEmail) supportContacts.push({ contactType: 'email', label: 'Support email', value: mapped.supportEmail });
-        if (mapped.supportPhone) supportContacts.push({ contactType: 'phone', label: 'Support phone', value: mapped.supportPhone });
+        if (row.supportEmail) supportContacts.push({ contactType: 'email', label: 'Support email', value: `${row.supportEmail || ''}`.trim() });
+        if (row.supportPhone) supportContacts.push({ contactType: 'phone', label: 'Support phone', value: `${row.supportPhone || ''}`.trim() });
         await upsertEntity('assets', id, withRequiredCompanyId({
           id,
           name: mapped['asset name'] || id,
@@ -277,13 +297,23 @@ export function createAdminActions(deps) {
           category: mapped.category || '',
           status: mapped.status || 'active',
           alternateNames: `${mapped.alternateNames || ''}`.split(/[|,;]+/).map((value) => value.trim()).filter(Boolean),
-          normalizedName: mapped.normalizedName || '',
-          manualLinks: mapped.manualUrl ? [mapped.manualUrl] : [],
-          manualSourceUrl: mapped.manualSourceUrl || '',
-          supportResourcesSuggestion: mapped.supportUrl ? [{ url: mapped.supportUrl, label: 'Support resource' }] : [],
+          subtitleOrVersion: mapped.subtitleOrVersion || '',
+          playerCount: mapped.playerCount || '',
+          cabinetType: mapped.cabinetType || '',
+          vendorOrDistributor: mapped.vendorOrDistributor || '',
+          manufacturerWebsite: mapped.manufacturerWebsite || '',
+          externalAssetKey: mapped.externalAssetKey || '',
+          manualHintUrl,
+          manualSourceHintUrl,
+          supportHintUrl,
+          documentationSuggestions,
+          supportResourcesSuggestion: supportHintUrl ? [{ url: supportHintUrl, label: 'CSV intake support hint', sourceType: 'intake_hint', trustedSource: false }] : [],
           supportContactsSuggestion: supportContacts,
           enrichmentConfidence: Number(mapped.matchConfidence || 0) || null,
-          matchNotes: mapped.matchNotes || ''
+          matchNotes: mapped.matchNotes || '',
+          importSource: 'assets_csv_v2',
+          enrichmentStatus: 'searching_docs',
+          enrichmentRequestedAt: new Date().toISOString()
         }, 'import assets'), state.user);
         imported += 1;
       }

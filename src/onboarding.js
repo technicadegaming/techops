@@ -241,11 +241,11 @@ function renderSetupWizard(el, state, actions) {
       <div data-step="4" class="${step === 4 ? '' : 'hide'}">
         <h3>Asset readiness</h3>
         <div class="tiny">Operations works best once assets exist. Paste a list of titles to run the same manual-first research flow used in Assets, or add a single asset for one-off setup. You can still skip for now.</div>
-        <div class="inline-state info mt">Updated template columns: ${ASSET_IMPORT_COLUMNS.slice(0, 10).map((column) => `<code>${column}</code>`).join(', ')} plus optional enrichment fields.</div>
+        <div class="inline-state info mt">Template v2: source-of-truth intake fields (${ASSET_IMPORT_COLUMNS.slice(0, 10).map((column) => `<code>${column}</code>`).join(', ')}) plus optional manual-search hints.</div>
         ${(state.assetUi?.onboardingValidationErrors || []).length ? `<div class="inline-state error mt"><b>Import issues to fix:</b><ul>${(state.assetUi.onboardingValidationErrors || []).slice(0, 6).map((error) => `<li>${error}</li>`).join('')}</ul></div>` : ''}
         <details>
           <summary class="tiny">CSV template and guidance</summary>
-          <div class="tiny" style="margin:8px 0;">Use UTF-8 CSV with a header row. Older templates still work. New optional columns can carry matched manuals/support details for review or import traceability.</div>
+          <div class="tiny" style="margin:8px 0;">Use UTF-8 CSV with a header row. Fill the first 10 intake columns first; optional hint columns help research (`manualHintUrl`, `manualSourceHintUrl`, `supportHintUrl`, aliases, vendor/distributor). Durable manual fields are system-managed after enrichment and should not be hand-entered. Older templates are still accepted, but manual/support result columns are treated only as hints.</div>
           <textarea readonly rows="5">${ASSET_CSV_TEMPLATE}</textarea>
           <a download="assets-template.csv" href="data:text/csv;charset=utf-8,${encodeURIComponent(ASSET_CSV_TEMPLATE)}">Download template</a>
         </details>

@@ -610,9 +610,9 @@ test('asset intake row mapping reuses manual engine summary shape for bulk and s
   assert.equal(row.normalizedName, 'Quik Drop');
   assert.equal(row.manufacturer, 'Bay Tek');
   assert.equal(row.manufacturerInferred, true);
-  assert.equal(row.manualUrl, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
-  assert.equal(row.manualSourceUrl, 'https://www.baytekent.com/games/quik-drop/');
-  assert.equal(row.supportUrl, 'https://www.baytekent.com/games/quik-drop/');
+  assert.equal(row.manualHintUrl, 'https://www.betson.com/wp-content/uploads/2018/03/quik-drop-service-manual.pdf');
+  assert.equal(row.manualSourceHintUrl, 'https://www.baytekent.com/games/quik-drop/');
+  assert.equal(row.supportHintUrl, 'https://www.baytekent.com/games/quik-drop/');
   assert.equal(row.matchType, 'exact_manual');
   assert.equal(row.manualReady, true);
   assert.equal(row.reviewNeeded, false);
@@ -648,8 +648,8 @@ test('asset intake row mapping keeps source-only matches review-required in bulk
   assert.equal(row.manualReady, false);
   assert.equal(row.reviewRequired, true);
   assert.equal(row.rowStatus, 'needs_review');
-  assert.equal(row.supportUrl, 'https://rawthrills.com/service/');
-  assert.equal(row.manualUrl, '');
+  assert.equal(row.supportHintUrl, 'https://rawthrills.com/service/');
+  assert.equal(row.manualHintUrl, '');
 });
 
 test('context switcher renders derived location options and syncs route changes', async () => {
@@ -963,7 +963,7 @@ Air FX`);
   assert.deepEqual(rows.map((row) => row.name), ['Quick Drop', 'Jurassic Park', 'Air FX']);
 });
 
-test('asset csv parser remains backward compatible and accepts optional enrichment columns', async () => {
+test('asset csv parser remains backward compatible and maps legacy enrichment columns as hints', async () => {
   const { parseAssetCsv } = await loadAssetIntakeHelpers();
   const legacy = parseAssetCsv(`asset name,manufacturer,location
 Quick Drop,Bay Tek Games,Main Floor`);
@@ -978,7 +978,9 @@ Jurassic Park,jp-01,Raw Thrills,Jurassic Park,Jurassic Park Arcade,false,https:/
   assert.equal(enriched.rows[0].originalTitle, 'Jurassic Park');
   assert.equal(enriched.rows[0].normalizedTitle, 'Jurassic Park Arcade');
   assert.equal(enriched.rows[0].manufacturerInferred, 'false');
-  assert.equal(enriched.rows[0].manualUrl, 'https://manual.example/jp.pdf');
+  assert.equal(enriched.rows[0].manualHintUrl, 'https://manual.example/jp.pdf');
+  assert.equal(enriched.rows[0].manualSourceHintUrl, 'https://source.example/jp');
+  assert.equal(enriched.rows[0].supportHintUrl, 'https://support.example/jp');
   assert.equal(enriched.rows[0].supportEmail, 'support@example.com');
   assert.equal(enriched.rows[0].matchType, 'exact_manual');
   assert.equal(enriched.rows[0].manualReady, 'true');
@@ -1020,9 +1022,9 @@ test('shared intake enrichment helper powers single and bulk row enrichment mapp
   });
   assert.deepEqual(calls, ['Quick Drop', 'Air FX']);
   assert.equal(rows[0].manufacturer, 'Bay Tek Games');
-  assert.equal(rows[0].manualUrl, 'https://manuals.example/quick-drop.pdf');
+  assert.equal(rows[0].manualHintUrl, 'https://manuals.example/quick-drop.pdf');
   assert.equal(rows[0].supportEmail, 'support@example.com');
-  assert.match(buildAssetCsv(rows), /originalTitle,normalizedTitle,manufacturerInferred,manualUrl,manualSourceUrl,supportUrl,supportEmail/);
+  assert.match(buildAssetCsv(rows), /asset name,assetId,manufacturer,model,serial,location,zone,category,status,notes,alternateNames,subtitleOrVersion,playerCount,cabinetType,vendorOrDistributor,manualHintUrl,manualSourceHintUrl,supportHintUrl,manufacturerWebsite,externalAssetKey/);
 });
 
 async function loadOnboardingStatusHelpers() {

@@ -500,6 +500,21 @@ export function createAssetActions(deps) {
       for (const row of rows) {
         const desiredId = `${row.assetId || ''}`.trim() || normalizeAssetId(row.name || 'asset');
         const finalId = pickUniqueAssetId(desiredId, state.assets);
+        const manualHintUrl = `${row.manualHintUrl || row.manualUrl || ''}`.trim();
+        const manualSourceHintUrl = `${row.manualSourceHintUrl || row.manualSourceUrl || ''}`.trim();
+        const supportHintUrl = `${row.supportHintUrl || row.supportUrl || ''}`.trim();
+        const documentationSuggestions = manualHintUrl
+          ? [{
+            title: 'Bulk intake manual hint',
+            url: manualHintUrl,
+            sourcePageUrl: manualSourceHintUrl || supportHintUrl,
+            sourceType: 'intake_hint',
+            verified: false,
+            trustedSource: false,
+            exactTitleMatch: false,
+            exactManualMatch: false
+          }]
+          : [];
         const supportContacts = [];
         if (row.supportEmail) supportContacts.push({ contactType: 'email', label: 'Support email', value: row.supportEmail });
         if (row.supportPhone) supportContacts.push({ contactType: 'phone', label: 'Support phone', value: row.supportPhone });
@@ -517,20 +532,26 @@ export function createAssetActions(deps) {
           status: row.status || 'active',
           alternateNames: Array.isArray(row.alternateNames) ? row.alternateNames : [],
           normalizedName: row.normalizedName || row.name,
-          manualLinks: row.manualUrl ? [row.manualUrl] : [],
-          manualSourceUrl: row.manualSourceUrl || '',
-          supportResourcesSuggestion: normalizeSupportEntries(row.supportUrl ? [{ url: row.supportUrl, label: 'Support resource' }] : []),
+          subtitleOrVersion: row.subtitleOrVersion || '',
+          playerCount: row.playerCount || '',
+          cabinetType: row.cabinetType || '',
+          vendorOrDistributor: row.vendorOrDistributor || '',
+          manufacturerWebsite: row.manufacturerWebsite || '',
+          externalAssetKey: row.externalAssetKey || '',
+          manualHintUrl,
+          manualSourceHintUrl,
+          supportHintUrl,
+          documentationSuggestions,
+          supportResourcesSuggestion: normalizeSupportEntries(supportHintUrl ? [{ url: supportHintUrl, label: 'Bulk intake support hint', sourceType: 'intake_hint', trustedSource: false }] : []),
           supportContactsSuggestion: supportContacts,
           enrichmentConfidence: Number(row.matchConfidence || row.confidence || 0) || null,
           manufacturerSuggestion: row.manufacturerSuggestion || '',
           categorySuggestion: row.categorySuggestion || '',
           importSource: 'bulk_title_intake',
           reviewState: row.rowStatus === 'good_match' ? 'ready' : 'pending_review',
-          manualStatus: deriveManualStatus({
-            manualLinks: row.manualUrl ? [row.manualUrl] : [],
-            supportResourcesSuggestion: normalizeSupportEntries(row.supportUrl ? [{ url: row.supportUrl, label: 'Support resource' }] : []),
-            documentationSuggestions: row.rowStatus === 'good_match' ? [] : (row.manualUrl ? [{ url: row.manualUrl, verified: true, exactTitleMatch: true, exactManualMatch: true }] : []),
-          }),
+          manualStatus: deriveManualStatus({ manualLinks: [], supportResourcesSuggestion: normalizeSupportEntries(supportHintUrl ? [{ url: supportHintUrl, label: 'Bulk intake support hint' }] : []), documentationSuggestions }),
+          enrichmentStatus: 'searching_docs',
+          enrichmentRequestedAt: new Date().toISOString(),
           reviewReason: row.rowStatus === 'good_match' ? '' : 'bulk_title_review',
           matchNotes: row.matchNotes || ''
         }, 'bulk import assets'), state.user);
