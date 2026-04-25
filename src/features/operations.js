@@ -1,5 +1,6 @@
 import {
   canDelete,
+  canCreateTasks,
   canEditTasks,
   canRunAiTroubleshooting,
   canAnswerAiFollowups,
@@ -252,6 +253,8 @@ function getTaskAiSnapshot(task, run = null) {
     nextSteps: Array.isArray(task.aiNextSteps) ? task.aiNextSteps : (Array.isArray(snapshot.nextSteps) ? snapshot.nextSteps : []),
     followupQuestions: Array.isArray(task.aiFollowupQuestions) ? task.aiFollowupQuestions : (Array.isArray(snapshot.followupQuestions) ? snapshot.followupQuestions : []),
     probableCauses: Array.isArray(snapshot.probableCauses) ? snapshot.probableCauses : [],
+    documentationMode: `${snapshot.documentationMode || ''}`.trim() || '',
+    documentationSources: Array.isArray(snapshot.documentationSources) ? snapshot.documentationSources : [],
     confidence: Number(snapshot.confidence),
     updatedAt: task.aiUpdatedAt || snapshot.completedAt || '',
     status: `${task.aiStatus || 'completed'}`.trim() || 'completed',
@@ -280,7 +283,7 @@ function getTaskAiEligibility(task, state, run = null) {
   const taskCompanyId = `${task.companyId || ''}`.trim();
   const activeCompanyId = `${state.company?.id || state.activeMembership?.companyId || ''}`.trim();
   const hasTaskCompanyContext = !!taskCompanyId;
-  const canRun = canRunAiTroubleshooting(state.permissions);
+  const canRun = canRunAiTroubleshooting(state.permissions, state.settings || {});
   const canAnswer = canAnswerAiFollowups(state.permissions);
   const aiEnabled = !!state.settings?.aiEnabled;
   const manualRerunAllowed = !!state.settings?.aiAllowManualRerun;
@@ -294,7 +297,7 @@ function getTaskAiEligibility(task, state, run = null) {
   } else if (!aiEnabled) {
     reason = 'Company AI is disabled in settings.';
   } else if (!canRun) {
-    reason = 'Manual AI run requires lead or higher.';
+    reason = 'Manual AI run is restricted by role/settings for this company.';
   } else if (run && !manualRerunAllowed) {
     reason = 'Manual rerun is disabled in company AI settings.';
   }
@@ -394,13 +397,19 @@ function getTaskAiState(task, state, run, followup, snapshot = null) {
 
 function renderAiSourceLine(run) {
   const sourceList = Array.isArray(run?.documentationSources) ? run.documentationSources : [];
-  const labels = new Set(sourceList.map((source) => source?.sourceType).filter(Boolean));
-  const mode = labels.has('manual')
-    ? 'manual-backed'
-    : (labels.has('approved_doc') ? 'approved-doc-backed' : 'web/internal only');
-  if (!sourceList.length && !run?.citations?.length) return `<div class="tiny">Sources used: ${mode}</div>`;
+  const mode = `${run?.documentationMode || ''}`.trim() || 'web_internal_only';
+  const modeCopy = {
+    approved_manual_internal: { label: 'Trusted manual-backed', tone: 'good', note: 'Trusted source: approved manual text' },
+    manual_library_backed: { label: 'Shared manual-backed', tone: 'warn', note: 'Uses shared manual-library context. Verify asset/manual match before relying on it.' },
+    troubleshooting_backed: { label: 'Saved-fix-backed', tone: 'info', note: 'Context includes prior troubleshooting-library fixes.' },
+    manual_backed: { label: 'Manual/link-backed', tone: 'info', note: '' },
+    approved_doc_backed: { label: 'Manual/link-backed', tone: 'info', note: '' },
+    support_backed: { label: 'Support/web/internal only', tone: 'warn', note: '' },
+    web_internal_only: { label: 'Support/web/internal only', tone: 'warn', note: '' }
+  }[mode] || { label: mode.replaceAll('_', ' '), tone: 'muted', note: '' };
+  if (!sourceList.length && !run?.citations?.length) return `<div class="tiny">Sources used: ${modeCopy.label}</div>${modeCopy.note ? `<div class="inline-state ${modeCopy.tone} mt">${modeCopy.note}</div>` : ''}`;
   const names = sourceList.slice(0, 3).map((source) => source.title || source.url).filter(Boolean);
-  return `<div class="tiny">Sources used: ${mode}${names.length ? ` | ${names.join(' | ')}` : ''}</div>`;
+  return `<div class="tiny">Sources used: ${modeCopy.label}${names.length ? ` | ${names.join(' | ')}` : ''}</div>${modeCopy.note ? `<div class="inline-state ${modeCopy.tone} mt">${modeCopy.note}</div>` : ''}`;
 }
 
 function formatDateTime(value) {
@@ -586,8 +595,12 @@ function renderAiPanel(task, state, meta) {
     && eligibility.canRun
     && !run
     && !hasSavedGuidance
-    && !['queued', 'running'].includes(aiState.status);
+    && !['queued', 'running', 'waiting_for_refresh'].includes(aiState.status);
   const canShowRerun = eligibility.hasTaskCompanyContext && eligibility.aiEnabled && eligibility.canRun && (hasSavedGuidance || !!run) && eligibility.manualRerunAllowed;
+  const pending = state.operationsUi?.pendingActionsByTask?.[task.id] || null;
+  const isBusy = !!pending;
+  const busyKey = `${pending?.action || ''}`;
+  const busyLabel = `${pending?.label || ''}`;
   const rerunLabel = run?.status === 'failed' ? 'Retry AI' : 'Rerun AI';
   const statusTone = ({
     bad: 'error',
@@ -613,7 +626,9 @@ function renderAiPanel(task, state, meta) {
     ${actionHint ? `<div class="tiny mt">${actionHint}</div>` : ''}
     ${guidance ? `<div class="tiny mt">${guidance}</div>` : ''}
     ${task.aiSummary?.summary ? `<div class="tiny mt">${task.aiSummary.summary}</div>` : ''}
-    ${run ? renderAiSourceLine(run) : (hasSavedGuidance ? `<div class="tiny mt">Latest saved AI guidance (run ${snapshot.runId}) • ${formatDateTime(snapshot.updatedAt)}</div>` : (aiState.status === 'waiting_for_refresh' ? `<div class="tiny mt">${aiState.message}</div>` : '<div class="tiny mt">No AI run yet for this task.</div>'))}
+    ${run ? renderAiSourceLine(run) : (hasSavedGuidance ? `${renderAiSourceLine(snapshot)}<div class="tiny mt">Latest saved AI guidance (run ${snapshot.runId}) • ${formatDateTime(snapshot.updatedAt)}</div>` : (aiState.status === 'waiting_for_refresh' ? `<div class="tiny mt">Waiting for AI run record…</div><div class="tiny mt">Refreshing results…</div>` : '<div class="tiny mt">No AI run yet for this task.</div>'))}
+    ${(aiState.status === 'queued' || aiState.status === 'running') ? '<div class="tiny mt">AI is thinking…</div>' : ''}
+    ${isBusy ? `<div class="tiny mt">${busyLabel || 'Working…'}</div>` : ''}
     ${hasSavedGuidance ? `<div class="inline-state info mt">Saved guidance review state: <b>${aiReviewState}</b></div>` : ''}
     ${summary ? `<div class="tiny mt"><b>Frontline:</b> ${summary}</div>` : ''}
     ${nextSteps?.length ? `<div class="tiny mt"><b>Next steps:</b> ${nextSteps.join(' | ')}</div>` : ''}
@@ -622,13 +637,13 @@ function renderAiPanel(task, state, meta) {
     ${!canAnswerAiFollowups(state.permissions) && followup?.questions?.length ? `<div class="tiny mt">Follow-up answers require staff or higher.</div>` : ''}
     ${!eligibility.canRun && aiState.status !== 'completed' ? `<div class="tiny mt">${eligibility.reason}</div>` : ''}
     <div class="action-row mt">
-      ${canShowRunNow ? `<button data-run-ai="${task.id}">Run AI now</button>` : ''}
-      ${canShowRerun ? `<button data-rerun-ai="${task.id}">${rerunLabel}</button>` : ''}
-      ${hasSavedGuidance ? `<button type="button" data-ai-fix-state="approved" data-task-ai-fix-state="${task.id}">Mark approved</button>
-      <button type="button" data-ai-fix-state="rejected" data-task-ai-fix-state="${task.id}">Mark rejected</button>
-      <button type="button" data-ai-fix-state="pending_review" data-task-ai-fix-state="${task.id}">Set pending review</button>` : ''}
+      ${canShowRunNow ? `<button data-run-ai="${task.id}" ${isBusy ? 'disabled' : ''}>${busyKey === 'run_ai' ? 'AI running…' : 'Run AI now'}</button>` : ''}
+      ${canShowRerun ? `<button data-rerun-ai="${task.id}" ${isBusy || ['queued', 'running', 'waiting_for_refresh'].includes(aiState.status) ? 'disabled' : ''}>${busyKey === 'rerun_ai' ? 'Rerunning…' : rerunLabel}</button>` : ''}
+      ${hasSavedGuidance ? `<button type="button" data-ai-fix-state="approved" data-task-ai-fix-state="${task.id}" ${isBusy ? 'disabled' : ''}>${busyKey === 'set_fix_state' ? 'Updating review…' : 'Mark approved'}</button>
+      <button type="button" data-ai-fix-state="rejected" data-task-ai-fix-state="${task.id}" ${isBusy ? 'disabled' : ''}>${busyKey === 'set_fix_state' ? 'Updating review…' : 'Mark rejected'}</button>
+      <button type="button" data-ai-fix-state="pending_review" data-task-ai-fix-state="${task.id}" ${isBusy ? 'disabled' : ''}>${busyKey === 'set_fix_state' ? 'Updating review…' : 'Set pending review'}</button>` : ''}
       ${aiState.status === 'disabled_by_settings' && canChangeAISettings(state.permissions) ? '<button type="button" data-open-ai-settings="1">Open AI settings</button>' : ''}
-      <button data-save-fix="${task.id}" ${canSaveFixToLibrary(state.permissions) ? '' : 'disabled'}>Save fix to library</button>
+      <button data-save-fix="${task.id}" ${canSaveFixToLibrary(state.permissions, state.settings || {}) && !isBusy ? '' : 'disabled'}>${busyKey === 'save_fix' ? 'Saving fix…' : 'Save fix to library'}</button>
     </div>
   </div>`;
 }
@@ -697,6 +712,8 @@ function createDefaultOperationsUiState() {
     reassignSelections: {},
     aiTaskStates: {},
     aiDisplayRunsByTask: {},
+    pendingActionsByTask: {},
+    isSavingTask: false,
     lastSavedTaskId: null
   };
 }
@@ -770,6 +787,7 @@ function filterTasks(tasks, state, assetById = new Map()) {
 export function renderOperations(el, state, actions) {
   state.operationsUi = { ...createDefaultOperationsUiState(), ...(state.operationsUi || {}) };
   const editable = canEditTasks(state.permissions);
+  const canCreate = canCreateTasks(state.permissions);
   const expanded = new Set(state.operationsUi.expandedTaskIds || []);
   const assetById = new Map((state.assets || []).map((asset) => [asset.id, asset]));
   const assetByName = new Map((state.assets || []).map((asset) => [`${asset.name || asset.id}`.toLowerCase(), asset]));
@@ -923,7 +941,7 @@ export function renderOperations(el, state, actions) {
         <h3>Step 1 · Asset / game <span class="tiny">Required</span></h3>
         <div class="tiny">Choose the affected asset in this location scope.</div>
         <label class="mt">Asset / game
-          <input name="assetSearch" list="assetOptions" placeholder="${scopedAssets.length ? 'Search by asset name' : 'No assets in the current location yet'}" required ${editable ? '' : 'disabled'} />
+        <input name="assetSearch" list="assetOptions" placeholder="${scopedAssets.length ? 'Search by asset name' : 'No assets in the current location yet'}" required ${canCreate ? '' : 'disabled'} />
         </label>
         <div id="missingAssetPrompt" class="inline-state error mt ${missingAssetPrompt ? '' : 'hide'}">${missingAssetPrompt ? renderMissingAssetPrompt(typedAssetName) : ''}</div>
       </section>
@@ -932,47 +950,49 @@ export function renderOperations(el, state, actions) {
         <h3>Step 2 · Problem description <span class="tiny">Required</span></h3>
         <div class="tiny">Describe what is wrong so the next technician can reproduce quickly.</div>
         <label class="mt">Issue details
-          <textarea name="description" placeholder="Describe the issue / concern" required ${editable ? '' : 'disabled'}></textarea>
+          <textarea name="description" placeholder="Describe the issue / concern" required ${canCreate ? '' : 'disabled'}></textarea>
         </label>
-        <label>Reported by <span class="tiny">Required</span><input name="reporter" placeholder="Reported by" required ${editable ? '' : 'disabled'} /></label>
+        <label>Reported by <span class="tiny">Required</span><input name="reporter" placeholder="Reported by" required ${canCreate ? '' : 'disabled'} /></label>
       </section>
 
       <section class="item ops-intake-step">
         <h3>Step 3 · What has been tried</h3>
-        <div class="tiny">Capture prior troubleshooting so work is not repeated.</div>
-        <input class="mt" name="alreadyTried" placeholder="What has been tried so far?" ${editable ? '' : 'disabled'} />
+        <div class="tiny">Capture prior troubleshooting so work is not repeated. This is included directly in AI troubleshooting context.</div>
+        <label class="mt">What did you already try / perform?
+          <input name="alreadyTried" placeholder="What did you already try / perform?" ${canCreate ? '' : 'disabled'} />
+        </label>
       </section>
 
       <details data-more-details ${state.operationsUi.moreDetailsOpen ? 'open' : ''} class="item ops-intake-step">
         <summary><b>Step 4 · Optional details</b> <span class="tiny">Expand for severity, assignment, timeline seed, and evidence refs.</span></summary>
         <div class="grid grid-2 mt">
-          <input name="issueCategory" placeholder="Issue category" ${editable ? '' : 'disabled'} />
-          <select name="severity" ${editable ? '' : 'disabled'}><option>critical</option><option>high</option><option selected>medium</option><option>low</option></select>
-          <input name="symptomTags" placeholder="Symptoms / tags (comma-separated)" ${editable ? '' : 'disabled'} />
-          <input name="symptomTagsExtra" placeholder="Additional symptom tags" ${editable ? '' : 'disabled'} />
-          <input name="location" list="locationOptions" placeholder="Location / zone / area" ${editable ? '' : 'disabled'} />
-          <input name="customerImpact" placeholder="Customer impact" ${editable ? '' : 'disabled'} />
-          <input name="errorText" placeholder="Observed error text/code" ${editable ? '' : 'disabled'} />
-          <select name="occurrence" ${editable ? '' : 'disabled'}><option value="constant">Constant</option><option value="intermittent">Intermittent</option></select>
-          <select name="reproducible" ${editable ? '' : 'disabled'}><option value="yes">Reproducible</option><option value="no">Not reproducible</option><option value="unknown">Unknown</option></select>
-          <input name="visibleCondition" placeholder="Visible condition notes" ${editable ? '' : 'disabled'} />
+          <input name="issueCategory" placeholder="Issue category" ${canCreate ? '' : 'disabled'} />
+          <select name="severity" ${canCreate ? '' : 'disabled'}><option>critical</option><option>high</option><option selected>medium</option><option>low</option></select>
+          <input name="symptomTags" placeholder="Symptoms / tags (comma-separated)" ${canCreate ? '' : 'disabled'} />
+          <input name="symptomTagsExtra" placeholder="Additional symptom tags" ${canCreate ? '' : 'disabled'} />
+          <input name="location" list="locationOptions" placeholder="Location / zone / area" ${canCreate ? '' : 'disabled'} />
+          <input name="customerImpact" placeholder="Customer impact" ${canCreate ? '' : 'disabled'} />
+          <input name="errorText" placeholder="Observed error text/code" ${canCreate ? '' : 'disabled'} />
+          <select name="occurrence" ${canCreate ? '' : 'disabled'}><option value="constant">Constant</option><option value="intermittent">Intermittent</option></select>
+          <select name="reproducible" ${canCreate ? '' : 'disabled'}><option value="yes">Reproducible</option><option value="no">Not reproducible</option><option value="unknown">Unknown</option></select>
+          <input name="visibleCondition" placeholder="Visible condition notes" ${canCreate ? '' : 'disabled'} />
           <label>Assigned worker
             <div class="tiny">Open tasks can be saved unassigned. Assignment is required before moving to in progress.</div>
-            <select name="assignedWorker" ${editable ? '' : 'disabled'}>
+            <select name="assignedWorker" ${canCreate ? '' : 'disabled'}>
               <option value="">Assign later</option>
               ${workerOptions.map((worker) => `<option value="${worker.id || worker.email || ''}">${getWorkerOptionLabel(worker)}</option>`).join('')}
             </select>
           </label>
-          <label>Status<div class="tiny">Open = intake allowed without assignment. In progress requires an assigned worker.</div><select name="status" ${editable ? '' : 'disabled'}><option>open</option><option>in_progress</option><option>completed</option></select></label>
+          <label>Status<div class="tiny">Open = intake allowed without assignment. In progress requires an assigned worker.</div><select name="status" ${canCreate ? '' : 'disabled'}><option>open</option><option>in_progress</option><option>completed</option></select></label>
           <div id="assignmentStatusHint" class="tiny"></div>
-          <textarea name="notes" placeholder="Current summary / handoff notes" ${editable ? '' : 'disabled'}></textarea>
-          <textarea name="timelineEntry" placeholder="First service timeline entry" ${editable ? '' : 'disabled'}></textarea>
+          <textarea name="notes" placeholder="Current summary / handoff notes" ${canCreate ? '' : 'disabled'}></textarea>
+          <textarea name="timelineEntry" placeholder="First service timeline entry" ${canCreate ? '' : 'disabled'}></textarea>
           <div class="closeout-wide evidence-group">
             <b>Evidence references</b>
             <div class="tiny">Optional. Keep references concise: URL, filename, or ticket number per line.</div>
-            <textarea name="imageRefs" placeholder="Image references: URLs, filenames, drive refs" ${editable ? '' : 'disabled'}></textarea>
-            <textarea name="videoRefs" placeholder="Video references: URLs or filenames" ${editable ? '' : 'disabled'}></textarea>
-            <textarea name="evidenceRefs" placeholder="Evidence refs: logs, measurements, ticket links" ${editable ? '' : 'disabled'}></textarea>
+            <textarea name="imageRefs" placeholder="Image references: URLs, filenames, drive refs" ${canCreate ? '' : 'disabled'}></textarea>
+            <textarea name="videoRefs" placeholder="Video references: URLs or filenames" ${canCreate ? '' : 'disabled'}></textarea>
+            <textarea name="evidenceRefs" placeholder="Evidence refs: logs, measurements, ticket links" ${canCreate ? '' : 'disabled'}></textarea>
           </div>
         </div>
         <div class="tiny mt">Use timeline updates and reference fields to keep a service-history trail without requiring upload wiring.</div>
@@ -981,7 +1001,7 @@ export function renderOperations(el, state, actions) {
       <section class="item ops-intake-step">
         <h3>Step 5 · Save and next actions</h3>
         <div class="tiny">Save now, then use the task card actions to assign/start work, run AI, update timeline, and close out.</div>
-        <button class="primary mt" ${editable ? '' : 'disabled'}>Save task</button>
+        <button class="primary mt" ${canCreate && !state.operationsUi?.isSavingTask ? '' : 'disabled'}>${state.operationsUi?.isSavingTask ? 'Saving…' : 'Save task'}</button>
       </section>
       <datalist id="assetOptions">${scopedAssets.map((asset) => `<option value="${asset.name || asset.id}"></option>`).join('')}</datalist>
       <datalist id="locationOptions">${locationOptions.filter((option) => option.name && !option.name.includes('Company-wide')).map((option) => `<option value="${option.name}"></option>`).join('')}</datalist>

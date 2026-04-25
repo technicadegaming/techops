@@ -13,6 +13,8 @@ const DEFAULT_SETTINGS = {
   aiMaxWebSources: 3,
   aiConfidenceThreshold: 0.45,
   aiAllowManualRerun: true,
+  aiAllowStaffManualRerun: false,
+  aiAllowStaffSaveFixesToLibrary: false,
   aiSaveSuccessfulFixesToLibraryDefault: false,
   aiShortResponseMode: true,
   aiVerboseManagerMode: false
@@ -39,6 +41,10 @@ function dedupeBy(items = [], buildKey = (item) => JSON.stringify(item)) {
     seen.add(key);
     return true;
   });
+}
+
+function normalizeComparable(value = '') {
+  return `${value || ''}`.trim().toLowerCase();
 }
 
 async function fetchDocExcerpt(url) {
@@ -236,7 +242,30 @@ async function gatherContext(db, taskId) {
   const recentNotes = notesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const libraryRecords = librarySnap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((row) => {
     if (!asset) return true;
-    return [row.manufacturer, row.gameTitle, row.assetType].some((x) => x && [asset.manufacturer, asset.gameTitle, asset.type, asset.name, asset.normalizedName, asset.family].includes(x));
+    const assetTerms = new Set([
+      asset.id,
+      asset.name,
+      asset.normalizedName,
+      asset.title,
+      asset.gameTitle,
+      asset.manufacturer,
+      asset.type,
+      asset.assetType,
+      asset.family,
+      asset.cabinetVariant
+    ].map(normalizeComparable).filter(Boolean));
+    const rowTerms = [
+      row.assetId,
+      row.assetName,
+      row.gameTitle,
+      row.title,
+      row.manufacturer,
+      row.assetType,
+      row.type,
+      row.family,
+      row.cabinetVariant
+    ].map(normalizeComparable).filter(Boolean);
+    return rowTerms.some((term) => assetTerms.has(term));
   }).slice(0, 10);
 
   const documentationContext = await buildDocumentationContext(db, asset, libraryRecords).catch(() => ({ mode: 'web_internal_only', items: [] }));
@@ -284,7 +313,7 @@ async function writeAudit(db, payload) {
   });
 }
 
-function buildTaskAiSnapshot({ runId, result, taskId, companyId }) {
+function buildTaskAiSnapshot({ runId, result, taskId, companyId, documentationContext = {} }) {
   const parsed = result?.parsed || {};
   const updatedAt = isoNow();
   return {
@@ -306,6 +335,9 @@ function buildTaskAiSnapshot({ runId, result, taskId, companyId }) {
       nextSteps: Array.isArray(parsed.diagnosticSteps) ? parsed.diagnosticSteps.slice(0, 8) : [],
       followupQuestions: [],
       probableCauses: Array.isArray(parsed.probableCauses) ? parsed.probableCauses.slice(0, 6) : []
+      ,
+      documentationMode: documentationContext.mode || 'web_internal_only',
+      documentationSources: Array.isArray(documentationContext.items) ? documentationContext.items.slice(0, 6) : []
     }
   };
 }
@@ -410,7 +442,8 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
             runId: runRef.id,
             result,
             taskId,
-            companyId: latestTaskCompanyId || expectedCompanyId || null
+            companyId: latestTaskCompanyId || expectedCompanyId || null,
+            documentationContext: context.documentationContext || {}
           }),
           updatedAt: isoNow(),
           updatedBy: userId

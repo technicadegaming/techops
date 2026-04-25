@@ -10,6 +10,7 @@ const {
 const {
   doc,
   getDoc,
+  deleteDoc,
   setDoc,
 } = require('firebase/firestore');
 const {
@@ -138,6 +139,67 @@ test('firestore: role-sensitive behavior enforces elevated-only app settings wri
       timezone: 'UTC',
     }),
   );
+});
+
+test('firestore: active staff can create same-company tasks but cannot create cross-company tasks', async () => {
+  await seedMembership({ uid: 'staff-a', companyId: 'company-a', role: 'staff' });
+  await seedMembership({ uid: 'staff-a-other', companyId: 'company-b', role: 'staff' });
+  const testEnv = await rulesTestEnvPromise;
+  const staffDb = testEnv.authenticatedContext('staff-a').firestore();
+
+  await assertSucceeds(
+    setDoc(doc(staffDb, 'tasks', 'task-a'), {
+      id: 'task-a',
+      companyId: 'company-a',
+      title: 'Quik Drop down',
+      status: 'open',
+    }),
+  );
+
+  await assertFails(
+    setDoc(doc(staffDb, 'tasks', 'task-cross'), {
+      id: 'task-cross',
+      companyId: 'company-b',
+      title: 'Cross-company task',
+      status: 'open',
+    }),
+  );
+});
+
+test('firestore: active staff cannot update or delete arbitrary tasks', async () => {
+  await seedMembership({ uid: 'staff-a', companyId: 'company-a', role: 'staff' });
+  await seedMembership({ uid: 'lead-a', companyId: 'company-a', role: 'lead' });
+  const testEnv = await rulesTestEnvPromise;
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'tasks', 'task-owned-by-lead'), {
+      id: 'task-owned-by-lead',
+      companyId: 'company-a',
+      title: 'Existing task',
+      status: 'open',
+      description: 'Initial',
+    });
+  });
+
+  const staffDb = testEnv.authenticatedContext('staff-a').firestore();
+  await assertFails(
+    setDoc(doc(staffDb, 'tasks', 'task-owned-by-lead'), {
+      id: 'task-owned-by-lead',
+      companyId: 'company-a',
+      title: 'Edited by staff',
+      status: 'completed',
+      description: 'Changed',
+    }),
+  );
+  await assertFails(
+    setDoc(doc(staffDb, 'tasks', 'task-owned-by-lead'), {
+      id: 'task-owned-by-lead',
+      companyId: 'company-a',
+      title: 'Edited by staff',
+      status: 'open',
+    }, { merge: true }),
+  );
+  await assertFails(deleteDoc(doc(staffDb, 'tasks', 'task-owned-by-lead')));
 });
 
 test('firestore: first user can create company and own owner membership during bootstrap', async () => {

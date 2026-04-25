@@ -9,7 +9,9 @@ test('permissions by role', () => {
   assert.equal(canRunAssetEnrichment('lead'), false);
   assert.equal(canRunAssetEnrichment('staff'), false);
   assert.equal(canRunManualAi('staff'), false);
+  assert.equal(canRunManualAi('staff', { aiAllowStaffManualRerun: true }), true);
   assert.equal(canRunManualAi('lead'), true);
   assert.equal(canSaveToTroubleshootingLibrary('lead'), true);
   assert.equal(canSaveToTroubleshootingLibrary('staff'), false);
+  assert.equal(canSaveToTroubleshootingLibrary('staff', { aiAllowStaffSaveFixesToLibrary: true }), true);
 });
