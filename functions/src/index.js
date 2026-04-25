@@ -250,8 +250,6 @@ exports.answerTaskFollowup = onCall({ secrets: [OPENAI_API_KEY] }, async (reques
   assertString(request.data?.runId, 'runId');
 
   const task = await loadTask(request.data.taskId);
-  const assetSnap = task.assetId ? await db.collection('assets').doc(task.assetId).get().catch(() => null) : null;
-  const taskAsset = assetSnap?.exists ? assetSnap.data() : null;
   const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
   const taskContext = await resolveTaskCompanyContext({
     task,
@@ -815,6 +813,12 @@ exports.saveTaskFixToTroubleshootingLibrary = onCall({}, async (request) => {
   assertString(request.data?.taskId, 'taskId');
 
   const task = await loadTask(request.data.taskId);
+  const assetSnap = task.assetId
+    ? await db.collection('assets').doc(task.assetId).get().catch(() => null)
+    : null;
+  const taskAsset = assetSnap?.exists
+    ? { id: assetSnap.id, ...assetSnap.data() }
+    : null;
   const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
   const taskContext = await resolveTaskCompanyContext({
     task,

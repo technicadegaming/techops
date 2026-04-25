@@ -22,6 +22,31 @@
   "storage": {
     "rules": "storage.rules"
   },
+  "hosting": {
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "functions/**",
+      "test/**",
+      "scripts/**",
+      "test-logs/**",
+      "*.log",
+      "firestore.rules",
+      "firestore.indexes.json",
+      "storage.rules",
+      "manual-research-benchmark*.json",
+      "package-lock.json",
+      "package.json"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
   "emulators": {
     "firestore": {
       "port": 8080
