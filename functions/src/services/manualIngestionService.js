@@ -1,9 +1,19 @@
 const admin = require('firebase-admin');
 const { createHash } = require('node:crypto');
+const { createRequire } = require('node:module');
 const { gunzipSync, inflateSync, inflateRawSync } = require('node:zlib');
 const { isoNow } = require('../lib/timestamps');
 const { cleanDocumentationSuggestions } = require('./assetEnrichmentService');
 const { acquireManualToLibrary } = require('./manualAcquisitionService');
+const requireFromHere = createRequire(__filename);
+
+function loadPdfParse() {
+  try {
+    return requireFromHere('pdf-parse');
+  } catch {
+    return null;
+  }
+}
 
 function normalizeString(value, max = 240) {
   return `${value || ''}`.trim().slice(0, max);
@@ -98,12 +108,88 @@ function extractPdfText(buffer) {
   return texts.join(' ').replace(/\s+/g, ' ').trim();
 }
 
+function normalizeExtractedText(value = '') {
+  return `${value || ''}`.replace(/\r/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+async function extractPdfTextRobust(buffer) {
+  const source = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || '');
+  const legacyText = normalizeExtractedText(extractPdfText(source));
+  const minimumPreferredLength = 80;
+  const pdfParse = loadPdfParse();
+  if (typeof pdfParse !== 'function') {
+    return {
+      text: legacyText,
+      extractionEngine: legacyText ? 'legacy_pdf_operator_parser' : 'none',
+      extractionWarning: 'pdf-parse unavailable; used legacy extractor fallback',
+    };
+  }
+  try {
+    const parsed = await pdfParse(source);
+    const parsedText = normalizeExtractedText(parsed?.text || '');
+    if (parsedText.length >= minimumPreferredLength || (parsedText.length > 0 && parsedText.length >= legacyText.length)) {
+      return {
+        text: parsedText,
+        extractionEngine: parsedText ? 'pdf-parse' : 'none',
+        extractionWarning: parsedText ? '' : 'pdf-parse returned empty text',
+      };
+    }
+    if (legacyText) {
+      return {
+        text: legacyText,
+        extractionEngine: 'legacy_pdf_operator_parser',
+        extractionWarning: 'pdf-parse returned limited text; used legacy extractor fallback',
+      };
+    }
+    return {
+      text: parsedText,
+      extractionEngine: parsedText ? 'pdf-parse' : 'none',
+      extractionWarning: parsedText ? '' : 'pdf-parse returned limited text',
+    };
+  } catch (error) {
+    if (legacyText) {
+      return {
+        text: legacyText,
+        extractionEngine: 'legacy_pdf_operator_parser',
+        extractionWarning: `pdf-parse failed: ${`${error?.message || String(error)}`.slice(0, 160)}`,
+      };
+    }
+    return {
+      text: '',
+      extractionEngine: 'none',
+      extractionWarning: `pdf-parse failed: ${`${error?.message || String(error)}`.slice(0, 160)}`,
+    };
+  }
+}
+
 function extractTextFromBuffer(buffer, contentType = '', sourceUrl = '') {
   const normalizedType = `${contentType || ''}`.toLowerCase();
   if (normalizedType.includes('html')) return stripHtml(Buffer.from(buffer).toString('utf8'));
   if (normalizedType.startsWith('text/')) return Buffer.from(buffer).toString('utf8').replace(/\s+/g, ' ').trim();
   if (normalizedType.includes('pdf') || /\.pdf($|\?|#)/i.test(sourceUrl)) return extractPdfText(buffer);
   return '';
+}
+
+async function extractTextFromBufferAsync(buffer, contentType = '', sourceUrl = '') {
+  const normalizedType = `${contentType || ''}`.toLowerCase();
+  if (normalizedType.includes('html')) {
+    const text = stripHtml(Buffer.from(buffer).toString('utf8'));
+    return { text, extractionEngine: text ? 'html' : 'none', extractedTextLength: text.length, extractionWarning: '' };
+  }
+  if (normalizedType.startsWith('text/')) {
+    const text = normalizeExtractedText(Buffer.from(buffer).toString('utf8'));
+    return { text, extractionEngine: text ? 'text' : 'none', extractedTextLength: text.length, extractionWarning: '' };
+  }
+  if (normalizedType.includes('pdf') || /\.pdf($|\?|#)/i.test(sourceUrl)) {
+    const extracted = await extractPdfTextRobust(buffer);
+    return {
+      text: extracted.text,
+      extractionEngine: extracted.extractionEngine,
+      extractedTextLength: extracted.text.length,
+      extractionWarning: extracted.extractionWarning || '',
+    };
+  }
+  return { text: '', extractionEngine: 'none', extractedTextLength: 0, extractionWarning: '' };
 }
 
 function chunkManualText(text = '', options = {}) {
@@ -257,7 +343,8 @@ async function materializeApprovedManualForAsset({
     }
   });
 
-  const extractedText = extractTextFromBuffer(buffer, manualLibrary.contentType || '', sourceUrl || manualLibrary.originalDownloadUrl || sharedStoragePath);
+  const extracted = await extractTextFromBufferAsync(buffer, manualLibrary.contentType || '', sourceUrl || manualLibrary.originalDownloadUrl || sharedStoragePath);
+  const extractedText = extracted.text;
   const chunks = chunkManualText(extractedText);
   const now = isoNow();
   await db.collection('manuals').doc(manualId).set({
@@ -287,6 +374,9 @@ async function materializeApprovedManualForAsset({
     extractionCompletedAt: now,
     extractionFailedAt: null,
     extractionError: '',
+    extractionEngine: extracted.extractionEngine || 'none',
+    extractedTextLength: extracted.extractedTextLength || extractedText.length || 0,
+    extractionWarning: extracted.extractionWarning || '',
     chunkCount: chunks.length,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedBy: userId || '',
@@ -300,6 +390,7 @@ async function materializeApprovedManualForAsset({
     sharedStoragePath,
     extractionStatus: chunks.length ? 'completed' : 'no_text_extracted',
     chunkCount: chunks.length,
+    extractionEngine: extracted.extractionEngine || 'none',
     contentType: manualLibrary.contentType || '',
   };
 }
@@ -344,7 +435,8 @@ async function materializeStoredAssetManual({
     ),
     200
   );
-  const extractedText = extractTextFromBuffer(buffer, resolvedContentType, normalizedSourceUrl || normalizedStoragePath);
+  const extracted = await extractTextFromBufferAsync(buffer, resolvedContentType, normalizedSourceUrl || normalizedStoragePath);
+  const extractedText = extracted.text;
   const chunks = chunkManualText(extractedText);
   const now = isoNow();
   await db.collection('manuals').doc(manualId).set({
@@ -370,6 +462,9 @@ async function materializeStoredAssetManual({
     extractionCompletedAt: now,
     extractionFailedAt: null,
     extractionError: '',
+    extractionEngine: extracted.extractionEngine || 'none',
+    extractedTextLength: extracted.extractedTextLength || extractedText.length || 0,
+    extractionWarning: extracted.extractionWarning || '',
     chunkCount: chunks.length,
     attachmentMode: attachmentMode || '',
     manualProvenance: manualProvenance || '',
@@ -383,6 +478,7 @@ async function materializeStoredAssetManual({
     manualId,
     extractionStatus: chunks.length ? 'completed' : 'no_text_extracted',
     chunkCount: chunks.length,
+    extractionEngine: extracted.extractionEngine || 'none',
     storagePath: normalizedStoragePath,
     contentType: resolvedContentType || '',
   };
@@ -650,8 +746,10 @@ module.exports = {
   buildManualStoragePath,
   chunkManualText,
   createAssetManualId,
+  extractPdfTextRobust,
   extractPdfText,
   extractTextFromBuffer,
+  extractTextFromBufferAsync,
   materializeStoredAssetManual,
   materializeApprovedManualForAsset,
   resolveApprovedManualLibraryForAsset,
