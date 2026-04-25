@@ -12,6 +12,7 @@ const {
   normalizeRole,
 } = require('./lib/permissions');
 const { toMillis } = require('./lib/rateLimit');
+const { isoNow } = require('./lib/timestamps');
 const {
   authorizeAssetEnrichment,
   getActiveMembershipForCompany,
@@ -277,8 +278,15 @@ exports.answerTaskFollowup = onCall({ secrets: [OPENAI_API_KEY] }, async (reques
     { merge: true },
   );
 
+  await db.collection('taskAiRuns').doc(request.data.runId).set({
+    followupStatus: 'answered',
+    followupAnsweredAt: serverTimestamp(),
+    updatedAt: isoNow(),
+    updatedBy: request.auth.uid,
+  }, { merge: true });
+
   const settings = await getAiSettings(authz.companyId);
-  return runPipeline({
+  const pipelineResult = await runPipeline({
     db,
     taskId: request.data.taskId,
     userId: request.auth.uid,
@@ -286,7 +294,20 @@ exports.answerTaskFollowup = onCall({ secrets: [OPENAI_API_KEY] }, async (reques
     settings,
     traceId: request.rawRequest.headers['x-cloud-trace-context'] || `followup-${Date.now()}`,
     followupAnswers: answers,
+    sourceRunId: request.data.runId,
   });
+
+  if (`${pipelineResult?.runId || ''}`.trim()) {
+    await db.collection('taskAiRuns').doc(request.data.runId).set({
+      followupStatus: 'answered',
+      continuedByRunId: pipelineResult.runId,
+      followupContinuedAt: serverTimestamp(),
+      updatedAt: isoNow(),
+      updatedBy: request.auth.uid,
+    }, { merge: true });
+  }
+
+  return pipelineResult;
 });
 
 exports.regenerateTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
