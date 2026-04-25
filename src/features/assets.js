@@ -41,7 +41,7 @@ const ENRICHMENT_STATUS_LABELS = {
   support_resources_found: 'support resources found',
   likely_manual_unreachable: 'manual likely unreachable',
   followup_needed: 'follow-up needed',
-  no_match_yet: 'no match yet',
+  no_match_yet: 'no trusted match yet',
   permission_blocked: 'permission blocked',
   lookup_failed: 'lookup failed',
   retry_needed: 'retry needed',
@@ -706,7 +706,7 @@ export function renderAssets(el, state, actions) {
     state.assetUi.searchQuery ? `search: "${state.assetUi.searchQuery}"` : '',
     state.assetUi.statusFilter !== 'all' ? `docs: ${state.assetUi.statusFilter.replace('_', ' ')}` : '',
     state.assetUi.reviewFilter !== 'all' ? `review: ${state.assetUi.reviewFilter.replace('_', ' ')}` : '',
-    state.assetUi.enrichmentFilter !== 'all' ? `enrichment: ${state.assetUi.enrichmentFilter.replace('_', ' ')}` : ''
+    state.assetUi.enrichmentFilter !== 'all' ? `documentation lookup: ${state.assetUi.enrichmentFilter.replace('_', ' ')}` : ''
   ].filter(Boolean);
   const assetTasks = scope.scopedTasks;
   const docsReadyCount = (scope.scopedAssets || []).filter((asset) => getAuthoritativeManualState(asset).hasAttachedManual).length;
@@ -761,9 +761,9 @@ export function renderAssets(el, state, actions) {
             <option value="missing_docs" ${state.assetUi.reviewFilter === 'missing_docs' ? 'selected' : ''}>Missing docs</option>
           </select>
         </label>
-        <label class="tiny">Enrichment state
+        <label class="tiny">Documentation lookup status
           <select data-asset-enrichment-filter>
-            <option value="all" ${state.assetUi.enrichmentFilter === 'all' ? 'selected' : ''}>All enrichment states</option>
+            <option value="all" ${state.assetUi.enrichmentFilter === 'all' ? 'selected' : ''}>All documentation states</option>
             <option value="action_needed" ${state.assetUi.enrichmentFilter === 'action_needed' ? 'selected' : ''}>Action needed</option>
             <option value="in_progress" ${state.assetUi.enrichmentFilter === 'in_progress' ? 'selected' : ''}>In progress</option>
             <option value="verified_manual_found" ${state.assetUi.enrichmentFilter === 'verified_manual_found' ? 'selected' : ''}>Verified manual found</option>
@@ -784,44 +784,60 @@ export function renderAssets(el, state, actions) {
       ${state.assetUi?.bulkDocRerunSummary ? `<div class="tiny mt">${state.assetUi.bulkDocRerunSummary}</div>` : ''}
     </div>
     ${assetFilter === 'missing_docs' ? '<div class="inline-state warn">Showing assets missing docs only.</div>' : ''}
-    <div class="item" style="margin-bottom:12px; overflow:auto;">
+    <div class="item" style="margin-bottom:12px;">
       <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
         <div>
           <b>Manual review queue</b>
-          <div class="tiny">Unresolved/manual-review-needed assets with candidate evidence, provenance, and next actions.</div>
+          <div class="tiny">Review documentation matches that need a decision. Keep technical provenance in Details to reduce noise.</div>
         </div>
         <div class="tiny">Queue items: ${manualReviewQueue.length}</div>
       </div>
-      ${manualReviewQueue.length ? `<table class="tiny" style="width:100%; border-collapse:collapse; margin-top:8px;"><thead><tr><th>Asset</th><th>Context</th><th>Status</th><th>Selected candidate</th><th>Top evidence + provenance</th><th>Rejected reasons</th><th>Manual-library</th><th>Case bucket</th><th>Actions</th></tr></thead><tbody>${manualReviewQueue.map((item) => {
+      ${manualReviewQueue.length ? `<div class="queue-list mt">${manualReviewQueue.map((item) => {
         const asset = item.asset || {};
         const location = getAssetLocationRecord(state, asset);
         const evidenceSummary = item.evidenceRows.length
-          ? item.evidenceRows.map((row) => `<div><a href="${row.url}" target="_blank" rel="noopener">${row.title}</a><div>${row.provenance}${row.score ? ` · score ${Math.round(Number(row.score))}` : ''}</div></div>`).join('')
+          ? item.evidenceRows.map((row) => `<div><a href="${row.url}" target="_blank" rel="noopener">${row.title}</a><div class="tiny">${row.provenance}${row.score ? ` · score ${Math.round(Number(row.score))}` : ''}</div></div>`).join('')
           : 'No candidate evidence';
         const rejectionSummary = item.rejectionReasons.length ? item.rejectionReasons.join('<br/>') : 'No explicit rejection reasons recorded';
         const candidateLabel = item.selectedCandidateUrl
           ? `<a href="${item.selectedCandidateUrl}" target="_blank" rel="noopener">${item.selectedCandidateTitle || item.selectedCandidateUrl}</a>`
           : 'n/a';
-        return `<tr>
-          <td><b>${asset.name || asset.id}</b><div>${asset.manufacturer || 'n/a'}</div><div><a href="#asset-${asset.id}">Open details</a></div></td>
-          <td>${location.label}<div>${asset.companyName || state.company?.name || 'company scope'}</div></td>
-          <td>manual: ${formatManualReviewLabel(item.manualStatus)}<br/>review: ${formatManualReviewLabel(item.manualReviewState)}<br/>enrichment: ${formatManualReviewLabel(item.effectiveStatus)}<br/>terminal: ${formatManualReviewLabel(item.enrichmentTerminalReason)}</td>
-          <td>${candidateLabel}</td>
-          <td>${evidenceSummary}</td>
-          <td>${rejectionSummary}</td>
-          <td>${item.hasManualLibraryEntry ? 'linked' : 'none'}</td>
-          <td>${formatManualReviewLabel(item.caseType)}</td>
-          <td style="min-width:220px;">
-            <div style="display:flex; gap:4px; flex-wrap:wrap;">
-              <button type="button" data-enrich="${asset.id}" class="primary">Rerun lookup</button>
-              <button type="button" data-queue-approve="${asset.id}" data-queue-candidate-url="${encodeURIComponent(item.selectedCandidateUrl || '')}" ${item.selectedCandidateUrl ? '' : 'disabled'}>Approve candidate</button>
-              <button type="button" data-queue-reject="${asset.id}" data-queue-candidate-url="${encodeURIComponent(item.selectedCandidateUrl || '')}" ${item.selectedCandidateUrl ? '' : 'disabled'}>Reject candidate</button>
-              <button type="button" data-queue-needs-title="${asset.id}">Needs title clarification</button>
-              <button type="button" data-queue-flag-library="${asset.id}" ${item.hasManualLibraryEntry ? '' : 'disabled'}>Flag manual-library row</button>
+        return `<details class="queue-item">
+          <summary class="queue-summary">
+            <div>
+              <b>${asset.name || asset.id}</b>
+              <div class="tiny">${asset.manufacturer || 'Unknown manufacturer'} · ${location.label}</div>
             </div>
-          </td>
-        </tr>`;
-      }).join('')}</tbody></table>` : '<div class="tiny" style="margin-top:8px;">No unresolved manual review queue items in this scope.</div>'}
+            <div class="queue-meta">
+              ${renderStatusChip(formatManualReviewLabel(item.manualStatus))}
+              ${renderStatusChip(formatManualReviewLabel(item.manualReviewState), 'warn')}
+              ${renderStatusChip(formatManualReviewLabel(item.effectiveStatus), ['verified_manual_found', 'manual_attached'].includes(item.effectiveStatus) ? 'good' : 'muted')}
+            </div>
+          </summary>
+          <div class="mt">
+            <div class="tiny"><b>Candidate:</b> ${candidateLabel}</div>
+            <div class="state-chip-row mt">
+              ${renderStatusChip(`Result reason: ${formatManualReviewLabel(item.enrichmentTerminalReason || 'not_set')}`, 'muted')}
+              ${renderStatusChip(`Case: ${formatManualReviewLabel(item.caseType)}`, 'info')}
+              ${renderStatusChip(item.hasManualLibraryEntry ? 'Shared manual record linked' : 'No shared manual record', item.hasManualLibraryEntry ? 'warn' : 'muted')}
+            </div>
+            <div class="action-row mt">
+              <button type="button" data-enrich="${asset.id}" class="primary">Review / rerun lookup</button>
+              <button type="button" data-queue-approve="${asset.id}" data-queue-candidate-url="${encodeURIComponent(item.selectedCandidateUrl || '')}" ${item.selectedCandidateUrl ? '' : 'disabled'}>Approve</button>
+              <button type="button" data-queue-reject="${asset.id}" data-queue-candidate-url="${encodeURIComponent(item.selectedCandidateUrl || '')}" ${item.selectedCandidateUrl ? '' : 'disabled'}>Reject</button>
+              <button type="button" data-queue-needs-title="${asset.id}">Needs title clarification</button>
+              <button type="button" data-queue-flag-library="${asset.id}" ${item.hasManualLibraryEntry ? '' : 'disabled'}>Flag shared manual record</button>
+            </div>
+            <details>
+              <summary class="tiny"><b>Details</b> · Evidence, provenance, and review notes</summary>
+              <div class="tiny mt"><b>Expected reason:</b> ${formatManualReviewLabel(item.enrichmentTerminalReason || 'not_set')}</div>
+              <div class="tiny mt"><b>Top evidence:</b><div class="mt">${evidenceSummary}</div></div>
+              <div class="tiny mt"><b>Rejected reasons:</b><div>${rejectionSummary}</div></div>
+              <div class="tiny mt"><a href="#asset-${asset.id}">Open full asset record</a></div>
+            </details>
+          </div>
+        </details>`;
+      }).join('')}</div>` : '<div class="tiny" style="margin-top:8px;">No unresolved manual review queue items in this scope.</div>'}
     </div>
     <form id="assetForm" class="grid grid-2" style="margin-bottom:12px; border:1px solid #e5e7eb; border-radius:10px; padding:10px;">
       <div class="tiny" style="grid-column:1/-1; font-weight:700;">Quick add asset</div>

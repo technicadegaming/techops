@@ -115,6 +115,7 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
   ].filter(Boolean);
 
   el.innerHTML = `
+    <div class="page-shell page-narrow">
     <div class="page-header">
       <div>
         <h2 class="page-title">Reports</h2>
@@ -250,6 +251,7 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
         <b>Unresolved tasks by severity</b>
         <div class="list mt">${unresolvedBySeverity.map((row) => `<div class="item tiny"><b>${row.severity}</b> | ${row.count} task${row.count === 1 ? '' : 's'}</div>`).join('')}</div>
       </div>
+    </div>
     </div>
   `;
 
