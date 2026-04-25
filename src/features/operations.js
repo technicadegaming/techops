@@ -19,7 +19,6 @@ import {
   buildLocationOptions,
   buildLocationSummary,
   getAssetLocationRecord,
-  getLocationEmptyState,
   getLocationScopeLabel,
   getTaskLocationRecord
 } from './locationContext.js';
@@ -829,16 +828,22 @@ export function renderOperations(el, state, actions) {
   const missingAssetPrompt = typedAssetName && !typedAssetMatch;
 
   el.innerHTML = `
-    <div class="row space">
+    <div class="page-shell">
+    <header class="page-header">
       <div>
-        <h2>Operations & Tasks</h2>
-        <div class="tiny">${getLocationScopeLabel(scope.selection)} | Structured intake enabled</div>
+        <h2 class="page-title">Operations</h2>
+        <p class="page-subtitle">Create tasks, troubleshoot issues, assign work, and keep service history organized. ${getLocationScopeLabel(scope.selection)}</p>
       </div>
-      <div class="kpi-line">
-        <span>Visible tasks: ${visibleTasks.length}</span>
-        <span>Open work: ${openTasks.length}</span>
-        <span>In progress: ${inProgress}</span>
+      <div class="page-actions">
+        <button type="button" class="btn-primary" data-jump-intake>Create task</button>
+        <button type="button" class="btn-secondary" data-status-filter="open">View open tasks</button>
+        <button type="button" class="btn-secondary" data-ownership-filter="followup">View follow-ups</button>
       </div>
+    </header>
+    <div class="kpi-line">
+      <span>Visible tasks: ${visibleTasks.length}</span>
+      <span>Open work: ${openTasks.length}</span>
+      <span>In progress: ${inProgress}</span>
     </div>
 
     <div class="stats-grid">
@@ -999,9 +1004,10 @@ export function renderOperations(el, state, actions) {
       </details>
 
       <section class="item ops-intake-step">
-        <h3>Step 5 · Save and next actions</h3>
+        <h3>Step 5 · Create task</h3>
         <div class="tiny">Save now, then use the task card actions to assign/start work, run AI, update timeline, and close out.</div>
-        <button class="primary mt" ${canCreate && !state.operationsUi?.isSavingTask ? '' : 'disabled'}>${state.operationsUi?.isSavingTask ? 'Saving…' : 'Save task'}</button>
+        <button class="primary mt" ${canCreate && !state.operationsUi?.isSavingTask ? '' : 'disabled'}>${state.operationsUi?.isSavingTask ? 'Creating task…' : (state.settings?.aiEnabled ? 'Create task & run AI' : 'Create task')}</button>
+        ${state.settings?.aiEnabled ? '' : '<div class="inline-state info mt">Operations AI is disabled in Admin settings. You can still create and manage tasks.</div>'}
       </section>
       <datalist id="assetOptions">${scopedAssets.map((asset) => `<option value="${asset.name || asset.id}"></option>`).join('')}</datalist>
       <datalist id="locationOptions">${locationOptions.filter((option) => option.name && !option.name.includes('Company-wide')).map((option) => `<option value="${option.name}"></option>`).join('')}</datalist>
@@ -1083,11 +1089,16 @@ export function renderOperations(el, state, actions) {
           </details>`;
         }).join('')}
       </div>`
-      : `<div class="inline-state ${scopedTasks.length ? 'info' : 'success'} mt">${scopedTasks.length ? 'No tasks match the current quick filters.' : getLocationEmptyState(scope.selection, 'tasks', 'task')}</div>`}
+      : `<div class="inline-state ${scopedTasks.length ? 'info' : 'success'} mt">${scopedTasks.length ? 'No tasks match the current quick filters.' : 'No open operations tasks yet. Create a task to start troubleshooting an asset issue.'}</div>`}
+    </div>
   `;
 
   const rerender = () => renderOperations(el, state, actions);
   const form = el.querySelector('#taskForm');
+  el.querySelector('[data-jump-intake]')?.addEventListener('click', () => {
+    form?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    form?.querySelector('[name="assetSearch"]')?.focus();
+  });
   const idInput = form?.querySelector('[name="id"]');
   const openedAtInput = form?.querySelector('[name="openedAt"]');
   const assetInput = form?.querySelector('[name="assetSearch"]');

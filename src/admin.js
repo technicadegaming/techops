@@ -50,16 +50,16 @@ const NOTIFICATION_PREF_CATEGORIES = [
 ];
 
 const ADMIN_SECTIONS = [
-  { id: 'company', label: 'Company settings' },
-  { id: 'locations', label: 'Location settings' },
+  { id: 'company', label: 'Company' },
+  { id: 'locations', label: 'Locations' },
   { id: 'members', label: 'Members' },
-  { id: 'billing', label: 'Billing & plan' },
+  { id: 'billing', label: 'Billing' },
   { id: 'workers', label: 'Workers' },
   { id: 'invites', label: 'Invites' },
-  { id: 'audit', label: 'Audit log' },
+  { id: 'audit', label: 'Audit' },
   { id: 'imports', label: 'Imports' },
-  { id: 'tools', label: 'AI & notifications' },
-  { id: 'danger', label: 'Danger zone' }
+  { id: 'tools', label: 'AI & Notifications' },
+  { id: 'danger', label: 'Danger Zone' }
 ];
 
 function getReadablePersonName(person = {}) {
@@ -159,9 +159,13 @@ export function renderAdmin(el, state, actions) {
   const locationManagerChoices = members.map((member) => `<option value="${getReadablePersonName(member.person || member)}">${getReadablePersonName(member.person || member)}</option>`).join('');
 
   el.innerHTML = `
-    <h2>Company Admin Settings</h2>
-    <p class="tiny">Manage company profile, locations, people access, AI behavior, and notification policies in one place.</p>
-    ${adminUi.message ? `<div class="inline-state ${adminUi.tone === 'error' ? 'error' : (adminUi.tone === 'success' ? 'success' : 'info')}">${adminUi.message}</div>` : ''}
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">Admin</h2>
+        <p class="page-subtitle">Manage company settings, people, imports, AI behavior, and workspace controls.</p>
+      </div>
+    </div>
+    ${adminUi.message ? `<div class="inline-state ${adminUi.tone === 'error' ? 'error' : (adminUi.tone === 'success' ? 'success' : 'info')}" role="status" aria-live="polite">${adminUi.message}</div>` : ''}
     ${renderWorkspaceReadinessCard(state, { compact: true })}
     ${renderSectionTabs(activeSection)}
 

@@ -92,8 +92,12 @@ function renderInitialOnboarding(el, state, actions) {
   const handoffStatus = state.onboardingUi?.handoffStatus || 'idle';
   const inviteCodePrefill = `${state.onboardingUi?.inviteCodePrefill || ''}`.trim();
   el.innerHTML = `
-    <h2>Welcome to Scoot Business</h2>
-    <p class="tiny">Create your company workspace in under a minute, or join one with an invite code. New workspaces begin on a free trial; billing setup comes later in Admin.</p>
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">Welcome to Scoot Business</h2>
+        <p class="page-subtitle">Create your company workspace or join with an invite code.</p>
+      </div>
+    </div>
     ${onboardingMessage ? `<div class="tiny" style="margin:0 0 12px; padding:8px 10px; border-radius:8px; border:1px solid ${onboardingTone === 'error' ? '#fca5a5' : (onboardingTone === 'success' ? '#86efac' : '#d1d5db')}; background:${onboardingTone === 'error' ? '#fef2f2' : (onboardingTone === 'success' ? '#f0fdf4' : '#f9fafb')}; color:${onboardingTone === 'error' ? '#991b1b' : (onboardingTone === 'success' ? '#166534' : '#374151')};">${onboardingMessage}</div>` : ''}
     ${handoffStatus === 'working' ? '<div class="inline-state info mt">Finishing account handoff…</div>' : ''}
     <div class="grid grid-2">
@@ -201,13 +205,17 @@ function renderSetupWizard(el, state, actions) {
   const currentLocation = (state.companyLocations || [])[0] || {};
 
   el.innerHTML = `
-    <h2>Setup wizard</h2>
-    <p class="tiny">Finish a few steps so your workspace is ready for daily operations.</p>
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">Onboarding</h2>
+        <p class="page-subtitle">Finish a few steps so your workspace is ready for daily operations.</p>
+      </div>
+    </div>
     ${renderWorkspaceReadinessCard(state, { compact: true, dismissible: true })}
     ${msg ? `<div class="inline-state ${tone} mt">${msg}</div>` : ''}
     <div class="item mt">
-      <div class="tiny">Step ${step} of 6 • Focused workspace setup</div>
-      <div class="kpi-line mt"><span>1. Confirm company</span><span>2. Confirm HQ location</span><span>3. Team setup</span><span>4. Add assets</span><span>5. AI setup</span><span>6. Review and launch</span></div>
+      <div class="tiny">Step ${step} of 6 • Guided workspace setup</div>
+      <div class="kpi-line mt"><span>1. Create company</span><span>2. Add location</span><span>3. Invite team</span><span>4. Add first asset</span><span>5. Enable AI</span><span>6. Review and launch</span></div>
     </div>
 
     <form id="wizardForm" class="item mt grid">

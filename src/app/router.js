@@ -7,10 +7,19 @@ export function tabVisible(state, tab, canViewAdminTab) {
 }
 
 export function buildTabs({ state, sections, canViewAdminTab, onOpenTab, documentRef = document }) {
+  const labelMap = {
+    dashboard: 'Workspace · Dashboard',
+    operations: 'Workspace · Operations',
+    assets: 'Workspace · Assets',
+    calendar: 'Workspace · Calendar & PM',
+    reports: 'Admin · Reports',
+    account: 'Admin · Account',
+    admin: 'Admin · Settings'
+  };
   const tabs = documentRef.getElementById('tabs');
   tabs.innerHTML = sections
     .filter((section) => tabVisible(state, section, canViewAdminTab))
-    .map((id) => `<button class="tab ${id === state.route.tab ? 'active' : ''}" data-tab="${id}">${id}</button>`)
+    .map((id) => `<button class="tab ${id === state.route.tab ? 'active' : ''}" data-tab="${id}">${labelMap[id] || id}</button>`)
     .join('');
   tabs.querySelectorAll('[data-tab]').forEach((button) => button.addEventListener('click', () => onOpenTab(button.dataset.tab)));
 }
