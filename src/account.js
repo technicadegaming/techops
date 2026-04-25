@@ -13,8 +13,12 @@ export function renderAccount(el, state, actions) {
   const displayName = profile.fullName || state.user?.displayName || state.user?.email?.split('@')[0] || '-';
 
   el.innerHTML = `
-    <h2>Account settings</h2>
-    <p class="tiny">Manage your profile visibility, sign-in state, notification expectations, and security posture.</p>
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">Account</h2>
+        <p class="page-subtitle">Manage your profile, security, workspace access, and sign-in settings.</p>
+      </div>
+    </div>
     <div class="grid grid-2 settings-stack">
       <section class="item">
         <h3>Profile and account</h3>
@@ -56,7 +60,7 @@ export function renderAccount(el, state, actions) {
         <div class="list mt">${loginHistory.map((entry) => `<div class="item tiny"><b>${(entry.method || 'password').toUpperCase()}</b> sign-in • ${formatRelativeTime(entry.at)}<div>Providers: ${(entry.providers || []).join(', ') || 'password'}</div></div>`).join('') || '<div class="inline-state info">No recent sign-in history yet.</div>'}</div>
       </section>
     </div>
-    <p id="accountSecurityMessage" class="tiny mt"></p>
+    <p id="accountSecurityMessage" class="tiny mt" role="status" aria-live="polite"></p>
   `;
 
   const messageEl = el.querySelector('#accountSecurityMessage');

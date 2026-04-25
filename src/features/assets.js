@@ -717,7 +717,16 @@ export function renderAssets(el, state, actions) {
   const manualReviewQueue = buildManualReviewQueue(scope.scopedAssets || [], getEffectiveEnrichmentStatus);
 
   el.innerHTML = `
-    <h2>Assets</h2>
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">Assets</h2>
+        <p class="page-subtitle">Manage equipment records, documentation, history, and operational context.</p>
+      </div>
+      <div class="page-actions">
+        <button type="button" class="btn-primary" data-focus-add-asset>Add asset</button>
+        <button type="button" class="btn-secondary" data-show-missing-docs>Review documentation</button>
+      </div>
+    </div>
     <div class="item" style="margin-bottom:12px;">
       <div class="row space">
         <div>
@@ -769,9 +778,9 @@ export function renderAssets(el, state, actions) {
       <div class="tiny mt">Active filters: ${activeAssetFilters.length ? activeAssetFilters.join(' · ') : 'none'}</div>
       <div class="row mt" style="flex-wrap:wrap; align-items:center;">
         <button type="button" data-bulk-visible-enrich class="primary" ${bulkDocRerunRunning ? 'disabled' : ''}>Re-search docs for all visible assets</button>
-        ${bulkDocRerunRunning && bulkDocRerunProgress ? `<span class="tiny">Re-searching docs: ${bulkDocRerunProgress.completed} / ${bulkDocRerunProgress.totalTargeted} complete${bulkDocRerunCurrentLabel ? ` · Current: ${bulkDocRerunCurrentLabel}` : ''}</span>` : ''}
+        ${bulkDocRerunRunning && bulkDocRerunProgress ? `<span class="tiny" role="status" aria-live="polite">Re-searching docs: ${bulkDocRerunProgress.completed} / ${bulkDocRerunProgress.totalTargeted} complete${bulkDocRerunCurrentLabel ? ` · Current: ${bulkDocRerunCurrentLabel}` : ''}</span>` : ''}
       </div>
-      ${bulkDocRerunProgress ? `<div class="tiny mt">Bulk docs progress · targeted ${bulkDocRerunProgress.totalTargeted} · completed ${bulkDocRerunProgress.completed} · succeeded ${bulkDocRerunProgress.succeeded} · failed ${bulkDocRerunProgress.failed} · skipped ${bulkDocRerunProgress.skipped}</div>` : ''}
+      ${bulkDocRerunProgress ? `<div class="tiny mt">Documentation lookup progress · targeted ${bulkDocRerunProgress.totalTargeted} · completed ${bulkDocRerunProgress.completed} · succeeded ${bulkDocRerunProgress.succeeded} · failed ${bulkDocRerunProgress.failed} · skipped ${bulkDocRerunProgress.skipped}</div>` : ''}
       ${state.assetUi?.bulkDocRerunSummary ? `<div class="tiny mt">${state.assetUi.bulkDocRerunSummary}</div>` : ''}
     </div>
     ${assetFilter === 'missing_docs' ? '<div class="inline-state warn">Showing assets missing docs only.</div>' : ''}
@@ -1093,6 +1102,14 @@ export function renderAssets(el, state, actions) {
     state.assetUi.statusFilter = 'all';
     state.assetUi.reviewFilter = 'all';
     state.assetUi.enrichmentFilter = 'all';
+    renderAssets(el, state, actions);
+  });
+  el.querySelector('[data-focus-add-asset]')?.addEventListener('click', () => {
+    el.querySelector('#assetForm')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.querySelector('#assetForm [name="name"]')?.focus();
+  });
+  el.querySelector('[data-show-missing-docs]')?.addEventListener('click', () => {
+    state.assetUi.statusFilter = 'missing_docs';
     renderAssets(el, state, actions);
   });
   el.querySelector('[data-bulk-visible-enrich]')?.addEventListener('click', () => actions.runBulkAssetEnrichment(scopedAssets.map((asset) => asset.id), { confirmStart: true }));

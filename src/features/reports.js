@@ -115,12 +115,12 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
   ].filter(Boolean);
 
   el.innerHTML = `
-    <div class="row space">
+    <div class="page-header">
       <div>
-        <h2>Reports</h2>
-        <div class="tiny">Summary view for PM risk, recurring failures, and workload concentration over time.</div>
+        <h2 class="page-title">Reports</h2>
+        <p class="page-subtitle">Review operational trends, exports, and workspace data.</p>
       </div>
-      <div class="kpi-line">
+      <div class="kpi-line page-actions">
         <span>Tasks in scope: ${scopedTasks.length}</span>
         <span>Completed: ${completed.length}</span>
         <span>Open: ${unresolved.length}</span>

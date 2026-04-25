@@ -89,19 +89,26 @@ export function renderDashboard(el, state, navigate, applyFocus = () => {}) {
     .slice(0, 6);
 
   el.innerHTML = `
-    <div class="row space">
+    <div class="page-shell">
+    <header class="page-header">
       <div>
-        <h2>Dashboard</h2>
-        <div class="tiny">${getLocationScopeLabel(scope.selection)}</div>
+        <h2 class="page-title">Dashboard</h2>
+        <p class="page-subtitle">Today’s operations snapshot for this workspace. ${getLocationScopeLabel(scope.selection)}</p>
       </div>
-      <div class="kpi-line">
-        <span>Assets here: ${scope.scopedAssets.length}</span>
-        <span>Broken assets: ${scope.brokenAssets.length}</span>
-        <span>Open work: ${openTasks.length}</span>
+      <div class="page-actions">
+        <button class="btn-primary jump" data-tab="operations">New operations task</button>
+        <button class="btn-secondary jump" data-tab="assets">Add asset</button>
+        <button class="btn-secondary jump" data-tab="assets" data-focus="missing_docs">Review documentation</button>
+        <button class="btn-secondary jump" data-tab="admin" data-focus="pending_invites">Invite member</button>
       </div>
+    </header>
+    <div class="kpi-line">
+      <span>Assets here: ${scope.scopedAssets.length}</span>
+      <span>Broken assets: ${scope.brokenAssets.length}</span>
+      <span>Open work: ${openTasks.length}</span>
     </div>
 
-    <div class="priority-band">
+    <div class="priority-band" role="status" aria-live="polite">
       <div>
         <div class="tiny">Attention now</div>
         <h3>Priority control center</h3>
@@ -198,6 +205,7 @@ export function renderDashboard(el, state, navigate, applyFocus = () => {}) {
       ? `<div class="list mt">${repeat.slice(0, 6).map((entry) => `<button class="item jump" data-tab="assets" data-asset="${entry.assetId}"><b>${entry.assetId || 'Unknown asset'}</b><div class="tiny">${entry.issueCategory || 'uncategorized'} | repeated ${entry.count} times</div></button>`).join('')}</div>`
       : '<div class="inline-state success mt">No repeat issues detected in the current scope.</div>'}
     </details>
+    </div>
   `;
 
   el.querySelectorAll('.jump').forEach((button) => button.addEventListener('click', () => {
