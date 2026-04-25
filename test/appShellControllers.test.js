@@ -72,6 +72,10 @@ async function loadManufacturerNormalizationHelpers() {
   return import('../src/features/manufacturerNormalization.js');
 }
 
+async function loadRolesHelpers() {
+  return import('../src/roles.js');
+}
+
 function createSelectElement() {
   return {
     innerHTML: '',
@@ -112,6 +116,20 @@ function createSectionElement(id) {
 test('onboarding view module loads without syntax errors', async () => {
   const onboarding = await loadOnboardingView();
   assert.equal(typeof onboarding.renderOnboarding, 'function');
+});
+
+test('operations role helpers gate staff create/run/save by settings', async () => {
+  const { canCreateTasks, canRunAiTroubleshooting, canSaveFixToLibrary } = await loadRolesHelpers();
+  const staff = { companyRole: 'staff' };
+  const lead = { companyRole: 'lead' };
+
+  assert.equal(canCreateTasks(staff), true);
+  assert.equal(canRunAiTroubleshooting(staff, { aiAllowStaffManualRerun: false }), false);
+  assert.equal(canRunAiTroubleshooting(staff, { aiAllowStaffManualRerun: true }), true);
+  assert.equal(canSaveFixToLibrary(staff, { aiAllowStaffSaveFixesToLibrary: false }), false);
+  assert.equal(canSaveFixToLibrary(staff, { aiAllowStaffSaveFixesToLibrary: true }), true);
+  assert.equal(canRunAiTroubleshooting(lead, {}), true);
+  assert.equal(canSaveFixToLibrary(lead, {}), true);
 });
 
 

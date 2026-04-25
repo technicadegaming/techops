@@ -11,6 +11,7 @@ const {
   canSaveToTroubleshootingLibrary,
   normalizeRole,
 } = require('./lib/permissions');
+const { toMillis } = require('./lib/rateLimit');
 const {
   authorizeAssetEnrichment,
   getActiveMembershipForCompany,
@@ -161,7 +162,7 @@ async function enforceRateLimit(taskId, userId) {
   if (recent.empty) return;
 
   const last = recent.docs[0].data();
-  const lastMs = last.createdAt?.toMillis?.() || 0;
+  const lastMs = toMillis(last.createdAt);
   if (Date.now() - lastMs < 15000) {
     throw new HttpsError('resource-exhausted', 'Please wait before running AI troubleshooting again.');
   }
@@ -196,10 +197,11 @@ exports.analyzeTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async
       userId: request.auth.uid,
     });
 
+    const settings = await getAiSettings(taskContext.companyId);
     const authz = await authorizeCompanyMember({
       uid: request.auth.uid,
       companyId: taskContext.companyId,
-      checkAccess: canRunManualAi,
+      checkAccess: (role) => canRunManualAi(role, settings),
     });
 
     if (!authz.allowed) {
@@ -210,8 +212,6 @@ exports.analyzeTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async
     }
 
     await enforceRateLimit(request.data.taskId, request.auth.uid);
-
-    const settings = await getAiSettings(authz.companyId);
 
     if (!settings.aiEnabled) {
       throw new HttpsError('failed-precondition', 'AI is disabled by admin settings');
@@ -250,6 +250,8 @@ exports.answerTaskFollowup = onCall({ secrets: [OPENAI_API_KEY] }, async (reques
   assertString(request.data?.runId, 'runId');
 
   const task = await loadTask(request.data.taskId);
+  const assetSnap = task.assetId ? await db.collection('assets').doc(task.assetId).get().catch(() => null) : null;
+  const taskAsset = assetSnap?.exists ? assetSnap.data() : null;
   const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
   const taskContext = await resolveTaskCompanyContext({
     task,
@@ -307,10 +309,11 @@ exports.regenerateTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, as
       userId: request.auth.uid,
     });
 
+    const settings = await getAiSettings(taskContext.companyId);
     const authz = await authorizeCompanyMember({
       uid: request.auth.uid,
       companyId: taskContext.companyId,
-      checkAccess: canRunManualAi,
+      checkAccess: (role) => canRunManualAi(role, settings),
     });
 
     if (!authz.allowed) {
@@ -319,8 +322,6 @@ exports.regenerateTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, as
         `Insufficient role for AI rerun in company ${authz.companyId || 'unknown'}`,
       );
     }
-
-    const settings = await getAiSettings(authz.companyId);
 
     if (!settings.aiAllowManualRerun) {
       throw new HttpsError('failed-precondition', 'Manual rerun disabled in settings');
@@ -821,26 +822,61 @@ exports.saveTaskFixToTroubleshootingLibrary = onCall({}, async (request) => {
     userId: request.auth.uid,
   });
 
+  const settings = await getAiSettings(taskContext.companyId);
   const authz = await authorizeCompanyMember({
     uid: request.auth.uid,
     companyId: taskContext.companyId,
-    checkAccess: canSaveToTroubleshootingLibrary,
+    checkAccess: (role) => canSaveToTroubleshootingLibrary(role, settings),
   });
   if (!authz.allowed) throw new HttpsError('permission-denied', 'Insufficient role');
+
+  const cleanText = (value, max = 600) => `${value || ''}`.trim().slice(0, max);
+  const cleanList = (value, maxItems = 12, maxItemLength = 80) => (Array.isArray(value) ? value : [])
+    .map((entry) => cleanText(entry, maxItemLength))
+    .filter(Boolean)
+    .slice(0, maxItems);
+  const cleanObject = (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : {});
+  const source = ['manual_save_fix', 'task_closeout'].includes(`${request.data?.source || ''}`.trim())
+    ? `${request.data.source}`.trim()
+    : 'manual_save_fix';
+  const notes = cleanText(request.data?.notes || task.notes || '', 1000);
+  const successfulFix = cleanText(
+    request.data?.successfulFix
+      || request.data?.resolutionSummary
+      || task.closeout?.bestFixSummary
+      || task.closeout?.fixPerformed
+      || task.notes
+      || '',
+    2000,
+  );
 
   const libRef = db.collection('troubleshootingLibrary').doc();
   await libRef.set({
     id: libRef.id,
     companyId: authz.companyId,
-    assetType: request.data.assetType || task.assetType || null,
-    manufacturer: request.data.manufacturer || null,
-    gameTitle: request.data.gameTitle || null,
-    symptomTags: Array.isArray(request.data.symptomTags) ? request.data.symptomTags : [],
-    problemSummary: request.data.problemSummary || task.title || '',
-    successfulFix: request.data.successfulFix || task.notes || '',
-    notes: request.data.notes || '',
-    manualReferences: Array.isArray(request.data.manualReferences) ? request.data.manualReferences : [],
     sourceTaskId: request.data.taskId,
+    sourceAiRunId: cleanText(request.data?.sourceAiRunId || task.currentAiRunId || task.aiLastCompletedRunSnapshot?.runId || '', 120),
+    source,
+    assetId: cleanText(request.data?.assetId || task.assetId || '', 160) || null,
+    assetName: cleanText(request.data?.assetName || task.assetName || '', 260) || null,
+    manufacturer: cleanText(request.data?.manufacturer || taskAsset?.manufacturer || '', 180) || null,
+    gameTitle: cleanText(request.data?.gameTitle || request.data?.assetName || task.assetName || taskAsset?.gameTitle || taskAsset?.name, 260) || null,
+    assetType: cleanText(request.data?.assetType || request.data?.type || task.assetType || taskAsset?.assetType || taskAsset?.type || '', 120) || null,
+    type: cleanText(request.data?.type || taskAsset?.type || '', 120) || null,
+    family: cleanText(request.data?.family || taskAsset?.family || '', 120) || null,
+    cabinetVariant: cleanText(request.data?.cabinetVariant || taskAsset?.cabinetVariant || '', 120) || null,
+    issueCategory: cleanText(request.data?.issueCategory || task.issueCategory || '', 140) || null,
+    symptomTags: cleanList(request.data?.symptomTags?.length ? request.data.symptomTags : task.symptomTags),
+    title: cleanText(request.data?.title || task.title || '', 260),
+    description: cleanText(request.data?.description || task.description || '', 1200),
+    problemSummary: cleanText(request.data?.problemSummary || task.title || task.description || '', 1200),
+    successfulFix,
+    resolutionSummary: cleanText(request.data?.resolutionSummary || successfulFix, 1200),
+    notes,
+    manualReferences: cleanList(request.data?.manualReferences, 12, 260),
+    metadata: {
+      sourcePayload: cleanObject(request.data?.metadata),
+    },
     createdAt: serverTimestamp(),
     createdBy: request.auth.uid,
     updatedAt: serverTimestamp(),

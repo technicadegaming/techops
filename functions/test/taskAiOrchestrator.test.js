@@ -9,7 +9,10 @@ function buildDb() {
     manuals: { m1: { companyId: 'company-a', assetId: 'asset1', extractionStatus: 'completed', approvedAt: '2026-03-20T00:00:00.000Z', sourceTitle: 'Manual', sourceUrl: 'https://example.com/manual.pdf', contentType: 'application/pdf' } },
     manualLibrary: { 'shared-manual-1': { canonicalTitle: 'Quik Drop Service Manual', manufacturer: 'Bay Tek Games', sourcePageUrl: 'https://example.com/manual-source', storagePath: 'manual-library/bay-tek/quik-drop/existing.pdf', approvalState: 'approved', approved: true } },
     manualChunks: { m1: [{ text: 'Approved manual chunk text', chunkIndex: 0 }] },
-    troubleshootingLibrary: { l1: { companyId: 'company-a', gameTitle: 'Quik Drop', resolutionSummary: 'Saved fix from prior issue.' } },
+    troubleshootingLibrary: {
+      l1: { companyId: 'company-a', gameTitle: 'Quik Drop', resolutionSummary: 'Saved fix from prior issue.' },
+      l2: { companyId: 'company-a', manufacturer: 'Bay Tek Games', assetType: 'ticket_redemption', assetName: 'Quik Drop Deluxe', successfulFix: 'Adjusted sensor harness.' }
+    },
     notes: {}
   };
 
@@ -103,4 +106,18 @@ test('task AI degrades gracefully to linked manualLibrary context when no approv
   assert.equal(context.documentationContext.mode, 'manual_library_backed');
   assert.equal(context.documentationContext.items[0].sourceType, 'manual_library_link');
   assert.match(context.documentationContext.items[0].excerpts[0], /Shared manual: Quik Drop Service Manual/);
+});
+
+test('task AI context includes troubleshooting records that match by manufacturer or asset metadata', async () => {
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => 'text/html' },
+    text: async () => 'Support fallback'
+  });
+  const context = await gatherContext(buildDb(), 'task1');
+  const troubleshootingEntries = context.troubleshootingLibrary;
+  assert.equal(troubleshootingEntries.length >= 2, true);
+  assert.equal(troubleshootingEntries.some((row) => row.manufacturer === 'Bay Tek Games'), true);
+  assert.equal(context.documentationContext.items.some((item) => item.sourceType === 'troubleshooting_fix'), true);
 });

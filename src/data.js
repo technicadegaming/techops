@@ -310,6 +310,8 @@ export const defaultAiSettings = {
   aiMaxWebSources: 3,
   aiConfidenceThreshold: 0.45,
   aiAllowManualRerun: true,
+  aiAllowStaffManualRerun: false,
+  aiAllowStaffSaveFixesToLibrary: false,
   aiSaveSuccessfulFixesToLibraryDefault: false,
   aiShortResponseMode: true,
   aiVerboseManagerMode: false,

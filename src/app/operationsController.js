@@ -41,6 +41,11 @@ function mapCallableRunStatus(status = '') {
   return 'queued';
 }
 
+function normalizeList(value = []) {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => `${entry || ''}`.trim()).filter(Boolean);
+}
+
 export function createOperationsController({
   state,
   navigationController,
@@ -95,6 +100,55 @@ export function createOperationsController({
     };
   }
 
+  function setPendingAction(taskId, action = null, label = '') {
+    const current = { ...(state.operationsUi?.pendingActionsByTask || {}) };
+    if (!taskId || !action) {
+      if (taskId) delete current[taskId];
+    } else {
+      current[taskId] = { action, label, startedAt: new Date().toISOString() };
+    }
+    state.operationsUi = {
+      ...(state.operationsUi || {}),
+      pendingActionsByTask: current
+    };
+  }
+
+  async function withTaskPendingAction(taskId, action, label, fn) {
+    setPendingAction(taskId, action, label);
+    render();
+    try {
+      return await fn();
+    } finally {
+      setPendingAction(taskId, null);
+      render();
+    }
+  }
+
+  function buildTroubleshootingLibraryPayload(task = {}, asset = null, overrides = {}) {
+    const snapshotRunId = `${task?.aiLastCompletedRunSnapshot?.runId || task?.currentAiRunId || ''}`.trim();
+    return {
+      taskId: task.id,
+      assetId: task.assetId || asset?.id || '',
+      assetName: task.assetName || asset?.name || '',
+      manufacturer: asset?.manufacturer || '',
+      gameTitle: asset?.gameTitle || asset?.name || task.assetName || '',
+      assetType: asset?.assetType || asset?.type || task?.assetType || '',
+      type: asset?.type || '',
+      family: asset?.family || '',
+      cabinetVariant: asset?.cabinetVariant || '',
+      issueCategory: task.issueCategory || '',
+      symptomTags: normalizeList(task.symptomTags),
+      title: task.title || '',
+      description: task.description || '',
+      problemSummary: task.title || task.description || '',
+      successfulFix: '',
+      resolutionSummary: '',
+      notes: task.notes || '',
+      sourceAiRunId: snapshotRunId,
+      ...overrides
+    };
+  }
+
   function mergeRunIntoState(run) {
     if (!run?.id) return;
     const existing = (state.taskAiRuns || []).filter((entry) => entry.id !== run.id);
@@ -104,7 +158,7 @@ export function createOperationsController({
   }
 
   async function pollForTaskAiRunRecord(taskId, runId, options = {}) {
-    const timeoutMs = Number(options.timeoutMs || 20000);
+    const timeoutMs = Number(options.timeoutMs || 30000);
     const intervalMs = Number(options.intervalMs || 900);
     const startedAt = Date.now();
     const expectedRunId = `${runId || ''}`.trim();
@@ -158,6 +212,25 @@ export function createOperationsController({
 
     state.taskAiRuns = latestRuns;
     return { found: false, run: null, timedOut: true, errorType: 'not_found_yet' };
+  }
+
+  async function pollForLatestTaskAiRun(taskId, options = {}) {
+    const timeoutMs = Number(options.timeoutMs || 30000);
+    const intervalMs = Number(options.intervalMs || 1000);
+    const startedAt = Date.now();
+    const cleanTaskId = `${taskId || ''}`.trim();
+    while (Date.now() - startedAt <= timeoutMs) {
+      await refreshData();
+      const latest = (state.taskAiRuns || [])
+        .filter((entry) => `${entry.taskId || ''}`.trim() === cleanTaskId)
+        .sort((a, b) => `${b.updatedAt || b.createdAt || ''}`.localeCompare(`${a.updatedAt || a.createdAt || ''}`))[0] || null;
+      if (latest?.id) {
+        setTaskAiDisplayRun(cleanTaskId, latest);
+        return { found: true, run: latest };
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    return { found: false, run: null };
   }
 
   function getTaskAiFailureState(error, fallbackAction = 'run AI') {
@@ -324,7 +397,8 @@ export function createOperationsController({
             alert('Assign a worker before moving a task into progress.');
             return false;
           }
-          const saved = await runAction('save_task', async () => {
+          const saved = await withTaskPendingAction(taskId, 'save_task', 'Saving…', async () => runAction('save_task', async () => {
+            state.operationsUi = { ...(state.operationsUi || {}), isSavingTask: true };
             await upsertEntity('tasks', taskId, withRequiredCompanyId(state, { ...payload, id: taskId }, 'save a task'), state.user);
             setTaskAiUiState(taskId, buildPostSaveAiState({ isNewTask: !existing }));
             state.operationsUi = {
@@ -337,6 +411,14 @@ export function createOperationsController({
             state.route = { ...state.route, tab: 'operations', taskId };
             await refreshData();
             render();
+            if (!existing && state.settings?.aiEnabled) {
+              setTaskAiUiState(taskId, { status: 'queued', message: 'AI is thinking…' });
+              render();
+              const autoRun = await pollForLatestTaskAiRun(taskId, { timeoutMs: 30000 });
+              if (!autoRun.found) {
+                setTaskAiUiState(taskId, { status: 'waiting_for_refresh', message: 'AI accepted / still syncing; refresh shortly.' });
+              }
+            }
             return true;
           }, {
             fallbackMessage: 'Unable to save task.',
@@ -348,14 +430,16 @@ export function createOperationsController({
               };
               render();
             }
-          });
+          }).finally(() => {
+            state.operationsUi = { ...(state.operationsUi || {}), isSavingTask: false };
+          }));
           return !!saved;
         },
         appendTaskTimeline: async (taskId, entry = {}) => {
           const task = state.tasks.find((row) => row.id === taskId);
           if (!task) return;
           if (!`${entry.note || ''}`.trim() && !Object.values(entry.attachments || {}).some((items) => (items || []).length)) return;
-          await upsertEntity('tasks', taskId, {
+          await withTaskPendingAction(taskId, 'append_timeline', 'Saving…', async () => upsertEntity('tasks', taskId, {
             ...task,
             timeline: [...(task.timeline || []), {
               at: new Date().toISOString(),
@@ -365,7 +449,7 @@ export function createOperationsController({
               attachments: entry.attachments || {}
             }],
             updatedAtClient: new Date().toISOString()
-          }, state.user);
+          }, state.user));
           state.operationsUi = {
             ...(state.operationsUi || {}),
             lastSaveFeedback: `Timeline updated for task ${taskId}.`,
@@ -382,7 +466,7 @@ export function createOperationsController({
             alert('Select a worker before reassigning.');
             return;
           }
-          await upsertEntity('tasks', taskId, {
+          await withTaskPendingAction(taskId, 'reassign_task', 'Saving…', async () => upsertEntity('tasks', taskId, {
             ...task,
             assignedWorkers: [nextWorker],
             timeline: [...(task.timeline || []), {
@@ -392,7 +476,7 @@ export function createOperationsController({
               by: state.user?.email || state.user?.uid || 'unknown'
             }],
             updatedAtClient: new Date().toISOString()
-          }, state.user);
+          }, state.user));
           await refreshData();
           render();
         },
@@ -425,51 +509,60 @@ export function createOperationsController({
         completeTask: async (taskId, closeout) => {
           const task = state.tasks.find((entry) => entry.id === taskId);
           if (!task) return;
-          const saveToLibrary = closeout.saveToLibrary === 'yes' || (closeout.saveToLibrary !== 'no' && state.settings.aiSaveSuccessfulFixesToLibraryDefault);
-          const completedAt = new Date().toISOString();
-          const closeoutTimeline = {
-            at: completedAt,
-            type: 'closeout',
-            note: closeout.bestFixSummary || closeout.fixPerformed || 'Task closed',
-            detail: closeout.verification || closeout.rootCause || '',
-            by: state.user?.email || state.user?.uid || 'unknown',
-            attachments: closeout.attachments || {}
-          };
-          await upsertEntity('tasks', taskId, {
-            ...task,
-            status: 'completed',
-            closeout: { ...closeout, completedAt },
-            timeline: [...(task.timeline || []), closeoutTimeline]
-          }, state.user);
-          if (task.assetId) {
-            const asset = state.assets.find((entry) => entry.id === task.assetId) || { id: task.assetId };
-            const event = buildCloseoutEvent(taskId, closeout, state.user);
-            await upsertEntity('assets', task.assetId, { ...asset, history: [...(asset.history || []), event] }, state.user);
-          }
-          if (saveToLibrary && closeout.fixPerformed) {
-            await saveTaskFixToTroubleshootingLibrary({ taskId, successfulFix: closeout.bestFixSummary || closeout.fixPerformed });
-            await logAudit({
-              action: 'create',
-              actionType: 'ai_fix_saved_to_library',
-              category: 'operations_tasks',
-              entityType: 'tasks',
-              entityId: taskId,
-              targetType: 'task',
-              targetId: taskId,
-              targetLabel: task.title || taskId,
-              summary: `AI fix saved to library from task ${task.title || taskId}`,
-              user: state.user,
-              metadata: { source: 'task_closeout', taskId }
-            });
-          }
-          state.operationsUi = {
-            ...(state.operationsUi || {}),
-            lastSaveFeedback: `Task ${taskId} closed successfully. ${saveToLibrary ? 'Fix saved to library settings path.' : 'Closeout recorded.'}`,
-            lastSaveTone: 'success',
-            expandedTaskIds: [...new Set([...(state.operationsUi?.expandedTaskIds || []), taskId])]
-          };
-          await refreshData();
-          render();
+          await withTaskPendingAction(taskId, 'complete_task', 'Saving…', async () => {
+            const saveToLibrary = closeout.saveToLibrary === 'yes' || (closeout.saveToLibrary !== 'no' && state.settings.aiSaveSuccessfulFixesToLibraryDefault);
+            const completedAt = new Date().toISOString();
+            const closeoutTimeline = {
+              at: completedAt,
+              type: 'closeout',
+              note: closeout.bestFixSummary || closeout.fixPerformed || 'Task closed',
+              detail: closeout.verification || closeout.rootCause || '',
+              by: state.user?.email || state.user?.uid || 'unknown',
+              attachments: closeout.attachments || {}
+            };
+            await upsertEntity('tasks', taskId, {
+              ...task,
+              status: 'completed',
+              closeout: { ...closeout, completedAt },
+              timeline: [...(task.timeline || []), closeoutTimeline]
+            }, state.user);
+            if (task.assetId) {
+              const asset = state.assets.find((entry) => entry.id === task.assetId) || { id: task.assetId };
+              const event = buildCloseoutEvent(taskId, closeout, state.user);
+              await upsertEntity('assets', task.assetId, { ...asset, history: [...(asset.history || []), event] }, state.user);
+            }
+            if (saveToLibrary && closeout.fixPerformed) {
+              const asset = state.assets.find((entry) => entry.id === task.assetId) || null;
+              const payload = buildTroubleshootingLibraryPayload(task, asset, {
+                successfulFix: closeout.bestFixSummary || closeout.fixPerformed,
+                resolutionSummary: closeout.bestFixSummary || closeout.fixPerformed,
+                notes: closeout.verification || closeout.rootCause || task.notes || '',
+                source: 'task_closeout'
+              });
+              await saveTaskFixToTroubleshootingLibrary(payload);
+              await logAudit({
+                action: 'create',
+                actionType: 'ai_fix_saved_to_library',
+                category: 'operations_tasks',
+                entityType: 'tasks',
+                entityId: taskId,
+                targetType: 'task',
+                targetId: taskId,
+                targetLabel: task.title || taskId,
+                summary: `AI fix saved to library from task ${task.title || taskId}`,
+                user: state.user,
+                metadata: { source: 'task_closeout', taskId }
+              });
+            }
+            state.operationsUi = {
+              ...(state.operationsUi || {}),
+              lastSaveFeedback: `Task ${taskId} closed successfully. ${saveToLibrary ? 'Fix saved to library settings path.' : 'Closeout recorded.'}`,
+              lastSaveTone: 'success',
+              expandedTaskIds: [...new Set([...(state.operationsUi?.expandedTaskIds || []), taskId])]
+            };
+            await refreshData();
+            render();
+          });
         },
         deleteTask: async (id) => {
           if (!canDelete(state.permissions)) return;
@@ -478,7 +571,8 @@ export function createOperationsController({
           render();
         },
         runAi: async (taskId) => {
-          setTaskAiUiState(taskId, { status: 'running', message: 'AI run started for this task.' });
+          await withTaskPendingAction(taskId, 'run_ai', 'AI running…', async () => {
+            setTaskAiUiState(taskId, { status: 'running', message: 'AI run started for this task.' });
           const task = state.tasks.find((entry) => entry.id === taskId);
           if (task) {
             await upsertEntity('tasks', taskId, {
@@ -503,8 +597,10 @@ export function createOperationsController({
             return;
           }
           await handleAiRunLifecycle({ taskId, result, statusPrefix: 'AI run' });
+          });
         },
         rerunAi: async (taskId) => {
+          await withTaskPendingAction(taskId, 'rerun_ai', 'Rerunning…', async () => {
           setTaskAiUiState(taskId, { status: 'running', message: 'AI rerun started for this task.' });
           render();
           let result = null;
@@ -517,8 +613,10 @@ export function createOperationsController({
             return;
           }
           await handleAiRunLifecycle({ taskId, result, statusPrefix: 'AI rerun' });
+          });
         },
         submitFollowup: async (taskId, runId, answers) => {
+          await withTaskPendingAction(taskId, 'submit_followup', 'Saving…', async () => {
           setTaskAiUiState(taskId, { status: 'running', message: 'Submitting follow-up answers to AI.' });
           try {
             await answerTaskFollowup(taskId, runId, answers);
@@ -544,12 +642,18 @@ export function createOperationsController({
           }
           await refreshData();
           render();
+          });
         },
         saveFix: async (taskId) => {
           const successfulFix = prompt('Summarize the successful fix for the troubleshooting library:');
           if (!successfulFix) return;
           const task = state.tasks.find((entry) => entry.id === taskId);
-          await saveTaskFixToTroubleshootingLibrary({ taskId, successfulFix });
+          const asset = state.assets.find((entry) => entry.id === task?.assetId) || null;
+          await withTaskPendingAction(taskId, 'save_fix', 'Saving fix…', async () => saveTaskFixToTroubleshootingLibrary(buildTroubleshootingLibraryPayload(task || { id: taskId }, asset, {
+            successfulFix,
+            resolutionSummary: successfulFix,
+            source: 'manual_save_fix'
+          })));
           await logAudit({
             action: 'create',
             actionType: 'ai_fix_saved_to_library',
@@ -588,11 +692,11 @@ export function createOperationsController({
           const task = state.tasks.find((entry) => entry.id === taskId);
           if (!task) return;
           const nextFixState = ['pending_review', 'approved', 'rejected'].includes(`${aiFixState || ''}`.trim()) ? aiFixState : 'pending_review';
-          await upsertEntity('tasks', taskId, {
+          await withTaskPendingAction(taskId, 'set_fix_state', 'Updating review…', async () => upsertEntity('tasks', taskId, {
             ...task,
             aiFixState: nextFixState,
             aiUpdatedAt: new Date().toISOString()
-          }, state.user);
+          }, state.user));
           await refreshData();
           render();
         },

@@ -16,8 +16,9 @@ function hasRoleAtLeast(role, minimum) {
   return roleIndex >= minimumIndex;
 }
 
-function canRunManualAi(role) {
-  return hasRoleAtLeast(role, 'lead');
+function canRunManualAi(role, settings = {}) {
+  if (hasRoleAtLeast(role, 'lead')) return true;
+  return normalizeRole(role) === 'staff' && settings.aiAllowStaffManualRerun === true;
 }
 
 function canAnswerFollowup(role) {
@@ -30,8 +31,9 @@ function canRunAssetEnrichment(role) {
   return hasRoleAtLeast(role, 'manager');
 }
 
-function canSaveToTroubleshootingLibrary(role) {
-  return hasRoleAtLeast(role, 'lead');
+function canSaveToTroubleshootingLibrary(role, settings = {}) {
+  if (hasRoleAtLeast(role, 'lead')) return true;
+  return normalizeRole(role) === 'staff' && settings.aiAllowStaffSaveFixesToLibrary === true;
 }
 
 function canManageAiSettings(role) {

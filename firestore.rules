@@ -232,7 +232,7 @@ service cloud.firestore {
 
     match /tasks/{docId} {
       allow read: if canReadScopedResource(resource.data);
-      allow create: if canCreateScopedResource();
+      allow create: if hasCompanyField(request.resource.data) && isCompanyStaff(request.resource.data.companyId);
       allow update: if canUpdateScopedResource();
       allow delete: if canDeleteScopedResource();
     }
