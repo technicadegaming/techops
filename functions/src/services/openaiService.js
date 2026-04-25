@@ -140,16 +140,116 @@ function buildAssetLookupSchemaPrompt() {
   });
 }
 
+function buildTroubleshootingResultSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: [
+      'conciseIssueSummary',
+      'probableCauses',
+      'immediateChecks',
+      'diagnosticSteps',
+      'recommendedFixes',
+      'toolsNeeded',
+      'partsPossiblyNeeded',
+      'safetyNotes',
+      'escalationSignals',
+      'confidence',
+      'shortFrontlineVersion',
+      'detailedManagerVersion',
+      'citations'
+    ],
+    properties: {
+      conciseIssueSummary: { type: 'string' },
+      probableCauses: { type: 'array', items: { type: 'string' } },
+      immediateChecks: { type: 'array', items: { type: 'string' } },
+      diagnosticSteps: { type: 'array', items: { type: 'string' } },
+      recommendedFixes: { type: 'array', items: { type: 'string' } },
+      toolsNeeded: { type: 'array', items: { type: 'string' } },
+      partsPossiblyNeeded: { type: 'array', items: { type: 'string' } },
+      safetyNotes: { type: 'array', items: { type: 'string' } },
+      escalationSignals: { type: 'array', items: { type: 'string' } },
+      confidence: { type: 'number' },
+      shortFrontlineVersion: { type: 'string' },
+      detailedManagerVersion: { type: 'string' },
+      citations: { type: 'array', items: { type: 'string' } },
+    },
+  };
+}
+
+function buildFollowupSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['needsFollowup', 'questions'],
+    properties: {
+      needsFollowup: { type: 'boolean' },
+      questions: {
+        type: 'array',
+        items: { type: 'string' },
+      },
+    },
+  };
+}
+
+function buildAiResponseError({ code, message, flow, traceId, responseId, details = '' }) {
+  const error = new Error(message);
+  error.code = code;
+  error.flow = flow;
+  error.traceId = traceId;
+  error.responseId = responseId || null;
+  if (details) error.details = details;
+  return error;
+}
+
+function extractStructuredJsonOrThrow(response, { flow, traceId, userMessage }) {
+  const responseId = response?.id || null;
+  if (response?.output_parsed && typeof response.output_parsed === 'object') {
+    return response.output_parsed;
+  }
+  const raw = response?.output_text || '{}';
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    const details = `${error?.message || 'JSON parse failed'}`;
+    console.error('[openaiService] structured output parse failed', {
+      traceId,
+      flow,
+      responseId,
+      error: details
+    });
+    throw buildAiResponseError({
+      code: 'ai_json_parse_failed',
+      message: userMessage,
+      flow,
+      traceId,
+      responseId,
+      details
+    });
+  }
+}
+
 async function requestFollowupQuestions({ model, traceId, context }) {
   const client = getClient();
   const prompt = `Determine if follow-up questions are needed. Return JSON: {"needsFollowup":boolean, "questions": string[]} with 2-5 concise practical questions max. Context: ${JSON.stringify(context)}`;
   const response = await client.responses.create({
     model,
     metadata: { traceId, flow: 'followup-detection' },
+    text: {
+      format: {
+        type: 'json_schema',
+        name: 'task_followup_questions',
+        strict: true,
+        schema: buildFollowupSchema()
+      }
+    },
     input: [{ role: 'system', content: 'Return strict JSON.' }, { role: 'user', content: prompt }]
   });
-  const text = response.output_text || '{}';
-  const parsed = JSON.parse(text);
+  const parsed = extractStructuredJsonOrThrow(response, {
+    flow: 'followup-detection',
+    traceId,
+    userMessage: 'AI follow-up analysis returned invalid data. Please rerun.'
+  });
   return {
     needsFollowup: !!parsed.needsFollowup,
     questions: Array.isArray(parsed.questions) ? parsed.questions.slice(0, 5).map((q) => String(q).trim()).filter(Boolean) : [],
@@ -162,13 +262,46 @@ async function requestTroubleshootingPlan({ model, traceId, settings, context })
   const response = await client.responses.create({
     model,
     metadata: { traceId, flow: 'task-troubleshooting' },
+    text: {
+      format: {
+        type: 'json_schema',
+        name: 'task_troubleshooting_plan',
+        strict: true,
+        schema: buildTroubleshootingResultSchema()
+      }
+    },
     input: [
       { role: 'system', content: buildSystemInstructions(settings) },
       { role: 'developer', content: `Output strict JSON schema: ${buildSchemaPrompt()}` },
       { role: 'user', content: `Use this structured context: ${JSON.stringify(context)}` }
     ]
   });
-  const parsed = validateAiResultShape(JSON.parse(response.output_text || '{}'));
+  const flow = 'task-troubleshooting';
+  const data = extractStructuredJsonOrThrow(response, {
+    flow,
+    traceId,
+    userMessage: 'AI troubleshooting output was invalid. Please rerun.'
+  });
+  let parsed;
+  try {
+    parsed = validateAiResultShape(data);
+  } catch (error) {
+    const details = `${error?.message || 'AI result validation failed'}`;
+    console.error('[openaiService] troubleshooting output validation failed', {
+      traceId,
+      flow,
+      responseId: response?.id || null,
+      error: details
+    });
+    throw buildAiResponseError({
+      code: 'ai_result_validation_failed',
+      message: 'AI troubleshooting output failed validation. Please rerun.',
+      flow,
+      traceId,
+      responseId: response?.id || null,
+      details
+    });
+  }
   return {
     parsed,
     responseMeta: { responseId: response.id, model: response.model }
