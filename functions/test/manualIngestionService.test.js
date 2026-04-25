@@ -9,6 +9,7 @@ const {
   createAssetManualId,
   extractPdfText,
   extractTextFromBuffer,
+  extractTextFromBufferAsync,
   materializeApprovedManualForAsset,
   materializeStoredAssetManual,
   resolveApprovedManualLibraryForAsset,
@@ -49,6 +50,19 @@ test('extractPdfText extracts simple flate-compressed text operators', () => {
   ]);
   assert.match(extractPdfText(pdf), /Operator Manual/);
   assert.match(extractTextFromBuffer(pdf, 'application/pdf', 'https://example.com/manual.pdf'), /Check fuse F1/);
+});
+
+test('extractTextFromBufferAsync uses robust PDF extraction path and preserves troubleshooting code phrases', async () => {
+  const stream = Buffer.from('BT /F1 12 Tf 72 712 Td (ERROR CODES AND TROUBLESHOOTING GUIDE) Tj ( E10: Out of Balloons.) Tj ET', 'latin1');
+  const pdf = Buffer.concat([
+    Buffer.from('%PDF-1.4\n1 0 obj\n<< /Length 2 0 R /Filter /FlateDecode >>\nstream\n', 'latin1'),
+    deflateSync(stream),
+    Buffer.from('\nendstream\nendobj\n', 'latin1'),
+  ]);
+  const extracted = await extractTextFromBufferAsync(pdf, 'application/pdf', 'https://example.com/manual.pdf');
+  assert.match(extracted.text, /E10:\s*Out of Balloons/i);
+  assert.match(extracted.text, /ERROR CODES AND TROUBLESHOOTING GUIDE/i);
+  assert.equal(['pdf-parse', 'legacy_pdf_operator_parser'].includes(extracted.extractionEngine), true);
 });
 
 test('approved manual metadata preserves type, variant, family, manufacturer, and confidence fields', async () => {
@@ -348,7 +362,11 @@ test('materializeStoredAssetManual creates deterministic manual doc and chunks f
   assert.ok(result.chunkCount > 0);
   assert.ok(writes.manuals[result.manualId]);
   assert.equal(writes.manuals[result.manualId].storagePath, storagePath);
+  assert.equal(['text', 'pdf-parse', 'legacy_pdf_operator_parser'].includes(writes.manuals[result.manualId].extractionEngine), true);
+  assert.ok(Number(writes.manuals[result.manualId].extractedTextLength || 0) > 0);
   assert.ok(writes.chunks.length > 0);
+  const chunkTexts = writes.chunks.map((entry) => entry.payload?.text || entry.text || '').join('\n');
+  assert.match(chunkTexts, /E10:\s*Out of balloons/i);
 });
 
 test('resolveApprovedManualLibraryForAsset matches approved records by exact shared storage path or download URL', async () => {

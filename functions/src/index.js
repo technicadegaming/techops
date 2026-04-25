@@ -638,37 +638,72 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
     report.manualMaterialization.scanned += 1;
     if (!companyId || !assetId) {
       report.manualMaterialization.skipped += 1;
-      report.manualMaterialization.entries.push({ assetId, manualId: '', extractionStatus: 'skipped', chunkCount: 0, reason: 'missing_company_or_asset_id' });
+      report.manualMaterialization.entries.push({
+        assetId,
+        manualId: '',
+        priorExtractionStatus: `${asset.manualTextExtractionStatus || ''}`.trim() || 'unknown',
+        newExtractionStatus: 'skipped',
+        priorChunkCount: Number(asset.manualChunkCount || 0) || 0,
+        newChunkCount: 0,
+        extractionEngine: 'none',
+        reason: 'missing_company_or_asset_id',
+      });
       return;
     }
     if (!manualStoragePath) {
       report.manualMaterialization.skipped += 1;
-      report.manualMaterialization.entries.push({ assetId, manualId: '', extractionStatus: 'skipped', chunkCount: 0, reason: 'no_manual_storage_path' });
+      report.manualMaterialization.entries.push({
+        assetId,
+        manualId: '',
+        priorExtractionStatus: `${asset.manualTextExtractionStatus || ''}`.trim() || 'unknown',
+        newExtractionStatus: 'skipped',
+        priorChunkCount: Number(asset.manualChunkCount || 0) || 0,
+        newChunkCount: 0,
+        extractionEngine: 'none',
+        reason: dryRun ? 'no_manual_storage_path' : 'no_manual_storage_path',
+        action: 'no_manual_storage_path',
+      });
       return;
     }
     const manualStatus = `${asset.manualStatus || ''}`.trim();
     const statusAllowsRepair = ['manual_attached', 'docs_found', 'manual_attached_bootstrap'].includes(manualStatus);
     if (!statusAllowsRepair) {
       report.manualMaterialization.skipped += 1;
-      report.manualMaterialization.entries.push({ assetId, manualId: '', extractionStatus: 'skipped', chunkCount: 0, reason: 'manual_status_not_repairable' });
+      report.manualMaterialization.entries.push({
+        assetId,
+        manualId: '',
+        priorExtractionStatus: `${asset.manualTextExtractionStatus || ''}`.trim() || 'unknown',
+        newExtractionStatus: 'skipped',
+        priorChunkCount: Number(asset.manualChunkCount || 0) || 0,
+        newChunkCount: 0,
+        extractionEngine: 'none',
+        reason: 'manual_status_not_repairable',
+      });
       return;
     }
     const sourceUrl = `${asset.manualSourceUrl || asset.manualUrl || ''}`.trim();
     const manualId = createAssetManualId({ companyId, assetId, storagePath: manualStoragePath, sourceUrl });
     const manualSnap = await db.collection('manuals').doc(manualId).get().catch(() => null);
     const manualDoc = manualSnap?.exists ? { id: manualSnap.id, ...(manualSnap.data() || {}) } : null;
-    const chunkCount = Number(manualDoc?.chunkCount || 0);
+    const priorExtractionStatus = `${manualDoc?.extractionStatus || asset.manualTextExtractionStatus || 'unknown'}`.trim() || 'unknown';
+    const chunkCount = Number(manualDoc?.chunkCount || asset.manualChunkCount || 0);
+    const priorChunkCount = chunkCount;
     const hasChunkDocs = manualDoc
       ? (await db.collection('manuals').doc(manualId).collection('chunks').limit(1).get().catch(() => ({ docs: [] }))).docs.length > 0
       : false;
-    if (manualDoc && hasChunkDocs && ['completed', 'no_text_extracted'].includes(`${manualDoc.extractionStatus || ''}`)) {
+    const needsReextract = ['no_text_extracted', 'failed'].includes(priorExtractionStatus) || !hasChunkDocs || chunkCount <= 0;
+    if (manualDoc && hasChunkDocs && chunkCount > 0 && !needsReextract) {
       report.manualMaterialization.alreadyHadChunks += 1;
       report.manualMaterialization.entries.push({
         assetId,
         manualId,
-        extractionStatus: manualDoc.extractionStatus || 'completed',
-        chunkCount,
+        priorExtractionStatus,
+        newExtractionStatus: manualDoc.extractionStatus || 'completed',
+        priorChunkCount,
+        newChunkCount: chunkCount,
+        extractionEngine: `${manualDoc.extractionEngine || ''}`.trim() || 'none',
         reason: 'already_materialized',
+        action: 'already_has_chunks',
       });
       return;
     }
@@ -677,9 +712,13 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
       report.manualMaterialization.entries.push({
         assetId,
         manualId,
-        extractionStatus: 'planned',
-        chunkCount: 0,
+        priorExtractionStatus,
+        newExtractionStatus: 'planned',
+        priorChunkCount,
+        newChunkCount: 0,
+        extractionEngine: `${manualDoc?.extractionEngine || ''}`.trim() || 'none',
         reason: 'dry_run_materialization_planned',
+        action: manualDoc ? 'would_reextract' : 'would_materialize',
       });
       return;
     }
@@ -712,18 +751,26 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
       report.manualMaterialization.entries.push({
         assetId,
         manualId: result.manualId || manualId,
-        extractionStatus: result.extractionStatus || 'completed',
-        chunkCount: nextChunkCount,
+        priorExtractionStatus,
+        newExtractionStatus: result.extractionStatus || 'completed',
+        priorChunkCount,
+        newChunkCount: nextChunkCount,
+        extractionEngine: result.extractionEngine || 'none',
         reason: nextChunkCount > 0 ? 'materialized_from_storage' : 'materialized_no_text',
+        action: nextChunkCount > 0 ? (manualDoc ? 'reextracted' : 'materialized') : 'extraction_failed',
       });
     } catch (error) {
       report.manualMaterialization.failed += 1;
       report.manualMaterialization.entries.push({
         assetId,
         manualId,
-        extractionStatus: 'failed',
-        chunkCount: 0,
+        priorExtractionStatus,
+        newExtractionStatus: 'failed',
+        priorChunkCount,
+        newChunkCount: 0,
+        extractionEngine: `${manualDoc?.extractionEngine || ''}`.trim() || 'none',
         reason: `${error?.message || String(error)}`.slice(0, 240),
+        action: 'extraction_failed',
       });
     }
   }
