@@ -10,6 +10,7 @@ const {
   extractPdfText,
   extractTextFromBuffer,
   materializeApprovedManualForAsset,
+  materializeStoredAssetManual,
   resolveApprovedManualLibraryForAsset,
   stripHtml,
 } = require('../src/services/manualIngestionService');
@@ -273,6 +274,81 @@ test('materializeApprovedManualForAsset reuses stable asset manual identity and 
   assert.ok(result.chunkCount >= 1);
   assert.ok(savedFiles[result.storagePath]);
   assert.equal(writes.manuals[result.manualId].manualLibraryRef, 'manual-quik-drop');
+});
+
+test('materializeStoredAssetManual creates deterministic manual doc and chunks from tenant storage path', async () => {
+  const writes = { manuals: {}, chunks: [] };
+  const storagePath = 'companies/company-a/asset-manual-bootstrap/asset1/manual.txt';
+  const db = {
+    collection(name) {
+      return {
+        doc(id) {
+          return {
+            id,
+            set: async (payload, options = {}) => {
+              if (name === 'manuals') writes.manuals[id] = options.merge ? { ...(writes.manuals[id] || {}), ...payload } : payload;
+            },
+            collection(subName) {
+              if (subName !== 'chunks') throw new Error('unexpected');
+              return {
+                manualId: id,
+                doc(chunkId) {
+                  return {
+                    id: chunkId,
+                    set: async (payload) => writes.chunks.push({ id: chunkId, payload })
+                  };
+                }
+              };
+            }
+          };
+        }
+      };
+    },
+    batch() {
+      const ops = [];
+      return {
+        set(ref, payload) { ops.push({ ref, payload }); },
+        async commit() { writes.chunks = ops; }
+      };
+    },
+    recursiveDelete: async () => {}
+  };
+  const storage = {
+    bucket() {
+      return {
+        file(path) {
+          return {
+            async download() {
+              assert.equal(path, storagePath);
+              return [Buffer.from('Error 10 / E10: Out of balloons. Refill balloons and retry.')];
+            },
+            async getMetadata() {
+              return [{ contentType: 'text/plain', size: 62 }];
+            }
+          };
+        }
+      };
+    }
+  };
+  const result = await materializeStoredAssetManual({
+    db,
+    storage,
+    asset: { id: 'asset1', companyId: 'company-a', name: 'Pop It & Win', manufacturer: 'Sega' },
+    userId: 'u-1',
+    storagePath,
+    sourceUrl: 'https://example.com/pop-it-manual',
+    sourceTitle: 'Pop It Manual',
+    sourceType: 'csv_direct_bootstrap_manual',
+    manualType: 'csv_direct_bootstrap_manual',
+    contentType: 'text/plain',
+    attachmentMode: 'csv_direct_bootstrap',
+    manualProvenance: 'csv_direct_manual_import',
+  });
+  assert.equal(result.extractionStatus, 'completed');
+  assert.ok(result.chunkCount > 0);
+  assert.ok(writes.manuals[result.manualId]);
+  assert.equal(writes.manuals[result.manualId].storagePath, storagePath);
+  assert.ok(writes.chunks.length > 0);
 });
 
 test('resolveApprovedManualLibraryForAsset matches approved records by exact shared storage path or download URL', async () => {

@@ -29,6 +29,8 @@ const {
 const {
   approveAssetManual,
   backfillApprovedAssetManualLinkage,
+  createAssetManualId,
+  materializeStoredAssetManual,
 } = require('./services/manualIngestionService');
 const { researchAssetTitles } = require('./services/manualResearchService');
 const {
@@ -617,12 +619,120 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
     unchanged: [],
     skipped: [],
     errors: [],
+    manualMaterialization: {
+      scanned: 0,
+      materialized: 0,
+      alreadyHadChunks: 0,
+      noTextExtracted: 0,
+      failed: 0,
+      skipped: 0,
+      entries: [],
+    },
   };
+
+  async function attemptStoredManualMaterialization(asset = {}) {
+    const companyId = `${asset.companyId || ''}`.trim();
+    const assetId = `${asset.id || ''}`.trim();
+    const manualStoragePath = `${asset.manualStoragePath || ''}`.trim()
+      || ((`${asset.manualUrl || ''}`.trim().startsWith('companies/')) ? `${asset.manualUrl || ''}`.trim() : '');
+    report.manualMaterialization.scanned += 1;
+    if (!companyId || !assetId) {
+      report.manualMaterialization.skipped += 1;
+      report.manualMaterialization.entries.push({ assetId, manualId: '', extractionStatus: 'skipped', chunkCount: 0, reason: 'missing_company_or_asset_id' });
+      return;
+    }
+    if (!manualStoragePath) {
+      report.manualMaterialization.skipped += 1;
+      report.manualMaterialization.entries.push({ assetId, manualId: '', extractionStatus: 'skipped', chunkCount: 0, reason: 'no_manual_storage_path' });
+      return;
+    }
+    const manualStatus = `${asset.manualStatus || ''}`.trim();
+    const statusAllowsRepair = ['manual_attached', 'docs_found', 'manual_attached_bootstrap'].includes(manualStatus);
+    if (!statusAllowsRepair) {
+      report.manualMaterialization.skipped += 1;
+      report.manualMaterialization.entries.push({ assetId, manualId: '', extractionStatus: 'skipped', chunkCount: 0, reason: 'manual_status_not_repairable' });
+      return;
+    }
+    const sourceUrl = `${asset.manualSourceUrl || asset.manualUrl || ''}`.trim();
+    const manualId = createAssetManualId({ companyId, assetId, storagePath: manualStoragePath, sourceUrl });
+    const manualSnap = await db.collection('manuals').doc(manualId).get().catch(() => null);
+    const manualDoc = manualSnap?.exists ? { id: manualSnap.id, ...(manualSnap.data() || {}) } : null;
+    const chunkCount = Number(manualDoc?.chunkCount || 0);
+    const hasChunkDocs = manualDoc
+      ? (await db.collection('manuals').doc(manualId).collection('chunks').limit(1).get().catch(() => ({ docs: [] }))).docs.length > 0
+      : false;
+    if (manualDoc && hasChunkDocs && ['completed', 'no_text_extracted'].includes(`${manualDoc.extractionStatus || ''}`)) {
+      report.manualMaterialization.alreadyHadChunks += 1;
+      report.manualMaterialization.entries.push({
+        assetId,
+        manualId,
+        extractionStatus: manualDoc.extractionStatus || 'completed',
+        chunkCount,
+        reason: 'already_materialized',
+      });
+      return;
+    }
+    if (dryRun) {
+      report.manualMaterialization.materialized += 1;
+      report.manualMaterialization.entries.push({
+        assetId,
+        manualId,
+        extractionStatus: 'planned',
+        chunkCount: 0,
+        reason: 'dry_run_materialization_planned',
+      });
+      return;
+    }
+    try {
+      const result = await materializeStoredAssetManual({
+        db,
+        storage: admin.storage(),
+        asset,
+        userId: request.auth.uid,
+        storagePath: manualStoragePath,
+        sourceUrl,
+        sourceTitle: `${asset.name || ''}`.trim() || 'Attached manual',
+        sourceType: `${asset.sourceType || ''}`.trim() || 'csv_direct_bootstrap_manual',
+        manualType: `${asset.manualType || ''}`.trim() || 'asset_attached_manual',
+        contentType: `${asset.manualContentType || ''}`.trim(),
+        attachmentMode: `${asset.attachmentMode || ''}`.trim(),
+        manualProvenance: `${asset.manualProvenance || ''}`.trim(),
+      });
+      const nextChunkCount = Number(result.chunkCount || 0);
+      await db.collection('assets').doc(assetId).set({
+        manualTextExtractionStatus: result.extractionStatus || 'failed',
+        manualChunkCount: nextChunkCount,
+        latestManualId: result.manualId || manualId,
+        documentationTextAvailable: nextChunkCount > 0,
+        updatedAt: serverTimestamp(),
+        updatedBy: request.auth.uid,
+      }, { merge: true });
+      report.manualMaterialization.materialized += 1;
+      if (result.extractionStatus === 'no_text_extracted') report.manualMaterialization.noTextExtracted += 1;
+      report.manualMaterialization.entries.push({
+        assetId,
+        manualId: result.manualId || manualId,
+        extractionStatus: result.extractionStatus || 'completed',
+        chunkCount: nextChunkCount,
+        reason: nextChunkCount > 0 ? 'materialized_from_storage' : 'materialized_no_text',
+      });
+    } catch (error) {
+      report.manualMaterialization.failed += 1;
+      report.manualMaterialization.entries.push({
+        assetId,
+        manualId,
+        extractionStatus: 'failed',
+        chunkCount: 0,
+        reason: `${error?.message || String(error)}`.slice(0, 240),
+      });
+    }
+  }
 
   for (const entry of assetDocs) {
     if (requestedAssetId) break;
     report.summary.scanned += 1;
     try {
+      await attemptStoredManualMaterialization(entry.asset);
       const plan = await planAssetDocumentationStateRepair({
         asset: entry.asset,
         userId: request.auth.uid,
@@ -664,6 +774,7 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
   if (requestedAssetId && assetDocs.length === 1) {
     const [{ ref, asset, manualLinkage }] = assetDocs;
     report.summary.scanned = 1;
+    await attemptStoredManualMaterialization(asset);
     const liveRepair = await planSingleAssetManualLiveRepair({
       asset,
       userId: request.auth.uid,

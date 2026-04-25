@@ -304,6 +304,90 @@ async function materializeApprovedManualForAsset({
   };
 }
 
+async function materializeStoredAssetManual({
+  db,
+  storage,
+  asset,
+  userId = '',
+  storagePath = '',
+  sourceUrl = '',
+  sourceTitle = '',
+  sourceType = 'csv_direct_bootstrap_manual',
+  manualType = 'asset_attached_manual',
+  contentType = '',
+  attachmentMode = '',
+  manualProvenance = '',
+} = {}) {
+  const companyId = normalizeString(asset?.companyId, 120);
+  const assetId = normalizeString(asset?.id, 120);
+  const normalizedStoragePath = normalizeString(storagePath, 500);
+  if (!db || !storage || !companyId || !assetId || !normalizedStoragePath) {
+    return { ok: false, skipped: true, reason: 'missing_materialization_inputs', extractionStatus: 'skipped', chunkCount: 0 };
+  }
+
+  const normalizedSourceUrl = normalizeString(sourceUrl, 2000);
+  const manualId = createAssetManualId({
+    companyId,
+    assetId,
+    storagePath: normalizedStoragePath,
+    sourceUrl: normalizedSourceUrl,
+  });
+  const fileRef = storage.bucket().file(normalizedStoragePath);
+  const [buffer] = await fileRef.download();
+  const [metadata] = await fileRef.getMetadata().catch(() => [{}]);
+  const resolvedContentType = normalizeString(
+    contentType || metadata?.contentType || (
+      /\.pdf($|\?|#)/i.test(normalizedStoragePath) ? 'application/pdf'
+        : /\.html?($|\?|#)/i.test(normalizedStoragePath) ? 'text/html'
+          : /\.txt($|\?|#)/i.test(normalizedStoragePath) ? 'text/plain'
+            : ''
+    ),
+    200
+  );
+  const extractedText = extractTextFromBuffer(buffer, resolvedContentType, normalizedSourceUrl || normalizedStoragePath);
+  const chunks = chunkManualText(extractedText);
+  const now = isoNow();
+  await db.collection('manuals').doc(manualId).set({
+    id: manualId,
+    manualId,
+    companyId,
+    assetId,
+    assetName: asset.name || '',
+    manufacturer: asset.manufacturer || '',
+    sourceUrl: normalizedSourceUrl || normalizedStoragePath,
+    sourceTitle: sourceTitle || asset.name || 'Attached manual',
+    sourceType: sourceType || 'csv_direct_bootstrap_manual',
+    manualType: manualType || 'asset_attached_manual',
+    storagePath: normalizedStoragePath,
+    contentType: resolvedContentType || '',
+    fileName: normalizedStoragePath.split('/').pop() || '',
+    byteSize: Number(metadata?.size || 0) || Buffer.byteLength(buffer || Buffer.alloc(0)),
+    approvedBy: userId || '',
+    approvedAt: now,
+    extractionStatus: chunks.length ? 'completed' : 'no_text_extracted',
+    extractionRequestedAt: now,
+    extractionStartedAt: now,
+    extractionCompletedAt: now,
+    extractionFailedAt: null,
+    extractionError: '',
+    chunkCount: chunks.length,
+    attachmentMode: attachmentMode || '',
+    manualProvenance: manualProvenance || '',
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: userId || '',
+  }, { merge: true });
+  await rewriteManualChunks({ db, manualId, chunks });
+
+  return {
+    ok: true,
+    manualId,
+    extractionStatus: chunks.length ? 'completed' : 'no_text_extracted',
+    chunkCount: chunks.length,
+    storagePath: normalizedStoragePath,
+    contentType: resolvedContentType || '',
+  };
+}
+
 async function resolveApprovedManualLibraryForAsset({ db, asset = {} } = {}) {
   if (!db || !asset) return { manualLibrary: null, evidence: 'missing_inputs', ambiguous: false };
   const existingRef = normalizeString(asset.manualLibraryRef, 180);
@@ -568,6 +652,7 @@ module.exports = {
   createAssetManualId,
   extractPdfText,
   extractTextFromBuffer,
+  materializeStoredAssetManual,
   materializeApprovedManualForAsset,
   resolveApprovedManualLibraryForAsset,
   stripHtml
