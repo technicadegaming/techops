@@ -59,10 +59,98 @@ async function fetchDocExcerpt(url) {
   return { excerpt: compactExcerpt(cleaned), contentType: contentType || 'text/html' };
 }
 
-async function fetchApprovedManualChunkContext(db, asset = {}) {
+const MANUAL_CHUNK_SCAN_LIMIT = 120;
+const MANUAL_CHUNK_SELECTION_LIMIT = 6;
+const MANUAL_CHUNK_DEFAULT_LIMIT = 4;
+const MANUAL_CHUNK_INTRO_FALLBACK_LIMIT = 2;
+const TASK_KEYWORD_STOP_WORDS = new Set([
+  'the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'when', 'then', 'have', 'has', 'had',
+  'show', 'shows', 'showing', 'error', 'code', 'task', 'asset', 'machine', 'game', 'issue', 'stuck',
+  'not', 'does', 'will', 'after', 'before', 'already', 'tried', 'notes', 'title', 'description'
+]);
+
+function normalizeCodeToken(value = '') {
+  const raw = `${value || ''}`.trim().toUpperCase();
+  if (!raw) return '';
+  const spaced = raw.replace(/[_]+/g, ' ').replace(/[-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const letterDigit = spaced.match(/^([A-Z]{1,4})\s*(\d{1,4})$/);
+  if (letterDigit) return `${letterDigit[1]}${Number(letterDigit[2])}`;
+  const numericError = spaced.match(/^(?:ERROR(?:\s+CODE)?|CODE)\s*(\d{1,4})$/);
+  if (numericError) return `E${Number(numericError[1])}`;
+  return spaced.replace(/\s+/g, '');
+}
+
+function stringifyTaskValue(value) {
+  if (Array.isArray(value)) return value.map((item) => stringifyTaskValue(item)).join(' ');
+  if (value && typeof value === 'object') return Object.values(value).map((item) => stringifyTaskValue(item)).join(' ');
+  return `${value || ''}`;
+}
+
+function extractTaskCodeTokens(task = {}) {
+  const taskBlob = [
+    task?.errorCode,
+    task?.errorText,
+    task?.description,
+    task?.title,
+    task?.issueCategory,
+    task?.symptomTags,
+    task?.alreadyTried,
+    task?.notes
+  ].map((value) => stringifyTaskValue(value)).join(' ');
+  const rawCodeTokens = [];
+  (taskBlob.match(/\b[A-Za-z]{1,4}[\s-]?\d{1,4}\b/g) || []).forEach((token) => rawCodeTokens.push(token));
+  (taskBlob.match(/\b(?:ERROR(?:\s+CODE)?|CODE)\s*[-:# ]?\s*\d{1,4}\b/gi) || []).forEach((token) => rawCodeTokens.push(token));
+  const codeTokens = dedupeBy(rawCodeTokens.map((token) => normalizeCodeToken(token)).filter(Boolean), (token) => token);
+  const keywordTokens = dedupeBy(
+    taskBlob
+      .toLowerCase()
+      .split(/[^a-z0-9]+/g)
+      .map((token) => token.trim())
+      .filter((token) => token.length >= 4 && !TASK_KEYWORD_STOP_WORDS.has(token)),
+    (token) => token
+  ).slice(0, 12);
+  return { codeTokens, keywordTokens };
+}
+
+function buildCodeRegexes(token = '') {
+  const match = `${token || ''}`.match(/^([A-Z]{1,4})(\d{1,4})$/);
+  if (!match) return [];
+  const [, alpha, digits] = match;
+  const base = [
+    new RegExp(`\\b${alpha}\\s*-?\\s*${digits}\\b`, 'i')
+  ];
+  if (alpha === 'E') {
+    base.push(new RegExp(`\\bERROR(?:\\s+CODE)?\\s*[:#-]?\\s*${digits}\\b`, 'i'));
+    base.push(new RegExp(`\\bCODE\\s*[:#-]?\\s*${digits}\\b`, 'i'));
+  }
+  return base;
+}
+
+function scoreManualChunkForTask(chunkText = '', tokens = {}) {
+  const text = `${chunkText || ''}`;
+  if (!text) return { score: 0, matchedCodes: [], matchedKeywords: [] };
+  const matchedCodes = [];
+  const codeTokens = Array.isArray(tokens.codeTokens) ? tokens.codeTokens : [];
+  codeTokens.forEach((codeToken) => {
+    const regexes = buildCodeRegexes(codeToken);
+    if (regexes.some((regex) => regex.test(text))) {
+      matchedCodes.push(codeToken);
+    }
+  });
+  const lowered = text.toLowerCase();
+  const matchedKeywords = (Array.isArray(tokens.keywordTokens) ? tokens.keywordTokens : []).filter((keyword) => lowered.includes(keyword));
+  const mappingCue = /\b(out of|means|indicates|definition|fault|alarm|empty|low|jam|blocked)\b/i.test(text);
+  let score = 0;
+  if (matchedCodes.length) score += 40 + ((matchedCodes.length - 1) * 15);
+  if (matchedCodes.length && mappingCue) score += 12;
+  score += Math.min(matchedKeywords.length * 2, 10);
+  return { score, matchedCodes, matchedKeywords };
+}
+
+async function fetchApprovedManualChunkContext(db, asset = {}, task = {}) {
   const companyId = `${asset.companyId || ''}`.trim();
   const assetId = `${asset.id || ''}`.trim();
-  if (!db || !companyId || !assetId) return [];
+  if (!db || !companyId || !assetId) return { items: [], hadManualWithoutExtractedText: false };
 
   const manualSnap = await db.collection('manuals')
     .where('companyId', '==', companyId)
@@ -80,26 +168,58 @@ async function fetchApprovedManualChunkContext(db, asset = {}) {
     })
     .slice(0, 2);
 
+  const taskTokens = extractTaskCodeTokens(task);
   const results = [];
+  let hadManualWithoutExtractedText = false;
   for (const manual of manuals) {
     const chunkSnap = await db.collection('manuals').doc(manual.id).collection('chunks')
       .orderBy('chunkIndex', 'asc')
-      .limit(4)
+      .limit(MANUAL_CHUNK_SCAN_LIMIT)
       .get()
       .catch(() => ({ docs: [] }));
-    const excerpts = chunkSnap.docs.map((doc) => compactExcerpt(doc.data()?.text || '', 500)).filter(Boolean);
+    const chunks = chunkSnap.docs.map((doc) => {
+      const data = doc.data() || {};
+      const chunkText = compactExcerpt(data?.text || '', 500);
+      const chunkIndex = Number(data?.chunkIndex);
+      const safeChunkIndex = Number.isFinite(chunkIndex) ? chunkIndex : Number.MAX_SAFE_INTEGER;
+      const scoring = scoreManualChunkForTask(chunkText, taskTokens);
+      return {
+        text: chunkText,
+        chunkIndex: safeChunkIndex,
+        score: scoring.score,
+        matchedCodes: scoring.matchedCodes
+      };
+    }).filter((chunk) => !!chunk.text);
+    if (!chunks.length) {
+      hadManualWithoutExtractedText = true;
+      continue;
+    }
+    const matchedChunks = chunks
+      .filter((chunk) => chunk.score > 0)
+      .sort((a, b) => b.score - a.score || a.chunkIndex - b.chunkIndex);
+    const prioritizedChunks = matchedChunks.slice(0, MANUAL_CHUNK_SELECTION_LIMIT);
+    const introFallbackChunks = chunks
+      .sort((a, b) => a.chunkIndex - b.chunkIndex)
+      .slice(0, MANUAL_CHUNK_INTRO_FALLBACK_LIMIT)
+      .filter((chunk) => !prioritizedChunks.some((selected) => selected.text === chunk.text));
+    const selectedChunks = (prioritizedChunks.length
+      ? [...prioritizedChunks, ...introFallbackChunks]
+      : chunks.sort((a, b) => a.chunkIndex - b.chunkIndex).slice(0, MANUAL_CHUNK_DEFAULT_LIMIT))
+      .slice(0, MANUAL_CHUNK_SELECTION_LIMIT);
+    const excerpts = selectedChunks.map((chunk) => chunk.text).filter(Boolean);
     if (!excerpts.length) continue;
+    const hasCodeMatch = selectedChunks.some((chunk) => Array.isArray(chunk.matchedCodes) && chunk.matchedCodes.length > 0);
     results.push({
       manualId: manual.id,
       title: manual.sourceTitle || manual.fileName || manual.sourceUrl,
       url: manual.sourceUrl || '',
       storagePath: manual.storagePath || '',
-      sourceType: 'approved_manual_chunk',
+      sourceType: hasCodeMatch ? 'approved_manual_code_chunk' : 'approved_manual_chunk',
       excerpts,
       contentType: manual.contentType || 'application/pdf'
     });
   }
-  return results;
+  return { items: results, hadManualWithoutExtractedText };
 }
 
 function pickApprovedSuggestions(asset = {}) {
@@ -115,10 +235,6 @@ function pickApprovedSuggestions(asset = {}) {
     .map((s) => ({ title: s.title || s.url, url: s.url, sourceType: 'approved_doc' }));
 }
 
-
-function normalizeCodeToken(value = '') {
-  return `${value || ''}`.trim().toUpperCase();
-}
 
 function parseCodeHintValue(code = '', value = '', sourceLabel = '') {
   const cleanCode = normalizeCodeToken(code);
@@ -182,16 +298,8 @@ function collectLibraryCodeHints(rows = []) {
   return dedupeBy(hints, (item) => `${item.code}|${normalizeComparable(item.meaning)}`);
 }
 
-function extractTaskCodeTokens(task = {}) {
-  const blob = [task?.errorCode, task?.errorText, task?.title, task?.description, task?.notes]
-    .map((value) => `${value || ''}`)
-    .join(' ');
-  const matches = blob.match(/\b[A-Za-z]\d{1,4}\b/g) || [];
-  return dedupeBy(matches.map((value) => normalizeCodeToken(value)).filter(Boolean), (value) => value);
-}
-
 function buildCodeHintContextItem({ task = {}, asset = {}, troubleshootingLibrary = [] } = {}) {
-  const taskCodes = extractTaskCodeTokens(task);
+  const taskCodes = extractTaskCodeTokens(task).codeTokens;
   const assetHints = collectAssetCodeHints(asset);
   const libraryHints = collectLibraryCodeHints(troubleshootingLibrary);
   const allHints = dedupeBy([...assetHints, ...libraryHints], (item) => `${item.code}|${normalizeComparable(item.meaning)}`);
@@ -251,7 +359,8 @@ Manual context layering:
 
 async function buildDocumentationContext(db, { task = null, asset = null, troubleshootingLibrary = [] } = {}) {
   if (!asset) return { mode: 'web_internal_only', items: [] };
-  const approvedChunkItems = await fetchApprovedManualChunkContext(db, asset).catch(() => []);
+  const manualChunkContext = await fetchApprovedManualChunkContext(db, asset, task).catch(() => ({ items: [], hadManualWithoutExtractedText: false }));
+  const approvedChunkItems = Array.isArray(manualChunkContext.items) ? manualChunkContext.items : [];
   const linkedManualLibraryItem = await fetchManualLibraryContext(db, asset).catch(() => null);
   const codeHintItem = buildCodeHintContextItem({ task, asset, troubleshootingLibrary });
   const troubleshootingItems = (Array.isArray(troubleshootingLibrary) ? troubleshootingLibrary : [])
@@ -269,6 +378,13 @@ async function buildDocumentationContext(db, { task = null, asset = null, troubl
     ...(asset.manualStoragePath ? [{ title: asset.name || asset.manualStoragePath, url: asset.manualStoragePath, sourceType: 'manual' }] : []),
     ...((asset.manualLinks || []).filter(Boolean).slice(0, 3).map((url) => ({ title: url, url, sourceType: 'manual' })))
   ], (item) => item?.url || `${item?.sourceType || ''}:${item?.manualLibraryRef || ''}`);
+  if (!approvedChunkItems.length && manualChunkContext.hadManualWithoutExtractedText && linkedManualLibraryItem) {
+    linkedManualLibraryItem.excerpts = dedupeBy([
+      ...(Array.isArray(linkedManualLibraryItem.excerpts) ? linkedManualLibraryItem.excerpts : []),
+      'Manual link exists but no extracted manual text was available for code lookup.'
+    ], (value) => value);
+    linkedManualLibraryItem.contextNote = 'manual_link_no_extracted_text';
+  }
   const fallbackCandidates = manualCandidates.length || approvedChunkItems.length ? [] : pickApprovedSuggestions(asset);
   const supportCandidates = Array.isArray(asset.supportResourcesSuggestion)
     ? asset.supportResourcesSuggestion.slice(0, approvedChunkItems.length ? 1 : 2).map((s) => ({ title: s.label || s.title || s.url, url: s.url || s, sourceType: 'support' }))
@@ -304,7 +420,7 @@ async function buildDocumentationContext(db, { task = null, asset = null, troubl
     }
   }
 
-  const mode = items.some((x) => x.sourceType === 'approved_manual_chunk')
+  const mode = items.some((x) => ['approved_manual_chunk', 'approved_manual_code_chunk'].includes(x.sourceType))
     ? 'approved_manual_internal'
     : items.some((x) => x.sourceType === 'manual_library_link')
     ? 'manual_library_backed'
