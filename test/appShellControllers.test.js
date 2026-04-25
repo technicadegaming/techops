@@ -51,6 +51,11 @@ async function loadAssetsHelpers() {
   return import('../src/features/assets.js');
 }
 
+
+async function loadOperationsHelpers() {
+  return import('../src/features/operations.js');
+}
+
 async function loadAssetDraftContextHelpers() {
   return import('../src/features/assetDraftContext.js');
 }
@@ -1650,4 +1655,65 @@ test('admin source no longer exposes a duplicate asset documentation review sect
   assert.doesNotMatch(source, /asset_review/);
   assert.doesNotMatch(source, /Asset documentation review/);
   assert.doesNotMatch(source, /data-run-review-enrichment/);
+});
+
+
+test('operations AI run selection prefers current completed run over older answered follow-up-required run', async () => {
+  const { __testOperationsAi } = await loadOperationsHelpers();
+  const task = {
+    id: 'task-1',
+    companyId: 'company-a',
+    currentAiRunId: 'run-new',
+    aiStatus: 'completed',
+    aiLastCompletedRunSnapshot: { runId: 'run-new', taskId: 'task-1', companyId: 'company-a', completedAt: '2026-03-20T00:00:00.000Z', frontline: 'Use balloon refill steps.' }
+  };
+  const state = {
+    settings: { aiEnabled: true, aiAllowManualRerun: true },
+    permissions: { companyRole: 'lead' },
+    operationsUi: { aiTaskStates: {}, aiDisplayRunsByTask: {} },
+    taskAiRuns: [
+      { id: 'run-old', taskId: 'task-1', companyId: 'company-a', status: 'followup_required', followupStatus: 'answered', continuedByRunId: 'run-new', updatedAt: '2026-03-19T00:00:00.000Z' },
+      { id: 'run-new', taskId: 'task-1', companyId: 'company-a', status: 'completed', updatedAt: '2026-03-20T00:00:00.000Z', shortFrontlineVersion: 'E10 indicates out of balloons.', diagnosticSteps: ['Refill balloons'] }
+    ],
+    taskAiFollowups: [
+      { runId: 'run-old', status: 'answered', questions: ['What code?'], answers: [{ question: 'What code?', answer: 'E10' }] }
+    ]
+  };
+
+  const run = __testOperationsAi.getTaskRun(task, state);
+  assert.equal(run.id, 'run-new');
+  const followup = __testOperationsAi.getTaskFollowup(run.id, state, run, task);
+  assert.equal(followup, null);
+});
+
+test('operations AI follow-up rendering hides blocker for answered follow-up docs', async () => {
+  const { __testOperationsAi } = await loadOperationsHelpers();
+  const task = {
+    id: 'task-2',
+    companyId: 'company-a',
+    currentAiRunId: 'run-2',
+    aiStatus: 'completed',
+    aiLastCompletedRunSnapshot: { runId: 'run-2', taskId: 'task-2', companyId: 'company-a', completedAt: '2026-03-20T00:00:00.000Z', frontline: 'Balloon hopper empty.' }
+  };
+  const state = {
+    settings: { aiEnabled: true, aiAllowManualRerun: true },
+    permissions: { companyRole: 'lead' },
+    operationsUi: { aiTaskStates: {}, aiDisplayRunsByTask: {}, pendingActionsByTask: {} },
+    taskAiRuns: [
+      { id: 'run-2', taskId: 'task-2', companyId: 'company-a', status: 'followup_required', followupStatus: 'answered', continuedByRunId: 'run-3', updatedAt: '2026-03-19T00:00:00.000Z' }
+    ],
+    taskAiFollowups: [
+      { runId: 'run-2', status: 'answered', questions: ['Error code?'], answers: [{ question: 'Error code?', answer: 'E10' }] }
+    ]
+  };
+
+  const run = __testOperationsAi.getTaskRun(task, state);
+  const followup = __testOperationsAi.getTaskFollowup(run.id, state, run, task);
+  const snapshot = __testOperationsAi.getTaskAiSnapshot(task, run);
+  const aiState = __testOperationsAi.getTaskAiState(task, state, run, followup, snapshot);
+  const html = __testOperationsAi.renderAiPanel(task, state, { run, followup, snapshot, aiState });
+
+  assert.equal(followup, null);
+  assert.equal(aiState.status, 'waiting_for_refresh');
+  assert.equal(html.includes('cannot advance until the follow-up answers below are submitted'), false);
 });

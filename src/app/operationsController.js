@@ -617,9 +617,10 @@ export function createOperationsController({
         },
         submitFollowup: async (taskId, runId, answers) => {
           await withTaskPendingAction(taskId, 'submit_followup', 'Saving…', async () => {
-          setTaskAiUiState(taskId, { status: 'running', message: 'Submitting follow-up answers to AI.' });
+          setTaskAiUiState(taskId, { status: 'running', message: 'Submitting follow-up answers…' });
+          let result = null;
           try {
-            await answerTaskFollowup(taskId, runId, answers);
+            result = await answerTaskFollowup(taskId, runId, answers);
             const task = state.tasks.find((entry) => entry.id === taskId);
             if (task) {
               await upsertEntity('tasks', taskId, {
@@ -633,15 +634,14 @@ export function createOperationsController({
                 updatedAtClient: new Date().toISOString()
               }, state.user);
             }
-            setTaskAiUiState(taskId, { status: 'queued', message: 'Follow-up answers submitted. AI is continuing the run.' });
+            setTaskAiUiState(taskId, { status: 'queued', message: 'Follow-up submitted. AI is continuing…' });
           } catch (error) {
             setTaskAiUiState(taskId, getTaskAiFailureState(error, 'submit AI follow-up answers'));
             render();
             reportActionError('submit_followup', error, 'Unable to submit AI follow-up answers.');
             return;
           }
-          await refreshData();
-          render();
+          await handleAiRunLifecycle({ taskId, result, statusPrefix: 'AI follow-up run' });
           });
         },
         saveFix: async (taskId) => {

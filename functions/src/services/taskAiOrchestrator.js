@@ -115,6 +115,101 @@ function pickApprovedSuggestions(asset = {}) {
     .map((s) => ({ title: s.title || s.url, url: s.url, sourceType: 'approved_doc' }));
 }
 
+
+function normalizeCodeToken(value = '') {
+  return `${value || ''}`.trim().toUpperCase();
+}
+
+function parseCodeHintValue(code = '', value = '', sourceLabel = '') {
+  const cleanCode = normalizeCodeToken(code);
+  const cleanMeaning = `${value || ''}`.trim();
+  if (!cleanCode || !cleanMeaning) return null;
+  return {
+    code: cleanCode,
+    meaning: cleanMeaning,
+    source: `${sourceLabel || ''}`.trim(),
+    line: `${cleanCode}: ${cleanMeaning}`
+  };
+}
+
+function collectAssetCodeHints(asset = {}) {
+  const hints = [];
+  const troubleshootingCodes = asset?.troubleshootingCodes && typeof asset.troubleshootingCodes === 'object' ? asset.troubleshootingCodes : {};
+  Object.entries(troubleshootingCodes).forEach(([code, meaning]) => {
+    const parsed = parseCodeHintValue(code, meaning, 'asset.troubleshootingCodes');
+    if (parsed) hints.push(parsed);
+  });
+
+  const arrayFields = [
+    { key: 'knownErrorCodes', label: 'asset.knownErrorCodes' },
+    { key: 'errorCodes', label: 'asset.errorCodes' }
+  ];
+  for (const field of arrayFields) {
+    const rows = Array.isArray(asset?.[field.key]) ? asset[field.key] : [];
+    rows.forEach((row) => {
+      if (!row) return;
+      if (typeof row === 'string') {
+        const match = row.match(/\b([A-Za-z]\d{1,4})\b\s*[:-]\s*(.+)$/);
+        const parsed = parseCodeHintValue(match?.[1] || '', match?.[2] || '', field.label);
+        if (parsed) hints.push(parsed);
+        return;
+      }
+      const parsed = parseCodeHintValue(row.code || row.errorCode || row.id, row.meaning || row.description || row.message, row.source || field.label);
+      if (parsed) hints.push(parsed);
+    });
+  }
+
+  return dedupeBy(hints, (item) => `${item.code}|${normalizeComparable(item.meaning)}`);
+}
+
+function collectLibraryCodeHints(rows = []) {
+  const hints = [];
+  for (const row of (Array.isArray(rows) ? rows : [])) {
+    const codeFields = [row?.errorCode, row?.code, row?.faultCode];
+    const code = codeFields.map((value) => normalizeCodeToken(value)).find(Boolean) || '';
+    const meaning = `${row?.codeMeaning || row?.issueSummary || row?.resolutionSummary || row?.successfulFix || ''}`.trim();
+    const parsed = parseCodeHintValue(code, meaning, 'troubleshooting_library');
+    if (parsed) hints.push(parsed);
+
+    const notesBlob = [row?.notes, row?.resolutionSummary, row?.successfulFix].filter(Boolean).join(' | ');
+    const extracted = notesBlob.match(/\b([A-Za-z]\d{1,4})\b\s*[:-]\s*([^|\n]+)/g) || [];
+    extracted.forEach((entry) => {
+      const match = entry.match(/\b([A-Za-z]\d{1,4})\b\s*[:-]\s*(.+)$/);
+      const parsedHint = parseCodeHintValue(match?.[1] || '', match?.[2] || '', 'troubleshooting_library_notes');
+      if (parsedHint) hints.push(parsedHint);
+    });
+  }
+  return dedupeBy(hints, (item) => `${item.code}|${normalizeComparable(item.meaning)}`);
+}
+
+function extractTaskCodeTokens(task = {}) {
+  const blob = [task?.errorCode, task?.errorText, task?.title, task?.description, task?.notes]
+    .map((value) => `${value || ''}`)
+    .join(' ');
+  const matches = blob.match(/\b[A-Za-z]\d{1,4}\b/g) || [];
+  return dedupeBy(matches.map((value) => normalizeCodeToken(value)).filter(Boolean), (value) => value);
+}
+
+function buildCodeHintContextItem({ task = {}, asset = {}, troubleshootingLibrary = [] } = {}) {
+  const taskCodes = extractTaskCodeTokens(task);
+  const assetHints = collectAssetCodeHints(asset);
+  const libraryHints = collectLibraryCodeHints(troubleshootingLibrary);
+  const allHints = dedupeBy([...assetHints, ...libraryHints], (item) => `${item.code}|${normalizeComparable(item.meaning)}`);
+  if (!allHints.length) return null;
+
+  const prioritized = taskCodes.length
+    ? allHints.filter((item) => taskCodes.includes(item.code))
+    : allHints;
+  const selected = (prioritized.length ? prioritized : allHints).slice(0, 6);
+  if (!selected.length) return null;
+  const titlePrefix = `${asset?.name || task?.assetName || ''}`.trim();
+  return {
+    sourceType: 'asset_code_hint',
+    title: titlePrefix ? `${titlePrefix} known code hints` : 'Known code hints',
+    excerpts: selected.map((item) => `${item.line}${item.source ? ` (${item.source})` : ''}`)
+  };
+}
+
 async function fetchManualLibraryContext(db, asset = {}) {
   const manualLibraryRef = `${asset?.manualLibraryRef || ''}`.trim();
   if (!db || !manualLibraryRef) return null;
@@ -154,10 +249,11 @@ Manual context layering:
   asset-linked shared manual record, then troubleshooting fixes, then support/manual URLs.
 */
 
-async function buildDocumentationContext(db, asset = null, troubleshootingLibrary = []) {
+async function buildDocumentationContext(db, { task = null, asset = null, troubleshootingLibrary = [] } = {}) {
   if (!asset) return { mode: 'web_internal_only', items: [] };
   const approvedChunkItems = await fetchApprovedManualChunkContext(db, asset).catch(() => []);
   const linkedManualLibraryItem = await fetchManualLibraryContext(db, asset).catch(() => null);
+  const codeHintItem = buildCodeHintContextItem({ task, asset, troubleshootingLibrary });
   const troubleshootingItems = (Array.isArray(troubleshootingLibrary) ? troubleshootingLibrary : [])
     .filter((row) => row && (row.resolutionSummary || row.fixSummary || row.notes || row.title))
     .slice(0, approvedChunkItems.length ? 3 : 4)
@@ -182,6 +278,7 @@ async function buildDocumentationContext(db, asset = null, troubleshootingLibrar
   const items = [
     ...approvedChunkItems,
     ...(linkedManualLibraryItem ? [linkedManualLibraryItem] : []),
+    ...(codeHintItem ? [codeHintItem] : []),
     ...troubleshootingItems,
   ];
   for (const source of selected) {
@@ -211,6 +308,8 @@ async function buildDocumentationContext(db, asset = null, troubleshootingLibrar
     ? 'approved_manual_internal'
     : items.some((x) => x.sourceType === 'manual_library_link')
     ? 'manual_library_backed'
+    : items.some((x) => x.sourceType === 'asset_code_hint')
+    ? 'code_hint_backed'
     : items.some((x) => x.sourceType === 'troubleshooting_fix')
     ? 'troubleshooting_backed'
     : items.some((x) => x.sourceType === 'manual')
@@ -268,7 +367,7 @@ async function gatherContext(db, taskId) {
     return rowTerms.some((term) => assetTerms.has(term));
   }).slice(0, 10);
 
-  const documentationContext = await buildDocumentationContext(db, asset, libraryRecords).catch(() => ({ mode: 'web_internal_only', items: [] }));
+  const documentationContext = await buildDocumentationContext(db, { task, asset, troubleshootingLibrary: libraryRecords }).catch(() => ({ mode: 'web_internal_only', items: [] }));
 
   return {
     task,
@@ -342,10 +441,20 @@ function buildTaskAiSnapshot({ runId, result, taskId, companyId, documentationCo
   };
 }
 
-async function runPipeline({ db, taskId, userId, triggerSource, settings, traceId, followupAnswers = [] }) {
+async function runPipeline({ db, taskId, userId, triggerSource, settings, traceId, followupAnswers = [], sourceRunId = '' }) {
   const taskSnap = await db.collection('tasks').doc(taskId).get();
   const taskCompanyId = taskSnap.exists ? `${taskSnap.data()?.companyId || ''}`.trim() : null;
+  const sourceRunIdClean = `${sourceRunId || ''}`.trim();
   const runRef = await createAiRun({ db, taskId, userId, triggerSource, model: settings.aiModel, settingsSnapshot: settings, companyId: taskCompanyId || null });
+  if (sourceRunIdClean && sourceRunIdClean !== runRef.id) {
+    await db.collection('taskAiRuns').doc(sourceRunIdClean).set({
+      followupStatus: 'answered',
+      continuedByRunId: runRef.id,
+      followupContinuedAt: isoNow(),
+      updatedAt: isoNow(),
+      updatedBy: userId
+    }, { merge: true });
+  }
   try {
     await runRef.set({
       status: 'running',

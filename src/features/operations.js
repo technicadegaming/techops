@@ -213,28 +213,66 @@ function renderMissingAssetPrompt(assetName = '') {
   return `No existing asset matches "${clean}". Create the asset first, then save the task. <button type="button" data-create-missing-asset="${clean}">Create asset</button>`;
 }
 
+
+function getRunSortKey(run = {}) {
+  return `${run.updatedAt || run.createdAt || run.startedAt || ''}`;
+}
+
+function isRunSuperseded(run = {}) {
+  const status = `${run.status || ''}`.trim();
+  const followupStatus = `${run.followupStatus || ''}`.trim();
+  return status === 'superseded' || followupStatus === 'superseded' || !!`${run.continuedByRunId || ''}`.trim();
+}
+
+function hasRunBeenAnswered(run = {}) {
+  const followupStatus = `${run.followupStatus || ''}`.trim();
+  return followupStatus === 'answered' || !!run.followupAnsweredAt;
+}
+
+function isActiveFollowupRun(run = {}) {
+  return `${run.status || ''}`.trim() === 'followup_required' && !hasRunBeenAnswered(run) && !isRunSuperseded(run);
+}
+
+function hasAnsweredFollowup(followup = {}) {
+  if (!followup) return false;
+  const status = `${followup.status || ''}`.trim();
+  const answers = Array.isArray(followup.answers) ? followup.answers : [];
+  return status === 'answered' || answers.some((entry) => `${entry?.answer || ''}`.trim());
+}
+
 function getTaskRun(task, state) {
   const taskId = `${task?.id || ''}`.trim();
   const taskCompanyId = `${task?.companyId || ''}`.trim();
-  const fromList = (state.taskAiRuns || [])
+  const currentAiRunId = `${task?.currentAiRunId || ''}`.trim();
+  const matchingRuns = (state.taskAiRuns || [])
     .filter((entry) => `${entry.taskId || ''}`.trim() === taskId)
     .filter((entry) => {
       if (!taskCompanyId) return true;
       return `${entry.companyId || ''}`.trim() === taskCompanyId;
     })
-    .sort((a, b) => `${b.updatedAt || b.createdAt || ''}`.localeCompare(`${a.updatedAt || a.createdAt || ''}`))[0] || null;
+    .sort((a, b) => getRunSortKey(b).localeCompare(getRunSortKey(a)));
+
   const displayRun = state.operationsUi?.aiDisplayRunsByTask?.[taskId] || null;
   const displayTaskId = `${displayRun?.taskId || ''}`.trim();
   const displayCompanyId = `${displayRun?.companyId || ''}`.trim();
   const validDisplayRun = displayRun && displayTaskId === taskId && (!taskCompanyId || !displayCompanyId || displayCompanyId === taskCompanyId)
     ? displayRun
     : null;
-  if (fromList && validDisplayRun) {
-    return `${validDisplayRun.updatedAt || validDisplayRun.createdAt || ''}`.localeCompare(`${fromList.updatedAt || fromList.createdAt || ''}`) > 0
-      ? validDisplayRun
-      : fromList;
+
+  if (currentAiRunId) {
+    const currentRun = matchingRuns.find((entry) => `${entry.id || ''}`.trim() === currentAiRunId);
+    if (currentRun) return currentRun;
+    if (validDisplayRun && `${validDisplayRun.id || ''}`.trim() === currentAiRunId) return validDisplayRun;
   }
-  return fromList || validDisplayRun || null;
+
+  const newestNonSuperseded = matchingRuns.find((entry) => !isRunSuperseded(entry));
+  if (newestNonSuperseded) return newestNonSuperseded;
+
+  if (validDisplayRun && !isRunSuperseded(validDisplayRun)) return validDisplayRun;
+
+  const fallbackRun = matchingRuns[0] || null;
+  if (fallbackRun && isActiveFollowupRun(fallbackRun)) return fallbackRun;
+  return fallbackRun || validDisplayRun || null;
 }
 
 function getTaskAiSnapshot(task, run = null) {
@@ -268,9 +306,14 @@ function getTaskAiSnapshot(task, run = null) {
   };
 }
 
-function getTaskFollowup(runId, state, run = null) {
+function getTaskFollowup(runId, state, run = null, task = null) {
   if (!runId) return null;
   const followup = (state.taskAiFollowups || []).find((entry) => entry.runId === runId) || null;
+  const answered = hasAnsweredFollowup(followup) || hasRunBeenAnswered(run || {});
+  const taskCurrentRunId = `${task?.currentAiRunId || ''}`.trim();
+  const taskStatus = `${task?.aiStatus || ''}`.trim();
+  if (answered || isRunSuperseded(run || {})) return null;
+  if (taskCurrentRunId && taskCurrentRunId !== `${runId}`.trim() && taskStatus === 'completed') return null;
   if (followup) return followup;
   const runQuestions = Array.isArray(run?.followupQuestions)
     ? run.followupQuestions
@@ -324,6 +367,15 @@ function getTaskAiState(task, state, run, followup, snapshot = null) {
   const localState = getTaskAiLocalState(task.id, state);
   const eligibility = getTaskAiEligibility(task, state, run);
   if (run?.status === 'followup_required') {
+    if (hasRunBeenAnswered(run) || hasAnsweredFollowup(followup)) {
+      return {
+        status: 'waiting_for_refresh',
+        message: 'Follow-up submitted. AI is continuing…',
+        source: 'run',
+        details: run.error || '',
+        eligibility
+      };
+    }
     return {
       status: 'followup_required',
       message: 'AI is waiting on follow-up answers before it can continue.',
@@ -408,6 +460,7 @@ function renderAiSourceLine(run) {
     approved_manual_internal: { label: 'Trusted manual-backed', tone: 'good', note: 'Trusted source: approved manual text' },
     manual_library_backed: { label: 'Shared manual-backed', tone: 'warn', note: 'Uses shared manual-library context. Verify asset/manual match before relying on it.' },
     troubleshooting_backed: { label: 'Saved-fix-backed', tone: 'info', note: 'Context includes prior troubleshooting-library fixes.' },
+    code_hint_backed: { label: 'Saved code hint-backed', tone: 'good', note: 'Context includes saved internal error-code hints.' },
     manual_backed: { label: 'Manual/link-backed', tone: 'info', note: '' },
     approved_doc_backed: { label: 'Manual/link-backed', tone: 'info', note: '' },
     support_backed: { label: 'Support/web/internal only', tone: 'warn', note: '' },
@@ -445,7 +498,7 @@ function getTaskStateMeta(task, state) {
   const severity = task.severity || 'medium';
   const assignedWorkers = task.assignedWorkers || [];
   const run = getTaskRun(task, state);
-  const followup = getTaskFollowup(run?.id, state, run);
+  const followup = getTaskFollowup(run?.id, state, run, task);
   const snapshot = getTaskAiSnapshot(task, run);
   const aiState = getTaskAiState(task, state, run, followup, snapshot);
   const unavailable = assignedWorkers.filter((worker) => state.users.some((user) => (
@@ -803,6 +856,14 @@ function filterTasks(tasks, state, assetById = new Map()) {
     return statusMatch && ownershipMatch && exceptionMatch && assigneeMatch && searchMatch;
   });
 }
+
+export const __testOperationsAi = {
+  getTaskRun,
+  getTaskFollowup,
+  getTaskAiState,
+  getTaskAiSnapshot,
+  renderAiPanel
+};
 
 export function renderOperations(el, state, actions) {
   state.operationsUi = { ...createDefaultOperationsUiState(), ...(state.operationsUi || {}) };

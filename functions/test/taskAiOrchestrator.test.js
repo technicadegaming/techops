@@ -121,3 +121,70 @@ test('task AI context includes troubleshooting records that match by manufacture
   assert.equal(troubleshootingEntries.some((row) => row.manufacturer === 'Bay Tek Games'), true);
   assert.equal(context.documentationContext.items.some((item) => item.sourceType === 'troubleshooting_fix'), true);
 });
+
+
+test('task AI context adds asset code hints and prioritizes them ahead of generic manual links when task references the code', async () => {
+  global.fetch = async (url) => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => 'text/html' },
+    text: async () => `Support page for ${url}`
+  });
+
+  const db = buildDb();
+  const context = await gatherContext({
+    collection(name) {
+      if (name === 'tasks') {
+        return {
+          doc(id) {
+            return {
+              id,
+              async get() {
+                return {
+                  exists: true,
+                  id,
+                  data: () => ({ companyId: 'company-a', assetId: 'asset1', title: 'Pop It & Win shows E10', errorText: 'E10 on startup', updatedAt: '2026-03-20T00:00:00.000Z' })
+                };
+              }
+            };
+          },
+          where(field, op, value) { return db.collection(name).where(field, op, value); }
+        };
+      }
+      if (name === 'assets') {
+        return {
+          doc(id) {
+            return {
+              id,
+              async get() {
+                return {
+                  exists: true,
+                  id,
+                  data: () => ({
+                    companyId: 'company-a',
+                    name: 'Pop It & Win',
+                    manufacturer: 'Bay Tek Games',
+                    manualLinks: ['https://example.com/pop-it-manual-link'],
+                    troubleshootingCodes: { E10: 'Out of balloons' },
+                    supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }]
+                  })
+                };
+              }
+            };
+          }
+        };
+      }
+      return db.collection(name);
+    }
+  }, 'task1');
+
+  const sourceTypes = context.documentationContext.items.map((item) => item.sourceType);
+  assert.equal(sourceTypes.includes('asset_code_hint'), true);
+  const codeHintIndex = sourceTypes.indexOf('asset_code_hint');
+  const supportIndex = sourceTypes.indexOf('support');
+  assert.equal(codeHintIndex >= 0, true);
+  assert.equal(supportIndex > codeHintIndex, true);
+  const hint = context.documentationContext.items.find((item) => item.sourceType === 'asset_code_hint');
+  assert.match(hint.excerpts.join(' '), /E10: Out of balloons/i);
+  assert.equal(context.documentationContext.mode, 'approved_manual_internal');
+});
