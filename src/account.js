@@ -13,7 +13,7 @@ export function renderAccount(el, state, actions) {
   const displayName = profile.fullName || state.user?.displayName || state.user?.email?.split('@')[0] || '-';
 
   el.innerHTML = `
-    <div class="page-header">
+    <div class="page-shell page-narrow"><div class="page-header">
       <div>
         <h2 class="page-title">Account</h2>
         <p class="page-subtitle">Manage your profile, security, workspace access, and sign-in settings.</p>
@@ -51,7 +51,7 @@ export function renderAccount(el, state, actions) {
       <section class="item">
         <h3>Notification preferences</h3>
         <p class="tiny">Notification categories are managed in <b>Admin → AI & notifications</b>. Categories use business-friendly groups (operations, PM, people, AI/docs).</p>
-        <p class="tiny">If alerts seem too noisy or too quiet, update category toggles and save preferences.</p>
+        <p class="tiny">Notification categories will appear here as workspace notification settings are configured.</p>
       </section>
 
       <section class="item">
@@ -61,6 +61,7 @@ export function renderAccount(el, state, actions) {
       </section>
     </div>
     <p id="accountSecurityMessage" class="tiny mt" role="status" aria-live="polite"></p>
+    </div>
   `;
 
   const messageEl = el.querySelector('#accountSecurityMessage');

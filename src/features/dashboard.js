@@ -89,7 +89,7 @@ export function renderDashboard(el, state, navigate, applyFocus = () => {}) {
     .slice(0, 6);
 
   el.innerHTML = `
-    <div class="page-shell">
+    <div class="page-shell page-narrow">
     <header class="page-header">
       <div>
         <h2 class="page-title">Dashboard</h2>

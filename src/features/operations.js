@@ -58,6 +58,13 @@ function parseReferenceList(value = '') {
     .filter(Boolean);
 }
 
+function splitChecklist(value = '') {
+  return `${value || ''}`
+    .split(/\r?\n|[;|]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 function buildAttachments(input = {}) {
   return {
     images: parseReferenceList(input.imageRefs || input.images || ''),
@@ -589,6 +596,11 @@ function renderAiPanel(task, state, meta) {
   const aiReviewState = AI_FIX_STATE_LABEL[snapshot?.fixState] || AI_FIX_STATE_LABEL.pending_review;
   const summary = run?.shortFrontlineVersion || snapshot?.frontline || '';
   const nextSteps = run?.diagnosticSteps?.length ? run.diagnosticSteps : (snapshot?.nextSteps || []);
+  const immediateChecks = splitChecklist(run?.immediateChecks || run?.frontlineChecklist || '');
+  const fixes = Array.isArray(run?.possibleFixes) ? run.possibleFixes : splitChecklist(run?.possibleFixes || '');
+  const tools = Array.isArray(run?.toolsAndParts) ? run.toolsAndParts : splitChecklist(run?.toolsAndParts || '');
+  const safety = Array.isArray(run?.safetyNotes) ? run.safetyNotes : splitChecklist(run?.safetyNotes || '');
+  const sources = Array.isArray(run?.sourcesUsed) ? run.sourcesUsed : (run?.sources?.length ? run.sources : []);
   const canShowRunNow = eligibility.hasTaskCompanyContext
     && eligibility.aiEnabled
     && eligibility.canRun
@@ -618,19 +630,28 @@ function renderAiPanel(task, state, meta) {
   return `<div class="item mt">
     <div class="row space">
       <b>AI Troubleshooting</b>
-      <div class="tiny">Status: ${getAiStatusLabel(aiState.status)}</div>
+      <div class="state-chip-row">
+        <span class="state-chip ${getChipTone('ai', aiState.status)}">${getAiStatusLabel(aiState.status)}</span>
+        ${run?.confidence ? `<span class="state-chip ${Number(run.confidence) >= 0.8 ? 'good' : 'warn'}">Confidence ${Math.round(Number(run.confidence) * 100)}%</span>` : ''}
+        ${hasSavedGuidance ? `<span class="state-chip ${snapshot?.fixState === 'approved' ? 'good' : (snapshot?.fixState === 'rejected' ? 'bad' : 'warn')}">${aiReviewState}</span>` : ''}
+      </div>
     </div>
     <div class="inline-state ${statusTone} mt">${aiState.message}</div>
     <div class="tiny mt">${sourceLine}${aiState.source ? ` | source: ${aiState.source}` : ''}${aiState.details ? ` | ${aiState.details}` : ''}</div>
     ${actionHint ? `<div class="tiny mt">${actionHint}</div>` : ''}
     ${guidance ? `<div class="tiny mt">${guidance}</div>` : ''}
     ${task.aiSummary?.summary ? `<div class="tiny mt">${task.aiSummary.summary}</div>` : ''}
-    ${run ? renderAiSourceLine(run) : (hasSavedGuidance ? `${renderAiSourceLine(snapshot)}<div class="tiny mt">Latest saved AI guidance (run ${snapshot.runId}) • ${formatDateTime(snapshot.updatedAt)}</div>` : (aiState.status === 'waiting_for_refresh' ? `<div class="tiny mt">Waiting for AI run record…</div><div class="tiny mt">Refreshing results…</div>` : '<div class="tiny mt">No AI run yet for this task.</div>'))}
-    ${(aiState.status === 'queued' || aiState.status === 'running') ? '<div class="tiny mt">AI is thinking…</div>' : ''}
+    ${run ? renderAiSourceLine(run) : (hasSavedGuidance ? `${renderAiSourceLine(snapshot)}<div class="tiny mt">Latest saved AI guidance (run ${snapshot.runId}) • ${formatDateTime(snapshot.updatedAt)}</div>` : (aiState.status === 'waiting_for_refresh' ? `<div class="tiny mt thinking">Waiting for AI run record… Refreshing results…</div>` : '<div class="tiny mt">No AI run yet for this task.</div>'))}
+    ${(aiState.status === 'queued' || aiState.status === 'running') ? '<div class="tiny mt thinking">AI is thinking…</div>' : ''}
     ${isBusy ? `<div class="tiny mt">${busyLabel || 'Working…'}</div>` : ''}
     ${hasSavedGuidance ? `<div class="inline-state info mt">Saved guidance review state: <b>${aiReviewState}</b></div>` : ''}
-    ${summary ? `<div class="tiny mt"><b>Frontline:</b> ${summary}</div>` : ''}
-    ${nextSteps?.length ? `<div class="tiny mt"><b>Next steps:</b> ${nextSteps.join(' | ')}</div>` : ''}
+    ${summary ? `<div class="mt"><b>Frontline summary</b><div class="tiny">${summary}</div></div>` : ''}
+    ${immediateChecks.length ? `<div class="mt"><b>Immediate checks</b><ul class="tiny">${immediateChecks.map((entry) => `<li>${entry}</li>`).join('')}</ul></div>` : ''}
+    ${nextSteps?.length ? `<div class="mt"><b>Diagnostic steps</b><ul class="tiny">${nextSteps.map((entry) => `<li>${entry}</li>`).join('')}</ul></div>` : ''}
+    ${fixes.length ? `<div class="mt"><b>Possible fixes</b><ul class="tiny">${fixes.map((entry) => `<li>${entry}</li>`).join('')}</ul></div>` : ''}
+    ${tools.length ? `<div class="mt"><b>Tools / parts</b><ul class="tiny">${tools.map((entry) => `<li>${entry}</li>`).join('')}</ul></div>` : ''}
+    ${safety.length ? `<div class="mt"><b>Safety notes</b><ul class="tiny">${safety.map((entry) => `<li>${entry}</li>`).join('')}</ul></div>` : ''}
+    ${sources.length ? `<div class="mt"><b>Sources used</b><ul class="tiny">${sources.map((entry) => `<li>${entry.title || entry.url || entry}</li>`).join('')}</ul></div>` : ''}
     ${followup?.questions?.length ? `<div class="inline-state warn mt">AI cannot advance until the follow-up answers below are submitted.</div>
       <form data-followup="${task.id}" data-run="${run.id}" class="grid mt followup-form">${followup.questions.map((question, index) => `<label class="tiny">${question}<input name="a${index}" placeholder="Answer" ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'} /></label>`).join('')}<button class="primary" ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'}>Submit follow-up answers</button></form>` : ''}
     ${!canAnswerAiFollowups(state.permissions) && followup?.questions?.length ? `<div class="tiny mt">Follow-up answers require staff or higher.</div>` : ''}
@@ -907,19 +928,22 @@ export function renderOperations(el, state, actions) {
           </select>
         </label>
       </div>
-      <div class="filter-row mt">
+      <div class="tiny mt"><b>Status</b></div>
+      <div class="filter-row">
         <button class="filter-chip ${state.operationsUi.statusFilter === 'open' ? 'active' : ''}" data-status-filter="open" type="button">Open work</button>
         <button class="filter-chip ${state.operationsUi.statusFilter === 'in_progress' ? 'active' : ''}" data-status-filter="in_progress" type="button">In progress</button>
         <button class="filter-chip ${state.operationsUi.statusFilter === 'completed' ? 'active' : ''}" data-status-filter="completed" type="button">Completed</button>
         <button class="filter-chip ${state.operationsUi.statusFilter === 'all' ? 'active' : ''}" data-status-filter="all" type="button">All statuses</button>
       </div>
-      <div class="filter-row mt">
+      <div class="tiny mt"><b>Priority and ownership</b></div>
+      <div class="filter-row">
         <button class="filter-chip ${state.operationsUi.ownershipFilter === 'all' ? 'active' : ''}" data-ownership-filter="all" type="button">All ownership</button>
         <button class="filter-chip ${state.operationsUi.ownershipFilter === 'mine' ? 'active' : ''}" data-ownership-filter="mine" type="button">My work</button>
         <button class="filter-chip ${state.operationsUi.ownershipFilter === 'unassigned' ? 'active' : ''}" data-ownership-filter="unassigned" type="button">Unassigned</button>
         <button class="filter-chip ${state.operationsUi.ownershipFilter === 'followup' ? 'active' : ''}" data-ownership-filter="followup" type="button">Needs follow-up</button>
       </div>
-      <div class="filter-row mt">
+      <div class="tiny mt"><b>Exceptions</b></div>
+      <div class="filter-row">
         <button class="filter-chip ${state.operationsUi.exceptionFilter === 'all' ? 'active' : ''}" data-exception-filter="all" type="button">All exceptions</button>
         <button class="filter-chip ${state.operationsUi.exceptionFilter === 'priority' ? 'active' : ''}" data-exception-filter="priority" type="button">High priority</button>
         <button class="filter-chip ${state.operationsUi.exceptionFilter === 'overdue' ? 'active' : ''}" data-exception-filter="overdue" type="button">Overdue</button>
@@ -928,7 +952,7 @@ export function renderOperations(el, state, actions) {
       </div>
       <div class="row space mt">
         <div class="tiny">Showing ${visibleTasks.length} of ${scopedTasks.length} tasks in this location scope.</div>
-        <button type="button" data-clear-task-filters ${activeTaskFilterParts.length ? '' : 'disabled'}>Clear filters</button>
+        <button type="button" class="btn-tertiary" data-clear-task-filters ${activeTaskFilterParts.length ? '' : 'disabled'}>Clear filters</button>
       </div>
       ${activeTaskFilterParts.length ? `<div class="tiny mt">Active filters: ${activeTaskFilterParts.join(' · ')}</div>` : '<div class="tiny mt">Active filters: default view (open work, all owners, all exceptions).</div>'}
     </div>

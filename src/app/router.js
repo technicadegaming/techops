@@ -8,13 +8,13 @@ export function tabVisible(state, tab, canViewAdminTab) {
 
 export function buildTabs({ state, sections, canViewAdminTab, onOpenTab, documentRef = document }) {
   const labelMap = {
-    dashboard: 'Workspace · Dashboard',
-    operations: 'Workspace · Operations',
-    assets: 'Workspace · Assets',
-    calendar: 'Workspace · Calendar & PM',
-    reports: 'Admin · Reports',
-    account: 'Admin · Account',
-    admin: 'Admin · Settings'
+    dashboard: 'Dashboard',
+    operations: 'Operations',
+    assets: 'Assets',
+    calendar: 'Calendar & PM',
+    reports: 'Reports',
+    account: 'Account',
+    admin: 'Settings'
   };
   const tabs = documentRef.getElementById('tabs');
   tabs.innerHTML = sections
