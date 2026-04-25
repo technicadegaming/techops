@@ -3,6 +3,7 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const { createHash } = require('node:crypto');
 const { downloadManualCandidate, isDocumentLike } = require('./manualAcquisitionService');
 const { normalizeUrl } = require('./manualLibraryService');
+const { createAssetManualId, materializeStoredAssetManual } = require('./manualIngestionService');
 
 function normalizeString(value = '', max = 500) {
   return `${value || ''}`.trim().slice(0, max);
@@ -149,6 +150,82 @@ async function bootstrapAttachManualFromCsvHint({
     },
   }, { merge: true });
 
+  let materialized = {
+    ok: false,
+    manualId: '',
+    extractionStatus: 'failed',
+    chunkCount: 0,
+    extractionError: '',
+  };
+  try {
+    materialized = await materializeStoredAssetManual({
+      db,
+      storage,
+      asset: { id: normalizedAssetId, ...asset },
+      userId,
+      storagePath: manualStoragePath,
+      sourceUrl: manualSourceUrl || directManualUrl,
+      sourceTitle: asset.name || 'CSV bootstrap attached manual',
+      sourceType: 'csv_direct_bootstrap_manual',
+      manualType: 'csv_direct_bootstrap_manual',
+      contentType: download.contentType,
+      attachmentMode: 'csv_direct_bootstrap',
+      manualProvenance: 'csv_direct_manual_import',
+    });
+  } catch (error) {
+    const extractionError = normalizeString(error?.message || 'manual_text_extraction_failed', 240);
+    const manualId = createAssetManualId({
+      companyId,
+      assetId: normalizedAssetId,
+      storagePath: manualStoragePath,
+      sourceUrl: manualSourceUrl || directManualUrl,
+    });
+    materialized = {
+      ok: false,
+      manualId,
+      extractionStatus: 'failed',
+      chunkCount: 0,
+      extractionError,
+    };
+    await db.collection('manuals').doc(manualId).set({
+      id: manualId,
+      manualId,
+      companyId,
+      assetId: normalizedAssetId,
+      assetName: asset.name || '',
+      manufacturer: asset.manufacturer || '',
+      sourceUrl: manualSourceUrl || directManualUrl,
+      sourceTitle: asset.name || 'CSV bootstrap attached manual',
+      sourceType: 'csv_direct_bootstrap_manual',
+      manualType: 'csv_direct_bootstrap_manual',
+      storagePath: manualStoragePath,
+      contentType: normalizeString(download.contentType, 200),
+      fileName: manualStoragePath.split('/').pop() || '',
+      approvedBy: normalizeString(userId, 120),
+      approvedAt: new Date().toISOString(),
+      extractionStatus: 'failed',
+      extractionRequestedAt: new Date().toISOString(),
+      extractionStartedAt: new Date().toISOString(),
+      extractionCompletedAt: null,
+      extractionFailedAt: new Date().toISOString(),
+      extractionError,
+      chunkCount: 0,
+      attachmentMode: 'csv_direct_bootstrap',
+      manualProvenance: 'csv_direct_manual_import',
+      updatedAt: now(),
+      updatedBy: normalizeString(userId, 120),
+    }, { merge: true }).catch(() => null);
+  }
+
+  await assetRef.set({
+    manualTextExtractionStatus: materialized.extractionStatus || 'failed',
+    manualChunkCount: Number(materialized.chunkCount || 0),
+    latestManualId: materialized.manualId || '',
+    documentationTextAvailable: Number(materialized.chunkCount || 0) > 0,
+    updatedAt: now(),
+    updatedBy: normalizeString(userId, 120),
+  }, { merge: true });
+
   return {
     ok: true,
     attached: true,
@@ -157,6 +234,12 @@ async function bootstrapAttachManualFromCsvHint({
     manualStoragePath,
     manualUrl: manualStoragePath,
     manualSourceUrl,
+    manualId: materialized.manualId || '',
+    extractionStatus: materialized.extractionStatus || 'failed',
+    chunkCount: Number(materialized.chunkCount || 0),
+    warning: materialized.extractionStatus === 'failed'
+      ? (materialized.extractionError || 'manual_text_extraction_failed_after_attach')
+      : '',
   };
 }
 
