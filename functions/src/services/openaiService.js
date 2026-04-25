@@ -36,6 +36,7 @@ function buildSystemInstructions(settings) {
     'If supplied context includes approved manual text excerpts/chunks, you may use that text as provided internal evidence and should cite it as supplied manual context rather than as live web verification.',
     'If supplied context includes asset_code_hint or known code mappings, treat them as high-priority internal evidence for that asset only.',
     'If an observed task code/error matches supplied code hints or manual chunks, state the mapping early in the frontline summary and immediate checks.',
+    'If supplied context defines the code mapping, do not claim "no code definition in provided context".',
     'Do not invent code/error meanings when no supplied context provides the mapping.',
     'Prefer asset-specific reasoning over generic advice.',
     'Clearly separate observed symptoms, probable causes, checks to perform, recommended fixes, and escalation conditions.',

@@ -106,6 +106,7 @@ test('task AI degrades gracefully to linked manualLibrary context when no approv
   assert.equal(context.documentationContext.mode, 'manual_library_backed');
   assert.equal(context.documentationContext.items[0].sourceType, 'manual_library_link');
   assert.match(context.documentationContext.items[0].excerpts[0], /Shared manual: Quik Drop Service Manual/);
+  assert.equal(context.documentationContext.items[0].excerpts.some((line) => /no extracted manual text was available for code lookup/i.test(line)), false);
 });
 
 test('task AI context includes troubleshooting records that match by manufacturer or asset metadata', async () => {
@@ -187,4 +188,212 @@ test('task AI context adds asset code hints and prioritizes them ahead of generi
   const hint = context.documentationContext.items.find((item) => item.sourceType === 'asset_code_hint');
   assert.match(hint.excerpts.join(' '), /E10: Out of balloons/i);
   assert.equal(context.documentationContext.mode, 'approved_manual_internal');
+});
+
+test('task AI context prioritizes matching approved manual code chunks even when code table appears later in manual', async () => {
+  global.fetch = async (url) => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => 'text/html' },
+    text: async () => `Support page for ${url}`
+  });
+
+  const db = buildDb();
+  const chunkRows = Array.from({ length: 35 }).map((_, index) => ({
+    chunkIndex: index,
+    text: index === 0
+      ? 'Pop It & Win basic overview and startup checks.'
+      : index === 25
+      ? 'Error 10 / E10: Out of balloons. Refill balloons and clear feed sensor before restart.'
+      : `Generic maintenance section ${index}.`
+  }));
+
+  const context = await gatherContext({
+    collection(name) {
+      if (name === 'tasks') {
+        return {
+          doc(id) {
+            return {
+              id,
+              async get() {
+                return {
+                  exists: true,
+                  id,
+                  data: () => ({
+                    companyId: 'company-a',
+                    assetId: 'asset1',
+                    title: 'Pop It & Win E10',
+                    errorText: 'Machine shows Error 10',
+                    description: 'Stuck on E-10 and not dispensing balloons.'
+                  })
+                };
+              }
+            };
+          },
+          where(field, op, value) { return db.collection(name).where(field, op, value); }
+        };
+      }
+      if (name === 'assets') {
+        return {
+          doc(id) {
+            return {
+              id,
+              async get() {
+                return {
+                  exists: true,
+                  id,
+                  data: () => ({
+                    companyId: 'company-a',
+                    name: 'Pop It & Win',
+                    manualLibraryRef: 'shared-manual-1',
+                    supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }]
+                  })
+                };
+              }
+            };
+          }
+        };
+      }
+      if (name === 'manuals') {
+        return {
+          where() {
+            return {
+              where() { return this; },
+              limit() { return this; },
+              async get() {
+                return {
+                  docs: [{
+                    id: 'm1',
+                    data: () => ({
+                      companyId: 'company-a',
+                      assetId: 'asset1',
+                      extractionStatus: 'completed',
+                      sourceTitle: 'Pop It Manual',
+                      sourceUrl: 'https://example.com/pop-it-manual.pdf'
+                    })
+                  }]
+                };
+              }
+            };
+          },
+          doc(id) {
+            return {
+              id,
+              collection() {
+                return {
+                  orderBy() { return this; },
+                  limit() { return this; },
+                  async get() {
+                    return { docs: chunkRows.map((row, idx) => ({ id: `${idx}`, data: () => row })) };
+                  }
+                };
+              }
+            };
+          }
+        };
+      }
+      return db.collection(name);
+    }
+  }, 'task1');
+
+  const firstItem = context.documentationContext.items[0];
+  assert.equal(firstItem.sourceType, 'approved_manual_code_chunk');
+  assert.match(firstItem.excerpts[0], /Error 10 \/ E10: Out of balloons/i);
+  assert.equal(context.documentationContext.mode, 'approved_manual_internal');
+});
+
+test('task AI keeps manual/link-backed mode honest when manual exists but has no extracted chunks', async () => {
+  global.fetch = async (url) => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => 'text/html' },
+    text: async () => `Support page for ${url}`
+  });
+
+  const context = await gatherContext({
+    collection(name) {
+      if (name === 'tasks') {
+        return {
+          doc(id) {
+            return {
+              id,
+              async get() {
+                return {
+                  exists: true,
+                  id,
+                  data: () => ({ companyId: 'company-a', assetId: 'asset1', title: 'Pop It & Win E10', errorText: 'E10' })
+                };
+              }
+            };
+          },
+          where(field, op, value) { return buildDb().collection(name).where(field, op, value); }
+        };
+      }
+      if (name === 'assets') {
+        return {
+          doc(id) {
+            return {
+              id,
+              async get() {
+                return {
+                  exists: true,
+                  id,
+                  data: () => ({
+                    companyId: 'company-a',
+                    name: 'Pop It & Win',
+                    manualLibraryRef: 'shared-manual-1',
+                    manualLinks: ['https://example.com/pop-it-manual-link'],
+                    supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }]
+                  })
+                };
+              }
+            };
+          }
+        };
+      }
+      if (name === 'manuals') {
+        return {
+          where() {
+            return {
+              where() { return this; },
+              limit() { return this; },
+              async get() {
+                return {
+                  docs: [{
+                    id: 'm1',
+                    data: () => ({
+                      companyId: 'company-a',
+                      assetId: 'asset1',
+                      extractionStatus: 'no_text_extracted',
+                      sourceTitle: 'Pop It Manual',
+                      sourceUrl: 'https://example.com/pop-it-manual.pdf'
+                    })
+                  }]
+                };
+              }
+            };
+          },
+          doc(id) {
+            return {
+              id,
+              collection() {
+                return {
+                  orderBy() { return this; },
+                  limit() { return this; },
+                  async get() { return { docs: [] }; }
+                };
+              }
+            };
+          }
+        };
+      }
+      return buildDb().collection(name);
+    }
+  }, 'task1');
+
+  assert.equal(context.documentationContext.mode, 'manual_library_backed');
+  const manualLibrary = context.documentationContext.items.find((item) => item.sourceType === 'manual_library_link');
+  assert.ok(manualLibrary);
+  assert.equal(manualLibrary.excerpts.some((line) => /no extracted manual text was available for code lookup/i.test(line)), true);
+  assert.equal(context.documentationContext.items.some((item) => (item.excerpts || []).join(' ').match(/Out of balloons/i)), false);
 });
