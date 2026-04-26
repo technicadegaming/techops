@@ -170,14 +170,16 @@ export function createAssetActions(deps) {
   const resolveManualAttachAsset = (requestedAssetId) => {
     const assetId = `${requestedAssetId || ''}`.trim();
     if (!assetId) {
-      return { ok: false, assetId: '', asset: null, message: MANUAL_ATTACH_ASSET_RESOLUTION_ERROR };
+      return { ok: false, assetId: '', assetDocId: '', storedAssetId: '', asset: null, message: MANUAL_ATTACH_ASSET_RESOLUTION_ERROR };
     }
     const asset = findAssetByRecordId(state.assets, assetId);
     const canonicalAssetId = getAssetRecordId(asset || {});
-    if (!canonicalAssetId) {
-      return { ok: false, assetId, asset: null, message: MANUAL_ATTACH_ASSET_RESOLUTION_ERROR };
+    const assetDocId = `${asset?.firestoreDocId || asset?.docId || asset?._docId || canonicalAssetId || ''}`.trim();
+    const storedAssetId = `${asset?.storedAssetId || ''}`.trim();
+    if (!canonicalAssetId || !assetDocId) {
+      return { ok: false, assetId, assetDocId: '', storedAssetId, asset: null, message: MANUAL_ATTACH_ASSET_RESOLUTION_ERROR };
     }
-    return { ok: true, assetId: canonicalAssetId, asset, message: '' };
+    return { ok: true, assetId: canonicalAssetId, assetDocId, storedAssetId, asset, message: '' };
   };
 
   const approveManualSources = (assetId, urls = [], current = {}, metadataByUrl = {}) => approveSuggestedManualSources({
@@ -1143,8 +1145,9 @@ export function createAssetActions(deps) {
       try {
         const result = await attachAssetManualFromUrl({
           assetId: resolution.assetId,
-          assetDocId: resolution.assetId,
+          assetDocId: resolution.assetDocId,
           assetName: `${resolution.asset?.name || ''}`.trim(),
+          storedAssetId: resolution.storedAssetId || '',
           manualUrl,
           sourceTitle: `${payload.sourceTitle || ''}`.trim(),
           sourcePageUrl: `${payload.sourcePageUrl || ''}`.trim(),
@@ -1192,7 +1195,7 @@ export function createAssetActions(deps) {
         return;
       }
       const safeName = sanitizeStorageSegment(file.name || 'manual');
-      const storagePath = `companies/${companyId}/manuals/${resolution.assetId}/manual-uploads/${Date.now()}-${safeName}`;
+      const storagePath = `companies/${companyId}/manuals/${resolution.assetDocId}/manual-uploads/${Date.now()}-${safeName}`;
       try {
         console.debug('upload_manual_attach:start', { assetId: resolution.assetId });
         setManualAttachUi(resolution.assetId, { pending: true, phase: 'uploading', tone: 'info', message: 'Uploading manual…' });
@@ -1202,8 +1205,9 @@ export function createAssetActions(deps) {
         render();
         const result = await attachAssetManualFromStoragePath({
           assetId: resolution.assetId,
-          assetDocId: resolution.assetId,
+          assetDocId: resolution.assetDocId,
           assetName: `${asset?.name || ''}`.trim(),
+          storedAssetId: resolution.storedAssetId || '',
           storagePath,
           sourceTitle: `${asset.name || ''}`.trim(),
           originalFileName: `${file.name || ''}`.trim(),
