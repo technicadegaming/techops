@@ -1,5 +1,6 @@
 import { buildUsageSummary, normalizeBillingAddress } from '../billing.js';
 import { ASSET_CSV_TEMPLATE, buildAssetImportRow } from './assetIntake.js';
+import { isManager } from '../roles.js';
 
 export function createAdminActions(deps) {
   const {
@@ -24,6 +25,7 @@ export function createAdminActions(deps) {
     downloadJson,
     normalizeAssetId,
     enrichAssetDocumentation,
+    repairAssetDocumentationState,
     bootstrapAttachAssetManualFromCsvHint,
     createCompanyInvite,
     revokeInvite
@@ -63,6 +65,64 @@ export function createAdminActions(deps) {
       manualReviewState: asset?.manualReviewState || ''
     };
   };
+  const canRunManualRepair = () => isManager(state.permissions) && typeof repairAssetDocumentationState === 'function';
+  const getRepairableAssetIds = (rows = []) => rows
+    .filter((row) => ['would_materialize', 'would_reextract'].includes(`${row?.action || ''}`))
+    .map((row) => row.assetId)
+    .filter(Boolean);
+  const sanitizeRepairErrorMessage = (error) => {
+    const code = `${error?.code || ''}`.trim();
+    if (code === 'permission-denied') return 'Permission denied while repairing this asset.';
+    if (code === 'not-found') return 'Asset not found for repair.';
+    return `${error?.message || 'Manual text repair failed.'}`.trim();
+  };
+  const upsertManualRepairRows = (rows = []) => {
+    state.adminUi = {
+      ...(state.adminUi || {}),
+      manualRepairRows: rows
+    };
+  };
+  const upsertManualRepairSelection = (assetIds = []) => {
+    state.adminUi = {
+      ...(state.adminUi || {}),
+      manualRepairSelectedAssetIds: [...new Set(assetIds.filter(Boolean))]
+    };
+  };
+  const mergeMaterializationResultIntoRow = (row, entry = {}, fallbackError = '') => ({
+    ...row,
+    action: entry.action || row.action || '',
+    reason: entry.reason || row.reason || '',
+    manualId: entry.manualId || row.manualId || '',
+    extractionEngine: entry.extractionEngine || row.extractionEngine || '',
+    priorExtractionStatus: entry.priorExtractionStatus || row.priorExtractionStatus || '',
+    newExtractionStatus: entry.newExtractionStatus || row.newExtractionStatus || '',
+    priorChunkCount: Number.isFinite(Number(entry.priorChunkCount)) ? Number(entry.priorChunkCount) : Number(row.priorChunkCount || 0),
+    newChunkCount: Number.isFinite(Number(entry.newChunkCount)) ? Number(entry.newChunkCount) : Number(row.newChunkCount || 0),
+    runStatus: fallbackError ? 'failed' : 'completed',
+    runMessage: fallbackError || ''
+  });
+  const mapRepairRowsFromEntries = (entries = [], existingRowsByAsset = new Map()) => entries.map((entry) => {
+    const existingRow = existingRowsByAsset.get(entry.assetId) || {};
+    return {
+      assetId: `${entry.assetId || existingRow.assetId || ''}`.trim(),
+      assetName: existingRow.assetName || `${entry.assetName || ''}`.trim() || 'Unknown asset',
+      locationName: existingRow.locationName || `${entry.locationName || ''}`.trim() || '—',
+      manualStatus: existingRow.manualStatus || `${entry.manualStatus || ''}`.trim() || 'unknown',
+      currentExtractionStatus: `${entry.priorExtractionStatus || existingRow.currentExtractionStatus || ''}`.trim() || 'unknown',
+      currentChunkCount: Number(entry.priorChunkCount || existingRow.currentChunkCount || 0),
+      action: `${entry.action || existingRow.action || ''}`.trim(),
+      reason: `${entry.reason || existingRow.reason || ''}`.trim(),
+      manualId: `${entry.manualId || existingRow.manualId || ''}`.trim(),
+      storagePath: `${existingRow.storagePath || entry.storagePath || ''}`.trim(),
+      extractionEngine: `${entry.extractionEngine || existingRow.extractionEngine || ''}`.trim(),
+      priorExtractionStatus: `${entry.priorExtractionStatus || existingRow.priorExtractionStatus || ''}`.trim(),
+      newExtractionStatus: `${entry.newExtractionStatus || existingRow.newExtractionStatus || ''}`.trim(),
+      priorChunkCount: Number(entry.priorChunkCount || existingRow.priorChunkCount || 0),
+      newChunkCount: Number(entry.newChunkCount || existingRow.newChunkCount || 0),
+      runStatus: 'idle',
+      runMessage: ''
+    };
+  }).filter((row) => row.assetId);
 
   return {
     setImportFeedback,
@@ -600,6 +660,139 @@ export function createAdminActions(deps) {
       }, state.user);
       setAdminFeedback({ tone: 'success', message: 'Notification preferences saved.' });
       await refreshData();
+      render();
+    },
+    checkManualTextExtraction: async ({ limit = 100 } = {}) => {
+      if (!canRunManualRepair()) return;
+      const companyId = `${state.company?.id || ''}`.trim();
+      if (!companyId) {
+        state.adminUi = { ...(state.adminUi || {}), manualRepairError: 'No active company found.' };
+        render();
+        return;
+      }
+      state.adminUi = {
+        ...(state.adminUi || {}),
+        manualRepairScanStatus: 'running',
+        manualRepairMessage: 'Checking attached manuals…',
+        manualRepairError: '',
+        manualRepairProgress: null,
+        manualRepairRows: [],
+        manualRepairSelectedAssetIds: []
+      };
+      render();
+      try {
+        const result = await repairAssetDocumentationState({ companyId, dryRun: true, limit: Math.max(1, Math.min(Number(limit) || 100, 100)) });
+        const assetsById = new Map((state.assets || []).map((asset) => [asset.id, asset]));
+        const rows = mapRepairRowsFromEntries(result?.manualMaterialization?.entries || []).map((row) => {
+          const asset = assetsById.get(row.assetId) || {};
+          return {
+            ...row,
+            assetName: row.assetName === 'Unknown asset' ? (asset.name || 'Unknown asset') : row.assetName,
+            locationName: row.locationName === '—' ? (asset.locationName || asset.zone || '—') : row.locationName,
+            manualStatus: row.manualStatus === 'unknown' ? `${asset.manualStatus || 'unknown'}`.trim() : row.manualStatus,
+            storagePath: row.storagePath || `${asset.manualStoragePath || ''}`.trim(),
+            latestManualId: row.manualId || `${asset.latestManualId || ''}`.trim()
+          };
+        });
+        const defaultSelected = getRepairableAssetIds(rows);
+        state.adminUi = {
+          ...(state.adminUi || {}),
+          manualRepairScanStatus: 'completed',
+          manualRepairMessage: `Checked ${rows.length} asset${rows.length === 1 ? '' : 's'} for manual text extraction.`,
+          manualRepairError: '',
+          manualRepairProgress: null,
+          manualRepairRows: rows,
+          manualRepairSelectedAssetIds: defaultSelected
+        };
+      } catch (error) {
+        state.adminUi = {
+          ...(state.adminUi || {}),
+          manualRepairScanStatus: 'error',
+          manualRepairMessage: '',
+          manualRepairError: sanitizeRepairErrorMessage(error),
+          manualRepairProgress: null,
+          manualRepairRows: [],
+          manualRepairSelectedAssetIds: []
+        };
+      }
+      render();
+    },
+    selectAllManualRepairRows: () => {
+      const rows = state.adminUi?.manualRepairRows || [];
+      upsertManualRepairSelection(getRepairableAssetIds(rows));
+      render();
+    },
+    clearManualRepairSelection: () => {
+      upsertManualRepairSelection([]);
+      render();
+    },
+    toggleManualRepairSelection: (assetId, selected) => {
+      const existing = new Set(state.adminUi?.manualRepairSelectedAssetIds || []);
+      if (selected) existing.add(assetId);
+      else existing.delete(assetId);
+      upsertManualRepairSelection([...existing]);
+      render();
+    },
+    runManualRepairForSelection: async ({ assetIds = null, concurrency = 3 } = {}) => {
+      if (!canRunManualRepair()) return;
+      const selectedIds = (Array.isArray(assetIds) ? assetIds : (state.adminUi?.manualRepairSelectedAssetIds || [])).filter(Boolean);
+      if (!selectedIds.length) {
+        state.adminUi = { ...(state.adminUi || {}), manualRepairError: 'Select at least one asset needing extraction.', manualRepairMessage: '' };
+        render();
+        return;
+      }
+      const rows = state.adminUi?.manualRepairRows || [];
+      const rowsById = new Map(rows.map((row) => [row.assetId, row]));
+      const total = selectedIds.length;
+      let completed = 0;
+      let succeeded = 0;
+      let failed = 0;
+      state.adminUi = {
+        ...(state.adminUi || {}),
+        manualRepairScanStatus: 'repairing',
+        manualRepairMessage: `Repairing 0 of ${total}…`,
+        manualRepairError: '',
+        manualRepairProgress: { total, completed: 0, succeeded: 0, failed: 0, running: true }
+      };
+      render();
+      const queue = [...selectedIds];
+      const workerCount = Math.max(1, Math.min(Number(concurrency) || 3, 3));
+      const worker = async () => {
+        while (queue.length) {
+          const nextId = queue.shift();
+          if (!nextId) continue;
+          const companyId = `${state.company?.id || ''}`.trim();
+          try {
+            const payload = companyId ? { assetId: nextId, companyId, dryRun: false } : { assetId: nextId, dryRun: false };
+            const result = await repairAssetDocumentationState(payload);
+            const entry = (result?.manualMaterialization?.entries || []).find((item) => item.assetId === nextId) || {};
+            const merged = mergeMaterializationResultIntoRow(rowsById.get(nextId) || { assetId: nextId }, entry);
+            rowsById.set(nextId, merged);
+            succeeded += 1;
+          } catch (error) {
+            failed += 1;
+            rowsById.set(nextId, mergeMaterializationResultIntoRow(rowsById.get(nextId) || { assetId: nextId }, {}, sanitizeRepairErrorMessage(error)));
+          }
+          completed += 1;
+          upsertManualRepairRows(Array.from(rowsById.values()));
+          state.adminUi = {
+            ...(state.adminUi || {}),
+            manualRepairMessage: `Repairing ${completed} of ${total}…`,
+            manualRepairProgress: { total, completed, succeeded, failed, running: completed < total }
+          };
+          render();
+        }
+      };
+      await Promise.all(Array.from({ length: workerCount }, () => worker()));
+      await refreshData();
+      state.adminUi = {
+        ...(state.adminUi || {}),
+        manualRepairScanStatus: 'completed',
+        manualRepairMessage: `Manual text repair complete. Succeeded ${succeeded}, failed ${failed}.`,
+        manualRepairError: failed ? 'Some assets could not be repaired. See row details.' : '',
+        manualRepairProgress: { total, completed, succeeded, failed, running: false },
+        manualRepairRows: Array.from(rowsById.values())
+      };
       render();
     }
   };

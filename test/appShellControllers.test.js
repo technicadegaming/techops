@@ -1724,6 +1724,87 @@ test('admin CSV import reconciles recent intake rows from refreshed asset enrich
   assert.equal(state.assetUi.recentIntakeRows[0].reviewState, 'pending_review');
 });
 
+test('admin manual text extraction scan defaults selection to repairable rows and runs per-asset repair', async () => {
+  const { createAdminActions } = await loadAdminActions();
+  const repairCalls = [];
+  let refreshCalls = 0;
+  const state = {
+    company: { id: 'company-a' },
+    permissions: { companyRole: 'manager', role: 'manager' },
+    user: { uid: 'user-1' },
+    assets: [
+      { id: 'asset-a', name: 'Asset A', locationName: 'Floor', manualStatus: 'manual_attached', manualStoragePath: 'companies/company-a/manuals/asset-a/source.pdf' },
+      { id: 'asset-b', name: 'Asset B', locationName: 'Floor', manualStatus: 'manual_attached', manualStoragePath: 'companies/company-a/manuals/asset-b/source.pdf' },
+      { id: 'asset-c', name: 'Asset C', locationName: 'Floor', manualStatus: 'manual_attached' }
+    ],
+    adminUi: {}
+  };
+  const actions = createAdminActions({
+    state,
+    render: () => {},
+    refreshData: async () => { refreshCalls += 1; },
+    runAction: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    clearEntitySet: async () => 0,
+    saveAppSettings: async () => {},
+    exportBackupJson: async () => ({}),
+    buildAssetsCsv: () => '',
+    buildTasksCsv: () => '',
+    buildAuditCsv: () => '',
+    buildWorkersCsv: () => '',
+    buildMembersCsv: () => '',
+    buildInvitesCsv: () => '',
+    buildLocationsCsv: () => '',
+    buildCompanyBackupBundle: () => ({}),
+    downloadFile: () => {},
+    downloadJson: () => {},
+    normalizeAssetId: (value) => value,
+    enrichAssetDocumentation: async () => {},
+    repairAssetDocumentationState: async (payload) => {
+      repairCalls.push(payload);
+      if (payload.dryRun) {
+        return {
+          manualMaterialization: {
+            entries: [
+              { assetId: 'asset-a', action: 'would_materialize', reason: 'dry_run_materialization_planned', priorExtractionStatus: 'unknown', priorChunkCount: 0 },
+              { assetId: 'asset-b', action: 'already_has_chunks', reason: 'already_materialized', priorExtractionStatus: 'completed', priorChunkCount: 8 },
+              { assetId: 'asset-c', action: 'no_manual_storage_path', reason: 'no_manual_storage_path', priorExtractionStatus: 'unknown', priorChunkCount: 0 }
+            ]
+          }
+        };
+      }
+      return { manualMaterialization: { entries: [{ assetId: payload.assetId, action: 'materialized', newChunkCount: 6, newExtractionStatus: 'completed' }] } };
+    },
+    createCompanyInvite: async () => ({}),
+    revokeInvite: async () => {}
+  });
+
+  await actions.checkManualTextExtraction({ limit: 100 });
+  assert.deepEqual(repairCalls[0], { companyId: 'company-a', dryRun: true, limit: 100 });
+  assert.deepEqual(state.adminUi.manualRepairSelectedAssetIds, ['asset-a']);
+
+  actions.selectAllManualRepairRows();
+  assert.deepEqual(state.adminUi.manualRepairSelectedAssetIds, ['asset-a']);
+  actions.clearManualRepairSelection();
+  assert.deepEqual(state.adminUi.manualRepairSelectedAssetIds, []);
+
+  await actions.runManualRepairForSelection({ assetIds: ['asset-a'], concurrency: 2 });
+  assert.deepEqual(repairCalls.slice(1), [{ assetId: 'asset-a', companyId: 'company-a', dryRun: false }]);
+  assert.equal(refreshCalls, 1);
+  assert.match(state.adminUi.manualRepairMessage, /Manual text repair complete/);
+});
+
+test('admin source includes manual text extraction repair card and user-facing status labels', () => {
+  const source = loadAdminSource();
+  assert.match(source, /Manual text extraction repair/);
+  assert.match(source, /data-manual-repair-check/);
+  assert.match(source, /data-manual-repair-run/);
+  assert.match(source, /Already has text/);
+  assert.match(source, /No attached manual file/);
+  assert.match(source, /const canRunManualRepair = isManager\(state.permissions\)/);
+});
+
 test('admin source keeps bootstrap checkbox and mode text tied to import config and progress state', () => {
   const source = loadAdminSource();
   assert.match(source, /const bootstrapModeActive = importProgress\?\.isRunning/);

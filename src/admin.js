@@ -1,5 +1,5 @@
 import { defaultAiSettings } from './data.js';
-import { canChangeAISettings, canManageBackups, isAdmin } from './roles.js';
+import { canChangeAISettings, canManageBackups, isAdmin, isManager } from './roles.js';
 import { buildLocationOptions } from './features/locationContext.js';
 import { renderWorkspaceReadinessCard } from './features/workspaceReadiness.js';
 import { formatRelativeTime } from './features/notifications.js';
@@ -78,6 +78,22 @@ function renderCompanyAddress(company = {}) {
 
 function formatRoleLabel(value = '') { return `${value || 'staff'}`.replace(/_/g, ' '); }
 function renderStatusChip(label, tone = 'muted') { return `<span class="state-chip ${tone}">${label}</span>`; }
+function shortenStoragePath(path = '') {
+  const clean = `${path || ''}`.trim();
+  if (!clean) return '—';
+  if (clean.length <= 58) return clean;
+  return `…${clean.slice(-55)}`;
+}
+function getRepairOutcomeLabel(action = '', runStatus = 'idle') {
+  if (runStatus === 'failed') return { label: 'Extraction failed', tone: 'bad' };
+  if (['reextracted', 'materialized'].includes(action)) return { label: 'Manual text available', tone: 'good' };
+  if (action === 'already_has_chunks') return { label: 'Already has text', tone: 'good' };
+  if (action === 'no_manual_storage_path') return { label: 'No attached manual file', tone: 'warn' };
+  if (action === 'extraction_failed') return { label: 'Extraction failed', tone: 'bad' };
+  if (action === 'would_reextract') return { label: 'Needs re-extraction', tone: 'warn' };
+  if (action === 'would_materialize') return { label: 'Needs extraction', tone: 'warn' };
+  return { label: 'Skipped', tone: 'muted' };
+}
 
 
 function formatDateLabel(value) {
@@ -152,6 +168,12 @@ export function renderAdmin(el, state, actions) {
     ? importProgress?.bootstrapMode === true
     : importConfig.bootstrapAttachManualsFromCsvHints === true;
   const progressPercent = importProgress?.totalRows ? Math.round((Math.min(importProgress.completedRows || 0, importProgress.totalRows) / importProgress.totalRows) * 100) : 0;
+  const canRunManualRepair = isManager(state.permissions) && typeof actions.checkManualTextExtraction === 'function';
+  const manualRepairRows = adminUi.manualRepairRows || [];
+  const manualRepairSelected = new Set(adminUi.manualRepairSelectedAssetIds || []);
+  const repairableRows = manualRepairRows.filter((row) => ['would_materialize', 'would_reextract'].includes(`${row?.action || ''}`));
+  const manualRepairBusy = ['running', 'repairing'].includes(`${adminUi.manualRepairScanStatus || ''}`) || adminUi?.manualRepairProgress?.running === true;
+  const repairProgress = adminUi.manualRepairProgress || null;
   const importProgressMarkup = importProgress?.totalRows
     ? `<div class="item mt"><div class="row space tiny"><b>Import progress</b><span>${progressPercent}%</span></div><progress max="${importProgress.totalRows}" value="${Math.min(importProgress.completedRows || 0, importProgress.totalRows)}" style="width:100%;"></progress><div class="tiny mt">${importProgress.bootstrapMode ? 'Mode: direct CSV bootstrap (admin import mode)' : 'Mode: standard documentation lookup queue'} · Total rows ${importProgress.totalRows} · Imported assets ${importProgress.importedAssets || 0} · Direct manuals attached ${importProgress.directManualsAttached || 0} · Direct attach failed ${importProgress.directManualAttachFailed || 0} · No direct manual URL ${importProgress.noDirectManualUrl || 0} · Completed rows ${importProgress.completedRows || 0}</div></div>`
     : '';
@@ -352,6 +374,47 @@ export function renderAdmin(el, state, actions) {
           </form>
         </div>
       </div>
+      ${canRunManualRepair ? `<div class="item mt">
+        <h4 style="margin:0 0 8px;">Manual text extraction repair</h4>
+        <p class="tiny">Find assets with attached manuals that do not yet have extracted manual text. Extracted manual text helps Operations AI read error codes, troubleshooting tables, and service steps from manuals.</p>
+        <p class="tiny">This does not change the attached manual. It only creates or refreshes searchable manual text chunks for AI troubleshooting.</p>
+        <div class="row mt">
+          <button type="button" data-manual-repair-check ${manualRepairBusy ? 'disabled' : ''}>Check assets needing text extraction</button>
+          <button type="button" data-manual-repair-run class="primary" ${(manualRepairBusy || !manualRepairSelected.size) ? 'disabled' : ''}>Re-extract selected</button>
+          <button type="button" data-manual-repair-select-all ${(manualRepairBusy || !repairableRows.length) ? 'disabled' : ''}>Select all</button>
+          <button type="button" data-manual-repair-clear ${manualRepairBusy ? 'disabled' : ''}>Clear selection</button>
+          ${manualRepairRows.length ? `<button type="button" data-manual-repair-run-all ${(manualRepairBusy || !repairableRows.length) ? 'disabled' : ''}>Re-extract all needing repair</button>` : ''}
+        </div>
+        ${adminUi.manualRepairScanStatus === 'running' ? '<div class="inline-state info mt">Checking attached manuals…</div>' : ''}
+        ${repairProgress?.running ? `<div class="inline-state info mt">Repairing ${repairProgress.completed || 0} of ${repairProgress.total || 0}…</div>` : ''}
+        ${adminUi.manualRepairMessage ? `<div class="tiny mt">${adminUi.manualRepairMessage}</div>` : ''}
+        ${adminUi.manualRepairError ? `<div class="inline-state error mt">${adminUi.manualRepairError}</div>` : ''}
+        ${manualRepairRows.length ? `<div class="list mt">${manualRepairRows.map((row) => {
+    const status = getRepairOutcomeLabel(row.action, row.runStatus);
+    return `<div class="item">
+              <div class="row space">
+                <label class="row" style="gap:8px;">
+                  <input type="checkbox" data-manual-repair-select="${row.assetId}" ${manualRepairSelected.has(row.assetId) ? 'checked' : ''} ${manualRepairBusy ? 'disabled' : ''} />
+                  <b>${row.assetName || row.assetId}</b>
+                </label>
+                ${renderStatusChip(status.label, status.tone)}
+              </div>
+              <div class="tiny">Location: ${row.locationName || '—'} · Manual status: ${`${row.manualStatus || 'unknown'}`.replace(/_/g, ' ')} · Current extraction status: ${`${row.currentExtractionStatus || 'unknown'}`.replace(/_/g, ' ')} · Current chunk count: ${Number(row.currentChunkCount || 0)}</div>
+              <div class="tiny">Planned action/reason: ${(row.action || 'none').replace(/_/g, ' ')}${row.reason ? ` · ${(row.reason || '').replace(/_/g, ' ')}` : ''}</div>
+              <div class="tiny">Latest manual id: ${row.latestManualId || row.manualId || '—'} · Storage path: ${shortenStoragePath(row.storagePath)}</div>
+              <details class="mt">
+                <summary>Raw details</summary>
+                <div class="tiny">action: ${row.action || ''}</div>
+                <div class="tiny">reason: ${row.reason || ''}</div>
+                <div class="tiny">manualId: ${row.manualId || ''}</div>
+                <div class="tiny">storagePath: ${row.storagePath || ''}</div>
+                <div class="tiny">extractionEngine: ${row.extractionEngine || ''}</div>
+                <div class="tiny">prior/new status: ${row.priorExtractionStatus || ''} → ${row.newExtractionStatus || ''}</div>
+                <div class="tiny">prior/new chunk count: ${Number(row.priorChunkCount || 0)} → ${Number(row.newChunkCount || 0)}</div>
+              </details>
+            </div>`;
+  }).join('')}</div>` : ''}
+      </div>` : ''}
     </section>
 
     <section class="item ${activeSection === 'danger' ? '' : 'hide'}" data-admin-section="danger"><h3 class="danger">Danger Zone</h3><p class="tiny">Destructive workspace actions are isolated here. Type the company name to confirm.</p><input id="dangerPhrase" placeholder="Type: ${state.company?.name || 'CONFIRM'}" /><div class="row mt"><button id="clearTasks" type="button">Clear tasks/operations</button><button id="clearAssets" type="button">Clear assets</button><button id="clearWorkers" type="button">Clear workers</button><button id="resetWorkspace" type="button">Reset workspace data</button></div></section></div>`;
@@ -462,4 +525,17 @@ export function renderAdmin(el, state, actions) {
       taskIntakeRequiredFields: (fd.get('taskIntakeRequiredFields') || 'assetId,description,reporter').split(',').map((value) => value.trim()).filter(Boolean)
     });
   });
+  el.querySelector('[data-manual-repair-check]')?.addEventListener('click', () => actions.checkManualTextExtraction({ limit: 100 }));
+  el.querySelector('[data-manual-repair-run]')?.addEventListener('click', () => actions.runManualRepairForSelection());
+  el.querySelector('[data-manual-repair-select-all]')?.addEventListener('click', () => actions.selectAllManualRepairRows());
+  el.querySelector('[data-manual-repair-clear]')?.addEventListener('click', () => actions.clearManualRepairSelection());
+  el.querySelector('[data-manual-repair-run-all]')?.addEventListener('click', () => {
+    const repairableIds = (state.adminUi?.manualRepairRows || []).filter((row) => ['would_materialize', 'would_reextract'].includes(`${row?.action || ''}`)).map((row) => row.assetId).filter(Boolean);
+    if (!repairableIds.length) return;
+    if (!window.confirm(`This will extract manual text for ${repairableIds.length} assets. Continue?`)) return;
+    actions.runManualRepairForSelection({ assetIds: repairableIds });
+  });
+  el.querySelectorAll('[data-manual-repair-select]').forEach((input) => input.addEventListener('change', (event) => {
+    actions.toggleManualRepairSelection(input.dataset.manualRepairSelect, event.currentTarget?.checked === true);
+  }));
 }
