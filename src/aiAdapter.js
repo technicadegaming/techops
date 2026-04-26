@@ -57,3 +57,11 @@ export function backfillApprovedAssetManualLinkage(payload) {
 export function repairAssetDocumentationState(payload) {
   return call('repairAssetDocumentationState', payload);
 }
+
+export function attachAssetManualFromUrl(payload) {
+  return call('attachAssetManualFromUrl', payload);
+}
+
+export function attachAssetManualFromStoragePath(payload) {
+  return call('attachAssetManualFromStoragePath', payload);
+}

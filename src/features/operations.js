@@ -796,7 +796,10 @@ function createDefaultOperationsUiState() {
     aiDisplayRunsByTask: {},
     pendingActionsByTask: {},
     isSavingTask: false,
-    lastSavedTaskId: null
+    lastSavedTaskId: null,
+    creatingTask: false,
+    createTaskMessage: '',
+    createTaskError: ''
   };
 }
 
@@ -1100,7 +1103,9 @@ export function renderOperations(el, state, actions) {
       <section class="item ops-intake-step">
         <h3>Step 5 · Create task</h3>
         <div class="tiny">Save now, then use the task card actions to assign/start work, run AI, update timeline, and close out.</div>
-        <button class="primary mt" ${canCreate && !state.operationsUi?.isSavingTask ? '' : 'disabled'}>${state.operationsUi?.isSavingTask ? 'Creating task…' : (state.settings?.aiEnabled ? 'Create task & run AI' : 'Create task')}</button>
+        <button class="primary mt" ${canCreate && !state.operationsUi?.creatingTask ? '' : 'disabled'}>${state.operationsUi?.creatingTask ? (state.settings?.aiEnabled ? 'Creating task & starting AI…' : 'Creating task…') : (state.settings?.aiEnabled ? 'Create task & run AI' : 'Create task')}</button>
+        ${state.operationsUi?.createTaskMessage ? `<div class="inline-state info mt">${state.operationsUi.createTaskMessage}</div>` : ''}
+        ${state.operationsUi?.createTaskError ? `<div class="inline-state error mt">${state.operationsUi.createTaskError}</div>` : ''}
         ${state.settings?.aiEnabled ? '' : '<div class="inline-state info mt">Operations AI is disabled in Admin settings. You can still create and manage tasks.</div>'}
       </section>
       <datalist id="assetOptions">${scopedAssets.map((asset) => `<option value="${asset.name || asset.id}"></option>`).join('')}</datalist>
@@ -1304,6 +1309,7 @@ export function renderOperations(el, state, actions) {
 
   form?.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (state.operationsUi?.creatingTask) return;
     persistDraft();
     const fd = new FormData(form);
     const selectedAsset = getSelectedAsset();

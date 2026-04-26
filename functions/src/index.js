@@ -40,6 +40,10 @@ const {
 const {
   bootstrapAttachManualFromCsvHint,
 } = require('./services/csvBootstrapManualAttachService');
+const {
+  attachAssetManualFromUrl,
+  attachAssetManualFromStoragePath,
+} = require('./services/assetManualAttachService');
 const { OPENAI_API_KEY } = require('./services/openaiService');
 
 admin.initializeApp();
@@ -1042,6 +1046,65 @@ exports.backfillApprovedAssetManualLinkage = onCall({}, async (request) => {
     asset: { id: assetSnap.id, ...assetSnap.data() },
     userId: request.auth.uid,
     dryRun: request.data?.dryRun === true,
+  });
+});
+
+exports.attachAssetManualFromUrl = onCall({}, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+  assertString(request.data?.assetId, 'assetId');
+  assertString(request.data?.manualUrl, 'manualUrl');
+
+  const authz = await authorizeAssetEnrichment({
+    db,
+    assetId: request.data.assetId,
+    uid: request.auth.uid,
+    getUserRole,
+  });
+  if (!authz.allowed) {
+    if (authz.scope === 'asset_not_found') throw new HttpsError('not-found', 'Asset not found');
+    throw new HttpsError('permission-denied', 'Insufficient role for manual attachment');
+  }
+
+  const asset = authz.asset ? { id: request.data.assetId, ...authz.asset } : null;
+  if (!asset?.id) throw new HttpsError('not-found', 'Asset not found');
+  return attachAssetManualFromUrl({
+    db,
+    storage: admin.storage(),
+    asset,
+    userId: request.auth.uid,
+    manualUrl: `${request.data?.manualUrl || ''}`.trim(),
+    sourceTitle: `${request.data?.sourceTitle || ''}`.trim(),
+    sourcePageUrl: `${request.data?.sourcePageUrl || ''}`.trim(),
+  });
+});
+
+exports.attachAssetManualFromStoragePath = onCall({}, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+  assertString(request.data?.assetId, 'assetId');
+  assertString(request.data?.storagePath, 'storagePath');
+
+  const authz = await authorizeAssetEnrichment({
+    db,
+    assetId: request.data.assetId,
+    uid: request.auth.uid,
+    getUserRole,
+  });
+  if (!authz.allowed) {
+    if (authz.scope === 'asset_not_found') throw new HttpsError('not-found', 'Asset not found');
+    throw new HttpsError('permission-denied', 'Insufficient role for manual attachment');
+  }
+
+  const asset = authz.asset ? { id: request.data.assetId, ...authz.asset } : null;
+  if (!asset?.id) throw new HttpsError('not-found', 'Asset not found');
+  return attachAssetManualFromStoragePath({
+    db,
+    storage: admin.storage(),
+    asset,
+    userId: request.auth.uid,
+    storagePath: `${request.data?.storagePath || ''}`.trim(),
+    sourceTitle: `${request.data?.sourceTitle || ''}`.trim(),
+    originalFileName: `${request.data?.originalFileName || ''}`.trim(),
+    contentType: `${request.data?.contentType || ''}`.trim(),
   });
 });
 

@@ -1076,6 +1076,14 @@ function loadAdminSource() {
   return require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'admin.js'), 'utf8');
 }
 
+function loadOperationsSource() {
+  return require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'features', 'operations.js'), 'utf8');
+}
+
+function loadAssetsSource() {
+  return require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'features', 'assets.js'), 'utf8');
+}
+
 test('authoritative onboarding state resolves stale bootstrap records as complete and repair is idempotent', async () => {
   const { buildOnboardingRepairPlan, getAuthoritativeOnboardingState } = await loadOnboardingStatusHelpers();
   const state = {
@@ -1911,4 +1919,20 @@ test('operations AI source hint explains missing extracted manual text for manua
   const html = __testOperationsAi.renderAiPanel(task, state, { run, followup: null, snapshot, aiState });
 
   assert.match(html, /Manual is attached, but extracted manual text is not available yet/);
+});
+
+test('operations source includes explicit create-task loading and error states', () => {
+  const source = loadOperationsSource();
+  assert.match(source, /creatingTask/);
+  assert.match(source, /createTaskMessage/);
+  assert.match(source, /createTaskError/);
+  assert.match(source, /Creating task & starting AI/);
+});
+
+test('assets source includes manual attach controls and upload actions', () => {
+  const source = loadAssetsSource();
+  assert.match(source, /Attach manual/);
+  assert.match(source, /data-attach-manual-url/);
+  assert.match(source, /data-upload-manual-file/);
+  assert.match(source, /Upload and extract manual/);
 });

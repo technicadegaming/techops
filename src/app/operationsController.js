@@ -397,16 +397,27 @@ export function createOperationsController({
             alert('Assign a worker before moving a task into progress.');
             return false;
           }
+          const isNewTask = !existing;
           const saved = await withTaskPendingAction(taskId, 'save_task', 'Saving…', async () => runAction('save_task', async () => {
-            state.operationsUi = { ...(state.operationsUi || {}), isSavingTask: true };
+            state.operationsUi = {
+              ...(state.operationsUi || {}),
+              isSavingTask: true,
+              creatingTask: isNewTask,
+              createTaskError: '',
+              createTaskMessage: isNewTask ? 'Creating task…' : '',
+            };
+            render();
             await upsertEntity('tasks', taskId, withRequiredCompanyId(state, { ...payload, id: taskId }, 'save a task'), state.user);
+            const startsAi = isNewTask && state.settings?.aiEnabled;
             setTaskAiUiState(taskId, buildPostSaveAiState({ isNewTask: !existing }));
             state.operationsUi = {
               ...(state.operationsUi || {}),
               expandedTaskIds: [...new Set([...(state.operationsUi?.expandedTaskIds || []), taskId])],
               lastSavedTaskId: taskId,
               lastSaveFeedback: `Task ${taskId} saved for ${payload.assetName || payload.assetId || 'the selected asset'}.`,
-              lastSaveTone: 'success'
+              lastSaveTone: 'success',
+              createTaskMessage: startsAi ? 'Task created. Starting AI troubleshooting…' : (isNewTask ? 'Task created.' : ''),
+              createTaskError: ''
             };
             state.route = { ...state.route, tab: 'operations', taskId };
             await refreshData();
@@ -419,6 +430,11 @@ export function createOperationsController({
                 setTaskAiUiState(taskId, { status: 'waiting_for_refresh', message: 'AI accepted / still syncing; refresh shortly.' });
               }
             }
+            state.operationsUi = {
+              ...(state.operationsUi || {}),
+              creatingTask: false,
+              createTaskMessage: isNewTask ? 'Task created.' : '',
+            };
             return true;
           }, {
             fallbackMessage: 'Unable to save task.',
@@ -426,12 +442,15 @@ export function createOperationsController({
               state.operationsUi = {
                 ...(state.operationsUi || {}),
                 lastSaveFeedback: formatActionError(error, 'Unable to save task.'),
-                lastSaveTone: 'error'
+                lastSaveTone: 'error',
+                creatingTask: false,
+                createTaskError: formatActionError(error, 'Unable to save task.'),
+                createTaskMessage: ''
               };
               render();
             }
           }).finally(() => {
-            state.operationsUi = { ...(state.operationsUi || {}), isSavingTask: false };
+            state.operationsUi = { ...(state.operationsUi || {}), isSavingTask: false, creatingTask: false };
           }));
           return !!saved;
         },
