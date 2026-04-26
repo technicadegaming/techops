@@ -81,7 +81,15 @@ function createMockStorage() {
 }
 
 test('attachAssetManualFromUrl stores file, materializes chunks, and patches asset', async () => {
-  const asset = { id: 'asset-1', companyId: 'company-1', name: 'Asset 1', manualLinks: [] };
+  const asset = {
+    id: 'asset-1',
+    companyId: 'company-1',
+    name: 'Asset 1',
+    manualLinks: ['companies/company-1/manuals/asset-1/old/path.pdf'],
+    selectedCandidateManualUrl: 'https://wrong.example/manual.pdf',
+    selectedCandidateUrl: 'https://wrong.example/details',
+    selectedCandidateTitle: 'Wrong Manual',
+  };
   const db = createMockDb(asset);
   const storage = createMockStorage();
   const result = await attachAssetManualFromUrl({
@@ -107,6 +115,13 @@ test('attachAssetManualFromUrl stores file, materializes chunks, and patches ass
   assert.equal(savedAsset.manualChunkCount > 0, true);
   assert.equal(savedAsset.documentationTextAvailable, true);
   assert.equal(savedAsset.manualStatus, 'manual_attached');
+  assert.equal(savedAsset.manualReviewState, 'manual_attached_user');
+  assert.equal(savedAsset.manualProvenance, 'user_manual_attach');
+  assert.equal(savedAsset.enrichmentTerminalReason, 'user_manual_attached');
+  assert.equal(savedAsset.selectedCandidateManualUrl, '');
+  assert.equal(savedAsset.selectedCandidateUrl, '');
+  assert.equal(savedAsset.selectedCandidateTitle, '');
+  assert.equal(savedAsset.manualLinks.includes('https://docs.example.com/manual.txt'), true);
 });
 
 test('attachAssetManualFromUrl succeeds with warning when no text is extracted', async () => {

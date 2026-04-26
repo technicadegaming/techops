@@ -1155,6 +1155,11 @@ test('asset manual status derivation distinguishes attached vs support-only vs r
   const { deriveAssetManualStatus, filterDisplaySupportResources } = await import('./../src/features/assets.js');
   assert.equal(deriveAssetManualStatus({ manualLibraryRef: 'manual-1', manualLinks: [] }), 'manual_attached');
   assert.equal(deriveAssetManualStatus({ documentationSuggestions: [{ url: 'https://example.com/manual.pdf', verified: true, exactTitleMatch: true, exactManualMatch: true }] }), 'queued_for_review');
+  assert.equal(deriveAssetManualStatus({
+    manualStatus: 'support_context_only',
+    documentationTextAvailable: true,
+    manualChunkCount: 7,
+  }), 'manual_attached');
   assert.equal(deriveAssetManualStatus({ supportResourcesSuggestion: [{ url: 'https://example.com/support', label: 'Support' }] }), 'support_context_only');
   assert.equal(deriveAssetManualStatus({ documentationSuggestions: [], supportResourcesSuggestion: [] }), 'no_public_manual');
   assert.equal(deriveAssetManualStatus({
@@ -1894,6 +1899,51 @@ test('asset actions maps missing URL attach error to specific guidance', async (
   await actions.attachManualFromUrl('asset-a', { manualUrl: 'https://example.com/manual.pdf' });
 
   assert.match(state.assetUi.manualAttachByAsset['asset-a'].message, /Manual URL is required for manual attachment\./);
+});
+
+test('asset actions maps unexpected backend attach failure to safe guidance', async () => {
+  const { createAssetActions } = await loadAssetActions();
+  const state = {
+    assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
+    assetUi: {},
+    assets: [{ id: 'asset-a', firestoreDocId: 'asset-a', name: 'Asset A', companyId: 'company-a' }],
+    companyLocations: [],
+    permissions: { companyRole: 'manager', role: 'manager' },
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    user: { uid: 'user-1' }
+  };
+  const actions = createAssetActions({
+    state,
+    onLocationFilter: () => {},
+    render: () => {},
+    refreshData: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    deleteEntity: async () => {},
+    approveAssetManual: async () => {},
+    attachAssetManualFromUrl: async () => { throw new Error('Manual attachment failed unexpectedly. Check function logs for details.'); },
+    attachAssetManualFromStoragePath: async () => ({}),
+    enrichAssetDocumentation: async () => ({}),
+    previewAssetDocumentationLookup: async () => ({}),
+    researchAssetTitles: async () => ({}),
+    markAssetEnrichmentFailure: async () => ({}),
+    normalizeAssetId: (name) => name,
+    pickUniqueAssetId: (id) => id,
+    createEmptyAssetDraft: () => ({ previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } }),
+    withTimeout: async (promise) => promise,
+    normalizeSupportEntries: (entries) => entries,
+    canDelete: () => false,
+    isAdmin: () => true,
+    isManager: () => true,
+    buildAssetSaveErrorMessage: () => 'error',
+    buildAssetSaveDebugContext: () => ({}),
+    isPermissionRelatedError: () => false,
+    buildPreviewQueryKey: () => ''
+  });
+
+  await actions.attachManualFromUrl('asset-a', { manualUrl: 'https://example.com/manual.pdf' });
+  assert.equal(state.assetUi.manualAttachByAsset['asset-a'].message, 'Manual attachment failed unexpectedly. Check function logs for details.');
 });
 test('admin CSV import queues truthful enrichment status, starts enrichment, and keeps hint URLs non-authoritative', async () => {
   const { createAdminActions } = await loadAdminActions();

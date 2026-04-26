@@ -1897,6 +1897,50 @@ function buildSingleAssetDocumentationFields({ preview = {}, cleanedResult = {},
   };
 }
 
+function tokenizeMatchText(value = '') {
+  return Array.from(new Set(
+    normalizePhrase(value)
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length > 2 && !COMMON_SHORT_TITLE_WORDS.has(token))
+  ));
+}
+
+function calcTokenOverlapRatio(referenceTokens = [], candidateTokens = []) {
+  if (!referenceTokens.length || !candidateTokens.length) return 0;
+  const candidateSet = new Set(candidateTokens);
+  const overlap = referenceTokens.filter((token) => candidateSet.has(token)).length;
+  return overlap / Math.max(referenceTokens.length, 1);
+}
+
+function evaluateAutoAttachGuard({ asset = {}, manualFields = {}, cleanedResult = {} } = {}) {
+  if (isManualAttachedStatus(asset.manualStatus || '')) return { allow: true, reason: '' };
+  const suggestions = Array.isArray(cleanedResult.documentationSuggestions) ? cleanedResult.documentationSuggestions : [];
+  const selected = suggestions.find((entry) => isManualUsableSuggestion(entry)) || suggestions[0] || {};
+  const assetTokens = tokenizeMatchText(asset.name || '');
+  const candidateTitle = `${selected.title || selected.label || selected.sourceTitle || ''}`.trim();
+  const candidateTokens = tokenizeMatchText(candidateTitle);
+  const titleOverlapRatio = calcTokenOverlapRatio(assetTokens, candidateTokens);
+  if (assetTokens.length >= 2 && candidateTokens.length >= 2 && titleOverlapRatio < 0.5) {
+    return { allow: false, reason: 'candidate_title_mismatch_review_required' };
+  }
+
+  const knownManufacturer = normalizePhrase(asset.manufacturer || '');
+  const candidateManufacturer = normalizePhrase(manualFields.matchedManufacturer || selected.manufacturer || selected.sourceManufacturer || '');
+  if (knownManufacturer && candidateManufacturer) {
+    const manufacturerOverlap = calcTokenOverlapRatio(
+      tokenizeMatchText(knownManufacturer),
+      tokenizeMatchText(candidateManufacturer)
+    );
+    if (!knownManufacturer.includes(candidateManufacturer)
+      && !candidateManufacturer.includes(knownManufacturer)
+      && manufacturerOverlap < 0.5) {
+      return { allow: false, reason: 'manufacturer_mismatch_review_required' };
+    }
+  }
+  return { allow: true, reason: '' };
+}
+
 function hasAuthoritativeManualAttachment(manualFields = {}, existingAsset = {}) {
   const candidatePath = `${manualFields?.manualStoragePath || existingAsset?.manualStoragePath || ''}`.trim();
   const durableStoragePath = candidatePath
@@ -2380,6 +2424,17 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       matchedManufacturer,
       existingAsset: asset,
     });
+    const autoAttachGuard = evaluateAutoAttachGuard({ asset, manualFields, cleanedResult });
+    const guardedManualFields = autoAttachGuard.allow ? manualFields : {
+      ...manualFields,
+      manualLibraryRef: '',
+      manualStoragePath: '',
+      manualLinks: [],
+      manualReady: false,
+    };
+    if (!autoAttachGuard.allow && !`${pipelineMeta.terminalStateReason || ''}`.trim()) {
+      pipelineMeta.terminalStateReason = autoAttachGuard.reason;
+    }
     const {
       finalStatus,
       finalManualFields,
@@ -2391,9 +2446,9 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       asset,
       cleanedResult,
       preview,
-      manualFields,
+      manualFields: guardedManualFields,
       acquisitionState: pipelineMeta.acquisitionState || '',
-      resolvedStatus: pipelineMeta.acquisitionState === 'timed_out' && !hasAuthoritativeManualAttachment(manualFields, asset)
+      resolvedStatus: pipelineMeta.acquisitionState === 'timed_out' && !hasAuthoritativeManualAttachment(guardedManualFields, asset)
         ? (hasSupportOrSourceContext({ ...asset, ...manualFields, supportResourcesSuggestion: cleanedResult.supportResourcesSuggestion, enrichmentFollowupQuestion: cleanedResult.enrichmentFollowupQuestion }) ? 'followup_needed' : 'timed_out')
         : status,
     });
@@ -2695,6 +2750,7 @@ module.exports = {
   runLookupPreview,
   runAuthoritativeAssetResearch,
   buildSingleAssetDocumentationFields,
+  evaluateAutoAttachGuard,
   finalizeSingleAssetEnrichment,
   persistDurableManualToAsset,
   hasAuthoritativeManualAttachment,

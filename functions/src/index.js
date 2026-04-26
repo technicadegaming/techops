@@ -562,7 +562,7 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
   if (requestedAssetId) {
     const authz = await authorizeAssetEnrichment({
       db,
-      assetId: resolvedAssetId || requestedAssetId,
+      assetId: requestedAssetId,
       uid: request.auth.uid,
       getUserRole,
     });
@@ -1058,29 +1058,33 @@ exports.backfillApprovedAssetManualLinkage = onCall({}, async (request) => {
 });
 
 exports.attachAssetManualFromUrl = onCall({}, async (request) => {
-  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
-  const requestedIds = getManualAttachAssetIds(request.data || {});
-  const requestedAssetId = resolveManualAttachAssetId(request.data || {});
-  assertString(requestedAssetId, 'assetId');
-  const manualUrl = `${request.data?.manualUrl || ''}`.trim();
-  if (!manualUrl) throw new HttpsError('invalid-argument', 'Manual URL is required for manual attachment.');
-
-  const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
-  const urlSummary = summarizeManualAttachUrl(manualUrl);
-  console.log('attachAssetManualFromUrl:start', {
-    assetId: requestedAssetId,
-    uid: request.auth.uid,
-    requestCompanyId: requestedCompanyId,
-    manualUrlHost: urlSummary.host,
-    manualUrlPathLength: urlSummary.pathLength,
-  });
-
+  let requestedAssetId = '';
+  let requestedAssetDocId = '';
+  let requestedCompanyId = '';
   let resolution = null;
   try {
+    if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+    const requestedIds = getManualAttachAssetIds(request.data || {});
+    requestedAssetDocId = requestedIds.assetDocId || '';
+    requestedAssetId = resolveManualAttachAssetId(request.data || {});
+    assertString(requestedAssetId, 'assetId');
+    const manualUrl = `${request.data?.manualUrl || ''}`.trim();
+    if (!manualUrl) throw new HttpsError('invalid-argument', 'Manual URL is required for manual attachment.');
+
+    requestedCompanyId = normalizeCompanyId(request.data?.companyId);
+    const urlSummary = summarizeManualAttachUrl(manualUrl);
+    console.log('attachAssetManualFromUrl:start', {
+      assetId: requestedAssetId,
+      uid: request.auth.uid,
+      requestCompanyId: requestedCompanyId,
+      manualUrlHost: urlSummary.host,
+      manualUrlPathLength: urlSummary.pathLength,
+    });
+
     resolution = await resolveManualAttachAsset({
       db,
       requestedAssetId,
-      requestedAssetDocId: requestedIds.assetDocId,
+      requestedAssetDocId,
       requestedCompanyId,
       uid: request.auth.uid,
       getUserRole,
@@ -1088,79 +1092,96 @@ exports.attachAssetManualFromUrl = onCall({}, async (request) => {
       authorizeCompanyMember,
       canRunAssetEnrichment,
     });
-  } catch (error) {
-    const status = error?.code === 'failed-precondition' ? 'ambiguous' : (error?.code === 'permission-denied' ? 'denied' : 'error');
-    console.warn('attachAssetManualFromUrl:resolution_error', {
+
+    const status = resolution?.status === 'found' ? 'found' : 'missing';
+    console.log('attachAssetManualFromUrl:resolved', {
       requestedAssetId,
-      requestedAssetDocId: requestedIds.assetDocId || '',
+      requestedAssetDocId,
       requestedCompanyId,
-      resolvedAssetDocId: null,
-      resolutionSource: null,
-      authzScope: null,
+      resolvedAssetDocId: resolution?.assetDocId || null,
+      resolutionSource: resolution?.resolutionSource || null,
+      authzScope: resolution?.authzScope || null,
       status,
     });
-    throw error;
-  }
 
-  const status = resolution?.status === 'found' ? 'found' : 'missing';
-  console.log('attachAssetManualFromUrl:resolved', {
-    requestedAssetId,
-    requestedAssetDocId: requestedIds.assetDocId || '',
-    requestedCompanyId,
-    resolvedAssetDocId: resolution?.assetDocId || null,
-    resolutionSource: resolution?.resolutionSource || null,
-    authzScope: resolution?.authzScope || null,
-    status,
-  });
+    const attachContext = normalizeManualAttachRequestContext({
+      requestData: request.data || {},
+      resolution,
+    });
+    const assetData = resolution?.asset || {};
+    const normalizedAsset = {
+      ...assetData,
+      id: resolution?.assetDocId || '',
+      firestoreDocId: resolution?.assetDocId || '',
+      docId: resolution?.assetDocId || '',
+      _docId: resolution?.assetDocId || '',
+      assetRecordId: resolution?.assetDocId || '',
+      storedAssetId: assetData.storedAssetId || assetData.id || '',
+    };
+    normalizedAsset.companyId = resolution?.companyId || assetData.companyId || requestedCompanyId;
 
-  const attachContext = normalizeManualAttachRequestContext({
-    requestData: request.data || {},
-    resolution,
-  });
-  if (resolution?.status !== 'found' || !attachContext?.resolvedAsset?.id) {
-    throw new HttpsError('not-found', 'Asset not found for manual attachment. Refresh the asset list and try again.');
+    if (!manualUrl) throw new HttpsError('invalid-argument', 'Manual URL is required for manual attachment.');
+    if (resolution?.status !== 'found' || !`${normalizedAsset.id || ''}`.trim()) {
+      throw new HttpsError('not-found', 'Asset not found for manual attachment. Refresh the asset list and try again.');
+    }
+    if (!`${normalizedAsset.companyId || ''}`.trim()) {
+      throw new HttpsError('failed-precondition', 'Asset resolved but missing company context for manual attachment.');
+    }
+    if (requestedCompanyId && `${normalizedAsset.companyId || ''}`.trim() && requestedCompanyId !== `${normalizedAsset.companyId || ''}`.trim()) {
+      throw new HttpsError('permission-denied', 'Asset/company mismatch for manual attachment.');
+    }
+    return attachAssetManualFromUrl({
+      db,
+      storage: admin.storage(),
+      asset: normalizedAsset,
+      userId: request.auth.uid,
+      manualUrl,
+      sourceTitle: attachContext.sourceTitle,
+      sourcePageUrl: `${request.data?.sourcePageUrl || ''}`.trim(),
+    });
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    console.error('attachAssetManualFromUrl:unexpected_error', {
+      functionName: 'attachAssetManualFromUrl',
+      uid: request.auth?.uid || null,
+      requestedAssetId,
+      requestedAssetDocId,
+      requestedCompanyId,
+      resolvedAssetDocId: resolution?.assetDocId || null,
+      resolutionSource: resolution?.resolutionSource || null,
+      message: error?.message || String(error),
+      stack: error?.stack || '',
+    });
+    throw new HttpsError('internal', 'Manual attachment failed unexpectedly. Check function logs for details.');
   }
-
-  const asset = attachContext.resolvedAsset;
-  if (!`${asset.id || ''}`.trim() || !`${asset.companyId || ''}`.trim()) {
-    throw new HttpsError('internal', 'Asset resolved but missing company context for manual attachment.');
-  }
-  if (requestedCompanyId && `${asset.companyId || ''}`.trim() && requestedCompanyId !== `${asset.companyId || ''}`.trim()) {
-    throw new HttpsError('permission-denied', 'Asset/company mismatch for manual attachment.');
-  }
-  return attachAssetManualFromUrl({
-    db,
-    storage: admin.storage(),
-    asset,
-    userId: request.auth.uid,
-    manualUrl,
-    sourceTitle: attachContext.sourceTitle,
-    sourcePageUrl: `${request.data?.sourcePageUrl || ''}`.trim(),
-  });
 });
 
 exports.attachAssetManualFromStoragePath = onCall({}, async (request) => {
-  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
-  const requestedIds = getManualAttachAssetIds(request.data || {});
-  const requestedAssetId = resolveManualAttachAssetId(request.data || {});
-  assertString(requestedAssetId, 'assetId');
-  const storagePath = `${request.data?.storagePath || ''}`.trim();
-  if (!storagePath) throw new HttpsError('invalid-argument', 'Manual file upload did not produce a storage path.');
-
-  const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
-  console.log('attachAssetManualFromStoragePath:start', {
-    assetId: requestedAssetId,
-    uid: request.auth.uid,
-    requestCompanyId: requestedCompanyId,
-    storagePathLength: storagePath.length,
-  });
-
+  let requestedAssetId = '';
+  let requestedAssetDocId = '';
+  let requestedCompanyId = '';
   let resolution = null;
   try {
+    if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+    const requestedIds = getManualAttachAssetIds(request.data || {});
+    requestedAssetDocId = requestedIds.assetDocId || '';
+    requestedAssetId = resolveManualAttachAssetId(request.data || {});
+    assertString(requestedAssetId, 'assetId');
+    const storagePath = `${request.data?.storagePath || ''}`.trim();
+    if (!storagePath) throw new HttpsError('invalid-argument', 'Manual file upload did not produce a storage path.');
+
+    requestedCompanyId = normalizeCompanyId(request.data?.companyId);
+    console.log('attachAssetManualFromStoragePath:start', {
+      assetId: requestedAssetId,
+      uid: request.auth.uid,
+      requestCompanyId: requestedCompanyId,
+      storagePathLength: storagePath.length,
+    });
+
     resolution = await resolveManualAttachAsset({
       db,
       requestedAssetId,
-      requestedAssetDocId: requestedIds.assetDocId,
+      requestedAssetDocId,
       requestedCompanyId,
       uid: request.auth.uid,
       getUserRole,
@@ -1168,56 +1189,69 @@ exports.attachAssetManualFromStoragePath = onCall({}, async (request) => {
       authorizeCompanyMember,
       canRunAssetEnrichment,
     });
-  } catch (error) {
-    const status = error?.code === 'failed-precondition' ? 'ambiguous' : (error?.code === 'permission-denied' ? 'denied' : 'error');
-    console.warn('attachAssetManualFromStoragePath:resolution_error', {
+
+    const status = resolution?.status === 'found' ? 'found' : 'missing';
+    console.log('attachAssetManualFromStoragePath:resolved', {
       requestedAssetId,
-      requestedAssetDocId: requestedIds.assetDocId || '',
+      requestedAssetDocId,
       requestedCompanyId,
-      resolvedAssetDocId: null,
-      resolutionSource: null,
-      authzScope: null,
+      resolvedAssetDocId: resolution?.assetDocId || null,
+      resolutionSource: resolution?.resolutionSource || null,
+      authzScope: resolution?.authzScope || null,
       status,
     });
-    throw error;
-  }
 
-  const status = resolution?.status === 'found' ? 'found' : 'missing';
-  console.log('attachAssetManualFromStoragePath:resolved', {
-    requestedAssetId,
-    requestedAssetDocId: requestedIds.assetDocId || '',
-    requestedCompanyId,
-    resolvedAssetDocId: resolution?.assetDocId || null,
-    resolutionSource: resolution?.resolutionSource || null,
-    authzScope: resolution?.authzScope || null,
-    status,
-  });
+    const attachContext = normalizeManualAttachRequestContext({
+      requestData: request.data || {},
+      resolution,
+    });
+    const assetData = resolution?.asset || {};
+    const normalizedAsset = {
+      ...assetData,
+      id: resolution?.assetDocId || '',
+      firestoreDocId: resolution?.assetDocId || '',
+      docId: resolution?.assetDocId || '',
+      _docId: resolution?.assetDocId || '',
+      assetRecordId: resolution?.assetDocId || '',
+      storedAssetId: assetData.storedAssetId || assetData.id || '',
+    };
+    normalizedAsset.companyId = resolution?.companyId || assetData.companyId || requestedCompanyId;
 
-  const attachContext = normalizeManualAttachRequestContext({
-    requestData: request.data || {},
-    resolution,
-  });
-  if (resolution?.status !== 'found' || !attachContext?.resolvedAsset?.id) {
-    throw new HttpsError('not-found', 'Asset not found for manual attachment. Refresh the asset list and try again.');
+    if (!storagePath) throw new HttpsError('invalid-argument', 'Manual file upload did not produce a storage path.');
+    if (resolution?.status !== 'found' || !`${normalizedAsset.id || ''}`.trim()) {
+      throw new HttpsError('not-found', 'Asset not found for manual attachment. Refresh the asset list and try again.');
+    }
+    if (!`${normalizedAsset.companyId || ''}`.trim()) {
+      throw new HttpsError('failed-precondition', 'Asset resolved but missing company context for manual attachment.');
+    }
+    if (requestedCompanyId && `${normalizedAsset.companyId || ''}`.trim() && requestedCompanyId !== `${normalizedAsset.companyId || ''}`.trim()) {
+      throw new HttpsError('permission-denied', 'Asset/company mismatch for manual attachment.');
+    }
+    return attachAssetManualFromStoragePath({
+      db,
+      storage: admin.storage(),
+      asset: normalizedAsset,
+      userId: request.auth.uid,
+      storagePath,
+      sourceTitle: attachContext.sourceTitle,
+      originalFileName: `${request.data?.originalFileName || ''}`.trim(),
+      contentType: `${request.data?.contentType || ''}`.trim(),
+    });
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    console.error('attachAssetManualFromStoragePath:unexpected_error', {
+      functionName: 'attachAssetManualFromStoragePath',
+      uid: request.auth?.uid || null,
+      requestedAssetId,
+      requestedAssetDocId,
+      requestedCompanyId,
+      resolvedAssetDocId: resolution?.assetDocId || null,
+      resolutionSource: resolution?.resolutionSource || null,
+      message: error?.message || String(error),
+      stack: error?.stack || '',
+    });
+    throw new HttpsError('internal', 'Manual attachment failed unexpectedly. Check function logs for details.');
   }
-
-  const asset = attachContext.resolvedAsset;
-  if (!`${asset.id || ''}`.trim() || !`${asset.companyId || ''}`.trim()) {
-    throw new HttpsError('internal', 'Asset resolved but missing company context for manual attachment.');
-  }
-  if (requestedCompanyId && `${asset.companyId || ''}`.trim() && requestedCompanyId !== `${asset.companyId || ''}`.trim()) {
-    throw new HttpsError('permission-denied', 'Asset/company mismatch for manual attachment.');
-  }
-  return attachAssetManualFromStoragePath({
-    db,
-    storage: admin.storage(),
-    asset,
-    userId: request.auth.uid,
-    storagePath,
-    sourceTitle: attachContext.sourceTitle,
-    originalFileName: `${request.data?.originalFileName || ''}`.trim(),
-    contentType: `${request.data?.contentType || ''}`.trim(),
-  });
 });
 
 exports.fetchWebContextForTask = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
