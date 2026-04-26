@@ -1,7 +1,13 @@
+function getManualAttachAssetIds(data = {}) {
+  const assetDocId = `${data?.assetDocId || ''}`.trim();
+  const assetId = `${data?.assetId || ''}`.trim();
+  return { assetDocId, assetId };
+}
+
 function resolveManualAttachAssetId(data = {}) {
-  const primary = `${data?.assetId || ''}`.trim();
-  if (primary) return primary;
-  return `${data?.assetDocId || ''}`.trim();
+  const ids = getManualAttachAssetIds(data);
+  if (ids.assetDocId) return ids.assetDocId;
+  return ids.assetId;
 }
 
 function summarizeManualAttachUrl(manualUrl = '') {
@@ -17,6 +23,7 @@ function summarizeManualAttachUrl(manualUrl = '') {
 }
 
 module.exports = {
+  getManualAttachAssetIds,
   resolveManualAttachAssetId,
   summarizeManualAttachUrl,
 };

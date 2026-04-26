@@ -19,7 +19,7 @@ const {
   isGlobalAdminRole,
 } = require('./lib/enrichmentAuthorization');
 const { normalizeAssetEnrichmentTriggerSource } = require('./lib/assetEnrichmentTriggers');
-const { resolveManualAttachAssetId, summarizeManualAttachUrl } = require('./lib/manualAttachCallable');
+const { getManualAttachAssetIds, resolveManualAttachAssetId, summarizeManualAttachUrl } = require('./lib/manualAttachCallable');
 const {
   enrichAssetDocumentation,
   previewAssetDocumentationLookup,
@@ -556,7 +556,7 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
   if (requestedAssetId) {
     const authz = await authorizeAssetEnrichment({
       db,
-      assetId: requestedAssetId,
+      assetId: resolvedAssetId || requestedAssetId,
       uid: request.auth.uid,
       getUserRole,
     });
@@ -1053,6 +1053,7 @@ exports.backfillApprovedAssetManualLinkage = onCall({}, async (request) => {
 
 exports.attachAssetManualFromUrl = onCall({}, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+  const requestedIds = getManualAttachAssetIds(request.data || {});
   const requestedAssetId = resolveManualAttachAssetId(request.data || {});
   assertString(requestedAssetId, 'assetId');
   assertString(request.data?.manualUrl, 'manualUrl');
@@ -1067,12 +1068,26 @@ exports.attachAssetManualFromUrl = onCall({}, async (request) => {
     manualUrlPathLength: urlSummary.pathLength,
   });
 
-  const authz = await authorizeAssetEnrichment({
-    db,
-    assetId: requestedAssetId,
-    uid: request.auth.uid,
-    getUserRole,
-  });
+  const candidateIds = [];
+  if (requestedIds.assetDocId) candidateIds.push(requestedIds.assetDocId);
+  if (requestedIds.assetId && requestedIds.assetId !== requestedIds.assetDocId) candidateIds.push(requestedIds.assetId);
+
+  let authz = null;
+  let resolvedAssetId = '';
+  for (const candidateId of candidateIds) {
+    const probe = await authorizeAssetEnrichment({
+      db,
+      assetId: candidateId,
+      uid: request.auth.uid,
+      getUserRole,
+    });
+    if (probe.allowed || probe.scope !== 'asset_not_found') {
+      authz = probe;
+      resolvedAssetId = candidateId;
+      break;
+    }
+  }
+  if (!authz) authz = { allowed: false, scope: 'asset_not_found' };
   if (!authz.allowed) {
     console.warn('attachAssetManualFromUrl:authz_denied', {
       assetId: requestedAssetId,
@@ -1088,7 +1103,7 @@ exports.attachAssetManualFromUrl = onCall({}, async (request) => {
     throw new HttpsError('permission-denied', 'Insufficient role for manual attachment');
   }
 
-  const asset = authz.asset ? { id: requestedAssetId, ...authz.asset } : null;
+  const asset = authz.asset ? { id: resolvedAssetId || requestedAssetId, ...authz.asset } : null;
   const assetExists = !!asset?.id;
   console.log('attachAssetManualFromUrl:authorized', {
     assetId: requestedAssetId,
@@ -1114,6 +1129,7 @@ exports.attachAssetManualFromUrl = onCall({}, async (request) => {
 
 exports.attachAssetManualFromStoragePath = onCall({}, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+  const requestedIds = getManualAttachAssetIds(request.data || {});
   const requestedAssetId = resolveManualAttachAssetId(request.data || {});
   assertString(requestedAssetId, 'assetId');
   assertString(request.data?.storagePath, 'storagePath');
@@ -1126,12 +1142,26 @@ exports.attachAssetManualFromStoragePath = onCall({}, async (request) => {
     storagePathLength: `${request.data?.storagePath || ''}`.trim().length,
   });
 
-  const authz = await authorizeAssetEnrichment({
-    db,
-    assetId: requestedAssetId,
-    uid: request.auth.uid,
-    getUserRole,
-  });
+  const candidateIds = [];
+  if (requestedIds.assetDocId) candidateIds.push(requestedIds.assetDocId);
+  if (requestedIds.assetId && requestedIds.assetId !== requestedIds.assetDocId) candidateIds.push(requestedIds.assetId);
+
+  let authz = null;
+  let resolvedAssetId = '';
+  for (const candidateId of candidateIds) {
+    const probe = await authorizeAssetEnrichment({
+      db,
+      assetId: candidateId,
+      uid: request.auth.uid,
+      getUserRole,
+    });
+    if (probe.allowed || probe.scope !== 'asset_not_found') {
+      authz = probe;
+      resolvedAssetId = candidateId;
+      break;
+    }
+  }
+  if (!authz) authz = { allowed: false, scope: 'asset_not_found' };
   if (!authz.allowed) {
     console.warn('attachAssetManualFromStoragePath:authz_denied', {
       assetId: requestedAssetId,
@@ -1147,7 +1177,7 @@ exports.attachAssetManualFromStoragePath = onCall({}, async (request) => {
     throw new HttpsError('permission-denied', 'Insufficient role for manual attachment');
   }
 
-  const asset = authz.asset ? { id: requestedAssetId, ...authz.asset } : null;
+  const asset = authz.asset ? { id: resolvedAssetId || requestedAssetId, ...authz.asset } : null;
   const assetExists = !!asset?.id;
   console.log('attachAssetManualFromStoragePath:authorized', {
     assetId: requestedAssetId,

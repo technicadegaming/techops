@@ -12,6 +12,7 @@ import { sortDocumentationSuggestions } from './documentationSuggestions.js';
 import { getReviewableDocumentationSuggestions } from './documentationReview.js';
 import { buildAssetDraftContextDebug, doesPreviewContextMatch, resolveAssetDraftContext } from './assetDraftContext.js';
 import { normalizeManufacturerDisplayName } from './manufacturerNormalization.js';
+import { getAssetRecordId } from './assetIdentity.js';
 import {
   buildManualReviewQueue,
   formatManualReviewLabel,
@@ -162,13 +163,14 @@ function renderAuditChip(label, tone = 'muted') {
 
 function renderAssetScanChips(asset, { openTasks = [], overduePm = [] } = {}) {
   const chips = [];
-  const manualStatus = deriveAssetManualStatus(asset);
-  if (manualStatus === MANUAL_STATUS.ATTACHED) chips.push(renderAuditChip('manual attached', 'good'));
-  else if (manualStatus === MANUAL_STATUS.QUEUED_FOR_REVIEW) chips.push(renderAuditChip('manual queued for review', 'warn'));
-  else if (manualStatus === MANUAL_STATUS.SUPPORT_CONTEXT_ONLY) chips.push(renderAuditChip('support context only', 'info'));
-  else chips.push(renderAuditChip('no manual', 'warn'));
-  if (['needs_review', 'pending_review'].includes((asset.reviewState || ''))) chips.push(renderAuditChip('review needed', 'warn'));
-  if (asset.manualReviewState) chips.push(renderAuditChip(`manual ${`${asset.manualReviewState}`.replace(/_/g, ' ')}`, 'info'));
+  const manualChunkCount = Number(asset?.manualChunkCount || 0) || 0;
+  const hasAttachedManual = !!`${asset?.manualStoragePath || ''}`.trim() || (Array.isArray(asset?.manualLinks) && asset.manualLinks.length > 0);
+  if (manualChunkCount > 0 || asset?.documentationTextAvailable === true) chips.push(renderAuditChip('Manual text available', 'good'));
+  else if (hasAttachedManual) chips.push(renderAuditChip('Manual attached — text not extracted', 'warn'));
+  else if (getEffectiveEnrichmentStatus(asset) === 'lookup_failed') chips.push(renderAuditChip('Lookup failed', 'bad'));
+  else if (deriveAssetManualStatus(asset) === MANUAL_STATUS.SUPPORT_CONTEXT_ONLY) chips.push(renderAuditChip('Support links only', 'info'));
+  else if (['followup_needed', 'retry_needed'].includes(getEffectiveEnrichmentStatus(asset))) chips.push(renderAuditChip('Needs documentation review', 'warn'));
+  else chips.push(renderAuditChip('No manual attached', 'warn'));
   if (['queued', 'searching_docs', 'in_progress'].includes(getEffectiveEnrichmentStatus(asset))) chips.push(renderAuditChip('enrichment running', 'info'));
   if (getEffectiveEnrichmentStatus(asset) === 'retry_needed') chips.push(renderAuditChip('retry needed', 'warn'));
   if (openTasks.length) chips.push(renderAuditChip('open issue', 'bad'));
@@ -784,7 +786,8 @@ export function renderAssets(el, state, actions) {
       ${state.assetUi?.bulkDocRerunSummary ? `<div class="tiny mt">${state.assetUi.bulkDocRerunSummary}</div>` : ''}
     </div>
     ${assetFilter === 'missing_docs' ? '<div class="inline-state warn">Showing assets missing docs only.</div>' : ''}
-    <div class="item" style="margin-bottom:12px;">
+    <details class="item" style="margin-bottom:12px;">
+      <summary><b>Documentation review</b> <span class="tiny">(${manualReviewQueue.length} queue items)</span></summary>
       <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
         <div>
           <b>Manual review queue</b>
@@ -838,8 +841,10 @@ export function renderAssets(el, state, actions) {
           </div>
         </details>`;
       }).join('')}</div>` : '<div class="tiny" style="margin-top:8px;">No unresolved manual review queue items in this scope.</div>'}
-    </div>
-    <form id="assetForm" class="grid grid-2" style="margin-bottom:12px; border:1px solid #e5e7eb; border-radius:10px; padding:10px;">
+    </details>
+    <details class="item" style="margin-bottom:12px;">
+      <summary><b>Add / import</b></summary>
+    <form id="assetForm" class="grid grid-2" style="margin-top:10px; margin-bottom:12px; border:1px solid #e5e7eb; border-radius:10px; padding:10px;">
       <div class="tiny" style="grid-column:1/-1; font-weight:700;">Quick add asset</div>
       <input name="name" value="${state.assetDraft?.name || ''}" placeholder="Asset name *" required ${editable ? '' : 'disabled'} />
       <input name="manufacturer" value="${state.assetDraft?.manufacturer || ''}" placeholder="Manufacturer *" required ${editable ? '' : 'disabled'} />
@@ -907,6 +912,7 @@ export function renderAssets(el, state, actions) {
     ${(state.assetUi?.onboardingValidationErrors || []).length ? `<div class="item" style="border:1px solid #fca5a5; background:#fef2f2;"><b>Import validation issues</b><ul>${(state.assetUi?.onboardingValidationErrors || []).slice(0, 8).map((error) => `<li class="tiny">${error}</li>`).join('')}</ul></div>` : ''}
     ${(state.assetUi?.bulkIntakeRows || []).length ? `<div class="item" style="margin-bottom:10px; overflow:auto;"><b>Research review grid</b><div class="tiny">Green = manual ready. Yellow = follow-up or family review. Red = unresolved. Only manual-ready rows should become docs found.</div><table class="tiny" style="width:100%; border-collapse:collapse; margin-top:8px;"><thead><tr><th>Original</th><th>Normalized</th><th>Manufacturer</th><th>Match type</th><th>Manual ready</th><th>Review required</th><th>Manual URL</th><th>Manual source URL</th><th>Support URL</th><th>Contact info</th><th>Confidence</th><th>Notes</th><th>Row status/action</th></tr></thead><tbody>${(state.assetUi.bulkIntakeRows || []).map((row, index) => { const tone = row.rowStatus === 'good_match' ? '#ecfdf5' : (row.rowStatus === 'needs_review' ? '#fffbeb' : '#fef2f2'); return `<tr data-bulk-row="${index}" style="background:${tone};"><td><input name="name" value="${row.name || ''}" /></td><td><input name="normalizedName" value="${row.normalizedTitle || row.normalizedName || ''}" /></td><td><input name="manufacturer" value="${row.manufacturer || row.manufacturerSuggestion || ''}" /></td><td><input name="matchType" value="${row.matchType || ''}" /></td><td><input name="manualReady" value="${typeof row.manualReady === 'boolean' ? String(row.manualReady) : (row.manualReady || '')}" /></td><td><input name="reviewRequired" value="${typeof row.reviewRequired === 'boolean' ? String(row.reviewRequired) : (row.reviewRequired || '')}" /></td><td><input name="manualUrl" value="${row.manualUrl || ''}" placeholder="https://..." /></td><td><input name="manualSourceUrl" value="${row.manualSourceUrl || ''}" placeholder="https://..." /></td><td><input name="supportUrl" value="${row.supportUrl || ''}" placeholder="https://support" /></td><td><input name="supportEmail" value="${row.supportEmail || ''}" placeholder="email" /><input name="supportPhone" value="${row.supportPhone || ''}" placeholder="phone" /></td><td><input name="matchConfidence" value="${row.matchConfidence || ''}" style="width:70px;" /></td><td><textarea name="matchNotes" rows="2">${row.matchNotes || ''}</textarea></td><td><select name="rowStatus"><option value="good_match" ${row.rowStatus === 'good_match' ? 'selected' : ''}>accepted-ready</option><option value="needs_review" ${row.rowStatus === 'needs_review' ? 'selected' : ''}>needs review</option><option value="unresolved" ${row.rowStatus === 'unresolved' ? 'selected' : ''}>unresolved</option><option value="skipped" ${row.rowStatus === 'skipped' ? 'selected' : ''}>skip</option></select><div style="display:flex; gap:4px; flex-wrap:wrap; margin-top:4px;"><button type="button" data-bulk-accept="${index}">Accept</button><button type="button" data-bulk-skip="${index}">Skip</button></div></td></tr>`; }).join('')}</tbody></table></div>` : ''}
     ${(state.assetUi?.recentIntakeRows || []).length ? `<div class="item" style="margin-bottom:10px; overflow:auto;"><b>Recent import/research status</b><div class="tiny">These rows reconcile to real asset enrichment and review state after each refresh.</div><table class="tiny" style="width:100%; border-collapse:collapse; margin-top:8px;"><thead><tr><th>Title</th><th>Asset</th><th>Status</th><th>Review</th></tr></thead><tbody>${(state.assetUi.recentIntakeRows || []).map((row) => `<tr><td>${row.name || 'Untitled'}</td><td>${row.assetId ? `<a href="#asset-${row.assetId}">${row.assetId}</a>` : 'pending'}</td><td>${renderStatusChip(row.enrichmentStatus || row.intakeStatusBadge || 'idle')}<div>${row.intakeStatusLabel || ''}</div></td><td>${formatManualReviewLabel(row.manualReviewState || row.reviewState || 'n/a')}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    </details>
 
     <div class="list">${scopedAssets.map((asset) => {
       try {
@@ -964,6 +970,7 @@ export function renderAssets(el, state, actions) {
     : (hasAttachedManualStorage ? renderAuditChip('Manual attached — text not extracted', 'warn') : renderAuditChip('No manual text attached', 'muted'))}
             </div>
             <div class="tiny" style="margin-top:4px;">latestManualId: ${asset.latestManualId || 'n/a'} | manualChunkCount: ${manualChunkCount} | manualTextExtractionStatus: ${asset.manualTextExtractionStatus || 'n/a'} | documentationTextAvailable: ${asset.documentationTextAvailable === true ? 'true' : 'false'}</div>
+            <details class="tiny" style="margin-top:6px;"><summary>Technical details</summary><div>Firestore asset id: ${getAssetRecordId(asset) || 'n/a'}</div><div>Stored asset id: ${asset.storedAssetId && asset.storedAssetId !== getAssetRecordId(asset) ? asset.storedAssetId : 'same as Firestore id'}</div><div>companyId: ${asset.companyId || 'n/a'}</div><div>latestManualId: ${asset.latestManualId || 'n/a'}</div><div>manualChunkCount: ${manualChunkCount}</div></details>
             ${manager ? `<div class="item" style="margin-top:8px;" data-manual-attach-section data-asset-id="${asset.id}">
               <b>Attach manual</b>
               <div class="tiny" style="margin-top:4px;">Paste a manual URL or upload a PDF/manual file. Scoot will attach it to this asset and extract searchable text for Operations AI.</div>
