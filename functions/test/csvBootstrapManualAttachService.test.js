@@ -84,7 +84,7 @@ function createDb(seed = {}) {
   };
 }
 
-test('bootstrap attach writes durable manual fields and materializes manual chunks when extraction succeeds', async () => {
+test('bootstrap attach writes durable manual fields and classifies unsupported doc extraction outcomes', async () => {
   const db = createDb({
     assets: {
       'quick-drop': { id: 'quick-drop', name: 'Quick Drop', manufacturer: 'Bay Tek Games', companyId: 'company-1' },
@@ -137,16 +137,16 @@ test('bootstrap attach writes durable manual fields and materializes manual chun
 
   assert.equal(result.attached, true);
   assert.equal(savedFiles.length, 1);
-  assert.equal(result.extractionStatus, 'completed');
-  assert.ok(result.chunkCount > 0);
+  assert.equal(result.extractionStatus, 'unsupported_file_type');
+  assert.equal(result.chunkCount, 0);
   assert.ok(result.manualId);
   const asset = db.state.assets['quick-drop'];
   assert.equal(asset.latestManualId, result.manualId);
-  assert.equal(asset.manualChunkCount, result.chunkCount);
-  assert.equal(asset.documentationTextAvailable, true);
+  assert.equal(asset.manualChunkCount, 0);
+  assert.equal(asset.documentationTextAvailable, false);
   const manual = db.state.manuals[result.manualId];
-  assert.equal(manual.extractionStatus, 'completed');
-  assert.ok(Object.keys(db.state.manualChunks[result.manualId] || {}).length > 0);
+  assert.equal(manual.extractionStatus, 'unsupported_file_type');
+  assert.equal(Object.keys(db.state.manualChunks[result.manualId] || {}).length, 0);
 });
 
 test('direct bootstrap attach remains successful even when extraction yields no text', async () => {

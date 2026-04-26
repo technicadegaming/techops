@@ -66,10 +66,42 @@ export function createAdminActions(deps) {
     };
   };
   const canRunManualRepair = () => isManager(state.permissions) && typeof repairAssetDocumentationState === 'function';
+  const MANUAL_REPAIRABLE_ACTIONS = new Set(['would_materialize', 'would_reextract']);
   const getRepairableAssetIds = (rows = []) => rows
-    .filter((row) => ['would_materialize', 'would_reextract'].includes(`${row?.action || ''}`))
+    .filter((row) => MANUAL_REPAIRABLE_ACTIONS.has(`${row?.action || ''}`))
     .map((row) => row.assetId)
     .filter(Boolean);
+  const normalizeExtractionStatus = (entry = {}, existingRow = {}) => `${entry.extractionStatus || entry.newExtractionStatus || existingRow.extractionStatus || existingRow.newExtractionStatus || ''}`.trim();
+  const classifySummaryBucket = (row = {}) => {
+    const action = `${row.action || ''}`.trim();
+    const status = normalizeExtractionStatus(row, row);
+    if (MANUAL_REPAIRABLE_ACTIONS.has(action)) return 'needExtraction';
+    if (action === 'already_has_chunks' || status === 'already_has_chunks') return 'alreadyHadText';
+    if (status === 'completed' || action === 'materialized' || action === 'reextracted') return 'repaired';
+    if (status === 'no_text_extracted') return 'noReadableText';
+    if (status === 'unsupported_file_type') return 'unsupportedFile';
+    if (status === 'storage_object_missing') return 'missingFile';
+    if (status === 'storage_download_failed') return 'downloadFailed';
+    if (status === 'pdf_parse_failed') return 'parseFailed';
+    if (status === 'skipped') return 'skipped';
+    return 'failed';
+  };
+  const buildManualRepairSummary = (rows = []) => rows.reduce((acc, row) => {
+    const bucket = classifySummaryBucket(row);
+    acc[bucket] = (acc[bucket] || 0) + 1;
+    return acc;
+  }, {
+    needExtraction: 0,
+    repaired: 0,
+    alreadyHadText: 0,
+    noReadableText: 0,
+    unsupportedFile: 0,
+    missingFile: 0,
+    downloadFailed: 0,
+    parseFailed: 0,
+    failed: 0,
+    skipped: 0,
+  });
   const sanitizeRepairErrorMessage = (error) => {
     const code = `${error?.code || ''}`.trim();
     if (code === 'permission-denied') return 'Permission denied while repairing this asset.';
@@ -92,6 +124,9 @@ export function createAdminActions(deps) {
     ...row,
     action: entry.action || row.action || '',
     reason: entry.reason || row.reason || '',
+    extractionStatus: normalizeExtractionStatus(entry, row) || (fallbackError ? 'extraction_failed' : row.extractionStatus || ''),
+    extractionReason: `${entry.extractionReason || row.extractionReason || ''}`.trim(),
+    extractionError: `${entry.extractionError || ''}`.trim() || fallbackError || `${row.extractionError || ''}`.trim(),
     manualId: entry.manualId || row.manualId || '',
     extractionEngine: entry.extractionEngine || row.extractionEngine || '',
     priorExtractionStatus: entry.priorExtractionStatus || row.priorExtractionStatus || '',
@@ -112,6 +147,9 @@ export function createAdminActions(deps) {
       currentChunkCount: Number(entry.priorChunkCount || existingRow.currentChunkCount || 0),
       action: `${entry.action || existingRow.action || ''}`.trim(),
       reason: `${entry.reason || existingRow.reason || ''}`.trim(),
+      extractionStatus: normalizeExtractionStatus(entry, existingRow),
+      extractionReason: `${entry.extractionReason || existingRow.extractionReason || ''}`.trim(),
+      extractionError: `${entry.extractionError || existingRow.extractionError || ''}`.trim(),
       manualId: `${entry.manualId || existingRow.manualId || ''}`.trim(),
       storagePath: `${existingRow.storagePath || entry.storagePath || ''}`.trim(),
       extractionEngine: `${entry.extractionEngine || existingRow.extractionEngine || ''}`.trim(),
@@ -702,7 +740,8 @@ export function createAdminActions(deps) {
           manualRepairError: '',
           manualRepairProgress: null,
           manualRepairRows: rows,
-          manualRepairSelectedAssetIds: defaultSelected
+          manualRepairSelectedAssetIds: defaultSelected,
+          manualRepairSummary: buildManualRepairSummary(rows)
         };
       } catch (error) {
         state.adminUi = {
@@ -778,7 +817,8 @@ export function createAdminActions(deps) {
           state.adminUi = {
             ...(state.adminUi || {}),
             manualRepairMessage: `Repairing ${completed} of ${total}…`,
-            manualRepairProgress: { total, completed, succeeded, failed, running: completed < total }
+            manualRepairProgress: { total, completed, succeeded, failed, running: completed < total },
+            manualRepairSummary: buildManualRepairSummary(Array.from(rowsById.values()))
           };
           render();
         }
@@ -791,9 +831,28 @@ export function createAdminActions(deps) {
         manualRepairMessage: `Manual text repair complete. Succeeded ${succeeded}, failed ${failed}.`,
         manualRepairError: failed ? 'Some assets could not be repaired. See row details.' : '',
         manualRepairProgress: { total, completed, succeeded, failed, running: false },
-        manualRepairRows: Array.from(rowsById.values())
+        manualRepairRows: Array.from(rowsById.values()),
+        manualRepairSummary: buildManualRepairSummary(Array.from(rowsById.values()))
       };
       render();
+    },
+    downloadManualRepairResultsCsv: () => {
+      const rows = state.adminUi?.manualRepairRows || [];
+      if (!rows.length || typeof downloadFile !== 'function') return;
+      const header = ['assetId', 'assetName', 'action', 'status', 'reason', 'chunkCount', 'extractionEngine', 'storagePath', 'error'];
+      const escape = (value) => `"${`${value ?? ''}`.replace(/"/g, '""')}"`;
+      const lines = rows.map((row) => [
+        row.assetId,
+        row.assetName,
+        row.action,
+        normalizeExtractionStatus(row, row),
+        row.extractionReason || row.reason,
+        Number(row.newChunkCount || row.currentChunkCount || 0),
+        row.extractionEngine || '',
+        row.storagePath || '',
+        row.extractionError || row.runMessage || ''
+      ].map(escape).join(','));
+      downloadFile('manual-repair-results.csv', `${header.join(',')}\n${lines.join('\n')}`, 'text/csv;charset=utf-8');
     }
   };
 }

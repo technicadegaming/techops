@@ -19,6 +19,56 @@ function normalizeString(value, max = 240) {
   return `${value || ''}`.trim().slice(0, max);
 }
 
+function safeDecodeURIComponent(value = '') {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return `${value || ''}`;
+  }
+}
+
+function inferFileExtension(pathOrUrl = '') {
+  const normalized = `${pathOrUrl || ''}`.trim().toLowerCase();
+  const match = normalized.match(/\.([a-z0-9]+)(?:$|\?|#)/i);
+  return match?.[1] || '';
+}
+
+function resolveManualStoragePath(value = '') {
+  const raw = `${value || ''}`.trim();
+  if (!raw) return { storagePath: '', sourceKind: 'missing', errorCode: 'storage_path_missing' };
+  if (/^companies\//i.test(raw) || /^manual-library\//i.test(raw)) {
+    return { storagePath: raw, sourceKind: 'bucket_path', errorCode: '' };
+  }
+  if (/^gs:\/\//i.test(raw)) {
+    const withoutScheme = raw.replace(/^gs:\/\//i, '');
+    const slashIndex = withoutScheme.indexOf('/');
+    const objectPath = slashIndex >= 0 ? withoutScheme.slice(slashIndex + 1) : '';
+    return objectPath
+      ? { storagePath: safeDecodeURIComponent(objectPath), sourceKind: 'gs_url', errorCode: '' }
+      : { storagePath: '', sourceKind: 'gs_url', errorCode: 'storage_path_missing' };
+  }
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const parsed = new URL(raw);
+      const isFirebaseStorageHost = parsed.hostname === 'firebasestorage.googleapis.com';
+      if (!isFirebaseStorageHost) return { storagePath: '', sourceKind: 'external_url', errorCode: 'unsupported_external_url' };
+      const objectMatch = parsed.pathname.match(/\/o\/([^/]+)/);
+      const encodedObject = objectMatch?.[1] || '';
+      if (!encodedObject) {
+        return { storagePath: '', sourceKind: 'firebase_download_url', errorCode: 'firebase_download_url_not_resolved' };
+      }
+      const decodedObject = safeDecodeURIComponent(encodedObject);
+      if (!decodedObject || decodedObject.includes('://')) {
+        return { storagePath: '', sourceKind: 'firebase_download_url', errorCode: 'firebase_download_url_not_resolved' };
+      }
+      return { storagePath: decodedObject, sourceKind: 'firebase_download_url', errorCode: '' };
+    } catch {
+      return { storagePath: '', sourceKind: 'invalid_url', errorCode: 'firebase_download_url_not_resolved' };
+    }
+  }
+  return { storagePath: safeDecodeURIComponent(raw), sourceKind: 'encoded_path', errorCode: '' };
+}
+
 function stripHtml(text = '') {
   return `${text || ''}`
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -346,6 +396,8 @@ async function materializeApprovedManualForAsset({
   const extracted = await extractTextFromBufferAsync(buffer, manualLibrary.contentType || '', sourceUrl || manualLibrary.originalDownloadUrl || sharedStoragePath);
   const extractedText = extracted.text;
   const chunks = chunkManualText(extractedText);
+  const extractionStatus = chunks.length ? 'completed' : 'no_text_extracted';
+  const extractionReason = chunks.length ? 'text_extracted' : 'no_readable_text_found';
   const now = isoNow();
   await db.collection('manuals').doc(manualId).set({
     companyId,
@@ -368,7 +420,9 @@ async function materializeApprovedManualForAsset({
     fileName: tenantStoragePath.split('/').pop() || '',
     byteSize: Buffer.byteLength(buffer),
     sha256: manualLibrary.sha256 || '',
-    extractionStatus: chunks.length ? 'completed' : 'no_text_extracted',
+    extractionStatus,
+    extractionReason,
+    extractionFailureCode: chunks.length ? '' : extractionReason,
     extractionRequestedAt: now,
     extractionStartedAt: now,
     extractionCompletedAt: now,
@@ -388,7 +442,8 @@ async function materializeApprovedManualForAsset({
     manualId,
     storagePath: tenantStoragePath,
     sharedStoragePath,
-    extractionStatus: chunks.length ? 'completed' : 'no_text_extracted',
+    extractionStatus,
+    extractionReason,
     chunkCount: chunks.length,
     extractionEngine: extracted.extractionEngine || 'none',
     contentType: manualLibrary.contentType || '',
@@ -411,7 +466,8 @@ async function materializeStoredAssetManual({
 } = {}) {
   const companyId = normalizeString(asset?.companyId, 120);
   const assetId = normalizeString(asset?.id, 120);
-  const normalizedStoragePath = normalizeString(storagePath, 500);
+  const resolvedPath = resolveManualStoragePath(storagePath || sourceUrl);
+  const normalizedStoragePath = normalizeString(resolvedPath.storagePath, 500);
   if (!db || !storage || !companyId || !assetId || !normalizedStoragePath) {
     return { ok: false, skipped: true, reason: 'missing_materialization_inputs', extractionStatus: 'skipped', chunkCount: 0 };
   }
@@ -424,7 +480,20 @@ async function materializeStoredAssetManual({
     sourceUrl: normalizedSourceUrl,
   });
   const fileRef = storage.bucket().file(normalizedStoragePath);
-  const [buffer] = await fileRef.download();
+  let buffer;
+  try {
+    [buffer] = await fileRef.download();
+  } catch (error) {
+    const code = `${error?.code || ''}`.trim().toLowerCase();
+    const message = `${error?.message || String(error)}`.slice(0, 240);
+    if (code === '404' || code === 'not-found') {
+      return { ok: false, skipped: false, reason: 'storage_object_not_found', extractionStatus: 'storage_object_missing', extractionReason: 'storage_object_not_found', extractionFailureCode: 'storage_object_not_found', extractionError: message, chunkCount: 0, extractionEngine: 'none', storagePath: normalizedStoragePath };
+    }
+    if (code === '403' || code === 'permission-denied') {
+      return { ok: false, skipped: false, reason: 'storage_permission_denied', extractionStatus: 'storage_download_failed', extractionReason: 'storage_permission_denied', extractionFailureCode: 'storage_permission_denied', extractionError: message, chunkCount: 0, extractionEngine: 'none', storagePath: normalizedStoragePath };
+    }
+    return { ok: false, skipped: false, reason: 'storage_download_failed', extractionStatus: 'storage_download_failed', extractionReason: 'storage_download_failed', extractionFailureCode: 'storage_download_failed', extractionError: message, chunkCount: 0, extractionEngine: 'none', storagePath: normalizedStoragePath };
+  }
   const [metadata] = await fileRef.getMetadata().catch(() => [{}]);
   const resolvedContentType = normalizeString(
     contentType || metadata?.contentType || (
@@ -435,9 +504,63 @@ async function materializeStoredAssetManual({
     ),
     200
   );
+  const extension = inferFileExtension(normalizedStoragePath || normalizedSourceUrl);
+  const isDoc = extension === 'doc' || extension === 'docx' || /application\/msword|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document/i.test(resolvedContentType);
+  if (isDoc) {
+    const docReason = extension === 'docx' ? 'unsupported_docx_binary' : 'unsupported_doc_binary';
+    const now = isoNow();
+    await db.collection('manuals').doc(manualId).set({
+      id: manualId,
+      manualId,
+      companyId,
+      assetId,
+      assetName: asset.name || '',
+      sourceUrl: normalizedSourceUrl || normalizedStoragePath,
+      sourceTitle: sourceTitle || asset.name || 'Attached manual',
+      sourceType: sourceType || 'csv_direct_bootstrap_manual',
+      manualType: manualType || 'asset_attached_manual',
+      storagePath: normalizedStoragePath,
+      contentType: resolvedContentType || '',
+      fileName: normalizedStoragePath.split('/').pop() || '',
+      byteSize: Number(metadata?.size || 0) || Buffer.byteLength(buffer || Buffer.alloc(0)),
+      approvedBy: userId || '',
+      approvedAt: now,
+      extractionStatus: 'unsupported_file_type',
+      extractionReason: docReason,
+      extractionFailureCode: docReason,
+      extractionRequestedAt: now,
+      extractionStartedAt: now,
+      extractionCompletedAt: now,
+      extractionFailedAt: null,
+      extractionError: 'Unsupported document format for text extraction.',
+      extractionEngine: 'none',
+      extractedTextLength: 0,
+      chunkCount: 0,
+      attachmentMode: attachmentMode || '',
+      manualProvenance: manualProvenance || '',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedBy: userId || '',
+    }, { merge: true });
+    await rewriteManualChunks({ db, manualId, chunks: [] });
+    return {
+      ok: true,
+      manualId,
+      extractionStatus: 'unsupported_file_type',
+      extractionReason: docReason,
+      extractionFailureCode: docReason,
+      extractionError: 'Unsupported document format for text extraction.',
+      chunkCount: 0,
+      extractionEngine: 'none',
+      storagePath: normalizedStoragePath,
+      contentType: resolvedContentType || '',
+      extension,
+    };
+  }
   const extracted = await extractTextFromBufferAsync(buffer, resolvedContentType, normalizedSourceUrl || normalizedStoragePath);
   const extractedText = extracted.text;
   const chunks = chunkManualText(extractedText);
+  const extractionStatus = chunks.length ? 'completed' : 'no_text_extracted';
+  const extractionReason = chunks.length ? 'text_extracted' : 'no_readable_text_found';
   const now = isoNow();
   await db.collection('manuals').doc(manualId).set({
     id: manualId,
@@ -456,7 +579,9 @@ async function materializeStoredAssetManual({
     byteSize: Number(metadata?.size || 0) || Buffer.byteLength(buffer || Buffer.alloc(0)),
     approvedBy: userId || '',
     approvedAt: now,
-    extractionStatus: chunks.length ? 'completed' : 'no_text_extracted',
+    extractionStatus,
+    extractionReason,
+    extractionFailureCode: chunks.length ? '' : extractionReason,
     extractionRequestedAt: now,
     extractionStartedAt: now,
     extractionCompletedAt: now,
@@ -476,11 +601,16 @@ async function materializeStoredAssetManual({
   return {
     ok: true,
     manualId,
-    extractionStatus: chunks.length ? 'completed' : 'no_text_extracted',
+    extractionStatus,
+    extractionReason,
+    extractionFailureCode: chunks.length ? '' : extractionReason,
+    extractionError: '',
     chunkCount: chunks.length,
     extractionEngine: extracted.extractionEngine || 'none',
     storagePath: normalizedStoragePath,
     contentType: resolvedContentType || '',
+    extension,
+    sourceKind: resolvedPath.sourceKind,
   };
 }
 
@@ -752,6 +882,7 @@ module.exports = {
   extractTextFromBufferAsync,
   materializeStoredAssetManual,
   materializeApprovedManualForAsset,
+  resolveManualStoragePath,
   resolveApprovedManualLibraryForAsset,
   stripHtml
 };
