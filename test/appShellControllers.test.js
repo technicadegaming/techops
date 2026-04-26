@@ -1767,14 +1767,14 @@ test('admin manual text extraction scan defaults selection to repairable rows an
         return {
           manualMaterialization: {
             entries: [
-              { assetId: 'asset-a', action: 'would_materialize', reason: 'dry_run_materialization_planned', priorExtractionStatus: 'unknown', priorChunkCount: 0 },
-              { assetId: 'asset-b', action: 'already_has_chunks', reason: 'already_materialized', priorExtractionStatus: 'completed', priorChunkCount: 8 },
-              { assetId: 'asset-c', action: 'no_manual_storage_path', reason: 'no_manual_storage_path', priorExtractionStatus: 'unknown', priorChunkCount: 0 }
+              { assetId: 'asset-a', action: 'would_materialize', reason: 'dry_run_materialization_planned', extractionStatus: 'skipped', extractionReason: 'storage_path_missing', priorExtractionStatus: 'unknown', priorChunkCount: 0 },
+              { assetId: 'asset-b', action: 'already_has_chunks', reason: 'already_has_chunks', extractionStatus: 'already_has_chunks', extractionReason: 'already_has_chunks', priorExtractionStatus: 'completed', priorChunkCount: 8 },
+              { assetId: 'asset-c', action: 'no_manual_storage_path', reason: 'storage_path_missing', extractionStatus: 'storage_object_missing', extractionReason: 'storage_object_not_found', priorExtractionStatus: 'unknown', priorChunkCount: 0 }
             ]
           }
         };
       }
-      return { manualMaterialization: { entries: [{ assetId: payload.assetId, action: 'materialized', newChunkCount: 6, newExtractionStatus: 'completed' }] } };
+      return { manualMaterialization: { entries: [{ assetId: payload.assetId, action: 'materialized', newChunkCount: 6, newExtractionStatus: 'completed', extractionStatus: 'completed', extractionReason: 'text_extracted' }] } };
     },
     createCompanyInvite: async () => ({}),
     revokeInvite: async () => {}
@@ -1800,8 +1800,13 @@ test('admin source includes manual text extraction repair card and user-facing s
   assert.match(source, /Manual text extraction repair/);
   assert.match(source, /data-manual-repair-check/);
   assert.match(source, /data-manual-repair-run/);
+  assert.match(source, /No readable text/);
+  assert.match(source, /Unsupported file/);
+  assert.match(source, /Missing file/);
+  assert.match(source, /Extracted/);
+  assert.match(source, /Download repair results CSV/);
   assert.match(source, /Already has text/);
-  assert.match(source, /No attached manual file/);
+  assert.match(source, /Need extraction:/);
   assert.match(source, /const canRunManualRepair = isManager\(state.permissions\)/);
 });
 

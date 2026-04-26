@@ -86,13 +86,25 @@ function shortenStoragePath(path = '') {
 }
 function getRepairOutcomeLabel(action = '', runStatus = 'idle') {
   if (runStatus === 'failed') return { label: 'Extraction failed', tone: 'bad' };
-  if (['reextracted', 'materialized'].includes(action)) return { label: 'Manual text available', tone: 'good' };
+  if (['reextracted', 'materialized'].includes(action)) return { label: 'Extracted', tone: 'good' };
   if (action === 'already_has_chunks') return { label: 'Already has text', tone: 'good' };
-  if (action === 'no_manual_storage_path') return { label: 'No attached manual file', tone: 'warn' };
-  if (action === 'extraction_failed') return { label: 'Extraction failed', tone: 'bad' };
+  if (action === 'no_manual_storage_path') return { label: 'Missing file', tone: 'warn' };
+  if (action === 'extraction_failed') return { label: 'Failed', tone: 'bad' };
   if (action === 'would_reextract') return { label: 'Needs re-extraction', tone: 'warn' };
   if (action === 'would_materialize') return { label: 'Needs extraction', tone: 'warn' };
   return { label: 'Skipped', tone: 'muted' };
+}
+function getRepairStatusChip(row = {}) {
+  const extractionStatus = `${row.extractionStatus || row.newExtractionStatus || ''}`.trim();
+  if (extractionStatus === 'completed') return { label: 'Extracted', tone: 'good' };
+  if (extractionStatus === 'already_has_chunks') return { label: 'Already has text', tone: 'good' };
+  if (extractionStatus === 'no_text_extracted') return { label: 'No readable text', tone: 'warn' };
+  if (extractionStatus === 'unsupported_file_type') return { label: 'Unsupported file', tone: 'warn' };
+  if (extractionStatus === 'storage_object_missing') return { label: 'Missing file', tone: 'warn' };
+  if (extractionStatus === 'storage_download_failed') return { label: 'Download failed', tone: 'bad' };
+  if (extractionStatus === 'pdf_parse_failed') return { label: 'Parse failed', tone: 'bad' };
+  if (extractionStatus === 'skipped') return { label: 'Skipped', tone: 'muted' };
+  return getRepairOutcomeLabel(row.action, row.runStatus);
 }
 
 
@@ -174,6 +186,7 @@ export function renderAdmin(el, state, actions) {
   const repairableRows = manualRepairRows.filter((row) => ['would_materialize', 'would_reextract'].includes(`${row?.action || ''}`));
   const manualRepairBusy = ['running', 'repairing'].includes(`${adminUi.manualRepairScanStatus || ''}`) || adminUi?.manualRepairProgress?.running === true;
   const repairProgress = adminUi.manualRepairProgress || null;
+  const repairSummary = adminUi.manualRepairSummary || {};
   const importProgressMarkup = importProgress?.totalRows
     ? `<div class="item mt"><div class="row space tiny"><b>Import progress</b><span>${progressPercent}%</span></div><progress max="${importProgress.totalRows}" value="${Math.min(importProgress.completedRows || 0, importProgress.totalRows)}" style="width:100%;"></progress><div class="tiny mt">${importProgress.bootstrapMode ? 'Mode: direct CSV bootstrap (admin import mode)' : 'Mode: standard documentation lookup queue'} · Total rows ${importProgress.totalRows} · Imported assets ${importProgress.importedAssets || 0} · Direct manuals attached ${importProgress.directManualsAttached || 0} · Direct attach failed ${importProgress.directManualAttachFailed || 0} · No direct manual URL ${importProgress.noDirectManualUrl || 0} · Completed rows ${importProgress.completedRows || 0}</div></div>`
     : '';
@@ -378,19 +391,22 @@ export function renderAdmin(el, state, actions) {
         <h4 style="margin:0 0 8px;">Manual text extraction repair</h4>
         <p class="tiny">Find assets with attached manuals that do not yet have extracted manual text. Extracted manual text helps Operations AI read error codes, troubleshooting tables, and service steps from manuals.</p>
         <p class="tiny">This does not change the attached manual. It only creates or refreshes searchable manual text chunks for AI troubleshooting.</p>
+        <p class="tiny">Assets with image-only/scanned PDFs may need OCR support. They are shown as No readable text, not repaired.</p>
         <div class="row mt">
           <button type="button" data-manual-repair-check ${manualRepairBusy ? 'disabled' : ''}>Check assets needing text extraction</button>
           <button type="button" data-manual-repair-run class="primary" ${(manualRepairBusy || !manualRepairSelected.size) ? 'disabled' : ''}>Re-extract selected</button>
           <button type="button" data-manual-repair-select-all ${(manualRepairBusy || !repairableRows.length) ? 'disabled' : ''}>Select all</button>
           <button type="button" data-manual-repair-clear ${manualRepairBusy ? 'disabled' : ''}>Clear selection</button>
           ${manualRepairRows.length ? `<button type="button" data-manual-repair-run-all ${(manualRepairBusy || !repairableRows.length) ? 'disabled' : ''}>Re-extract all needing repair</button>` : ''}
+          ${manualRepairRows.length ? `<button type="button" data-manual-repair-csv ${manualRepairBusy ? 'disabled' : ''}>Download repair results CSV</button>` : ''}
         </div>
         ${adminUi.manualRepairScanStatus === 'running' ? '<div class="inline-state info mt">Checking attached manuals…</div>' : ''}
         ${repairProgress?.running ? `<div class="inline-state info mt">Repairing ${repairProgress.completed || 0} of ${repairProgress.total || 0}…</div>` : ''}
         ${adminUi.manualRepairMessage ? `<div class="tiny mt">${adminUi.manualRepairMessage}</div>` : ''}
         ${adminUi.manualRepairError ? `<div class="inline-state error mt">${adminUi.manualRepairError}</div>` : ''}
+        ${manualRepairRows.length ? `<div class="tiny mt">Need extraction: ${repairSummary.needExtraction || 0} · Repaired: ${repairSummary.repaired || 0} · Already had text: ${repairSummary.alreadyHadText || 0} · No readable text: ${repairSummary.noReadableText || 0} · Unsupported file: ${repairSummary.unsupportedFile || 0} · Missing file: ${repairSummary.missingFile || 0} · Failed: ${repairSummary.failed || 0}</div>` : ''}
         ${manualRepairRows.length ? `<div class="list mt">${manualRepairRows.map((row) => {
-    const status = getRepairOutcomeLabel(row.action, row.runStatus);
+    const status = getRepairStatusChip(row);
     return `<div class="item">
               <div class="row space">
                 <label class="row" style="gap:8px;">
@@ -400,12 +416,15 @@ export function renderAdmin(el, state, actions) {
                 ${renderStatusChip(status.label, status.tone)}
               </div>
               <div class="tiny">Location: ${row.locationName || '—'} · Manual status: ${`${row.manualStatus || 'unknown'}`.replace(/_/g, ' ')} · Current extraction status: ${`${row.currentExtractionStatus || 'unknown'}`.replace(/_/g, ' ')} · Current chunk count: ${Number(row.currentChunkCount || 0)}</div>
-              <div class="tiny">Planned action/reason: ${(row.action || 'none').replace(/_/g, ' ')}${row.reason ? ` · ${(row.reason || '').replace(/_/g, ' ')}` : ''}</div>
-              <div class="tiny">Latest manual id: ${row.latestManualId || row.manualId || '—'} · Storage path: ${shortenStoragePath(row.storagePath)}</div>
+              <div class="tiny">Reason: ${(row.extractionReason || row.reason || 'n/a').replace(/_/g, ' ')} · Chunks: ${Number(row.newChunkCount || row.currentChunkCount || 0)} · Engine: ${row.extractionEngine || 'none'}</div>
+              <div class="tiny">Latest manual id: ${row.latestManualId || row.manualId || '—'} · Storage path: ${shortenStoragePath(row.storagePath)}${row.extractionError ? ` · ${row.extractionError}` : ''}</div>
               <details class="mt">
                 <summary>Raw details</summary>
                 <div class="tiny">action: ${row.action || ''}</div>
                 <div class="tiny">reason: ${row.reason || ''}</div>
+                <div class="tiny">extractionStatus: ${row.extractionStatus || row.newExtractionStatus || ''}</div>
+                <div class="tiny">extractionReason: ${row.extractionReason || ''}</div>
+                <div class="tiny">extractionError: ${row.extractionError || row.runMessage || ''}</div>
                 <div class="tiny">manualId: ${row.manualId || ''}</div>
                 <div class="tiny">storagePath: ${row.storagePath || ''}</div>
                 <div class="tiny">extractionEngine: ${row.extractionEngine || ''}</div>
@@ -535,6 +554,7 @@ export function renderAdmin(el, state, actions) {
     if (!window.confirm(`This will extract manual text for ${repairableIds.length} assets. Continue?`)) return;
     actions.runManualRepairForSelection({ assetIds: repairableIds });
   });
+  el.querySelector('[data-manual-repair-csv]')?.addEventListener('click', () => actions.downloadManualRepairResultsCsv());
   el.querySelectorAll('[data-manual-repair-select]').forEach((input) => input.addEventListener('change', (event) => {
     actions.toggleManualRepairSelection(input.dataset.manualRepairSelect, event.currentTarget?.checked === true);
   }));

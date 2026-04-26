@@ -12,6 +12,7 @@ const {
   extractTextFromBufferAsync,
   materializeApprovedManualForAsset,
   materializeStoredAssetManual,
+  resolveManualStoragePath,
   resolveApprovedManualLibraryForAsset,
   stripHtml,
 } = require('../src/services/manualIngestionService');
@@ -367,6 +368,142 @@ test('materializeStoredAssetManual creates deterministic manual doc and chunks f
   assert.ok(writes.chunks.length > 0);
   const chunkTexts = writes.chunks.map((entry) => entry.payload?.text || entry.text || '').join('\n');
   assert.match(chunkTexts, /E10:\s*Out of balloons/i);
+});
+
+test('resolveManualStoragePath normalizes plain path, gs url, and firebase download url while rejecting external urls', () => {
+  assert.deepEqual(resolveManualStoragePath('companies/company-a/asset-manual-bootstrap/asset1/file.pdf'), {
+    storagePath: 'companies/company-a/asset-manual-bootstrap/asset1/file.pdf',
+    sourceKind: 'bucket_path',
+    errorCode: ''
+  });
+  assert.deepEqual(resolveManualStoragePath('gs://bucket/companies/company-a/manuals/asset1/source.pdf'), {
+    storagePath: 'companies/company-a/manuals/asset1/source.pdf',
+    sourceKind: 'gs_url',
+    errorCode: ''
+  });
+  const firebaseResolved = resolveManualStoragePath('https://firebasestorage.googleapis.com/v0/b/example/o/companies%2Fcompany-a%2Fasset-manual-bootstrap%2Fasset1%2Ffile.pdf?alt=media&token=abc');
+  assert.equal(firebaseResolved.storagePath, 'companies/company-a/asset-manual-bootstrap/asset1/file.pdf');
+  assert.equal(firebaseResolved.sourceKind, 'firebase_download_url');
+  assert.equal(firebaseResolved.errorCode, '');
+  const external = resolveManualStoragePath('https://example.com/manual.pdf');
+  assert.equal(external.storagePath, '');
+  assert.equal(external.errorCode, 'unsupported_external_url');
+});
+
+test('materializeStoredAssetManual classifies missing storage object without generic extraction failure', async () => {
+  const storagePath = 'companies/company-a/asset-manual-bootstrap/asset1/missing.pdf';
+  const result = await materializeStoredAssetManual({
+    db: { collection() { throw new Error('should not write when download fails'); } },
+    storage: {
+      bucket() {
+        return {
+          file(path) {
+            return {
+              async download() {
+                assert.equal(path, storagePath);
+                const error = new Error('No such object');
+                error.code = 404;
+                throw error;
+              }
+            };
+          }
+        };
+      }
+    },
+    asset: { id: 'asset1', companyId: 'company-a', name: 'Asset One' },
+    storagePath,
+    sourceUrl: storagePath,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.extractionStatus, 'storage_object_missing');
+  assert.equal(result.extractionReason, 'storage_object_not_found');
+});
+
+test('materializeStoredAssetManual classifies no readable text extraction', async () => {
+  const writes = { manuals: {} };
+  const storagePath = 'companies/company-a/asset-manual-bootstrap/asset1/manual.pdf';
+  const db = {
+    collection(name) {
+      return {
+        doc(id) {
+          return {
+            id,
+            set: async (payload, options = {}) => {
+              if (name === 'manuals') writes.manuals[id] = options.merge ? { ...(writes.manuals[id] || {}), ...payload } : payload;
+            },
+            collection() { return { doc() { return { set: async () => {} }; } }; }
+          };
+        }
+      };
+    },
+    batch() { return { set() {}, async commit() {} }; },
+    recursiveDelete: async () => {}
+  };
+  const storage = {
+    bucket() {
+      return {
+        file() {
+          return {
+            async download() { return [Buffer.from('%PDF-1.4\n% empty-ish')]; },
+            async getMetadata() { return [{ contentType: 'application/pdf', size: 20 }]; }
+          };
+        }
+      };
+    }
+  };
+  const result = await materializeStoredAssetManual({
+    db,
+    storage,
+    asset: { id: 'asset1', companyId: 'company-a', name: 'Asset One' },
+    storagePath,
+    sourceUrl: storagePath
+  });
+  assert.equal(result.extractionStatus, 'no_text_extracted');
+  assert.equal(result.extractionReason, 'no_readable_text_found');
+  assert.equal(result.chunkCount, 0);
+});
+
+test('materializeStoredAssetManual classifies unsupported docx file type', async () => {
+  const writes = { manuals: {} };
+  const db = {
+    collection(name) {
+      return {
+        doc(id) {
+          return {
+            id,
+            set: async (payload, options = {}) => {
+              if (name === 'manuals') writes.manuals[id] = options.merge ? { ...(writes.manuals[id] || {}), ...payload } : payload;
+            },
+            collection() { return { doc() { return { set: async () => {} }; } }; }
+          };
+        }
+      };
+    },
+    batch() { return { set() {}, async commit() {} }; },
+    recursiveDelete: async () => {}
+  };
+  const storage = {
+    bucket() {
+      return {
+        file() {
+          return {
+            async download() { return [Buffer.from('docx-binary')]; },
+            async getMetadata() { return [{ contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 11 }]; }
+          };
+        }
+      };
+    }
+  };
+  const result = await materializeStoredAssetManual({
+    db,
+    storage,
+    asset: { id: 'asset1', companyId: 'company-a', name: 'Asset One' },
+    storagePath: 'companies/company-a/asset-manual-bootstrap/asset1/manual.docx',
+    sourceUrl: 'companies/company-a/asset-manual-bootstrap/asset1/manual.docx'
+  });
+  assert.equal(result.extractionStatus, 'unsupported_file_type');
+  assert.equal(result.extractionReason, 'unsupported_docx_binary');
+  assert.equal(result.chunkCount, 0);
 });
 
 test('resolveApprovedManualLibraryForAsset matches approved records by exact shared storage path or download URL', async () => {

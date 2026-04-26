@@ -31,6 +31,7 @@ const {
   backfillApprovedAssetManualLinkage,
   createAssetManualId,
   materializeStoredAssetManual,
+  resolveManualStoragePath,
 } = require('./services/manualIngestionService');
 const { researchAssetTitles } = require('./services/manualResearchService');
 const {
@@ -633,8 +634,21 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
   async function attemptStoredManualMaterialization(asset = {}) {
     const companyId = `${asset.companyId || ''}`.trim();
     const assetId = `${asset.id || ''}`.trim();
-    const manualStoragePath = `${asset.manualStoragePath || ''}`.trim()
-      || ((`${asset.manualUrl || ''}`.trim().startsWith('companies/')) ? `${asset.manualUrl || ''}`.trim() : '');
+    const storageCandidates = [
+      `${asset.manualStoragePath || ''}`.trim(),
+      `${asset.manualUrl || ''}`.trim(),
+      ...((Array.isArray(asset.manualLinks) ? asset.manualLinks : []).map((value) => `${value || ''}`.trim()))
+    ].filter(Boolean);
+    let resolvedStorage = { storagePath: '', sourceKind: 'missing', errorCode: 'storage_path_missing' };
+    for (const candidate of storageCandidates) {
+      const candidateResolved = resolveManualStoragePath(candidate);
+      if (candidateResolved.storagePath) {
+        resolvedStorage = candidateResolved;
+        break;
+      }
+      if (!resolvedStorage.storagePath && candidateResolved.errorCode) resolvedStorage = candidateResolved;
+    }
+    const manualStoragePath = `${resolvedStorage.storagePath || ''}`.trim();
     report.manualMaterialization.scanned += 1;
     if (!companyId || !assetId) {
       report.manualMaterialization.skipped += 1;
@@ -646,6 +660,10 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
         priorChunkCount: Number(asset.manualChunkCount || 0) || 0,
         newChunkCount: 0,
         extractionEngine: 'none',
+        extractionStatus: 'skipped',
+        extractionReason: 'storage_path_missing',
+        extractionError: '',
+        storagePath: manualStoragePath,
         reason: 'missing_company_or_asset_id',
       });
       return;
@@ -660,7 +678,13 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
         priorChunkCount: Number(asset.manualChunkCount || 0) || 0,
         newChunkCount: 0,
         extractionEngine: 'none',
-        reason: dryRun ? 'no_manual_storage_path' : 'no_manual_storage_path',
+        extractionStatus: 'skipped',
+        extractionReason: resolvedStorage.errorCode || 'storage_path_missing',
+        extractionError: '',
+        storagePath: '',
+        contentType: `${asset.manualContentType || ''}`.trim(),
+        extension: '',
+        reason: resolvedStorage.errorCode || 'storage_path_missing',
         action: 'no_manual_storage_path',
       });
       return;
@@ -677,6 +701,10 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
         priorChunkCount: Number(asset.manualChunkCount || 0) || 0,
         newChunkCount: 0,
         extractionEngine: 'none',
+        extractionStatus: 'skipped',
+        extractionReason: 'storage_path_missing',
+        extractionError: '',
+        storagePath: manualStoragePath,
         reason: 'manual_status_not_repairable',
       });
       return;
@@ -702,7 +730,13 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
         priorChunkCount,
         newChunkCount: chunkCount,
         extractionEngine: `${manualDoc.extractionEngine || ''}`.trim() || 'none',
-        reason: 'already_materialized',
+        extractionStatus: 'already_has_chunks',
+        extractionReason: 'already_has_chunks',
+        extractionError: '',
+        storagePath: manualStoragePath,
+        contentType: `${manualDoc.contentType || asset.manualContentType || ''}`.trim(),
+        extension: `${manualDoc.fileName || ''}`.trim().split('.').pop() || '',
+        reason: 'already_has_chunks',
         action: 'already_has_chunks',
       });
       return;
@@ -717,6 +751,12 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
         priorChunkCount,
         newChunkCount: 0,
         extractionEngine: `${manualDoc?.extractionEngine || ''}`.trim() || 'none',
+        extractionStatus: manualDoc?.extractionStatus || 'skipped',
+        extractionReason: manualDoc?.extractionReason || 'storage_path_missing',
+        extractionError: '',
+        storagePath: manualStoragePath,
+        contentType: `${manualDoc?.contentType || asset.manualContentType || ''}`.trim(),
+        extension: `${manualDoc?.fileName || ''}`.trim().split('.').pop() || '',
         reason: 'dry_run_materialization_planned',
         action: manualDoc ? 'would_reextract' : 'would_materialize',
       });
@@ -737,9 +777,40 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
         attachmentMode: `${asset.attachmentMode || ''}`.trim(),
         manualProvenance: `${asset.manualProvenance || ''}`.trim(),
       });
+      if (result?.ok === false) {
+        const failureStatus = `${result.extractionStatus || 'extraction_failed'}`.trim() || 'extraction_failed';
+        const failureReason = `${result.extractionReason || result.reason || 'extraction_failed'}`.trim() || 'extraction_failed';
+        await db.collection('assets').doc(assetId).set({
+          manualTextExtractionStatus: failureStatus,
+          manualChunkCount: 0,
+          latestManualId: result.manualId || manualId,
+          documentationTextAvailable: false,
+          updatedAt: serverTimestamp(),
+          updatedBy: request.auth.uid,
+        }, { merge: true });
+        report.manualMaterialization.failed += 1;
+        report.manualMaterialization.entries.push({
+          assetId,
+          manualId: result.manualId || manualId,
+          priorExtractionStatus,
+          newExtractionStatus: failureStatus,
+          priorChunkCount,
+          newChunkCount: 0,
+          extractionEngine: result.extractionEngine || 'none',
+          extractionStatus: failureStatus,
+          extractionReason: failureReason,
+          extractionError: `${result.extractionError || ''}`.trim(),
+          storagePath: result.storagePath || manualStoragePath,
+          contentType: `${result.contentType || asset.manualContentType || ''}`.trim(),
+          extension: `${result.extension || (manualStoragePath.split('.').pop() || '').toLowerCase()}`.trim(),
+          reason: failureReason,
+          action: 'extraction_failed',
+        });
+        return;
+      }
       const nextChunkCount = Number(result.chunkCount || 0);
       await db.collection('assets').doc(assetId).set({
-        manualTextExtractionStatus: result.extractionStatus || 'failed',
+        manualTextExtractionStatus: result.extractionStatus || 'extraction_failed',
         manualChunkCount: nextChunkCount,
         latestManualId: result.manualId || manualId,
         documentationTextAvailable: nextChunkCount > 0,
@@ -748,6 +819,8 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
       }, { merge: true });
       report.manualMaterialization.materialized += 1;
       if (result.extractionStatus === 'no_text_extracted') report.manualMaterialization.noTextExtracted += 1;
+      const contentType = `${result.contentType || asset.manualContentType || ''}`.trim();
+      const extension = `${result.extension || ''}`.trim() || (manualStoragePath.split('.').pop() || '').toLowerCase();
       report.manualMaterialization.entries.push({
         assetId,
         manualId: result.manualId || manualId,
@@ -756,20 +829,33 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
         priorChunkCount,
         newChunkCount: nextChunkCount,
         extractionEngine: result.extractionEngine || 'none',
-        reason: nextChunkCount > 0 ? 'materialized_from_storage' : 'materialized_no_text',
-        action: nextChunkCount > 0 ? (manualDoc ? 'reextracted' : 'materialized') : 'extraction_failed',
+        extractionStatus: result.extractionStatus || 'completed',
+        extractionReason: result.extractionReason || (nextChunkCount > 0 ? 'text_extracted' : 'no_readable_text_found'),
+        extractionError: result.extractionError || '',
+        storagePath: result.storagePath || manualStoragePath,
+        contentType,
+        extension,
+        reason: result.extractionReason || (nextChunkCount > 0 ? 'text_extracted' : 'no_readable_text_found'),
+        action: nextChunkCount > 0 ? (manualDoc ? 'reextracted' : 'materialized') : 'materialized_without_text',
       });
     } catch (error) {
       report.manualMaterialization.failed += 1;
+      const message = `${error?.message || String(error)}`.slice(0, 240);
       report.manualMaterialization.entries.push({
         assetId,
         manualId,
         priorExtractionStatus,
-        newExtractionStatus: 'failed',
+        newExtractionStatus: 'extraction_failed',
         priorChunkCount,
         newChunkCount: 0,
         extractionEngine: `${manualDoc?.extractionEngine || ''}`.trim() || 'none',
-        reason: `${error?.message || String(error)}`.slice(0, 240),
+        extractionStatus: 'extraction_failed',
+        extractionReason: 'pdf_parse_error',
+        extractionError: message,
+        storagePath: manualStoragePath,
+        contentType: `${manualDoc?.contentType || asset.manualContentType || ''}`.trim(),
+        extension: (manualStoragePath.split('.').pop() || '').toLowerCase(),
+        reason: 'pdf_parse_error',
         action: 'extraction_failed',
       });
     }
