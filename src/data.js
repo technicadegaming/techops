@@ -12,6 +12,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore.js';
 import { db, serverTimestamp } from './firebase.js';
 import { appConfig } from './config.js';
+import { toCanonicalAssetRecord } from './features/assetIdentity.js';
 import { logAudit } from './audit.js';
 import {
   buildCompanyScopedPayload,
@@ -23,6 +24,22 @@ import {
 
 const C = appConfig.collections;
 export { setActiveCompanyContext };
+
+
+function mapSnapshotEntity(name, snap) {
+  const payload = { ...(snap.data() || {}) };
+  const record = { id: snap.id, ...payload };
+  if (name !== 'assets') return record;
+  const storedAssetId = `${payload.id || ''}`.trim();
+  return toCanonicalAssetRecord({
+    ...record,
+    firestoreDocId: snap.id,
+    docId: snap.id,
+    _docId: snap.id,
+    assetRecordId: snap.id,
+    storedAssetId,
+  });
+}
 
 const withMeta = (payload, user, isCreate) => ({
   ...payload,
@@ -45,7 +62,7 @@ export async function listEntities(name) {
 
   const snap = await getDocs(baseQuery);
   return snap.docs
-    .map((d) => ({ id: d.id, ...d.data() }))
+    .map((d) => mapSnapshotEntity(name, d))
     .filter((entity) => includeRecordForActiveCompany(name, entity));
 }
 
@@ -64,7 +81,7 @@ export async function listAudit(filters = {}) {
   const snap = await getDocs(q);
 
   return snap.docs
-    .map((d) => ({ id: d.id, ...d.data() }))
+    .map((d) => mapSnapshotEntity('auditLogs', d))
     .filter((entity) => includeRecordForActiveCompany('auditLogs', entity))
     .filter((i) => !filters.entityType || i.entityType === filters.entityType)
     .filter((i) => !filters.userUid || i.userUid === filters.userUid);
@@ -75,7 +92,7 @@ export async function getEntity(name, id, options = {}) {
   const snap = await getDoc(ref);
   if (!snap.exists()) return null;
 
-  const entity = { id: snap.id, ...snap.data() };
+  const entity = mapSnapshotEntity(name, snap);
   if (options.bypassCompanyFilter) return entity;
   return includeRecordForActiveCompany(name, entity) ? entity : null;
 }

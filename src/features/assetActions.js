@@ -11,6 +11,7 @@ import {
   resolveAssetDraftContext
 } from './assetDraftContext.js';
 import { normalizeManufacturerDisplayName } from './manufacturerNormalization.js';
+import { findAssetByRecordId, getAssetRecordId } from './assetIdentity.js';
 
 export function createAssetActions(deps) {
   const {
@@ -98,7 +99,8 @@ export function createAssetActions(deps) {
     const byId = new Map();
     const byStableKey = new Map();
     (Array.isArray(assets) ? assets : []).forEach((asset) => {
-      if (asset?.id) byId.set(asset.id, asset);
+      const recordId = getAssetRecordId(asset);
+      if (recordId) byId.set(recordId, asset);
       const key = `${asset?.name || ''}|${asset?.manufacturer || ''}`.trim().toLowerCase();
       if (key && !byStableKey.has(key)) byStableKey.set(key, asset);
     });
@@ -121,7 +123,7 @@ export function createAssetActions(deps) {
       statusKey = 'docs_found';
     }
     return {
-      linkedAssetId: asset?.id || '',
+      linkedAssetId: getAssetRecordId(asset) || '',
       enrichmentStatus: asset?.enrichmentStatus || 'idle',
       intakeStatusBadge: IN_PROGRESS_ENRICHMENT_STATUSES.has(statusKey) ? (statusKey === 'queued' ? 'queued' : 'searching') : statusKey,
       intakeStatusLabel: LOWER_STATUS_LABELS[statusKey] || statusKey.replace(/_/g, ' '),
@@ -134,7 +136,7 @@ export function createAssetActions(deps) {
     return (Array.isArray(rows) ? rows : []).map((row) => {
       const linked = findLinkedAssetForRow(row, maps);
       if (!linked) return row;
-      return { ...row, assetId: linked.id, ...mapLowerRowStatus(linked) };
+      return { ...row, assetId: getAssetRecordId(linked), ...mapLowerRowStatus(linked) };
     });
   };
 
@@ -170,11 +172,12 @@ export function createAssetActions(deps) {
     if (!assetId) {
       return { ok: false, assetId: '', asset: null, message: MANUAL_ATTACH_ASSET_RESOLUTION_ERROR };
     }
-    const asset = (Array.isArray(state.assets) ? state.assets : []).find((entry) => `${entry?.id || ''}`.trim() === assetId) || null;
-    if (!asset?.id) {
+    const asset = findAssetByRecordId(state.assets, assetId);
+    const canonicalAssetId = getAssetRecordId(asset || {});
+    if (!canonicalAssetId) {
       return { ok: false, assetId, asset: null, message: MANUAL_ATTACH_ASSET_RESOLUTION_ERROR };
     }
-    return { ok: true, assetId: `${asset.id}`.trim(), asset, message: '' };
+    return { ok: true, assetId: canonicalAssetId, asset, message: '' };
   };
 
   const approveManualSources = (assetId, urls = [], current = {}, metadataByUrl = {}) => approveSuggestedManualSources({
@@ -796,18 +799,20 @@ export function createAssetActions(deps) {
     repairAssetManualText: async (id, options = {}) => {
       if (!isManager(state.permissions) || typeof repairAssetDocumentationState !== 'function') return;
       const dryRun = options?.dryRun === true;
-      setAssetActionFeedback(id, dryRun ? 'Checking manual text extraction state…' : 'Re-extracting manual text…', 'info');
+      const current = findAssetByRecordId(state.assets, id) || {};
+      const canonicalId = getAssetRecordId(current) || `${id || ''}`.trim();
+      setAssetActionFeedback(canonicalId, dryRun ? 'Checking manual text extraction state…' : 'Re-extracting manual text…', 'info');
       render();
       try {
-        const result = await repairAssetDocumentationState({ assetId: id, dryRun });
+        const result = await repairAssetDocumentationState({ assetId: canonicalId, assetDocId: canonicalId, dryRun });
         const message = buildManualRepairFeedback(result, { dryRun });
-        setAssetActionFeedback(id, message, message.startsWith('Extraction failed') ? 'error' : 'success');
+        setAssetActionFeedback(canonicalId, message, message.startsWith('Extraction failed') ? 'error' : 'success');
         await refreshData();
         render();
         return result;
       } catch (error) {
         const reason = `${error?.message || error || 'unknown error'}`.trim().slice(0, 120);
-        setAssetActionFeedback(id, `Extraction failed: ${reason}.`, 'error');
+        setAssetActionFeedback(canonicalId, `Extraction failed: ${reason}.`, 'error');
         await refreshData();
         render();
         return null;
@@ -1138,6 +1143,8 @@ export function createAssetActions(deps) {
       try {
         const result = await attachAssetManualFromUrl({
           assetId: resolution.assetId,
+          assetDocId: resolution.assetId,
+          assetName: `${resolution.asset?.name || ''}`.trim(),
           manualUrl,
           sourceTitle: `${payload.sourceTitle || ''}`.trim(),
           sourcePageUrl: `${payload.sourcePageUrl || ''}`.trim(),
@@ -1195,6 +1202,8 @@ export function createAssetActions(deps) {
         render();
         const result = await attachAssetManualFromStoragePath({
           assetId: resolution.assetId,
+          assetDocId: resolution.assetId,
+          assetName: `${asset?.name || ''}`.trim(),
           storagePath,
           sourceTitle: `${asset.name || ''}`.trim(),
           originalFileName: `${file.name || ''}`.trim(),

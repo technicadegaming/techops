@@ -1084,6 +1084,10 @@ function loadAssetsSource() {
   return require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'features', 'assets.js'), 'utf8');
 }
 
+function loadDataSource() {
+  return require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'data.js'), 'utf8');
+}
+
 test('authoritative onboarding state resolves stale bootstrap records as complete and repair is idempotent', async () => {
   const { buildOnboardingRepairPlan, getAuthoritativeOnboardingState } = await loadOnboardingStatusHelpers();
   const state = {
@@ -1468,7 +1472,7 @@ test('asset actions manual text repair calls callable and refreshes asset data',
   const state = {
     assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
     assetUi: {},
-    assets: [{ id: 'asset-a', name: 'Asset A', manualStoragePath: 'companies/company-a/manuals/asset-a/source.pdf', manualStatus: 'manual_attached' }],
+    assets: [{ id: 'legacy-asset-a', firestoreDocId: 'asset-a', storedAssetId: 'legacy-asset-a', name: 'Asset A', manualStoragePath: 'companies/company-a/manuals/asset-a/source.pdf', manualStatus: 'manual_attached' }],
     companyLocations: [],
     permissions: { companyRole: 'manager', role: 'manager' },
     activeMembership: { companyId: 'company-a' },
@@ -1512,7 +1516,7 @@ test('asset actions manual text repair calls callable and refreshes asset data',
 
   await actions.repairAssetManualText('asset-a', { dryRun: false });
 
-  assert.deepEqual(repairCalls, [{ assetId: 'asset-a', dryRun: false }]);
+  assert.deepEqual(repairCalls, [{ assetId: 'asset-a', assetDocId: 'asset-a', dryRun: false }]);
   assert.equal(refreshCalls, 1);
   assert.match(state.assetUi.lastActionByAsset['asset-a'].message, /Manual text extracted: 12 chunks created/);
 });
@@ -1525,7 +1529,7 @@ test('asset actions attach manual from URL uses exact asset.id and callable payl
   const state = {
     assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
     assetUi: {},
-    assets: [{ id: 'asset-doc-123', assetId: 'legacy-name', name: 'SpongeBob', companyId: 'company-a' }],
+    assets: [{ id: 'legacy-name', firestoreDocId: 'asset-doc-123', storedAssetId: 'legacy-name', name: 'SpongeBob', companyId: 'company-a' }],
     companyLocations: [],
     permissions: { companyRole: 'manager', role: 'manager' },
     activeMembership: { companyId: 'company-a' },
@@ -1568,6 +1572,7 @@ test('asset actions attach manual from URL uses exact asset.id and callable payl
 
   assert.equal(attachCalls.length, 1);
   assert.equal(attachCalls[0].assetId, 'asset-doc-123');
+  assert.equal(attachCalls[0].assetDocId, 'asset-doc-123');
 });
 
 test('asset actions upload manual file uses exact asset.id in storage path', async () => {
@@ -1577,7 +1582,7 @@ test('asset actions upload manual file uses exact asset.id in storage path', asy
   const state = {
     assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
     assetUi: {},
-    assets: [{ id: 'asset-doc-456', assetId: 'legacy-id', name: 'SpongeBob', companyId: 'company-a' }],
+    assets: [{ id: 'legacy-id', firestoreDocId: 'asset-doc-456', storedAssetId: 'legacy-id', name: 'SpongeBob', companyId: 'company-a' }],
     companyLocations: [],
     permissions: { companyRole: 'manager', role: 'manager' },
     activeMembership: { companyId: 'company-a' },
@@ -1625,6 +1630,7 @@ test('asset actions upload manual file uses exact asset.id in storage path', asy
   assert.equal(uploadCalls.length, 1);
   assert.match(uploadCalls[0], /^companies\/company-a\/manuals\/asset-doc-456\/manual-uploads\//);
   assert.equal(attachCalls[0].assetId, 'asset-doc-456');
+  assert.equal(attachCalls[0].assetDocId, 'asset-doc-456');
 });
 
 test('asset actions block manual attach when asset id cannot be resolved', async () => {
@@ -2094,4 +2100,11 @@ test('assets source includes manual attach controls and upload actions', () => {
   assert.match(source, /data-attach-manual-url/);
   assert.match(source, /data-upload-manual-file/);
   assert.match(source, /Upload and extract manual/);
+});
+
+test('data source preserves canonical firestore asset id metadata', () => {
+  const source = loadDataSource();
+  assert.match(source, /toCanonicalAssetRecord/);
+  assert.match(source, /firestoreDocId: snap\.id/);
+  assert.match(source, /storedAssetId/);
 });

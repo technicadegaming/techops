@@ -1,12 +1,16 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { resolveManualAttachAssetId, summarizeManualAttachUrl } = require('../src/lib/manualAttachCallable');
+const { getManualAttachAssetIds, resolveManualAttachAssetId, summarizeManualAttachUrl } = require('../src/lib/manualAttachCallable');
 
-test('resolveManualAttachAssetId prefers assetId and falls back to assetDocId alias', () => {
-  assert.equal(resolveManualAttachAssetId({ assetId: 'asset-primary', assetDocId: 'asset-alias' }), 'asset-primary');
+test('manual attach ids preserve assetDocId and assetId separately', () => {
+  assert.deepEqual(getManualAttachAssetIds({ assetId: 'asset-primary', assetDocId: 'asset-doc' }), { assetId: 'asset-primary', assetDocId: 'asset-doc' });
+});
+
+test('resolveManualAttachAssetId prefers assetDocId and falls back to assetId alias', () => {
+  assert.equal(resolveManualAttachAssetId({ assetId: 'asset-primary', assetDocId: 'asset-doc' }), 'asset-doc');
   assert.equal(resolveManualAttachAssetId({ assetDocId: 'asset-alias' }), 'asset-alias');
-  assert.equal(resolveManualAttachAssetId({ assetId: '   ', assetDocId: 'asset-alias' }), 'asset-alias');
+  assert.equal(resolveManualAttachAssetId({ assetId: 'asset-primary' }), 'asset-primary');
 });
 
 test('summarizeManualAttachUrl avoids logging full URL tokens', () => {
