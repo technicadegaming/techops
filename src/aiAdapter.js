@@ -49,3 +49,11 @@ export function researchAssetTitles(payload) {
 export function approveAssetManual(payload) {
   return call('approveAssetManual', payload);
 }
+
+export function backfillApprovedAssetManualLinkage(payload) {
+  return call('backfillApprovedAssetManualLinkage', payload);
+}
+
+export function repairAssetDocumentationState(payload) {
+  return call('repairAssetDocumentationState', payload);
+}

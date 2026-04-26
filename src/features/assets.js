@@ -921,6 +921,10 @@ export function renderAssets(el, state, actions) {
         const manualState = getAuthoritativeManualState(asset);
         const docsStatus = docs.length || manualState.hasAttachedManual ? 'linked' : 'missing';
         const manualStatus = deriveAssetManualStatus(asset);
+        const manualChunkCount = Number(asset.manualChunkCount || 0) || 0;
+        const hasExtractedManualText = manualChunkCount > 0;
+        const hasAttachedManualStorage = !!`${asset.manualStoragePath || ''}`.trim()
+          || manualState.manualLinks.some((url) => isStoredManualUrl(url));
         const auditEntries = (state.auditLogs || []).filter((entry) => entry.entityType === 'assets' && entry.entityId === asset.id).slice(0, 6);
         const location = getAssetLocationRecord(state, asset);
         return `<details class="item" id="asset-${asset.id}" ${state.route?.assetId === asset.id ? 'open' : ''}>
@@ -951,6 +955,17 @@ export function renderAssets(el, state, actions) {
 
           <details><summary>Documentation / AI status (${docsStatus})</summary>
             <div class="tiny" style="margin:8px 0;"><b>Manual status:</b> ${deriveAssetManualStatus(asset).replace('_', ' ')}</div>
+            <div class="tiny" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              <b>Manual text:</b>
+              ${hasExtractedManualText
+    ? renderAuditChip('Manual text available', 'good')
+    : (hasAttachedManualStorage ? renderAuditChip('Manual attached — text not extracted', 'warn') : renderAuditChip('No manual text attached', 'muted'))}
+            </div>
+            <div class="tiny" style="margin-top:4px;">latestManualId: ${asset.latestManualId || 'n/a'} | manualChunkCount: ${manualChunkCount} | manualTextExtractionStatus: ${asset.manualTextExtractionStatus || 'n/a'} | documentationTextAvailable: ${asset.documentationTextAvailable === true ? 'true' : 'false'}</div>
+            ${manager ? `<div class="action-row" style="margin-top:6px;">
+              <button type="button" data-check-manual-text="${asset.id}">Check manual text</button>
+              <button type="button" data-reextract-manual-text="${asset.id}" class="primary">Re-extract manual text</button>
+            </div>` : ''}
             <div class="tiny" style="margin:4px 0;">Attached manual:</div>
             <div style="margin:4px 0 8px;">${manualState.manualLinks.length ? manualState.manualLinks.map((url) => renderLinkChip(url, {
           linkUrl: buildStoredManualDownloadUrl(url),
@@ -1132,6 +1147,8 @@ export function renderAssets(el, state, actions) {
   el.querySelectorAll('[data-docs]').forEach((button) => button.addEventListener('click', () => actions.markDocsReviewed(button.dataset.docs)));
   el.querySelectorAll('[data-del]').forEach((button) => button.addEventListener('click', () => actions.deleteAsset(button.dataset.del)));
   el.querySelectorAll('[data-enrich]').forEach((button) => button.addEventListener('click', () => actions.runAssetEnrichment(button.dataset.enrich)));
+  el.querySelectorAll('[data-check-manual-text]').forEach((button) => button.addEventListener('click', () => actions.repairAssetManualText(button.dataset.checkManualText, { dryRun: true })));
+  el.querySelectorAll('[data-reextract-manual-text]').forEach((button) => button.addEventListener('click', () => actions.repairAssetManualText(button.dataset.reextractManualText, { dryRun: false })));
   el.querySelectorAll('[data-enrichment-followup-form]').forEach((followupForm) => followupForm.addEventListener('submit', (event) => {
     event.preventDefault();
     const fd = new FormData(followupForm);
