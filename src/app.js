@@ -307,6 +307,7 @@ async function render() {
     downloadJson,
     normalizeAssetId,
     enrichAssetDocumentation,
+    repairAssetDocumentationState,
     bootstrapAttachAssetManualFromCsvHint,
     createCompanyInvite,
     revokeInvite
