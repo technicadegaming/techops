@@ -717,6 +717,8 @@ export function renderAssets(el, state, actions) {
   const bulkDocRerunProgress = state.assetUi?.bulkDocRerunProgress || null;
   const bulkDocRerunCurrentLabel = `${bulkDocRerunProgress?.currentAssetName || bulkDocRerunProgress?.currentAssetId || ''}`.trim();
   const manualReviewQueue = buildManualReviewQueue(scope.scopedAssets || [], getEffectiveEnrichmentStatus);
+  const activeAssetsTab = state.assetUi?.activeTab || 'asset_records';
+  state.assetUi.activeTab = activeAssetsTab;
 
   el.innerHTML = `
     <div class="page-header">
@@ -785,7 +787,15 @@ export function renderAssets(el, state, actions) {
       ${bulkDocRerunProgress ? `<div class="tiny mt">Documentation lookup progress · targeted ${bulkDocRerunProgress.totalTargeted} · completed ${bulkDocRerunProgress.completed} · succeeded ${bulkDocRerunProgress.succeeded} · failed ${bulkDocRerunProgress.failed} · skipped ${bulkDocRerunProgress.skipped}</div>` : ''}
       ${state.assetUi?.bulkDocRerunSummary ? `<div class="tiny mt">${state.assetUi.bulkDocRerunSummary}</div>` : ''}
     </div>
-    ${assetFilter === 'missing_docs' ? '<div class="inline-state warn">Showing assets missing docs only.</div>' : ''}
+    <div class="item" style="margin-bottom:12px;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button type="button" data-assets-tab="asset_records" ${activeAssetsTab === 'asset_records' ? 'class="primary"' : ''}>Asset records</button>
+        <button type="button" data-assets-tab="documentation_review" ${activeAssetsTab === 'documentation_review' ? 'class="primary"' : ''}>Documentation review</button>
+        <button type="button" data-assets-tab="add_import" ${activeAssetsTab === 'add_import' ? 'class="primary"' : ''}>Add / import</button>
+      </div>
+    </div>
+    ${activeAssetsTab === 'asset_records' ? `${assetFilter === 'missing_docs' ? '<div class="inline-state warn">Showing assets missing docs only.</div>' : ''}` : ''}
+    ${activeAssetsTab === 'documentation_review' ? `
     <details class="item" style="margin-bottom:12px;">
       <summary><b>Documentation review</b> <span class="tiny">(${manualReviewQueue.length} queue items)</span></summary>
       <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">
@@ -842,7 +852,9 @@ export function renderAssets(el, state, actions) {
         </details>`;
       }).join('')}</div>` : '<div class="tiny" style="margin-top:8px;">No unresolved manual review queue items in this scope.</div>'}
     </details>
-    <details class="item" style="margin-bottom:12px;">
+    ` : ''}
+    ${activeAssetsTab === 'add_import' ? `
+    <details class="item" style="margin-bottom:12px;" open>
       <summary><b>Add / import</b></summary>
     <form id="assetForm" class="grid grid-2" style="margin-top:10px; margin-bottom:12px; border:1px solid #e5e7eb; border-radius:10px; padding:10px;">
       <div class="tiny" style="grid-column:1/-1; font-weight:700;">Quick add asset</div>
@@ -913,8 +925,9 @@ export function renderAssets(el, state, actions) {
     ${(state.assetUi?.bulkIntakeRows || []).length ? `<div class="item" style="margin-bottom:10px; overflow:auto;"><b>Research review grid</b><div class="tiny">Green = manual ready. Yellow = follow-up or family review. Red = unresolved. Only manual-ready rows should become docs found.</div><table class="tiny" style="width:100%; border-collapse:collapse; margin-top:8px;"><thead><tr><th>Original</th><th>Normalized</th><th>Manufacturer</th><th>Match type</th><th>Manual ready</th><th>Review required</th><th>Manual URL</th><th>Manual source URL</th><th>Support URL</th><th>Contact info</th><th>Confidence</th><th>Notes</th><th>Row status/action</th></tr></thead><tbody>${(state.assetUi.bulkIntakeRows || []).map((row, index) => { const tone = row.rowStatus === 'good_match' ? '#ecfdf5' : (row.rowStatus === 'needs_review' ? '#fffbeb' : '#fef2f2'); return `<tr data-bulk-row="${index}" style="background:${tone};"><td><input name="name" value="${row.name || ''}" /></td><td><input name="normalizedName" value="${row.normalizedTitle || row.normalizedName || ''}" /></td><td><input name="manufacturer" value="${row.manufacturer || row.manufacturerSuggestion || ''}" /></td><td><input name="matchType" value="${row.matchType || ''}" /></td><td><input name="manualReady" value="${typeof row.manualReady === 'boolean' ? String(row.manualReady) : (row.manualReady || '')}" /></td><td><input name="reviewRequired" value="${typeof row.reviewRequired === 'boolean' ? String(row.reviewRequired) : (row.reviewRequired || '')}" /></td><td><input name="manualUrl" value="${row.manualUrl || ''}" placeholder="https://..." /></td><td><input name="manualSourceUrl" value="${row.manualSourceUrl || ''}" placeholder="https://..." /></td><td><input name="supportUrl" value="${row.supportUrl || ''}" placeholder="https://support" /></td><td><input name="supportEmail" value="${row.supportEmail || ''}" placeholder="email" /><input name="supportPhone" value="${row.supportPhone || ''}" placeholder="phone" /></td><td><input name="matchConfidence" value="${row.matchConfidence || ''}" style="width:70px;" /></td><td><textarea name="matchNotes" rows="2">${row.matchNotes || ''}</textarea></td><td><select name="rowStatus"><option value="good_match" ${row.rowStatus === 'good_match' ? 'selected' : ''}>accepted-ready</option><option value="needs_review" ${row.rowStatus === 'needs_review' ? 'selected' : ''}>needs review</option><option value="unresolved" ${row.rowStatus === 'unresolved' ? 'selected' : ''}>unresolved</option><option value="skipped" ${row.rowStatus === 'skipped' ? 'selected' : ''}>skip</option></select><div style="display:flex; gap:4px; flex-wrap:wrap; margin-top:4px;"><button type="button" data-bulk-accept="${index}">Accept</button><button type="button" data-bulk-skip="${index}">Skip</button></div></td></tr>`; }).join('')}</tbody></table></div>` : ''}
     ${(state.assetUi?.recentIntakeRows || []).length ? `<div class="item" style="margin-bottom:10px; overflow:auto;"><b>Recent import/research status</b><div class="tiny">These rows reconcile to real asset enrichment and review state after each refresh.</div><table class="tiny" style="width:100%; border-collapse:collapse; margin-top:8px;"><thead><tr><th>Title</th><th>Asset</th><th>Status</th><th>Review</th></tr></thead><tbody>${(state.assetUi.recentIntakeRows || []).map((row) => `<tr><td>${row.name || 'Untitled'}</td><td>${row.assetId ? `<a href="#asset-${row.assetId}">${row.assetId}</a>` : 'pending'}</td><td>${renderStatusChip(row.enrichmentStatus || row.intakeStatusBadge || 'idle')}<div>${row.intakeStatusLabel || ''}</div></td><td>${formatManualReviewLabel(row.manualReviewState || row.reviewState || 'n/a')}</td></tr>`).join('')}</tbody></table></div>` : ''}
     </details>
+    ` : ''}
 
-    <div class="list">${scopedAssets.map((asset) => {
+    ${activeAssetsTab === 'asset_records' ? `<div class="list">${scopedAssets.map((asset) => {
       try {
         const openTasks = assetTasks.filter((task) => task.assetId === asset.id && task.status !== 'completed');
         const completedTasks = assetTasks.filter((task) => task.assetId === asset.id && task.status === 'completed').slice(0, 5);
@@ -970,7 +983,7 @@ export function renderAssets(el, state, actions) {
     : (hasAttachedManualStorage ? renderAuditChip('Manual attached — text not extracted', 'warn') : renderAuditChip('No manual text attached', 'muted'))}
             </div>
             <div class="tiny" style="margin-top:4px;">latestManualId: ${asset.latestManualId || 'n/a'} | manualChunkCount: ${manualChunkCount} | manualTextExtractionStatus: ${asset.manualTextExtractionStatus || 'n/a'} | documentationTextAvailable: ${asset.documentationTextAvailable === true ? 'true' : 'false'}</div>
-            <details class="tiny" style="margin-top:6px;"><summary>Technical details</summary><div>Firestore asset id: ${getAssetRecordId(asset) || 'n/a'}</div><div>Stored asset id: ${asset.storedAssetId && asset.storedAssetId !== getAssetRecordId(asset) ? asset.storedAssetId : 'same as Firestore id'}</div><div>companyId: ${asset.companyId || 'n/a'}</div><div>latestManualId: ${asset.latestManualId || 'n/a'}</div><div>manualChunkCount: ${manualChunkCount}</div></details>
+            <details class="tiny" style="margin-top:6px;"><summary>Technical details</summary><div>Firestore id: ${asset.firestoreDocId || asset.docId || asset._docId || getAssetRecordId(asset) || 'n/a'}</div><div>Stored id: ${asset.storedAssetId || 'n/a'}</div><div>Asset record id: ${getAssetRecordId(asset) || 'n/a'}</div><div>Company id: ${asset.companyId || 'n/a'}</div>${asset.storedAssetId && `${asset.storedAssetId}`.trim() && `${asset.storedAssetId}`.trim() !== `${asset.firestoreDocId || asset.docId || asset._docId || getAssetRecordId(asset) || ''}`.trim() ? '<div>Identity check: Firestore id and stored id differ</div>' : ''}<div>latestManualId: ${asset.latestManualId || 'n/a'}</div><div>manualChunkCount: ${manualChunkCount}</div></details>
             ${manager ? `<div class="item" style="margin-top:8px;" data-manual-attach-section data-asset-id="${asset.id}">
               <b>Attach manual</b>
               <div class="tiny" style="margin-top:4px;">Paste a manual URL or upload a PDF/manual file. Scoot will attach it to this asset and extract searchable text for Operations AI.</div>
@@ -1032,7 +1045,7 @@ export function renderAssets(el, state, actions) {
       } catch (error) {
         return renderAssetCardFallback(asset, error);
       }
-    }).join('') || `<div class="tiny">${getLocationEmptyState(scope.selection, 'assets', 'asset')}</div>`}</div>`;
+    }).join('') || `<div class="tiny">${getLocationEmptyState(scope.selection, 'assets', 'asset')}</div>`}</div>` : ''}`;
 
   const form = el.querySelector('#assetForm');
   const nameInput = form?.querySelector('[name="name"]');
@@ -1143,6 +1156,10 @@ export function renderAssets(el, state, actions) {
     event.preventDefault();
     const fd = new FormData(reviewForm);
     actions.applyOnboardingReviewEdit(Number(reviewForm.dataset.onboardingReviewRow), Object.fromEntries(fd.entries()));
+  }));
+  el.querySelectorAll('[data-assets-tab]').forEach((button) => button.addEventListener('click', () => {
+    state.assetUi.activeTab = button.dataset.assetsTab || 'asset_records';
+    renderAssets(el, state, actions);
   }));
   el.querySelector('[data-location-filter]')?.addEventListener('change', (event) => actions.setLocationFilter(event.target.value));
   el.querySelector('[data-asset-search]')?.addEventListener('input', (event) => {

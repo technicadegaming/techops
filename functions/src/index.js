@@ -19,7 +19,7 @@ const {
   isGlobalAdminRole,
 } = require('./lib/enrichmentAuthorization');
 const { normalizeAssetEnrichmentTriggerSource } = require('./lib/assetEnrichmentTriggers');
-const { getManualAttachAssetIds, resolveManualAttachAssetId, summarizeManualAttachUrl } = require('./lib/manualAttachCallable');
+const { getManualAttachAssetIds, resolveManualAttachAssetId, summarizeManualAttachUrl, resolveManualAttachAsset } = require('./lib/manualAttachCallable');
 const {
   enrichAssetDocumentation,
   previewAssetDocumentationLookup,
@@ -1068,51 +1068,49 @@ exports.attachAssetManualFromUrl = onCall({}, async (request) => {
     manualUrlPathLength: urlSummary.pathLength,
   });
 
-  const candidateIds = [];
-  if (requestedIds.assetDocId) candidateIds.push(requestedIds.assetDocId);
-  if (requestedIds.assetId && requestedIds.assetId !== requestedIds.assetDocId) candidateIds.push(requestedIds.assetId);
-
-  let authz = null;
-  let resolvedAssetId = '';
-  for (const candidateId of candidateIds) {
-    const probe = await authorizeAssetEnrichment({
+  let resolution = null;
+  try {
+    resolution = await resolveManualAttachAsset({
       db,
-      assetId: candidateId,
+      requestedAssetId,
+      requestedAssetDocId: requestedIds.assetDocId,
+      requestedCompanyId,
       uid: request.auth.uid,
       getUserRole,
+      authorizeAssetEnrichment,
+      authorizeCompanyMember,
+      canRunAssetEnrichment,
     });
-    if (probe.allowed || probe.scope !== 'asset_not_found') {
-      authz = probe;
-      resolvedAssetId = candidateId;
-      break;
-    }
-  }
-  if (!authz) authz = { allowed: false, scope: 'asset_not_found' };
-  if (!authz.allowed) {
-    console.warn('attachAssetManualFromUrl:authz_denied', {
-      assetId: requestedAssetId,
-      uid: request.auth.uid,
-      requestCompanyId: requestedCompanyId,
-      scope: authz.scope || 'unknown',
-      companyId: authz.companyId || null,
-      companyRole: authz.companyRole || null,
-      globalRole: authz.globalRole || null,
-      assetExists: authz.scope !== 'asset_not_found',
+  } catch (error) {
+    const status = error?.code === 'failed-precondition' ? 'ambiguous' : (error?.code === 'permission-denied' ? 'denied' : 'error');
+    console.warn('attachAssetManualFromUrl:resolution_error', {
+      requestedAssetId,
+      requestedAssetDocId: requestedIds.assetDocId || '',
+      requestedCompanyId,
+      resolvedAssetDocId: null,
+      resolutionSource: null,
+      authzScope: null,
+      status,
     });
-    if (authz.scope === 'asset_not_found') throw new HttpsError('not-found', 'Asset not found for manual attachment. Refresh the asset list and try again.');
-    throw new HttpsError('permission-denied', 'Insufficient role for manual attachment');
+    throw error;
   }
 
-  const asset = authz.asset ? { id: resolvedAssetId || requestedAssetId, ...authz.asset } : null;
-  const assetExists = !!asset?.id;
-  console.log('attachAssetManualFromUrl:authorized', {
-    assetId: requestedAssetId,
-    uid: request.auth.uid,
-    requestCompanyId: requestedCompanyId,
-    assetCompanyId: asset?.companyId || null,
-    assetExists,
+  const status = resolution?.status === 'found' ? 'found' : 'missing';
+  console.log('attachAssetManualFromUrl:resolved', {
+    requestedAssetId,
+    requestedAssetDocId: requestedIds.assetDocId || '',
+    requestedCompanyId,
+    resolvedAssetDocId: resolution?.assetDocId || null,
+    resolutionSource: resolution?.resolutionSource || null,
+    authzScope: resolution?.authzScope || null,
+    status,
   });
-  if (!assetExists) throw new HttpsError('not-found', 'Asset not found for manual attachment. Refresh the asset list and try again.');
+
+  if (resolution?.status !== 'found' || !resolution?.asset?.id) {
+    throw new HttpsError('not-found', 'Asset not found for manual attachment. Refresh the asset list and try again.');
+  }
+
+  const asset = resolution.asset;
   if (requestedCompanyId && `${asset.companyId || ''}`.trim() && requestedCompanyId !== `${asset.companyId || ''}`.trim()) {
     throw new HttpsError('permission-denied', 'Asset/company mismatch for manual attachment.');
   }
@@ -1142,51 +1140,49 @@ exports.attachAssetManualFromStoragePath = onCall({}, async (request) => {
     storagePathLength: `${request.data?.storagePath || ''}`.trim().length,
   });
 
-  const candidateIds = [];
-  if (requestedIds.assetDocId) candidateIds.push(requestedIds.assetDocId);
-  if (requestedIds.assetId && requestedIds.assetId !== requestedIds.assetDocId) candidateIds.push(requestedIds.assetId);
-
-  let authz = null;
-  let resolvedAssetId = '';
-  for (const candidateId of candidateIds) {
-    const probe = await authorizeAssetEnrichment({
+  let resolution = null;
+  try {
+    resolution = await resolveManualAttachAsset({
       db,
-      assetId: candidateId,
+      requestedAssetId,
+      requestedAssetDocId: requestedIds.assetDocId,
+      requestedCompanyId,
       uid: request.auth.uid,
       getUserRole,
+      authorizeAssetEnrichment,
+      authorizeCompanyMember,
+      canRunAssetEnrichment,
     });
-    if (probe.allowed || probe.scope !== 'asset_not_found') {
-      authz = probe;
-      resolvedAssetId = candidateId;
-      break;
-    }
-  }
-  if (!authz) authz = { allowed: false, scope: 'asset_not_found' };
-  if (!authz.allowed) {
-    console.warn('attachAssetManualFromStoragePath:authz_denied', {
-      assetId: requestedAssetId,
-      uid: request.auth.uid,
-      requestCompanyId: requestedCompanyId,
-      scope: authz.scope || 'unknown',
-      companyId: authz.companyId || null,
-      companyRole: authz.companyRole || null,
-      globalRole: authz.globalRole || null,
-      assetExists: authz.scope !== 'asset_not_found',
+  } catch (error) {
+    const status = error?.code === 'failed-precondition' ? 'ambiguous' : (error?.code === 'permission-denied' ? 'denied' : 'error');
+    console.warn('attachAssetManualFromStoragePath:resolution_error', {
+      requestedAssetId,
+      requestedAssetDocId: requestedIds.assetDocId || '',
+      requestedCompanyId,
+      resolvedAssetDocId: null,
+      resolutionSource: null,
+      authzScope: null,
+      status,
     });
-    if (authz.scope === 'asset_not_found') throw new HttpsError('not-found', 'Asset not found for manual attachment. Refresh the asset list and try again.');
-    throw new HttpsError('permission-denied', 'Insufficient role for manual attachment');
+    throw error;
   }
 
-  const asset = authz.asset ? { id: resolvedAssetId || requestedAssetId, ...authz.asset } : null;
-  const assetExists = !!asset?.id;
-  console.log('attachAssetManualFromStoragePath:authorized', {
-    assetId: requestedAssetId,
-    uid: request.auth.uid,
-    requestCompanyId: requestedCompanyId,
-    assetCompanyId: asset?.companyId || null,
-    assetExists,
+  const status = resolution?.status === 'found' ? 'found' : 'missing';
+  console.log('attachAssetManualFromStoragePath:resolved', {
+    requestedAssetId,
+    requestedAssetDocId: requestedIds.assetDocId || '',
+    requestedCompanyId,
+    resolvedAssetDocId: resolution?.assetDocId || null,
+    resolutionSource: resolution?.resolutionSource || null,
+    authzScope: resolution?.authzScope || null,
+    status,
   });
-  if (!assetExists) throw new HttpsError('not-found', 'Asset not found for manual attachment. Refresh the asset list and try again.');
+
+  if (resolution?.status !== 'found' || !resolution?.asset?.id) {
+    throw new HttpsError('not-found', 'Asset not found for manual attachment. Refresh the asset list and try again.');
+  }
+
+  const asset = resolution.asset;
   if (requestedCompanyId && `${asset.companyId || ''}`.trim() && requestedCompanyId !== `${asset.companyId || ''}`.trim()) {
     throw new HttpsError('permission-denied', 'Asset/company mismatch for manual attachment.');
   }

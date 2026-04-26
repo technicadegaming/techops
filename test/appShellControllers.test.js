@@ -1573,6 +1573,7 @@ test('asset actions attach manual from URL uses exact asset.id and callable payl
   assert.equal(attachCalls.length, 1);
   assert.equal(attachCalls[0].assetId, 'asset-doc-123');
   assert.equal(attachCalls[0].assetDocId, 'asset-doc-123');
+  assert.equal(attachCalls[0].storedAssetId, 'legacy-name');
 });
 
 test('asset actions upload manual file uses exact asset.id in storage path', async () => {
@@ -1631,6 +1632,7 @@ test('asset actions upload manual file uses exact asset.id in storage path', asy
   assert.match(uploadCalls[0], /^companies\/company-a\/manuals\/asset-doc-456\/manual-uploads\//);
   assert.equal(attachCalls[0].assetId, 'asset-doc-456');
   assert.equal(attachCalls[0].assetDocId, 'asset-doc-456');
+  assert.equal(attachCalls[0].storedAssetId, 'legacy-id');
 });
 
 test('asset actions block manual attach when asset id cannot be resolved', async () => {
@@ -2090,6 +2092,29 @@ test('operations source includes explicit create-task loading and error states',
   assert.match(source, /createTaskMessage/);
   assert.match(source, /createTaskError/);
   assert.match(source, /Creating task & starting AI/);
+});
+
+
+test('assets source renders technical identity details and mismatch note', () => {
+  const source = loadAssetsSource();
+  assert.match(source, /Firestore id:/);
+  assert.match(source, /Stored id:/);
+  assert.match(source, /Asset record id:/);
+  assert.match(source, /Company id:/);
+  assert.match(source, /Identity check: Firestore id and stored id differ/);
+});
+
+test('assets source uses tabbed layout with asset records default and section separation', () => {
+  const source = loadAssetsSource();
+  assert.match(source, /data-assets-tab="asset_records"/);
+  assert.match(source, /data-assets-tab="documentation_review"/);
+  assert.match(source, /data-assets-tab="add_import"/);
+  assert.match(source, /activeAssetsTab === 'asset_records'/);
+  assert.match(source, /activeAssetsTab === 'documentation_review'/);
+  assert.match(source, /activeAssetsTab === 'add_import'/);
+  assert.match(source, /<b>Manual review queue<\/b>/);
+  assert.match(source, /<b>Research Titles<\/b>/);
+  assert.match(source, /Quick add asset/);
 });
 
 test('assets source includes manual attach controls and upload actions', () => {
