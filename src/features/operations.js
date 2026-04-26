@@ -299,6 +299,8 @@ function getTaskAiSnapshot(task, run = null) {
     probableCauses: Array.isArray(snapshot.probableCauses) ? snapshot.probableCauses : [],
     documentationMode: `${snapshot.documentationMode || ''}`.trim() || '',
     documentationSources: Array.isArray(snapshot.documentationSources) ? snapshot.documentationSources : [],
+    manualChunkCount: Number(snapshot.manualChunkCount || 0) || 0,
+    documentationTextAvailable: snapshot.documentationTextAvailable === true,
     confidence: Number(snapshot.confidence),
     updatedAt: task.aiUpdatedAt || snapshot.completedAt || '',
     status: `${task.aiStatus || 'completed'}`.trim() || 'completed',
@@ -466,9 +468,16 @@ function renderAiSourceLine(run) {
     support_backed: { label: 'Support/web/internal only', tone: 'warn', note: '' },
     web_internal_only: { label: 'Support/web/internal only', tone: 'warn', note: '' }
   }[mode] || { label: mode.replaceAll('_', ' '), tone: 'muted', note: '' };
-  if (!sourceList.length && !run?.citations?.length) return `<div class="tiny">Sources used: ${modeCopy.label}</div>${modeCopy.note ? `<div class="inline-state ${modeCopy.tone} mt">${modeCopy.note}</div>` : ''}`;
+  const chunkCount = Number(run?.manualChunkCount || 0) || 0;
+  const missingManualText = ['manual_backed', 'approved_doc_backed'].includes(mode)
+    && !run?.documentationTextAvailable
+    && chunkCount <= 0;
+  const manualTextHint = missingManualText
+    ? '<div class="inline-state warn mt">Manual is attached, but extracted manual text is not available yet. Re-extract manual text from the asset record.</div>'
+    : '';
+  if (!sourceList.length && !run?.citations?.length) return `<div class="tiny">Sources used: ${modeCopy.label}</div>${modeCopy.note ? `<div class="inline-state ${modeCopy.tone} mt">${modeCopy.note}</div>` : ''}${manualTextHint}`;
   const names = sourceList.slice(0, 3).map((source) => source.title || source.url).filter(Boolean);
-  return `<div class="tiny">Sources used: ${modeCopy.label}${names.length ? ` | ${names.join(' | ')}` : ''}</div>${modeCopy.note ? `<div class="inline-state ${modeCopy.tone} mt">${modeCopy.note}</div>` : ''}`;
+  return `<div class="tiny">Sources used: ${modeCopy.label}${names.length ? ` | ${names.join(' | ')}` : ''}</div>${modeCopy.note ? `<div class="inline-state ${modeCopy.tone} mt">${modeCopy.note}</div>` : ''}${manualTextHint}`;
 }
 
 function formatDateTime(value) {

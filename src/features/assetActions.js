@@ -22,6 +22,7 @@ export function createAssetActions(deps) {
     upsertEntity,
     deleteEntity,
     approveAssetManual,
+    repairAssetDocumentationState,
     enrichAssetDocumentation,
     previewAssetDocumentationLookup,
     researchAssetTitles,
@@ -152,6 +153,31 @@ export function createAssetActions(deps) {
   const countReviewableSuggestions = (asset = {}) => (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : [])
     .filter((entry) => !!`${entry?.url || ''}`.trim() && !entry?.deadPage && !entry?.unreachable && entry?.verified)
     .length;
+
+  const buildManualRepairFeedback = (result = {}, { dryRun = false } = {}) => {
+    const entry = Array.isArray(result?.manualMaterialization?.entries) ? result.manualMaterialization.entries[0] : null;
+    if (!entry) return dryRun ? 'Manual text check completed.' : 'Manual text re-extraction completed.';
+    const chunkCount = Number(entry?.newChunkCount ?? entry?.priorChunkCount ?? 0) || 0;
+    if (entry?.action === 'already_has_chunks') {
+      return `Manual already has extracted text: ${chunkCount} chunk${chunkCount === 1 ? '' : 's'}.`;
+    }
+    if (entry?.action === 'no_manual_storage_path' || entry?.reason === 'no_manual_storage_path') {
+      return 'No attached manual storage path found.';
+    }
+    if (entry?.newExtractionStatus === 'no_text_extracted') {
+      return 'Manual attached, but no readable text was extracted.';
+    }
+    if (entry?.newChunkCount > 0 && ['reextracted', 'materialized', 'would_reextract', 'would_materialize'].includes(`${entry?.action || ''}`)) {
+      return dryRun
+        ? `Manual text check: ${chunkCount} chunk${chunkCount === 1 ? '' : 's'} would be available after re-extraction.`
+        : `Manual text extracted: ${chunkCount} chunks created.`;
+    }
+    if (entry?.action === 'extraction_failed' || entry?.newExtractionStatus === 'failed') {
+      const reason = `${entry?.reason || ''}`.trim() || 'unknown error';
+      return `Extraction failed: ${reason.slice(0, 120)}.`;
+    }
+    return dryRun ? 'Manual text check completed.' : 'Manual text re-extraction completed.';
+  };
 
   const getDraftContext = (draft = state.assetDraft || {}) => resolveAssetDraftContext(state, draft);
 
@@ -729,6 +755,26 @@ export function createAssetActions(deps) {
         await refreshData();
         render();
         return { ok: false, assetId: id, error };
+      }
+    },
+    repairAssetManualText: async (id, options = {}) => {
+      if (!isManager(state.permissions) || typeof repairAssetDocumentationState !== 'function') return;
+      const dryRun = options?.dryRun === true;
+      setAssetActionFeedback(id, dryRun ? 'Checking manual text extraction state…' : 'Re-extracting manual text…', 'info');
+      render();
+      try {
+        const result = await repairAssetDocumentationState({ assetId: id, dryRun });
+        const message = buildManualRepairFeedback(result, { dryRun });
+        setAssetActionFeedback(id, message, message.startsWith('Extraction failed') ? 'error' : 'success');
+        await refreshData();
+        render();
+        return result;
+      } catch (error) {
+        const reason = `${error?.message || error || 'unknown error'}`.trim().slice(0, 120);
+        setAssetActionFeedback(id, `Extraction failed: ${reason}.`, 'error');
+        await refreshData();
+        render();
+        return null;
       }
     },
     runBulkAssetEnrichment: async (assetIds = [], options = {}) => {

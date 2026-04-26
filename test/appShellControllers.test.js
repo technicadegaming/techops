@@ -1365,6 +1365,35 @@ test('assets view renders bulk visible doc re-search action and disables it whil
   assert.match(el.innerHTML, /Re-searching docs: 1 \/ 2 complete/);
 });
 
+test('assets view shows manual text extraction state chips and repair actions for manager role', async () => {
+  const { renderAssets } = await loadAssetsHelpers();
+  const state = {
+    permissions: { companyRole: 'manager', role: 'manager' },
+    tasks: [],
+    pmSchedules: [],
+    taskAiRuns: [],
+    manuals: [],
+    auditLogs: [],
+    troubleshootingLibrary: [],
+    companyLocations: [],
+    route: { tab: 'assets', location: 'all', assetFilter: 'all' },
+    assetDraft: {},
+    assetUi: { searchQuery: '', statusFilter: 'all', reviewFilter: 'all', enrichmentFilter: 'all' },
+    assets: [
+      { id: 'asset-zero', name: 'Asset Zero', manufacturer: 'Mfr', manualStatus: 'manual_attached', manualStoragePath: 'companies/company-a/manuals/asset-zero/source.pdf', manualChunkCount: 0 },
+      { id: 'asset-ready', name: 'Asset Ready', manufacturer: 'Mfr', manualStatus: 'manual_attached', manualStoragePath: 'companies/company-a/manuals/asset-ready/source.pdf', manualChunkCount: 12, manualTextExtractionStatus: 'completed', documentationTextAvailable: true }
+    ]
+  };
+  const el = { innerHTML: '', querySelector: () => null, querySelectorAll: () => [] };
+  const actions = { setLocationFilter: () => {}, runBulkAssetEnrichment: () => {}, repairAssetManualText: () => {} };
+  renderAssets(el, state, actions);
+
+  assert.match(el.innerHTML, /Manual attached — text not extracted/);
+  assert.match(el.innerHTML, /Manual text available/);
+  assert.match(el.innerHTML, /data-reextract-manual-text="asset-zero"/);
+  assert.match(el.innerHTML, /data-check-manual-text="asset-zero"/);
+});
+
 test('asset actions bulk doc re-search uses visible ids, processes queued imports, and records progress summary', async () => {
   const { createAssetActions } = await loadAssetActions();
   const state = {
@@ -1422,6 +1451,62 @@ test('asset actions bulk doc re-search uses visible ids, processes queued import
   assert.equal(state.assetUi.bulkDocRerunProgress.failed, 1);
   assert.equal(state.assetUi.bulkDocRerunProgress.skipped, 0);
   assert.match(state.assetUi.bulkDocRerunSummary, /Succeeded 2, failed 1, skipped 0/);
+});
+
+test('asset actions manual text repair calls callable and refreshes asset data', async () => {
+  const { createAssetActions } = await loadAssetActions();
+  const repairCalls = [];
+  let refreshCalls = 0;
+  const state = {
+    assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
+    assetUi: {},
+    assets: [{ id: 'asset-a', name: 'Asset A', manualStoragePath: 'companies/company-a/manuals/asset-a/source.pdf', manualStatus: 'manual_attached' }],
+    companyLocations: [],
+    permissions: { companyRole: 'manager', role: 'manager' },
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    user: { uid: 'user-1' }
+  };
+  const actions = createAssetActions({
+    state,
+    onLocationFilter: () => {},
+    render: () => {},
+    refreshData: async () => { refreshCalls += 1; },
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    deleteEntity: async () => {},
+    approveAssetManual: async () => {},
+    repairAssetDocumentationState: async (payload) => {
+      repairCalls.push(payload);
+      return {
+        manualMaterialization: {
+          entries: [{ action: 'reextracted', newChunkCount: 12, newExtractionStatus: 'completed' }]
+        }
+      };
+    },
+    enrichAssetDocumentation: async () => ({}),
+    previewAssetDocumentationLookup: async () => ({}),
+    researchAssetTitles: async () => ({}),
+    markAssetEnrichmentFailure: async () => ({}),
+    normalizeAssetId: (name) => name,
+    pickUniqueAssetId: (id) => id,
+    createEmptyAssetDraft: () => ({ previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } }),
+    withTimeout: async (promise) => promise,
+    normalizeSupportEntries: (entries) => entries,
+    canDelete: () => false,
+    isAdmin: () => true,
+    isManager: () => true,
+    buildAssetSaveErrorMessage: () => 'error',
+    buildAssetSaveDebugContext: () => ({}),
+    isPermissionRelatedError: () => false,
+    buildPreviewQueryKey: () => ''
+  });
+
+  await actions.repairAssetManualText('asset-a', { dryRun: false });
+
+  assert.deepEqual(repairCalls, [{ assetId: 'asset-a', dryRun: false }]);
+  assert.equal(refreshCalls, 1);
+  assert.match(state.assetUi.lastActionByAsset['asset-a'].message, /Manual text extracted: 12 chunks created/);
 });
 
 test('admin CSV import queues truthful enrichment status, starts enrichment, and keeps hint URLs non-authoritative', async () => {
@@ -1716,4 +1801,28 @@ test('operations AI follow-up rendering hides blocker for answered follow-up doc
   assert.equal(followup, null);
   assert.equal(aiState.status, 'waiting_for_refresh');
   assert.equal(html.includes('cannot advance until the follow-up answers below are submitted'), false);
+});
+
+test('operations AI source hint explains missing extracted manual text for manual/link-backed mode', async () => {
+  const { __testOperationsAi } = await loadOperationsHelpers();
+  const task = {
+    id: 'task-3',
+    companyId: 'company-a',
+    aiStatus: 'completed',
+    aiLastCompletedRunSnapshot: { runId: 'run-3', taskId: 'task-3', companyId: 'company-a', completedAt: '2026-03-21T00:00:00.000Z', documentationMode: 'manual_backed', manualChunkCount: 0, documentationTextAvailable: false, frontline: 'Check hopper.' }
+  };
+  const state = {
+    settings: { aiEnabled: true, aiAllowManualRerun: true },
+    permissions: { companyRole: 'lead' },
+    operationsUi: { aiTaskStates: {}, aiDisplayRunsByTask: {} },
+    taskAiRuns: [],
+    taskAiFollowups: []
+  };
+
+  const run = __testOperationsAi.getTaskRun(task, state);
+  const snapshot = __testOperationsAi.getTaskAiSnapshot(task, run);
+  const aiState = __testOperationsAi.getTaskAiState(task, state, run, null, snapshot);
+  const html = __testOperationsAi.renderAiPanel(task, state, { run, followup: null, snapshot, aiState });
+
+  assert.match(html, /Manual is attached, but extracted manual text is not available yet/);
 });
