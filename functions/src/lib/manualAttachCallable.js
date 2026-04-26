@@ -28,6 +28,16 @@ function normalizeCompanyId(value = '') {
   return `${value || ''}`.trim();
 }
 
+function buildNormalizedAssetRecord(docId = '', data = {}) {
+  const assetData = data || {};
+  return {
+    ...assetData,
+    id: docId,
+    firestoreDocId: docId,
+    storedAssetId: `${assetData.id || assetData.storedAssetId || ''}`.trim(),
+  };
+}
+
 async function resolveManualAttachAsset({
   db,
   requestedAssetId = '',
@@ -69,11 +79,7 @@ async function resolveManualAttachAsset({
     return {
       assetDocId: candidateDocId,
       assetRef: db.collection('assets').doc(candidateDocId),
-      asset: {
-        ...rawAsset,
-        id: candidateDocId,
-        ...(storedAssetId && storedAssetId !== candidateDocId ? { storedAssetId } : {}),
-      },
+      asset: buildNormalizedAssetRecord(candidateDocId, rawAsset),
       storedAssetId,
       companyId: resolvedCompanyId,
       resolutionSource: candidateDocId === normalizedAssetDocId ? 'docId_assetDocId' : 'docId_assetId',
@@ -115,11 +121,7 @@ async function resolveManualAttachAsset({
     return {
       assetDocId: doc.id,
       assetRef: doc.ref,
-      asset: {
-        ...rawAsset,
-        id: doc.id,
-        ...(storedAssetId && storedAssetId !== doc.id ? { storedAssetId } : {}),
-      },
+      asset: buildNormalizedAssetRecord(doc.id, rawAsset),
       storedAssetId,
       companyId: resolvedCompanyId,
       resolutionSource: 'legacy_id_field',
@@ -148,11 +150,7 @@ async function resolveManualAttachAsset({
     return {
       assetDocId: doc.id,
       assetRef: doc.ref,
-      asset: {
-        ...rawAsset,
-        id: doc.id,
-        ...(storedAssetId && storedAssetId !== doc.id ? { storedAssetId } : {}),
-      },
+      asset: buildNormalizedAssetRecord(doc.id, rawAsset),
       storedAssetId,
       companyId: resolvedCompanyId,
       resolutionSource: 'storedAssetId_field',
@@ -164,9 +162,35 @@ async function resolveManualAttachAsset({
   return { status: 'missing', authzScope: companyAuthz.scope || 'unknown' };
 }
 
+function normalizeManualAttachRequestContext({
+  requestData = {},
+  resolution = null,
+} = {}) {
+  const requestedAssetId = `${requestData?.assetId || ''}`.trim();
+  const requestedAssetDocId = `${requestData?.assetDocId || ''}`.trim();
+  const requestedCompanyId = normalizeCompanyId(requestData?.companyId);
+  const manualUrl = `${requestData?.manualUrl || ''}`.trim();
+  const sourceTitle = `${requestData?.sourceTitle || ''}`.trim();
+  const resolvedAssetDocId = `${resolution?.assetDocId || ''}`.trim();
+  const resolvedAsset = resolution?.asset
+    ? buildNormalizedAssetRecord(resolvedAssetDocId || `${resolution.asset.id || ''}`.trim(), resolution.asset)
+    : null;
+  return {
+    requestedAssetId,
+    requestedAssetDocId,
+    requestedCompanyId,
+    manualUrl,
+    sourceTitle,
+    resolvedAssetDocId,
+    resolvedAsset,
+    resolutionSource: `${resolution?.resolutionSource || ''}`.trim(),
+  };
+}
+
 module.exports = {
   getManualAttachAssetIds,
   resolveManualAttachAssetId,
   summarizeManualAttachUrl,
   resolveManualAttachAsset,
+  normalizeManualAttachRequestContext,
 };
