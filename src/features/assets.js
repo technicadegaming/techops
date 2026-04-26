@@ -163,14 +163,13 @@ function renderAuditChip(label, tone = 'muted') {
 
 function renderAssetScanChips(asset, { openTasks = [], overduePm = [] } = {}) {
   const chips = [];
-  const manualChunkCount = Number(asset?.manualChunkCount || 0) || 0;
-  const hasAttachedManual = !!`${asset?.manualStoragePath || ''}`.trim() || (Array.isArray(asset?.manualLinks) && asset.manualLinks.length > 0);
-  if (manualChunkCount > 0 || asset?.documentationTextAvailable === true) chips.push(renderAuditChip('Manual text available', 'good'));
-  else if (hasAttachedManual) chips.push(renderAuditChip('Manual attached — text not extracted', 'warn'));
-  else if (getEffectiveEnrichmentStatus(asset) === 'lookup_failed') chips.push(renderAuditChip('Lookup failed', 'bad'));
-  else if (deriveAssetManualStatus(asset) === MANUAL_STATUS.SUPPORT_CONTEXT_ONLY) chips.push(renderAuditChip('Support links only', 'info'));
+  const manualState = getAuthoritativeManualState(asset);
+  if (manualState.hasManualText) chips.push(renderAuditChip('Manual text available', 'good'));
+  else if (manualState.hasAttachedManual) chips.push(renderAuditChip('Manual attached — text not extracted', 'warn'));
   else if (['followup_needed', 'retry_needed'].includes(getEffectiveEnrichmentStatus(asset))) chips.push(renderAuditChip('Needs documentation review', 'warn'));
+  else if (deriveAssetManualStatus(asset) === MANUAL_STATUS.SUPPORT_CONTEXT_ONLY) chips.push(renderAuditChip('Support links only', 'info'));
   else chips.push(renderAuditChip('No manual attached', 'warn'));
+  if (getEffectiveEnrichmentStatus(asset) === 'lookup_failed') chips.push(renderAuditChip('Lookup failed', 'bad'));
   if (['queued', 'searching_docs', 'in_progress'].includes(getEffectiveEnrichmentStatus(asset))) chips.push(renderAuditChip('enrichment running', 'info'));
   if (getEffectiveEnrichmentStatus(asset) === 'retry_needed') chips.push(renderAuditChip('retry needed', 'warn'));
   if (openTasks.length) chips.push(renderAuditChip('open issue', 'bad'));
@@ -377,18 +376,48 @@ function deriveAssetManualStatus(asset = {}) {
 }
 
 function getAuthoritativeManualState(asset = {}) {
+  const manualChunkCount = Number(asset?.manualChunkCount || 0) || 0;
+  const csvBootstrapManualStoragePath = `${asset?.csvBootstrapManualAttach?.manualStoragePath || ''}`.trim();
+  const csvBootstrapResolvedManualUrl = `${asset?.csvBootstrapManualAttach?.resolvedManualUrl || ''}`.trim();
   const manualLibraryRef = `${asset?.manualLibraryRef || ''}`.trim();
   const manualStoragePath = `${asset?.manualStoragePath || ''}`.trim();
+  const manualUrl = `${asset?.manualUrl || ''}`.trim();
+  const latestManualId = `${asset?.latestManualId || ''}`.trim();
+  const manualSourceUrl = `${asset?.manualSourceUrl || ''}`.trim();
+  const manualHintUrl = `${asset?.manualHintUrl || ''}`.trim();
   const manualLinks = Array.isArray(asset?.manualLinks) ? asset.manualLinks : [];
   const authoritativeLinks = Array.from(new Set([
     manualStoragePath,
+    csvBootstrapManualStoragePath,
+    manualUrl,
+    csvBootstrapResolvedManualUrl,
+    manualSourceUrl,
+    manualHintUrl,
     ...manualLinks.map((value) => `${value || ''}`.trim()).filter((value) => isStoredManualUrl(value)),
   ].filter(Boolean))).slice(0, 5);
+  const hasManualText = manualChunkCount > 0 || asset?.documentationTextAvailable === true;
   return {
     manualLibraryRef,
     manualStoragePath,
+    csvBootstrapManualStoragePath,
+    csvBootstrapResolvedManualUrl,
+    manualUrl,
+    manualSourceUrl,
+    manualHintUrl,
+    latestManualId,
+    manualChunkCount,
+    hasManualText,
     manualLinks: authoritativeLinks,
-    hasAttachedManual: !!(manualLibraryRef || manualStoragePath || authoritativeLinks.length),
+    hasAttachedManual: !!(manualLibraryRef
+      || manualStoragePath
+      || latestManualId
+      || hasManualText
+      || csvBootstrapManualStoragePath
+      || csvBootstrapResolvedManualUrl
+      || manualUrl
+      || manualSourceUrl
+      || manualHintUrl
+      || authoritativeLinks.length),
   };
 }
 
@@ -943,9 +972,19 @@ export function renderAssets(el, state, actions) {
         const docsStatus = docs.length || manualState.hasAttachedManual ? 'linked' : 'missing';
         const manualStatus = deriveAssetManualStatus(asset);
         const manualChunkCount = Number(asset.manualChunkCount || 0) || 0;
-        const hasExtractedManualText = manualChunkCount > 0;
+        const hasExtractedManualText = manualState.hasManualText;
         const hasAttachedManualStorage = !!`${asset.manualStoragePath || ''}`.trim()
+          || !!manualState.csvBootstrapManualStoragePath
           || manualState.manualLinks.some((url) => isStoredManualUrl(url));
+        const manualOutcomeLabel = hasExtractedManualText
+          ? 'manual text available'
+          : manualStatus === MANUAL_STATUS.ATTACHED
+            ? 'manual attached'
+            : ['followup_needed', 'retry_needed'].includes(getEffectiveEnrichmentStatus(asset))
+              ? 'needs documentation review'
+              : manualStatus === MANUAL_STATUS.SUPPORT_CONTEXT_ONLY
+                ? 'support links only'
+                : 'no manual attached';
         const auditEntries = (state.auditLogs || []).filter((entry) => entry.entityType === 'assets' && entry.entityId === asset.id).slice(0, 6);
         const location = getAssetLocationRecord(state, asset);
         return `<details class="item" id="asset-${asset.id}" ${state.route?.assetId === asset.id ? 'open' : ''}>
@@ -956,7 +995,7 @@ export function renderAssets(el, state, actions) {
             <div class="tiny">Owners: ${(asset.ownerWorkers || []).join(', ') || 'unassigned'} | Urgency flags: ${openTasks.filter((task) => ['high', 'critical'].includes(task.severity)).length}</div>
             <div class="tiny">Quick stats: open ${openTasks.length} | open PM ${openPm.length} | repeat failures ${recurring.reduce((sum, row) => sum + row.count, 0)} | recent repairs ${completedTasks.length}</div>
             <div class="tiny">Maintenance plan: ${maintenanceDue.label}${maintenanceDue.dueAt ? ` · due ${formatDateLabel(new Date(maintenanceDue.dueAt).toISOString())}` : ''} · checklist ${maintenanceDue.plan.checklist.length}</div>
-            <div class="tiny">Manual outcome: ${manualStatus === MANUAL_STATUS.ATTACHED ? 'manual attached' : manualStatus === MANUAL_STATUS.SUPPORT_CONTEXT_ONLY ? 'support context only' : manualStatus === MANUAL_STATUS.QUEUED_FOR_REVIEW ? 'manual queued for review' : 'no public manual found'}</div>
+            <div class="tiny">Manual outcome: ${manualOutcomeLabel}</div>
             ${asset.enrichmentTerminalReason ? `<div class="tiny">Terminal reason: ${asset.enrichmentTerminalReason.replace(/_/g, ' ')}</div>` : ''}
             ${asset.manualReviewState ? `<div class="tiny">Manual review state: ${asset.manualReviewState.replace(/_/g, ' ')}</div>` : ''}
             ${renderAssetScanChips(asset, { docsStatus, openTasks, overduePm: openPm })}
@@ -975,15 +1014,15 @@ export function renderAssets(el, state, actions) {
           </details>
 
           <details><summary>Documentation / AI status (${docsStatus})</summary>
-            <div class="tiny" style="margin:8px 0;"><b>Manual status:</b> ${deriveAssetManualStatus(asset).replace('_', ' ')}</div>
+            <div class="tiny" style="margin:8px 0;"><b>Manual status:</b> ${manualOutcomeLabel}</div>
             <div class="tiny" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
               <b>Manual text:</b>
               ${hasExtractedManualText
-    ? renderAuditChip('Manual text available', 'good')
+    ? renderAuditChip('Attached manual text available', 'good')
     : (hasAttachedManualStorage ? renderAuditChip('Manual attached — text not extracted', 'warn') : renderAuditChip('No manual text attached', 'muted'))}
             </div>
             <div class="tiny" style="margin-top:4px;">latestManualId: ${asset.latestManualId || 'n/a'} | manualChunkCount: ${manualChunkCount} | manualTextExtractionStatus: ${asset.manualTextExtractionStatus || 'n/a'} | documentationTextAvailable: ${asset.documentationTextAvailable === true ? 'true' : 'false'}</div>
-            <details class="tiny" style="margin-top:6px;"><summary>Technical details</summary><div>Firestore id: ${asset.firestoreDocId || asset.docId || asset._docId || getAssetRecordId(asset) || 'n/a'}</div><div>Stored id: ${asset.storedAssetId || 'n/a'}</div><div>Asset record id: ${getAssetRecordId(asset) || 'n/a'}</div><div>Company id: ${asset.companyId || 'n/a'}</div>${asset.storedAssetId && `${asset.storedAssetId}`.trim() && `${asset.storedAssetId}`.trim() !== `${asset.firestoreDocId || asset.docId || asset._docId || getAssetRecordId(asset) || ''}`.trim() ? '<div>Identity check: Firestore id and stored id differ</div>' : ''}<div>latestManualId: ${asset.latestManualId || 'n/a'}</div><div>manualChunkCount: ${manualChunkCount}</div></details>
+            <details class="tiny" style="margin-top:6px;"><summary>Technical details</summary><div>Firestore id: ${asset.firestoreDocId || asset.docId || asset._docId || getAssetRecordId(asset) || 'n/a'}</div><div>Stored id: ${asset.storedAssetId || 'n/a'}</div><div>Asset record id: ${getAssetRecordId(asset) || 'n/a'}</div><div>Company id: ${asset.companyId || 'n/a'}</div>${asset.storedAssetId && `${asset.storedAssetId}`.trim() && `${asset.storedAssetId}`.trim() !== `${asset.firestoreDocId || asset.docId || asset._docId || getAssetRecordId(asset) || ''}`.trim() ? '<div>Identity check: Firestore id and stored id differ</div>' : ''}<div>manualStatus: ${asset.manualStatus || 'n/a'}</div><div>latestManualId: ${asset.latestManualId || 'n/a'}</div><div>manualChunkCount: ${manualChunkCount}</div></details>
             ${manager ? `<div class="item" style="margin-top:8px;" data-manual-attach-section data-asset-id="${asset.id}">
               <b>Attach manual</b>
               <div class="tiny" style="margin-top:4px;">Paste a manual URL or upload a PDF/manual file. Scoot will attach it to this asset and extract searchable text for Operations AI.</div>
@@ -1018,7 +1057,8 @@ export function renderAssets(el, state, actions) {
           linkAttrs: isStoredManualUrl(url) ? `data-manual-storage-path="${encodeURIComponent(url)}"` : '',
           removable: manager,
           removeAttr: `data-remove-manual="${asset.id}" data-url="${encodeURIComponent(url)}"`
-        })).join('') : (manualState.manualLibraryRef ? renderInlineFeedback(`Shared manual attached via library ref ${manualState.manualLibraryRef}.`, 'success') : renderInlineFeedback('No attached manual yet. Run lookup or approve a suggested manual below.', 'info'))}</div>
+        })).join('') : (manualState.manualLibraryRef ? renderInlineFeedback(`Shared manual attached via library ref ${manualState.manualLibraryRef}.`, 'success') : (manualState.hasManualText ? renderInlineFeedback('Manual text available from attached manual.', 'success') : renderInlineFeedback('No attached manual yet. Run lookup or approve a suggested manual below.', 'info')))}</div>
+            ${manualState.csvBootstrapManualStoragePath && !`${asset.manualStoragePath || ''}`.trim() ? `<div class="tiny">Attached manual storage path: ${manualState.csvBootstrapManualStoragePath}</div>` : ''}
             <div class="tiny" style="margin:4px 0;">Linked support links:</div>
             <div style="margin:4px 0 8px;">${filterDisplaySupportResources(asset.supportResourcesSuggestion || []).length ? filterDisplaySupportResources(asset.supportResourcesSuggestion || []).map((entry) => {
           const url = entry?.url || entry;
