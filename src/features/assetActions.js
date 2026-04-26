@@ -164,6 +164,19 @@ export function createAssetActions(deps) {
     return normalized || fallback;
   };
 
+  const MANUAL_ATTACH_ASSET_RESOLUTION_ERROR = 'Cannot attach manual because the asset record could not be identified. Refresh and try again.';
+  const resolveManualAttachAsset = (requestedAssetId) => {
+    const assetId = `${requestedAssetId || ''}`.trim();
+    if (!assetId) {
+      return { ok: false, assetId: '', asset: null, message: MANUAL_ATTACH_ASSET_RESOLUTION_ERROR };
+    }
+    const asset = (Array.isArray(state.assets) ? state.assets : []).find((entry) => `${entry?.id || ''}`.trim() === assetId) || null;
+    if (!asset?.id) {
+      return { ok: false, assetId, asset: null, message: MANUAL_ATTACH_ASSET_RESOLUTION_ERROR };
+    }
+    return { ok: true, assetId: `${asset.id}`.trim(), asset, message: '' };
+  };
+
   const approveManualSources = (assetId, urls = [], current = {}, metadataByUrl = {}) => approveSuggestedManualSources({
     assetId,
     urls,
@@ -1106,17 +1119,25 @@ export function createAssetActions(deps) {
     },
     attachManualFromUrl: async (id, payload = {}) => {
       if (!isManager(state.permissions) || typeof attachAssetManualFromUrl !== 'function') return;
-      const manualUrl = `${payload.manualUrl || ''}`.trim();
-      if (!manualUrl) {
-        setManualAttachUi(id, { tone: 'error', message: 'Attachment failed: enter a manual URL.' });
+      const resolution = resolveManualAttachAsset(id);
+      if (!resolution.ok) {
+        setManualAttachUi(resolution.assetId || `${id || ''}`.trim() || 'unknown', { tone: 'error', message: resolution.message });
+        console.warn('attach_manual_from_url:missing_asset_context', { requestedAssetId: `${id || ''}`.trim() || null });
         render();
         return;
       }
-      setManualAttachUi(id, { pending: true, phase: 'attaching', tone: 'info', message: 'Attaching manual…' });
+      const manualUrl = `${payload.manualUrl || ''}`.trim();
+      if (!manualUrl) {
+        setManualAttachUi(resolution.assetId, { tone: 'error', message: 'Attachment failed: enter a manual URL.' });
+        render();
+        return;
+      }
+      setManualAttachUi(resolution.assetId, { pending: true, phase: 'attaching', tone: 'info', message: 'Attaching manual…' });
+      console.debug('attach_manual_from_url:start', { assetId: resolution.assetId });
       render();
       try {
         const result = await attachAssetManualFromUrl({
-          assetId: id,
+          assetId: resolution.assetId,
           manualUrl,
           sourceTitle: `${payload.sourceTitle || ''}`.trim(),
           sourcePageUrl: `${payload.sourcePageUrl || ''}`.trim(),
@@ -1124,48 +1145,56 @@ export function createAssetActions(deps) {
         const chunkCount = Number(result?.chunkCount || 0) || 0;
         const message = result?.warning
           || (chunkCount > 0 ? `Manual attached and text extracted: ${chunkCount} chunks.` : 'Manual attached.');
-        setManualAttachUi(id, { pending: false, phase: 'idle', tone: result?.warning ? 'warn' : 'success', message });
+        setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: result?.warning ? 'warn' : 'success', message });
         await refreshData();
       } catch (error) {
-        setManualAttachUi(id, { pending: false, phase: 'idle', tone: 'error', message: `Attachment failed: ${`${error?.message || error || 'unknown error'}`.slice(0, 140)}` });
+        setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: 'error', message: `Attachment failed: ${`${error?.message || error || 'unknown error'}`.slice(0, 140)}` });
       }
       render();
     },
     uploadAndAttachManualFile: async (id, file = null) => {
       if (!isManager(state.permissions) || typeof attachAssetManualFromStoragePath !== 'function') return;
+      const resolution = resolveManualAttachAsset(id);
+      if (!resolution.ok) {
+        setManualAttachUi(resolution.assetId || `${id || ''}`.trim() || 'unknown', { tone: 'error', message: resolution.message });
+        console.warn('upload_manual_attach:missing_asset_context', { requestedAssetId: `${id || ''}`.trim() || null });
+        render();
+        return;
+      }
       if (!file) {
-        setManualAttachUi(id, { tone: 'error', message: 'Attachment failed: choose a file to upload.' });
+        setManualAttachUi(resolution.assetId, { tone: 'error', message: 'Attachment failed: choose a file to upload.' });
         render();
         return;
       }
       const extension = `${file?.name || ''}`.split('.').pop().toLowerCase();
       if (!ALLOWED_MANUAL_FILE_EXTENSIONS.has(extension)) {
-        setManualAttachUi(id, { tone: 'error', message: 'Attachment failed: supported file types are PDF, TXT, HTML, DOC, and DOCX.' });
+        setManualAttachUi(resolution.assetId, { tone: 'error', message: 'Attachment failed: supported file types are PDF, TXT, HTML, DOC, and DOCX.' });
         render();
         return;
       }
       if (Number(file.size || 0) > MAX_MANUAL_UPLOAD_BYTES) {
-        setManualAttachUi(id, { tone: 'error', message: 'Attachment failed: file must be 25 MB or smaller.' });
+        setManualAttachUi(resolution.assetId, { tone: 'error', message: 'Attachment failed: file must be 25 MB or smaller.' });
         render();
         return;
       }
-      const asset = state.assets.find((entry) => entry.id === id) || {};
+      const asset = resolution.asset || {};
       const companyId = `${asset.companyId || state.company?.id || state.activeMembership?.companyId || ''}`.trim();
       if (!companyId || !storage || typeof storageRef !== 'function' || typeof uploadBytes !== 'function') {
-        setManualAttachUi(id, { tone: 'error', message: 'Attachment failed: missing company/storage context.' });
+        setManualAttachUi(resolution.assetId, { tone: 'error', message: 'Attachment failed: missing company/storage context.' });
         render();
         return;
       }
       const safeName = sanitizeStorageSegment(file.name || 'manual');
-      const storagePath = `companies/${companyId}/manuals/${id}/manual-uploads/${Date.now()}-${safeName}`;
+      const storagePath = `companies/${companyId}/manuals/${resolution.assetId}/manual-uploads/${Date.now()}-${safeName}`;
       try {
-        setManualAttachUi(id, { pending: true, phase: 'uploading', tone: 'info', message: 'Uploading manual…' });
+        console.debug('upload_manual_attach:start', { assetId: resolution.assetId });
+        setManualAttachUi(resolution.assetId, { pending: true, phase: 'uploading', tone: 'info', message: 'Uploading manual…' });
         render();
         await uploadBytes(storageRef(storage, storagePath), file, { contentType: file.type || 'application/octet-stream' });
-        setManualAttachUi(id, { pending: true, phase: 'extracting', tone: 'info', message: 'Extracting manual text…' });
+        setManualAttachUi(resolution.assetId, { pending: true, phase: 'extracting', tone: 'info', message: 'Extracting manual text…' });
         render();
         const result = await attachAssetManualFromStoragePath({
-          assetId: id,
+          assetId: resolution.assetId,
           storagePath,
           sourceTitle: `${asset.name || ''}`.trim(),
           originalFileName: `${file.name || ''}`.trim(),
@@ -1174,10 +1203,10 @@ export function createAssetActions(deps) {
         const chunkCount = Number(result?.chunkCount || 0) || 0;
         const message = result?.warning
           || (chunkCount > 0 ? `Manual attached and text extracted: ${chunkCount} chunks.` : 'Manual attached.');
-        setManualAttachUi(id, { pending: false, phase: 'idle', tone: result?.warning ? 'warn' : 'success', message });
+        setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: result?.warning ? 'warn' : 'success', message });
         await refreshData();
       } catch (error) {
-        setManualAttachUi(id, { pending: false, phase: 'idle', tone: 'error', message: `Attachment failed: ${`${error?.message || error || 'unknown error'}`.slice(0, 140)}` });
+        setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: 'error', message: `Attachment failed: ${`${error?.message || error || 'unknown error'}`.slice(0, 140)}` });
       }
       render();
     },

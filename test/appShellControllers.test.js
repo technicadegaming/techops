@@ -1517,6 +1517,163 @@ test('asset actions manual text repair calls callable and refreshes asset data',
   assert.match(state.assetUi.lastActionByAsset['asset-a'].message, /Manual text extracted: 12 chunks created/);
 });
 
+
+
+test('asset actions attach manual from URL uses exact asset.id and callable payload', async () => {
+  const { createAssetActions } = await loadAssetActions();
+  const attachCalls = [];
+  const state = {
+    assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
+    assetUi: {},
+    assets: [{ id: 'asset-doc-123', assetId: 'legacy-name', name: 'SpongeBob', companyId: 'company-a' }],
+    companyLocations: [],
+    permissions: { companyRole: 'manager', role: 'manager' },
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    user: { uid: 'user-1' }
+  };
+  const actions = createAssetActions({
+    state,
+    onLocationFilter: () => {},
+    render: () => {},
+    refreshData: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    deleteEntity: async () => {},
+    approveAssetManual: async () => {},
+    attachAssetManualFromUrl: async (payload) => {
+      attachCalls.push(payload);
+      return { chunkCount: 0 };
+    },
+    attachAssetManualFromStoragePath: async () => ({}),
+    enrichAssetDocumentation: async () => ({}),
+    previewAssetDocumentationLookup: async () => ({}),
+    researchAssetTitles: async () => ({}),
+    markAssetEnrichmentFailure: async () => ({}),
+    normalizeAssetId: (name) => name,
+    pickUniqueAssetId: (id) => id,
+    createEmptyAssetDraft: () => ({ previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } }),
+    withTimeout: async (promise) => promise,
+    normalizeSupportEntries: (entries) => entries,
+    canDelete: () => false,
+    isAdmin: () => true,
+    isManager: () => true,
+    buildAssetSaveErrorMessage: () => 'error',
+    buildAssetSaveDebugContext: () => ({}),
+    isPermissionRelatedError: () => false,
+    buildPreviewQueryKey: () => ''
+  });
+
+  await actions.attachManualFromUrl('asset-doc-123', { manualUrl: 'https://example.com/manual.pdf', sourceTitle: 'Manual' });
+
+  assert.equal(attachCalls.length, 1);
+  assert.equal(attachCalls[0].assetId, 'asset-doc-123');
+});
+
+test('asset actions upload manual file uses exact asset.id in storage path', async () => {
+  const { createAssetActions } = await loadAssetActions();
+  const uploadCalls = [];
+  const attachCalls = [];
+  const state = {
+    assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
+    assetUi: {},
+    assets: [{ id: 'asset-doc-456', assetId: 'legacy-id', name: 'SpongeBob', companyId: 'company-a' }],
+    companyLocations: [],
+    permissions: { companyRole: 'manager', role: 'manager' },
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    user: { uid: 'user-1' }
+  };
+  const fakeStorage = {};
+  const actions = createAssetActions({
+    state,
+    onLocationFilter: () => {},
+    render: () => {},
+    refreshData: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    deleteEntity: async () => {},
+    approveAssetManual: async () => {},
+    attachAssetManualFromUrl: async () => ({}),
+    attachAssetManualFromStoragePath: async (payload) => {
+      attachCalls.push(payload);
+      return { chunkCount: 0 };
+    },
+    enrichAssetDocumentation: async () => ({}),
+    previewAssetDocumentationLookup: async () => ({}),
+    researchAssetTitles: async () => ({}),
+    storage: fakeStorage,
+    storageRef: (_storage, path) => ({ path }),
+    uploadBytes: async (ref) => { uploadCalls.push(ref.path); },
+    markAssetEnrichmentFailure: async () => ({}),
+    normalizeAssetId: (name) => name,
+    pickUniqueAssetId: (id) => id,
+    createEmptyAssetDraft: () => ({ previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } }),
+    withTimeout: async (promise) => promise,
+    normalizeSupportEntries: (entries) => entries,
+    canDelete: () => false,
+    isAdmin: () => true,
+    isManager: () => true,
+    buildAssetSaveErrorMessage: () => 'error',
+    buildAssetSaveDebugContext: () => ({}),
+    isPermissionRelatedError: () => false,
+    buildPreviewQueryKey: () => ''
+  });
+
+  await actions.uploadAndAttachManualFile('asset-doc-456', { name: 'ops-manual.pdf', size: 1024, type: 'application/pdf' });
+
+  assert.equal(uploadCalls.length, 1);
+  assert.match(uploadCalls[0], /^companies\/company-a\/manuals\/asset-doc-456\/manual-uploads\//);
+  assert.equal(attachCalls[0].assetId, 'asset-doc-456');
+});
+
+test('asset actions block manual attach when asset id cannot be resolved', async () => {
+  const { createAssetActions } = await loadAssetActions();
+  let attachCallCount = 0;
+  const state = {
+    assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
+    assetUi: {},
+    assets: [{ id: 'asset-a', name: 'Asset A', companyId: 'company-a' }],
+    companyLocations: [],
+    permissions: { companyRole: 'manager', role: 'manager' },
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    user: { uid: 'user-1' }
+  };
+  const actions = createAssetActions({
+    state,
+    onLocationFilter: () => {},
+    render: () => {},
+    refreshData: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    deleteEntity: async () => {},
+    approveAssetManual: async () => {},
+    attachAssetManualFromUrl: async () => { attachCallCount += 1; return {}; },
+    attachAssetManualFromStoragePath: async () => { attachCallCount += 1; return {}; },
+    enrichAssetDocumentation: async () => ({}),
+    previewAssetDocumentationLookup: async () => ({}),
+    researchAssetTitles: async () => ({}),
+    markAssetEnrichmentFailure: async () => ({}),
+    normalizeAssetId: (name) => name,
+    pickUniqueAssetId: (id) => id,
+    createEmptyAssetDraft: () => ({ previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } }),
+    withTimeout: async (promise) => promise,
+    normalizeSupportEntries: (entries) => entries,
+    canDelete: () => false,
+    isAdmin: () => true,
+    isManager: () => true,
+    buildAssetSaveErrorMessage: () => 'error',
+    buildAssetSaveDebugContext: () => ({}),
+    isPermissionRelatedError: () => false,
+    buildPreviewQueryKey: () => ''
+  });
+
+  await actions.attachManualFromUrl('missing-id', { manualUrl: 'https://example.com/manual.pdf' });
+
+  assert.equal(attachCallCount, 0);
+  assert.match(state.assetUi.manualAttachByAsset['missing-id'].message, /could not be identified/i);
+});
 test('admin CSV import queues truthful enrichment status, starts enrichment, and keeps hint URLs non-authoritative', async () => {
   const { createAdminActions } = await loadAdminActions();
   const assets = [];
@@ -1932,6 +2089,8 @@ test('operations source includes explicit create-task loading and error states',
 test('assets source includes manual attach controls and upload actions', () => {
   const source = loadAssetsSource();
   assert.match(source, /Attach manual/);
+  assert.match(source, /data-manual-attach-section/);
+  assert.match(source, /data-asset-id="\$\{asset\.id\}"/);
   assert.match(source, /data-attach-manual-url/);
   assert.match(source, /data-upload-manual-file/);
   assert.match(source, /Upload and extract manual/);

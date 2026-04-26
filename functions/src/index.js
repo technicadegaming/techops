@@ -19,6 +19,7 @@ const {
   isGlobalAdminRole,
 } = require('./lib/enrichmentAuthorization');
 const { normalizeAssetEnrichmentTriggerSource } = require('./lib/assetEnrichmentTriggers');
+const { resolveManualAttachAssetId, summarizeManualAttachUrl } = require('./lib/manualAttachCallable');
 const {
   enrichAssetDocumentation,
   previewAssetDocumentationLookup,
@@ -97,6 +98,7 @@ async function loadTask(taskId) {
 function normalizeCompanyId(companyId) {
   return `${companyId || ''}`.trim() || null;
 }
+
 
 async function resolveTaskCompanyContext({ task, requestedCompanyId, userId }) {
   const taskCompanyId = normalizeCompanyId(task.companyId);
@@ -1051,22 +1053,54 @@ exports.backfillApprovedAssetManualLinkage = onCall({}, async (request) => {
 
 exports.attachAssetManualFromUrl = onCall({}, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
-  assertString(request.data?.assetId, 'assetId');
+  const requestedAssetId = resolveManualAttachAssetId(request.data || {});
+  assertString(requestedAssetId, 'assetId');
   assertString(request.data?.manualUrl, 'manualUrl');
+
+  const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
+  const urlSummary = summarizeManualAttachUrl(request.data?.manualUrl);
+  console.log('attachAssetManualFromUrl:start', {
+    assetId: requestedAssetId,
+    uid: request.auth.uid,
+    requestCompanyId: requestedCompanyId,
+    manualUrlHost: urlSummary.host,
+    manualUrlPathLength: urlSummary.pathLength,
+  });
 
   const authz = await authorizeAssetEnrichment({
     db,
-    assetId: request.data.assetId,
+    assetId: requestedAssetId,
     uid: request.auth.uid,
     getUserRole,
   });
   if (!authz.allowed) {
-    if (authz.scope === 'asset_not_found') throw new HttpsError('not-found', 'Asset not found');
+    console.warn('attachAssetManualFromUrl:authz_denied', {
+      assetId: requestedAssetId,
+      uid: request.auth.uid,
+      requestCompanyId: requestedCompanyId,
+      scope: authz.scope || 'unknown',
+      companyId: authz.companyId || null,
+      companyRole: authz.companyRole || null,
+      globalRole: authz.globalRole || null,
+      assetExists: authz.scope !== 'asset_not_found',
+    });
+    if (authz.scope === 'asset_not_found') throw new HttpsError('not-found', 'Asset not found for manual attachment. Refresh the asset list and try again.');
     throw new HttpsError('permission-denied', 'Insufficient role for manual attachment');
   }
 
-  const asset = authz.asset ? { id: request.data.assetId, ...authz.asset } : null;
-  if (!asset?.id) throw new HttpsError('not-found', 'Asset not found');
+  const asset = authz.asset ? { id: requestedAssetId, ...authz.asset } : null;
+  const assetExists = !!asset?.id;
+  console.log('attachAssetManualFromUrl:authorized', {
+    assetId: requestedAssetId,
+    uid: request.auth.uid,
+    requestCompanyId: requestedCompanyId,
+    assetCompanyId: asset?.companyId || null,
+    assetExists,
+  });
+  if (!assetExists) throw new HttpsError('not-found', 'Asset not found for manual attachment. Refresh the asset list and try again.');
+  if (requestedCompanyId && `${asset.companyId || ''}`.trim() && requestedCompanyId !== `${asset.companyId || ''}`.trim()) {
+    throw new HttpsError('permission-denied', 'Asset/company mismatch for manual attachment.');
+  }
   return attachAssetManualFromUrl({
     db,
     storage: admin.storage(),
@@ -1080,22 +1114,52 @@ exports.attachAssetManualFromUrl = onCall({}, async (request) => {
 
 exports.attachAssetManualFromStoragePath = onCall({}, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
-  assertString(request.data?.assetId, 'assetId');
+  const requestedAssetId = resolveManualAttachAssetId(request.data || {});
+  assertString(requestedAssetId, 'assetId');
   assertString(request.data?.storagePath, 'storagePath');
+
+  const requestedCompanyId = normalizeCompanyId(request.data?.companyId);
+  console.log('attachAssetManualFromStoragePath:start', {
+    assetId: requestedAssetId,
+    uid: request.auth.uid,
+    requestCompanyId: requestedCompanyId,
+    storagePathLength: `${request.data?.storagePath || ''}`.trim().length,
+  });
 
   const authz = await authorizeAssetEnrichment({
     db,
-    assetId: request.data.assetId,
+    assetId: requestedAssetId,
     uid: request.auth.uid,
     getUserRole,
   });
   if (!authz.allowed) {
-    if (authz.scope === 'asset_not_found') throw new HttpsError('not-found', 'Asset not found');
+    console.warn('attachAssetManualFromStoragePath:authz_denied', {
+      assetId: requestedAssetId,
+      uid: request.auth.uid,
+      requestCompanyId: requestedCompanyId,
+      scope: authz.scope || 'unknown',
+      companyId: authz.companyId || null,
+      companyRole: authz.companyRole || null,
+      globalRole: authz.globalRole || null,
+      assetExists: authz.scope !== 'asset_not_found',
+    });
+    if (authz.scope === 'asset_not_found') throw new HttpsError('not-found', 'Asset not found for manual attachment. Refresh the asset list and try again.');
     throw new HttpsError('permission-denied', 'Insufficient role for manual attachment');
   }
 
-  const asset = authz.asset ? { id: request.data.assetId, ...authz.asset } : null;
-  if (!asset?.id) throw new HttpsError('not-found', 'Asset not found');
+  const asset = authz.asset ? { id: requestedAssetId, ...authz.asset } : null;
+  const assetExists = !!asset?.id;
+  console.log('attachAssetManualFromStoragePath:authorized', {
+    assetId: requestedAssetId,
+    uid: request.auth.uid,
+    requestCompanyId: requestedCompanyId,
+    assetCompanyId: asset?.companyId || null,
+    assetExists,
+  });
+  if (!assetExists) throw new HttpsError('not-found', 'Asset not found for manual attachment. Refresh the asset list and try again.');
+  if (requestedCompanyId && `${asset.companyId || ''}`.trim() && requestedCompanyId !== `${asset.companyId || ''}`.trim()) {
+    throw new HttpsError('permission-denied', 'Asset/company mismatch for manual attachment.');
+  }
   return attachAssetManualFromStoragePath({
     db,
     storage: admin.storage(),

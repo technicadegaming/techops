@@ -964,27 +964,27 @@ export function renderAssets(el, state, actions) {
     : (hasAttachedManualStorage ? renderAuditChip('Manual attached — text not extracted', 'warn') : renderAuditChip('No manual text attached', 'muted'))}
             </div>
             <div class="tiny" style="margin-top:4px;">latestManualId: ${asset.latestManualId || 'n/a'} | manualChunkCount: ${manualChunkCount} | manualTextExtractionStatus: ${asset.manualTextExtractionStatus || 'n/a'} | documentationTextAvailable: ${asset.documentationTextAvailable === true ? 'true' : 'false'}</div>
-            ${manager ? `<div class="item" style="margin-top:8px;">
+            ${manager ? `<div class="item" style="margin-top:8px;" data-manual-attach-section data-asset-id="${asset.id}">
               <b>Attach manual</b>
               <div class="tiny" style="margin-top:4px;">Paste a manual URL or upload a PDF/manual file. Scoot will attach it to this asset and extract searchable text for Operations AI.</div>
               <div class="grid grid-2 mt">
                 <label class="tiny">Manual URL
-                  <input data-attach-manual-url-input="${asset.id}" placeholder="https://..." ${attachBusy ? 'disabled' : ''} />
+                  <input data-attach-manual-url-input="${asset.id}" data-asset-id="${asset.id}" placeholder="https://..." ${attachBusy ? 'disabled' : ''} />
                 </label>
                 <label class="tiny">Manual title (optional)
-                  <input data-attach-manual-title-input="${asset.id}" placeholder="Manual title" ${attachBusy ? 'disabled' : ''} />
+                  <input data-attach-manual-title-input="${asset.id}" data-asset-id="${asset.id}" placeholder="Manual title" ${attachBusy ? 'disabled' : ''} />
                 </label>
               </div>
               <div class="action-row mt">
-                <button type="button" data-attach-manual-url="${asset.id}" ${attachBusy ? 'disabled' : ''}>${attachBusy && attachUi.phase === 'attaching' ? 'Attaching manual…' : 'Attach manual from link'}</button>
+                <button type="button" data-attach-manual-url="${asset.id}" data-asset-id="${asset.id}" ${attachBusy ? 'disabled' : ''}>${attachBusy && attachUi.phase === 'attaching' ? 'Attaching manual…' : 'Attach manual from link'}</button>
               </div>
               <div class="grid mt">
                 <label class="tiny">Manual file
-                  <input type="file" accept=".pdf,.txt,.html,.doc,.docx" data-attach-manual-file-input="${asset.id}" ${attachBusy ? 'disabled' : ''} />
+                  <input type="file" accept=".pdf,.txt,.html,.doc,.docx" data-attach-manual-file-input="${asset.id}" data-asset-id="${asset.id}" ${attachBusy ? 'disabled' : ''} />
                 </label>
               </div>
               <div class="action-row mt">
-                <button type="button" data-upload-manual-file="${asset.id}" ${attachBusy ? 'disabled' : ''}>${attachBusy && attachUi.phase === 'uploading' ? 'Uploading manual…' : attachBusy && attachUi.phase === 'extracting' ? 'Extracting manual text…' : 'Upload and extract manual'}</button>
+                <button type="button" data-upload-manual-file="${asset.id}" data-asset-id="${asset.id}" ${attachBusy ? 'disabled' : ''}>${attachBusy && attachUi.phase === 'uploading' ? 'Uploading manual…' : attachBusy && attachUi.phase === 'extracting' ? 'Extracting manual text…' : 'Upload and extract manual'}</button>
               </div>
               ${attachUi?.message ? renderInlineFeedback(attachUi.message, attachUi.tone || 'info') : ''}
             </div>` : ''}
@@ -1209,19 +1209,37 @@ export function renderAssets(el, state, actions) {
     await openStoredManualPath(link, state);
   }));
   el.querySelectorAll('[data-remove-support]').forEach((button) => button.addEventListener('click', () => actions.removeSupportLink(button.dataset.removeSupport, decodeURIComponent(button.dataset.url || ''))));
+  const resolveManualAttachContext = (node) => {
+    const section = node?.closest?.('[data-manual-attach-section]');
+    const assetId = `${section?.dataset?.assetId || ''}`.trim();
+    if (!assetId) return null;
+    const asset = (Array.isArray(state.assets) ? state.assets : []).find((entry) => `${entry?.id || ''}`.trim() === assetId) || null;
+    if (!asset?.id) return null;
+    return { section, assetId: asset.id, asset };
+  };
   el.querySelectorAll('[data-attach-manual-url]').forEach((button) => button.addEventListener('click', () => {
-    const assetId = button.dataset.attachManualUrl;
-    const urlInput = el.querySelector(`[data-attach-manual-url-input="${assetId}"]`);
-    const titleInput = el.querySelector(`[data-attach-manual-title-input="${assetId}"]`);
-    actions.attachManualFromUrl(assetId, {
+    const context = resolveManualAttachContext(button);
+    if (!context) {
+      console.warn('attach_manual_from_url:unresolved_asset_context', { requestedAssetId: `${button.dataset.attachManualUrl || ''}`.trim() || null });
+      actions.attachManualFromUrl('', {});
+      return;
+    }
+    const urlInput = context.section.querySelector(`[data-attach-manual-url-input="${context.assetId}"]`);
+    const titleInput = context.section.querySelector(`[data-attach-manual-title-input="${context.assetId}"]`);
+    actions.attachManualFromUrl(context.assetId, {
       manualUrl: `${urlInput?.value || ''}`.trim(),
       sourceTitle: `${titleInput?.value || ''}`.trim(),
     });
   }));
   el.querySelectorAll('[data-upload-manual-file]').forEach((button) => button.addEventListener('click', () => {
-    const assetId = button.dataset.uploadManualFile;
-    const fileInput = el.querySelector(`[data-attach-manual-file-input="${assetId}"]`);
-    actions.uploadAndAttachManualFile(assetId, fileInput?.files?.[0] || null);
+    const context = resolveManualAttachContext(button);
+    if (!context) {
+      console.warn('upload_manual_attach:unresolved_asset_context', { requestedAssetId: `${button.dataset.uploadManualFile || ''}`.trim() || null });
+      actions.uploadAndAttachManualFile('', null);
+      return;
+    }
+    const fileInput = context.section.querySelector(`[data-attach-manual-file-input="${context.assetId}"]`);
+    actions.uploadAndAttachManualFile(context.assetId, fileInput?.files?.[0] || null);
   }));
   el.querySelectorAll('[data-remove-all-manuals]').forEach((button) => button.addEventListener('click', () => actions.removeAllManualLinks(button.dataset.removeAllManuals)));
   el.querySelectorAll('[data-remove-all-support]').forEach((button) => button.addEventListener('click', () => actions.removeAllSupportLinks(button.dataset.removeAllSupport)));
