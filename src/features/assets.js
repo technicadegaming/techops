@@ -973,10 +973,15 @@ export function renderAssets(el, state, actions) {
         const manualStatus = deriveAssetManualStatus(asset);
         const manualChunkCount = Number(asset.manualChunkCount || 0) || 0;
         const hasExtractedManualText = manualState.hasManualText;
+        const hasManualTextEvidence = hasExtractedManualText
+          || manualChunkCount > 0
+          || !!`${asset.latestManualId || ''}`.trim()
+          || !!manualState.csvBootstrapManualStoragePath
+          || !!manualState.csvBootstrapResolvedManualUrl;
         const hasAttachedManualStorage = !!`${asset.manualStoragePath || ''}`.trim()
           || !!manualState.csvBootstrapManualStoragePath
           || manualState.manualLinks.some((url) => isStoredManualUrl(url));
-        const manualOutcomeLabel = hasExtractedManualText
+        const manualOutcomeLabel = hasManualTextEvidence
           ? 'manual text available'
           : manualStatus === MANUAL_STATUS.ATTACHED
             ? 'manual attached'
@@ -1017,7 +1022,7 @@ export function renderAssets(el, state, actions) {
             <div class="tiny" style="margin:8px 0;"><b>Manual status:</b> ${manualOutcomeLabel}</div>
             <div class="tiny" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
               <b>Manual text:</b>
-              ${hasExtractedManualText
+              ${hasManualTextEvidence
     ? renderAuditChip('Attached manual text available', 'good')
     : (hasAttachedManualStorage ? renderAuditChip('Manual attached — text not extracted', 'warn') : renderAuditChip('No manual text attached', 'muted'))}
             </div>
@@ -1028,10 +1033,10 @@ export function renderAssets(el, state, actions) {
               <div class="tiny" style="margin-top:4px;">Paste a manual URL or upload a PDF/manual file. Scoot will attach it to this asset and extract searchable text for Operations AI.</div>
               <div class="grid grid-2 mt">
                 <label class="tiny">Manual URL
-                  <input data-attach-manual-url-input="${asset.id}" data-asset-id="${asset.id}" placeholder="https://..." ${attachBusy ? 'disabled' : ''} />
+                  <input data-manual-url-input data-asset-id="${asset.id}" placeholder="https://..." ${attachBusy ? 'disabled' : ''} />
                 </label>
                 <label class="tiny">Manual title (optional)
-                  <input data-attach-manual-title-input="${asset.id}" data-asset-id="${asset.id}" placeholder="Manual title" ${attachBusy ? 'disabled' : ''} />
+                  <input data-manual-title-input data-asset-id="${asset.id}" placeholder="Manual title" ${attachBusy ? 'disabled' : ''} />
                 </label>
               </div>
               <div class="action-row mt">
@@ -1039,7 +1044,7 @@ export function renderAssets(el, state, actions) {
               </div>
               <div class="grid mt">
                 <label class="tiny">Manual file
-                  <input type="file" accept=".pdf,.txt,.html,.doc,.docx" data-attach-manual-file-input="${asset.id}" data-asset-id="${asset.id}" ${attachBusy ? 'disabled' : ''} />
+                  <input type="file" accept=".pdf,.txt,.html,.doc,.docx" data-manual-file-input data-asset-id="${asset.id}" ${attachBusy ? 'disabled' : ''} />
                 </label>
               </div>
               <div class="action-row mt">
@@ -1057,8 +1062,12 @@ export function renderAssets(el, state, actions) {
           linkAttrs: isStoredManualUrl(url) ? `data-manual-storage-path="${encodeURIComponent(url)}"` : '',
           removable: manager,
           removeAttr: `data-remove-manual="${asset.id}" data-url="${encodeURIComponent(url)}"`
-        })).join('') : (manualState.manualLibraryRef ? renderInlineFeedback(`Shared manual attached via library ref ${manualState.manualLibraryRef}.`, 'success') : (manualState.hasManualText ? renderInlineFeedback('Manual text available from attached manual.', 'success') : renderInlineFeedback('No attached manual yet. Run lookup or approve a suggested manual below.', 'info')))}</div>
-            ${manualState.csvBootstrapManualStoragePath && !`${asset.manualStoragePath || ''}`.trim() ? `<div class="tiny">Attached manual storage path: ${manualState.csvBootstrapManualStoragePath}</div>` : ''}
+        })).join('') : (manualState.manualLibraryRef ? renderInlineFeedback(`Shared manual attached via library ref ${manualState.manualLibraryRef}.`, 'success') : (hasManualTextEvidence ? renderInlineFeedback('Manual text available from attached manual.', 'success') : renderInlineFeedback('No attached manual yet. Run lookup or approve a suggested manual below.', 'info')))}</div>
+            ${manualState.csvBootstrapManualStoragePath && !manualState.manualLinks.includes(manualState.csvBootstrapManualStoragePath) ? renderLinkChip(manualState.csvBootstrapManualStoragePath, {
+          label: `Bootstrap manual storage (${manualState.csvBootstrapManualStoragePath})`,
+          linkUrl: buildStoredManualDownloadUrl(manualState.csvBootstrapManualStoragePath),
+          linkAttrs: `data-manual-storage-path="${encodeURIComponent(manualState.csvBootstrapManualStoragePath)}"`
+        }) : ''}
             <div class="tiny" style="margin:4px 0;">Linked support links:</div>
             <div style="margin:4px 0 8px;">${filterDisplaySupportResources(asset.supportResourcesSuggestion || []).length ? filterDisplaySupportResources(asset.supportResourcesSuggestion || []).map((entry) => {
           const url = entry?.url || entry;
@@ -1288,8 +1297,8 @@ export function renderAssets(el, state, actions) {
       actions.attachManualFromUrl('', {});
       return;
     }
-    const urlInput = context.section.querySelector(`[data-attach-manual-url-input="${context.assetId}"]`);
-    const titleInput = context.section.querySelector(`[data-attach-manual-title-input="${context.assetId}"]`);
+    const urlInput = context.section.querySelector('[data-manual-url-input]');
+    const titleInput = context.section.querySelector('[data-manual-title-input]');
     actions.attachManualFromUrl(context.assetId, {
       manualUrl: `${urlInput?.value || ''}`.trim(),
       sourceTitle: `${titleInput?.value || ''}`.trim(),
@@ -1302,7 +1311,7 @@ export function renderAssets(el, state, actions) {
       actions.uploadAndAttachManualFile('', null);
       return;
     }
-    const fileInput = context.section.querySelector(`[data-attach-manual-file-input="${context.assetId}"]`);
+    const fileInput = context.section.querySelector('[data-manual-file-input]');
     actions.uploadAndAttachManualFile(context.assetId, fileInput?.files?.[0] || null);
   }));
   el.querySelectorAll('[data-remove-all-manuals]').forEach((button) => button.addEventListener('click', () => actions.removeAllManualLinks(button.dataset.removeAllManuals)));

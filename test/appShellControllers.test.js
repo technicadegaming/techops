@@ -1468,7 +1468,7 @@ test('assets view shows csv bootstrap manual storage evidence and prioritizes ma
   const actions = { setLocationFilter: () => {}, runBulkAssetEnrichment: () => {}, repairAssetManualText: () => {} };
   renderAssets(el, state, actions);
 
-  assert.match(el.innerHTML, /Attached manual storage path: companies\/company-a\/manuals\/asset-bootstrap\/source\.pdf/);
+  assert.match(el.innerHTML, /data-manual-storage-path="companies%2Fcompany-a%2Fmanuals%2Fasset-bootstrap%2Fsource\.pdf"/);
   assert.match(el.innerHTML, /Manual outcome: manual text available/);
   assert.doesNotMatch(el.innerHTML, /Manual outcome: support links only/);
 });
@@ -1642,6 +1642,7 @@ test('asset actions attach manual from URL uses exact asset.id and callable payl
   assert.equal(attachCalls[0].assetDocId, 'asset-doc-123');
   assert.equal(attachCalls[0].storedAssetId, 'legacy-name');
   assert.equal(attachCalls[0].manualUrl, 'https://example.com/manual.pdf');
+  assert.equal(attachCalls[0].companyId, 'company-a');
 });
 
 test('asset actions attach manual from URL blocks blank and invalid URLs', async () => {
@@ -1798,6 +1799,7 @@ test('asset actions upload manual file uses exact asset.id in storage path', asy
   assert.equal(attachCalls[0].assetId, 'asset-doc-456');
   assert.equal(attachCalls[0].assetDocId, 'asset-doc-456');
   assert.equal(attachCalls[0].storedAssetId, 'legacy-id');
+  assert.equal(attachCalls[0].companyId, 'company-a');
 });
 
 test('asset actions block manual attach when asset id cannot be resolved', async () => {
@@ -1848,7 +1850,7 @@ test('asset actions block manual attach when asset id cannot be resolved', async
   assert.match(state.assetUi.manualAttachByAsset['missing-id'].message, /could not be identified/i);
 });
 
-test('asset actions maps missing required inputs attach error to friendly guidance', async () => {
+test('asset actions maps missing URL attach error to specific guidance', async () => {
   const { createAssetActions } = await loadAssetActions();
   const state = {
     assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
@@ -1869,7 +1871,7 @@ test('asset actions maps missing required inputs attach error to friendly guidan
     upsertEntity: async () => {},
     deleteEntity: async () => {},
     approveAssetManual: async () => {},
-    attachAssetManualFromUrl: async () => { throw new Error('Missing required inputs for manual attachment.'); },
+    attachAssetManualFromUrl: async () => { throw new Error('Manual URL is required for manual attachment.'); },
     attachAssetManualFromStoragePath: async () => ({}),
     enrichAssetDocumentation: async () => ({}),
     previewAssetDocumentationLookup: async () => ({}),
@@ -1891,7 +1893,7 @@ test('asset actions maps missing required inputs attach error to friendly guidan
 
   await actions.attachManualFromUrl('asset-a', { manualUrl: 'https://example.com/manual.pdf' });
 
-  assert.match(state.assetUi.manualAttachByAsset['asset-a'].message, /Missing manual URL or asset record\. Refresh the asset list and try again\./);
+  assert.match(state.assetUi.manualAttachByAsset['asset-a'].message, /Manual URL is required for manual attachment\./);
 });
 test('admin CSV import queues truthful enrichment status, starts enrichment, and keeps hint URLs non-authoritative', async () => {
   const { createAdminActions } = await loadAdminActions();
@@ -2334,6 +2336,9 @@ test('assets source includes manual attach controls and upload actions', () => {
   assert.match(source, /data-manual-attach-section/);
   assert.match(source, /data-asset-id="\$\{asset\.id\}"/);
   assert.match(source, /data-attach-manual-url/);
+  assert.match(source, /data-manual-url-input/);
+  assert.match(source, /data-manual-title-input/);
+  assert.match(source, /data-manual-file-input/);
   assert.match(source, /data-upload-manual-file/);
   assert.match(source, /Upload and extract manual/);
 });

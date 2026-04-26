@@ -6,6 +6,7 @@ const {
   resolveManualAttachAssetId,
   summarizeManualAttachUrl,
   resolveManualAttachAsset,
+  normalizeManualAttachRequestContext,
 } = require('../src/lib/manualAttachCallable');
 
 function createDb(assets = []) {
@@ -79,7 +80,29 @@ test('resolveManualAttachAsset tries requested assetDocId doc first', async () =
 
   assert.deepEqual(calls, ['asset-doc-1']);
   assert.equal(result.asset.id, 'asset-doc-1');
+  assert.equal(result.asset.firestoreDocId, 'asset-doc-1');
+  assert.equal(result.asset.storedAssetId, 'legacy-1');
   assert.equal(result.resolutionSource, 'docId_assetDocId');
+});
+
+test('resolveManualAttachAsset normalizes asset identity so doc.data.id cannot override firestore doc id', async () => {
+  const db = createDb([{ docId: 'asset-doc-normalized', data: { companyId: 'company-a', id: 'legacy-id-should-not-overwrite' } }]);
+  const result = await resolveManualAttachAsset({
+    db,
+    requestedAssetId: 'asset-doc-normalized',
+    requestedAssetDocId: 'asset-doc-normalized',
+    requestedCompanyId: 'company-a',
+    uid: 'user-1',
+    getUserRole: async () => 'manager',
+    authorizeAssetEnrichment: async () => ({ allowed: true, scope: 'company_membership', asset: { companyId: 'company-a', id: 'legacy-id-should-not-overwrite' } }),
+    authorizeCompanyMember: async () => ({ allowed: true, scope: 'company_membership' }),
+    canRunAssetEnrichment: () => true,
+  });
+
+  assert.equal(result.asset.id, 'asset-doc-normalized');
+  assert.equal(result.asset.firestoreDocId, 'asset-doc-normalized');
+  assert.equal(result.asset.storedAssetId, 'legacy-id-should-not-overwrite');
+  assert.equal(result.companyId, 'company-a');
 });
 
 test('resolveManualAttachAsset finds exactly one legacy id match scoped to company', async () => {
@@ -154,4 +177,30 @@ test('resolveManualAttachAsset rejects company mismatch', async () => {
     }),
     (error) => error?.code === 'permission-denied'
   );
+});
+
+test('normalizeManualAttachRequestContext returns normalized request and resolved asset details', () => {
+  const context = normalizeManualAttachRequestContext({
+    requestData: {
+      assetId: 'legacy-id',
+      assetDocId: 'asset-doc-7',
+      companyId: 'company-a',
+      manualUrl: ' https://example.com/manual.pdf ',
+      sourceTitle: ' Ops Manual ',
+    },
+    resolution: {
+      assetDocId: 'asset-doc-7',
+      resolutionSource: 'docId_assetDocId',
+      asset: { id: 'legacy-id', companyId: 'company-a', name: 'Asset' },
+    }
+  });
+  assert.equal(context.requestedAssetId, 'legacy-id');
+  assert.equal(context.requestedAssetDocId, 'asset-doc-7');
+  assert.equal(context.requestedCompanyId, 'company-a');
+  assert.equal(context.manualUrl, 'https://example.com/manual.pdf');
+  assert.equal(context.sourceTitle, 'Ops Manual');
+  assert.equal(context.resolvedAssetDocId, 'asset-doc-7');
+  assert.equal(context.resolvedAsset.id, 'asset-doc-7');
+  assert.equal(context.resolvedAsset.firestoreDocId, 'asset-doc-7');
+  assert.equal(context.resolutionSource, 'docId_assetDocId');
 });

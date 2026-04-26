@@ -182,11 +182,22 @@ export function createAssetActions(deps) {
     return { ok: true, assetId: canonicalAssetId, assetDocId, storedAssetId, asset, message: '' };
   };
   const isHttpUrl = (value = '') => /^https?:\/\//i.test(`${value || ''}`.trim());
+  const summarizeManualAttachUrl = (manualUrl = '') => {
+    const value = `${manualUrl || ''}`.trim();
+    if (!value) return { host: '' };
+    try {
+      return { host: new URL(value).hostname || '' };
+    } catch {
+      return { host: '' };
+    }
+  };
   const mapManualAttachErrorMessage = (error) => {
     const raw = `${error?.message || error || 'unknown error'}`.trim();
-    if (/missing required inputs for manual attachment/i.test(raw)) {
-      return 'Missing manual URL or asset record. Refresh the asset list and try again.';
-    }
+    if (/manual url is required for manual attachment/i.test(raw)) return 'Manual URL is required for manual attachment.';
+    if (/manual file upload did not produce a storage path/i.test(raw)) return 'Manual file upload did not produce a storage path.';
+    if (/asset not found for manual attachment/i.test(raw)) return 'Asset not found for manual attachment. Refresh the asset list and try again.';
+    if (/asset resolved but missing company context for manual attachment/i.test(raw)) return 'Asset resolved but missing company context for manual attachment.';
+    if (/asset\/company mismatch for manual attachment/i.test(raw)) return 'Asset/company mismatch for manual attachment.';
     return `Attachment failed: ${raw.slice(0, 140)}`;
   };
 
@@ -1152,8 +1163,28 @@ export function createAssetActions(deps) {
         render();
         return;
       }
+      const activeCompanyId = `${state.company?.id || state.activeMembership?.companyId || resolution.asset?.companyId || ''}`.trim();
+      if (!resolution.assetId || !resolution.assetDocId) {
+        setManualAttachUi(resolution.assetId || `${id || ''}`.trim() || 'unknown', { tone: 'error', message: MANUAL_ATTACH_ASSET_RESOLUTION_ERROR });
+        render();
+        return;
+      }
+      if (!activeCompanyId) {
+        setManualAttachUi(resolution.assetId, { tone: 'error', message: 'Cannot attach manual because company context is missing. Refresh and try again.' });
+        render();
+        return;
+      }
+      const debugPayload = {
+        assetId: resolution.assetId,
+        assetDocId: resolution.assetDocId,
+        storedAssetId: resolution.storedAssetId || '',
+        companyId: activeCompanyId,
+        manualUrlPresent: !!manualUrl,
+        manualUrlHost: summarizeManualAttachUrl(manualUrl).host || '',
+        sourceTitlePresent: !!`${payload.sourceTitle || ''}`.trim(),
+      };
       setManualAttachUi(resolution.assetId, { pending: true, phase: 'attaching', tone: 'info', message: 'Attaching manual…' });
-      console.debug('attach_manual_from_url:start', { assetId: resolution.assetId });
+      console.debug('attach_manual_from_url:start', debugPayload);
       render();
       try {
         const result = await attachAssetManualFromUrl({
@@ -1164,6 +1195,7 @@ export function createAssetActions(deps) {
           manualUrl,
           sourceTitle: `${payload.sourceTitle || ''}`.trim(),
           sourcePageUrl: `${payload.sourcePageUrl || ''}`.trim(),
+          companyId: activeCompanyId,
         });
         const chunkCount = Number(result?.chunkCount || 0) || 0;
         const message = result?.warning
@@ -1201,9 +1233,14 @@ export function createAssetActions(deps) {
         return;
       }
       const asset = resolution.asset || {};
-      const companyId = `${asset.companyId || state.company?.id || state.activeMembership?.companyId || ''}`.trim();
+      const companyId = `${state.company?.id || state.activeMembership?.companyId || asset.companyId || ''}`.trim();
+      if (!resolution.assetId || !resolution.assetDocId) {
+        setManualAttachUi(resolution.assetId || `${id || ''}`.trim() || 'unknown', { tone: 'error', message: MANUAL_ATTACH_ASSET_RESOLUTION_ERROR });
+        render();
+        return;
+      }
       if (!companyId || !storage || typeof storageRef !== 'function' || typeof uploadBytes !== 'function') {
-        setManualAttachUi(resolution.assetId, { tone: 'error', message: 'Attachment failed: missing company/storage context.' });
+        setManualAttachUi(resolution.assetId, { tone: 'error', message: !companyId ? 'Cannot attach manual because company context is missing. Refresh and try again.' : 'Attachment failed: missing company/storage context.' });
         render();
         return;
       }
@@ -1214,6 +1251,16 @@ export function createAssetActions(deps) {
         setManualAttachUi(resolution.assetId, { pending: true, phase: 'uploading', tone: 'info', message: 'Uploading manual…' });
         render();
         await uploadBytes(storageRef(storage, storagePath), file, { contentType: file.type || 'application/octet-stream' });
+        console.debug('attach_manual_from_storage_path:start', {
+          assetId: resolution.assetId,
+          assetDocId: resolution.assetDocId,
+          storedAssetId: resolution.storedAssetId || '',
+          companyId,
+          storagePathPresent: !!storagePath,
+          storagePathPrefix: storagePath.split('/').slice(0, 4).join('/'),
+          contentType: `${file.type || ''}`.trim(),
+          originalFileName: `${file.name || ''}`.trim(),
+        });
         setManualAttachUi(resolution.assetId, { pending: true, phase: 'extracting', tone: 'info', message: 'Extracting manual text…' });
         render();
         const result = await attachAssetManualFromStoragePath({
@@ -1225,6 +1272,7 @@ export function createAssetActions(deps) {
           sourceTitle: `${asset.name || ''}`.trim(),
           originalFileName: `${file.name || ''}`.trim(),
           contentType: `${file.type || ''}`.trim(),
+          companyId,
         });
         const chunkCount = Number(result?.chunkCount || 0) || 0;
         const message = result?.warning
