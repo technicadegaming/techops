@@ -21,6 +21,7 @@ const {
   isSeededCatalogManualCandidate,
   rehydrateSeededManualDocumentationSuggestions,
   classifyManualMatchSummary,
+  evaluateAutoAttachGuard,
   finalizeSingleAssetEnrichment,
   hasAuthoritativeManualAttachment,
   repairStaleInProgressAsset,
@@ -87,6 +88,34 @@ test('resolveForcedTerminalStatus maps terminal manual outcomes to canonical enr
       manualLibraryRef: 'manual-1',
     }
   }), 'docs_found');
+});
+
+test('evaluateAutoAttachGuard rejects title mismatches for auto attachment', () => {
+  const guard = evaluateAutoAttachGuard({
+    asset: { name: 'SpongeBob Ticket Coaster', manufacturer: 'Bay Tek' },
+    manualFields: { matchedManufacturer: 'Bay Tek' },
+    cleanedResult: {
+      documentationSuggestions: [
+        { title: 'Marvel Avengers Operator Manual', exactManualMatch: true, exactTitleMatch: true, verified: true }
+      ]
+    }
+  });
+  assert.equal(guard.allow, false);
+  assert.equal(guard.reason, 'candidate_title_mismatch_review_required');
+});
+
+test('evaluateAutoAttachGuard rejects manufacturer mismatches for auto attachment', () => {
+  const guard = evaluateAutoAttachGuard({
+    asset: { name: 'SpongeBob Ticket Coaster', manufacturer: 'Bay Tek' },
+    manualFields: { matchedManufacturer: 'Raw Thrills' },
+    cleanedResult: {
+      documentationSuggestions: [
+        { title: 'SpongeBob Ticket Coaster Operator Manual', exactManualMatch: true, exactTitleMatch: true, verified: true }
+      ]
+    }
+  });
+  assert.equal(guard.allow, false);
+  assert.equal(guard.reason, 'manufacturer_mismatch_review_required');
 });
 
 test('verifySuggestionUrl marks dead pages and verified links', async () => {

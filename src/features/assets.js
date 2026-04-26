@@ -365,9 +365,10 @@ function normalizeAssetManualStatus(value = '') {
 }
 
 function deriveAssetManualStatus(asset = {}) {
-  const explicitStatus = normalizeAssetManualStatus(asset?.manualStatus || '');
-  if (Object.values(MANUAL_STATUS).includes(explicitStatus)) return explicitStatus;
   const manualState = getAuthoritativeManualState(asset);
+  const explicitStatus = normalizeAssetManualStatus(asset?.manualStatus || '');
+  if (explicitStatus === MANUAL_STATUS.SUPPORT_CONTEXT_ONLY && manualState.hasManualText) return MANUAL_STATUS.ATTACHED;
+  if (Object.values(MANUAL_STATUS).includes(explicitStatus)) return explicitStatus;
   if (manualState.hasAttachedManual) return MANUAL_STATUS.ATTACHED;
   if (getReviewableManualCandidateCount(asset) > 0) return MANUAL_STATUS.QUEUED_FOR_REVIEW;
   const supportOnlyCount = filterDisplaySupportResources(Array.isArray(asset.supportResourcesSuggestion) ? asset.supportResourcesSuggestion : []).length;

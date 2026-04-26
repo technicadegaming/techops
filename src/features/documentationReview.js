@@ -1,6 +1,8 @@
 import { sortDocumentationSuggestions } from './documentationSuggestions.js';
 
 export function deriveManualStatus(asset = {}) {
+  const chunkCount = Number(asset?.manualChunkCount || 0) || 0;
+  if (asset?.documentationTextAvailable === true || chunkCount > 0) return 'manual_attached';
   const explicitStatusRaw = `${asset?.manualStatus || ''}`.trim();
   const explicitStatus = ({
     attached: 'manual_attached',

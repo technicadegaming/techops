@@ -193,6 +193,7 @@ export function createAssetActions(deps) {
   };
   const mapManualAttachErrorMessage = (error) => {
     const raw = `${error?.message || error || 'unknown error'}`.trim();
+    if (/manual attachment failed unexpectedly\. check function logs for details\./i.test(raw)) return 'Manual attachment failed unexpectedly. Check function logs for details.';
     if (/manual url is required for manual attachment/i.test(raw)) return 'Manual URL is required for manual attachment.';
     if (/manual file upload did not produce a storage path/i.test(raw)) return 'Manual file upload did not produce a storage path.';
     if (/asset not found for manual attachment/i.test(raw)) return 'Asset not found for manual attachment. Refresh the asset list and try again.';

@@ -46,24 +46,44 @@ function buildAssetManualPatch({
   manualUrl = '',
   sourceTitle = '',
   sourcePageUrl = '',
+  sourceType = 'manual_url_attach',
+  manualProvenance = 'user_manual_attach',
   materialized = {},
 } = {}) {
   const existingLinks = Array.isArray(asset?.manualLinks) ? asset.manualLinks : [];
-  const manualLinks = uniqueList([...existingLinks, storagePath, manualUrl]);
+  const manualLinks = uniqueList([...existingLinks, storagePath, manualUrl, sourcePageUrl]);
   const chunkCount = Number(materialized?.chunkCount || 0) || 0;
+  const normalizedSourceType = normalizeString(sourceType, 120) || 'manual_url_attach';
+  const nextManualUrl = normalizedSourceType === 'manual_url_attach'
+    ? (manualUrl || storagePath)
+    : storagePath;
   return {
     manualStoragePath: storagePath,
-    manualUrl: storagePath,
+    manualUrl: nextManualUrl,
     manualSourceUrl: sourcePageUrl || normalizeString(asset?.manualSourceUrl || '', 2000),
     manualLinks,
     manualStatus: 'manual_attached',
-    enrichmentStatus: 'docs_found',
+    enrichmentStatus: chunkCount > 0 ? 'verified_manual_found' : 'docs_found',
+    enrichmentTerminalReason: 'user_manual_attached',
     manualReviewState: 'manual_attached_user',
-    sourceType: 'manual_url_attach',
+    sourceType: normalizedSourceType,
+    manualProvenance: normalizeString(manualProvenance, 120) || 'user_manual_attach',
     latestManualId: materialized.manualId || '',
     manualTextExtractionStatus: materialized.extractionStatus || 'failed',
     manualChunkCount: chunkCount,
     documentationTextAvailable: chunkCount > 0,
+    selectedCandidateManualUrl: '',
+    selectedCandidateUrl: '',
+    selectedCandidateTitle: '',
+    candidateRejectionReasons: [],
+    manualMatchSummary: {
+      ...(asset?.manualMatchSummary || {}),
+      manualReady: true,
+      status: chunkCount > 0 ? 'verified_manual_found' : 'docs_found',
+      manualStoragePath: storagePath,
+      manualUrl: nextManualUrl,
+      manualSourceUrl: sourcePageUrl || normalizeString(asset?.manualSourceUrl || '', 2000),
+    },
     sourceTitle: sourceTitle || normalizeString(asset?.sourceTitle || '', 200),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedBy: normalizeString(userId, 180),
@@ -158,6 +178,8 @@ async function attachAssetManualFromUrl({
     manualUrl: normalizedUrl,
     sourceTitle,
     sourcePageUrl: normalizeUrl(sourcePageUrl),
+    sourceType: 'manual_url_attach',
+    manualProvenance: 'user_manual_attach',
     materialized,
   });
   await db.collection('assets').doc(assetId).set(patch, { merge: true });
@@ -210,6 +232,8 @@ async function attachAssetManualFromStoragePath({
     manualUrl: pathValidation.normalized,
     sourceTitle,
     sourcePageUrl: '',
+    sourceType: 'manual_file_upload_attach',
+    manualProvenance: 'user_manual_attach',
     materialized,
   });
   await db.collection('assets').doc(assetId).set(patch, { merge: true });
