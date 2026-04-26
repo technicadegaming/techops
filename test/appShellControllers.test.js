@@ -1406,6 +1406,73 @@ test('assets view shows manual text extraction state chips and repair actions fo
   assert.match(el.innerHTML, /data-check-manual-text="asset-zero"/);
 });
 
+test('assets view does not show missing manual message when extracted manual evidence exists', async () => {
+  const { renderAssets } = await loadAssetsHelpers();
+  const state = {
+    permissions: { companyRole: 'manager', role: 'manager' },
+    tasks: [],
+    pmSchedules: [],
+    taskAiRuns: [],
+    manuals: [],
+    auditLogs: [],
+    troubleshootingLibrary: [],
+    companyLocations: [],
+    route: { tab: 'assets', location: 'all', assetFilter: 'all' },
+    assetDraft: {},
+    assetUi: { searchQuery: '', statusFilter: 'all', reviewFilter: 'all', enrichmentFilter: 'all' },
+    assets: [{
+      id: 'asset-ready',
+      name: 'Asset Ready',
+      manufacturer: 'Mfr',
+      manualStatus: 'support_context_only',
+      latestManualId: 'manual-1',
+      manualChunkCount: 10,
+      documentationTextAvailable: true
+    }]
+  };
+  const el = { innerHTML: '', querySelector: () => null, querySelectorAll: () => [] };
+  const actions = { setLocationFilter: () => {}, runBulkAssetEnrichment: () => {}, repairAssetManualText: () => {} };
+  renderAssets(el, state, actions);
+
+  assert.doesNotMatch(el.innerHTML, /No attached manual yet\. Run lookup or approve a suggested manual below\./);
+  assert.match(el.innerHTML, /Attached manual text available|Manual text available from attached manual\./);
+});
+
+test('assets view shows csv bootstrap manual storage evidence and prioritizes manual text available label', async () => {
+  const { renderAssets } = await loadAssetsHelpers();
+  const state = {
+    permissions: { companyRole: 'manager', role: 'manager' },
+    tasks: [],
+    pmSchedules: [],
+    taskAiRuns: [],
+    manuals: [],
+    auditLogs: [],
+    troubleshootingLibrary: [],
+    companyLocations: [],
+    route: { tab: 'assets', location: 'all', assetFilter: 'all' },
+    assetDraft: {},
+    assetUi: { searchQuery: '', statusFilter: 'all', reviewFilter: 'all', enrichmentFilter: 'all' },
+    assets: [{
+      id: 'asset-bootstrap',
+      name: 'Asset Bootstrap',
+      manufacturer: 'Mfr',
+      manualStatus: 'support_context_only',
+      documentationTextAvailable: true,
+      manualChunkCount: 1,
+      csvBootstrapManualAttach: {
+        manualStoragePath: 'companies/company-a/manuals/asset-bootstrap/source.pdf'
+      }
+    }]
+  };
+  const el = { innerHTML: '', querySelector: () => null, querySelectorAll: () => [] };
+  const actions = { setLocationFilter: () => {}, runBulkAssetEnrichment: () => {}, repairAssetManualText: () => {} };
+  renderAssets(el, state, actions);
+
+  assert.match(el.innerHTML, /Attached manual storage path: companies\/company-a\/manuals\/asset-bootstrap\/source\.pdf/);
+  assert.match(el.innerHTML, /Manual outcome: manual text available/);
+  assert.doesNotMatch(el.innerHTML, /Manual outcome: support links only/);
+});
+
 test('asset actions bulk doc re-search uses visible ids, processes queued imports, and records progress summary', async () => {
   const { createAssetActions } = await loadAssetActions();
   const state = {
@@ -1574,6 +1641,104 @@ test('asset actions attach manual from URL uses exact asset.id and callable payl
   assert.equal(attachCalls[0].assetId, 'asset-doc-123');
   assert.equal(attachCalls[0].assetDocId, 'asset-doc-123');
   assert.equal(attachCalls[0].storedAssetId, 'legacy-name');
+  assert.equal(attachCalls[0].manualUrl, 'https://example.com/manual.pdf');
+});
+
+test('asset actions attach manual from URL blocks blank and invalid URLs', async () => {
+  const { createAssetActions } = await loadAssetActions();
+  const attachCalls = [];
+  const state = {
+    assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
+    assetUi: {},
+    assets: [{ id: 'asset-doc-123', firestoreDocId: 'asset-doc-123', name: 'SpongeBob', companyId: 'company-a' }],
+    companyLocations: [],
+    permissions: { companyRole: 'manager', role: 'manager' },
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    user: { uid: 'user-1' }
+  };
+  const actions = createAssetActions({
+    state,
+    onLocationFilter: () => {},
+    render: () => {},
+    refreshData: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    deleteEntity: async () => {},
+    approveAssetManual: async () => {},
+    attachAssetManualFromUrl: async (payload) => { attachCalls.push(payload); return {}; },
+    attachAssetManualFromStoragePath: async () => ({}),
+    enrichAssetDocumentation: async () => ({}),
+    previewAssetDocumentationLookup: async () => ({}),
+    researchAssetTitles: async () => ({}),
+    markAssetEnrichmentFailure: async () => ({}),
+    normalizeAssetId: (name) => name,
+    pickUniqueAssetId: (id) => id,
+    createEmptyAssetDraft: () => ({ previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } }),
+    withTimeout: async (promise) => promise,
+    normalizeSupportEntries: (entries) => entries,
+    canDelete: () => false,
+    isAdmin: () => true,
+    isManager: () => true,
+    buildAssetSaveErrorMessage: () => 'error',
+    buildAssetSaveDebugContext: () => ({}),
+    isPermissionRelatedError: () => false,
+    buildPreviewQueryKey: () => ''
+  });
+
+  await actions.attachManualFromUrl('asset-doc-123', { manualUrl: '   ' });
+  await actions.attachManualFromUrl('asset-doc-123', { manualUrl: 'example.com/manual.pdf' });
+
+  assert.equal(attachCalls.length, 0);
+  assert.match(state.assetUi.manualAttachByAsset['asset-doc-123'].message, /Enter a valid http\(s\) manual URL\./);
+});
+
+test('asset actions upload manual blocks missing file selection', async () => {
+  const { createAssetActions } = await loadAssetActions();
+  let attachCalls = 0;
+  const state = {
+    assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
+    assetUi: {},
+    assets: [{ id: 'asset-doc-456', firestoreDocId: 'asset-doc-456', name: 'SpongeBob', companyId: 'company-a' }],
+    companyLocations: [],
+    permissions: { companyRole: 'manager', role: 'manager' },
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    user: { uid: 'user-1' }
+  };
+  const actions = createAssetActions({
+    state,
+    onLocationFilter: () => {},
+    render: () => {},
+    refreshData: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    deleteEntity: async () => {},
+    approveAssetManual: async () => {},
+    attachAssetManualFromUrl: async () => ({}),
+    attachAssetManualFromStoragePath: async () => { attachCalls += 1; return {}; },
+    enrichAssetDocumentation: async () => ({}),
+    previewAssetDocumentationLookup: async () => ({}),
+    researchAssetTitles: async () => ({}),
+    markAssetEnrichmentFailure: async () => ({}),
+    normalizeAssetId: (name) => name,
+    pickUniqueAssetId: (id) => id,
+    createEmptyAssetDraft: () => ({ previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } }),
+    withTimeout: async (promise) => promise,
+    normalizeSupportEntries: (entries) => entries,
+    canDelete: () => false,
+    isAdmin: () => true,
+    isManager: () => true,
+    buildAssetSaveErrorMessage: () => 'error',
+    buildAssetSaveDebugContext: () => ({}),
+    isPermissionRelatedError: () => false,
+    buildPreviewQueryKey: () => ''
+  });
+
+  await actions.uploadAndAttachManualFile('asset-doc-456', null);
+
+  assert.equal(attachCalls, 0);
+  assert.match(state.assetUi.manualAttachByAsset['asset-doc-456'].message, /Choose a manual file first\./);
 });
 
 test('asset actions upload manual file uses exact asset.id in storage path', async () => {
@@ -1681,6 +1846,52 @@ test('asset actions block manual attach when asset id cannot be resolved', async
 
   assert.equal(attachCallCount, 0);
   assert.match(state.assetUi.manualAttachByAsset['missing-id'].message, /could not be identified/i);
+});
+
+test('asset actions maps missing required inputs attach error to friendly guidance', async () => {
+  const { createAssetActions } = await loadAssetActions();
+  const state = {
+    assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
+    assetUi: {},
+    assets: [{ id: 'asset-a', firestoreDocId: 'asset-a', name: 'Asset A', companyId: 'company-a' }],
+    companyLocations: [],
+    permissions: { companyRole: 'manager', role: 'manager' },
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    user: { uid: 'user-1' }
+  };
+  const actions = createAssetActions({
+    state,
+    onLocationFilter: () => {},
+    render: () => {},
+    refreshData: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    deleteEntity: async () => {},
+    approveAssetManual: async () => {},
+    attachAssetManualFromUrl: async () => { throw new Error('Missing required inputs for manual attachment.'); },
+    attachAssetManualFromStoragePath: async () => ({}),
+    enrichAssetDocumentation: async () => ({}),
+    previewAssetDocumentationLookup: async () => ({}),
+    researchAssetTitles: async () => ({}),
+    markAssetEnrichmentFailure: async () => ({}),
+    normalizeAssetId: (name) => name,
+    pickUniqueAssetId: (id) => id,
+    createEmptyAssetDraft: () => ({ previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } }),
+    withTimeout: async (promise) => promise,
+    normalizeSupportEntries: (entries) => entries,
+    canDelete: () => false,
+    isAdmin: () => true,
+    isManager: () => true,
+    buildAssetSaveErrorMessage: () => 'error',
+    buildAssetSaveDebugContext: () => ({}),
+    isPermissionRelatedError: () => false,
+    buildPreviewQueryKey: () => ''
+  });
+
+  await actions.attachManualFromUrl('asset-a', { manualUrl: 'https://example.com/manual.pdf' });
+
+  assert.match(state.assetUi.manualAttachByAsset['asset-a'].message, /Missing manual URL or asset record\. Refresh the asset list and try again\./);
 });
 test('admin CSV import queues truthful enrichment status, starts enrichment, and keeps hint URLs non-authoritative', async () => {
   const { createAdminActions } = await loadAdminActions();

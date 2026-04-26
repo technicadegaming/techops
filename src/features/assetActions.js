@@ -181,6 +181,14 @@ export function createAssetActions(deps) {
     }
     return { ok: true, assetId: canonicalAssetId, assetDocId, storedAssetId, asset, message: '' };
   };
+  const isHttpUrl = (value = '') => /^https?:\/\//i.test(`${value || ''}`.trim());
+  const mapManualAttachErrorMessage = (error) => {
+    const raw = `${error?.message || error || 'unknown error'}`.trim();
+    if (/missing required inputs for manual attachment/i.test(raw)) {
+      return 'Missing manual URL or asset record. Refresh the asset list and try again.';
+    }
+    return `Attachment failed: ${raw.slice(0, 140)}`;
+  };
 
   const approveManualSources = (assetId, urls = [], current = {}, metadataByUrl = {}) => approveSuggestedManualSources({
     assetId,
@@ -1135,7 +1143,12 @@ export function createAssetActions(deps) {
       }
       const manualUrl = `${payload.manualUrl || ''}`.trim();
       if (!manualUrl) {
-        setManualAttachUi(resolution.assetId, { tone: 'error', message: 'Attachment failed: enter a manual URL.' });
+        setManualAttachUi(resolution.assetId, { tone: 'error', message: 'Enter a manual URL first.' });
+        render();
+        return;
+      }
+      if (!isHttpUrl(manualUrl)) {
+        setManualAttachUi(resolution.assetId, { tone: 'error', message: 'Enter a valid http(s) manual URL.' });
         render();
         return;
       }
@@ -1158,7 +1171,7 @@ export function createAssetActions(deps) {
         setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: result?.warning ? 'warn' : 'success', message });
         await refreshData();
       } catch (error) {
-        setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: 'error', message: `Attachment failed: ${`${error?.message || error || 'unknown error'}`.slice(0, 140)}` });
+        setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: 'error', message: mapManualAttachErrorMessage(error) });
       }
       render();
     },
@@ -1172,7 +1185,7 @@ export function createAssetActions(deps) {
         return;
       }
       if (!file) {
-        setManualAttachUi(resolution.assetId, { tone: 'error', message: 'Attachment failed: choose a file to upload.' });
+        setManualAttachUi(resolution.assetId, { tone: 'error', message: 'Choose a manual file first.' });
         render();
         return;
       }
@@ -1219,7 +1232,7 @@ export function createAssetActions(deps) {
         setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: result?.warning ? 'warn' : 'success', message });
         await refreshData();
       } catch (error) {
-        setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: 'error', message: `Attachment failed: ${`${error?.message || error || 'unknown error'}`.slice(0, 140)}` });
+        setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: 'error', message: mapManualAttachErrorMessage(error) });
       }
       render();
     },
