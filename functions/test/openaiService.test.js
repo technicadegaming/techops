@@ -73,6 +73,47 @@ test('requestTroubleshootingPlan uses structured json_schema output', async () =
   }
 });
 
+test('requestTroubleshootingPlan adds grounding directive from approved manual definition', async () => {
+  process.env.OPENAI_API_KEY = 'test-key';
+  let createArgs;
+  const fixture = {
+    conciseIssueSummary: 'ERROR 11 means card dispenser error.',
+    probableCauses: ['Card path jam'],
+    immediateChecks: ['Inspect dispenser'],
+    diagnosticSteps: ['Clear jam'],
+    recommendedFixes: ['Reset after correction'],
+    toolsNeeded: ['Flashlight'],
+    partsPossiblyNeeded: ['Dispense sensor'],
+    safetyNotes: ['Power down'],
+    escalationSignals: ['Still failing'],
+    confidence: 0.9,
+    shortFrontlineVersion: 'ERROR 11 indicates card dispenser error.',
+    detailedManagerVersion: 'Grounded by manual definition.',
+    citations: ['approved_manual_code_definition']
+  };
+  const { service, restore } = loadServiceWithMockedOpenAI(async (args) => {
+    createArgs = args;
+    return { id: 'resp_grounded', model: 'gpt-test', output_parsed: fixture };
+  });
+  try {
+    await service.requestTroubleshootingPlan({
+      model: 'gpt-test',
+      traceId: 'trace-grounding',
+      settings: { aiShortResponseMode: false, aiVerboseManagerMode: false },
+      context: {
+        taskTokens: { codeTokens: ['E11'] },
+        documentationContext: {
+          items: [{ sourceType: 'approved_manual_code_definition', excerpts: ['ERROR 11: CARD DISPENSER ERROR'] }]
+        }
+      }
+    });
+    const developerMessages = createArgs.input.filter((entry) => entry.role === 'developer').map((entry) => entry.content).join('\n');
+    assert.match(developerMessages, /first sentence must state this approved manual code definition/i);
+  } finally {
+    restore();
+  }
+});
+
 test('requestTroubleshootingPlan maps JSON parse failures to stable failureCode', async () => {
   process.env.OPENAI_API_KEY = 'test-key';
   const { service, restore } = loadServiceWithMockedOpenAI(async () => ({
@@ -124,4 +165,3 @@ test('requestTroubleshootingPlan maps validation failures to stable failureCode'
     restore();
   }
 });
-

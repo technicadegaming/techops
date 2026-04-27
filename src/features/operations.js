@@ -480,6 +480,44 @@ function renderAiSourceLine(run) {
   return `<div class="tiny">Sources used: ${modeCopy.label}${names.length ? ` | ${names.join(' | ')}` : ''}</div>${modeCopy.note ? `<div class="inline-state ${modeCopy.tone} mt">${modeCopy.note}</div>` : ''}${manualTextHint}`;
 }
 
+function formatEvidenceSourceType(sourceType = '') {
+  return ({
+    asset_code_hint: 'Saved fix/code library',
+    troubleshooting_fix: 'Saved fix/code library',
+    approved_manual_code_definition: 'Manual code definition',
+    approved_manual_code_chunk: 'Manual text excerpt',
+    approved_manual_chunk: 'Manual text excerpt',
+    web_code_definition: 'Web/manual source',
+    support: 'Web/manual source',
+    approved_doc: 'Web/manual source',
+    prior_task_history: 'Prior task history'
+  })[sourceType] || sourceType || 'Unknown';
+}
+
+function renderAiEvidencePanel(run = {}, settings = {}) {
+  const sourceList = Array.isArray(run?.documentationSources) ? run.documentationSources : [];
+  const rows = sourceList.slice(0, 8).map((source) => {
+    const matchedCode = (Array.isArray(source.matchedCodes) ? source.matchedCodes : [source.code, source.matchedCode]).filter(Boolean).join(', ') || '—';
+    const sourceTitle = source.title || source.manualId || source.url || 'n/a';
+    const excerpt = Array.isArray(source.excerpts) ? source.excerpts[0] : '';
+    const confidence = Number.isFinite(Number(source.confidence)) ? `${Math.round(Number(source.confidence) * 100)}%` : 'n/a';
+    return `<tr>
+      <td>${formatEvidenceSourceType(source.sourceType)}</td>
+      <td>${matchedCode}</td>
+      <td>${sourceTitle}</td>
+      <td>${excerpt || source.contextNote || source.fetchError || 'No excerpt captured.'}</td>
+      <td>${confidence}</td>
+    </tr>`;
+  }).join('');
+  const webEnabled = settings.aiUseWebSearch === true || settings.operationsWebResearchEnabled === true;
+  const webUnavailable = webEnabled && /not configured/i.test(`${run?.webContextSummary || ''}`);
+  return `<div class="mt">
+    <b>AI evidence used</b>
+    ${webUnavailable ? '<div class="inline-state warn mt">Web research is not configured. AI is using manuals/internal data only.</div>' : ''}
+    ${rows ? `<div style="overflow:auto;"><table class="tiny" style="width:100%; border-collapse:collapse; margin-top:6px;"><thead><tr><th>Source type</th><th>Matched code</th><th>Source</th><th>Evidence excerpt</th><th>Confidence</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<div class="tiny mt">No evidence rows captured for this run.</div>'}
+  </div>`;
+}
+
 function formatDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'not set';
@@ -703,7 +741,7 @@ function renderAiPanel(task, state, meta) {
     ${actionHint ? `<div class="tiny mt">${actionHint}</div>` : ''}
     ${guidance ? `<div class="tiny mt">${guidance}</div>` : ''}
     ${task.aiSummary?.summary ? `<div class="tiny mt">${task.aiSummary.summary}</div>` : ''}
-    ${run ? renderAiSourceLine(run) : (hasSavedGuidance ? `${renderAiSourceLine(snapshot)}<div class="tiny mt">Latest saved AI guidance (run ${snapshot.runId}) • ${formatDateTime(snapshot.updatedAt)}</div>` : (aiState.status === 'waiting_for_refresh' ? `<div class="tiny mt thinking">Waiting for AI run record… Refreshing results…</div>` : '<div class="tiny mt">No AI run yet for this task.</div>'))}
+    ${run ? `${renderAiSourceLine(run)}${renderAiEvidencePanel(run, state.settings || {})}` : (hasSavedGuidance ? `${renderAiSourceLine(snapshot)}${renderAiEvidencePanel(snapshot, state.settings || {})}<div class="tiny mt">Latest saved AI guidance (run ${snapshot.runId}) • ${formatDateTime(snapshot.updatedAt)}</div>` : (aiState.status === 'waiting_for_refresh' ? `<div class="tiny mt thinking">Waiting for AI run record… Refreshing results…</div>` : '<div class="tiny mt">No AI run yet for this task.</div>'))}
     ${(aiState.status === 'queued' || aiState.status === 'running') ? '<div class="tiny mt thinking">AI is thinking…</div>' : ''}
     ${isBusy ? `<div class="tiny mt">${busyLabel || 'Working…'}</div>` : ''}
     ${hasSavedGuidance ? `<div class="inline-state info mt">Saved guidance review state: <b>${aiReviewState}</b></div>` : ''}

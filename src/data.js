@@ -322,6 +322,7 @@ export const defaultAiSettings = {
   aiAutoAttach: false,
   aiUseInternalKnowledge: true,
   aiUseWebSearch: false,
+  operationsWebResearchEnabled: false,
   aiAskFollowups: true,
   aiModel: 'gpt-4.1-mini',
   aiMaxWebSources: 3,
