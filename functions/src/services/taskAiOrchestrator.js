@@ -33,6 +33,35 @@ function compactExcerpt(text = '', maxLen = 380) {
   return `${text || ''}`.slice(0, maxLen).trim();
 }
 
+function buildFocusedManualExcerpt(text = '', taskTokens = {}, options = {}) {
+  const source = `${text || ''}`;
+  if (!source) return '';
+  const maxLen = Math.max(700, Math.min(Number(options.maxLen || 820), 900));
+  const prefixes = [];
+  (Array.isArray(taskTokens.codeTokens) ? taskTokens.codeTokens : []).forEach((token) => {
+    prefixes.push(...buildCodeRegexes(token));
+  });
+  let anchor = -1;
+  for (const regex of prefixes) {
+    const match = source.match(regex);
+    if (match?.index >= 0) {
+      anchor = match.index;
+      break;
+    }
+  }
+  if (anchor < 0) {
+    const lowered = source.toLowerCase();
+    const keyword = (Array.isArray(taskTokens.keywordTokens) ? taskTokens.keywordTokens : []).find((token) => lowered.includes(token));
+    anchor = keyword ? lowered.indexOf(keyword) : 0;
+  }
+  const left = Math.max(0, anchor - Math.floor(maxLen * 0.35));
+  const right = Math.min(source.length, left + maxLen);
+  let excerpt = source.slice(left, right).trim();
+  if (left > 0) excerpt = `…${excerpt}`;
+  if (right < source.length) excerpt = `${excerpt}…`;
+  return excerpt;
+}
+
 function dedupeBy(items = [], buildKey = (item) => JSON.stringify(item)) {
   const seen = new Set();
   return (Array.isArray(items) ? items : []).filter((item) => {
@@ -179,12 +208,12 @@ async function fetchApprovedManualChunkContext(db, asset = {}, task = {}) {
       .catch(() => ({ docs: [] }));
     const chunks = chunkSnap.docs.map((doc) => {
       const data = doc.data() || {};
-      const chunkText = compactExcerpt(data?.text || '', 500);
+      const chunkText = `${data?.text || ''}`.trim();
       const chunkIndex = Number(data?.chunkIndex);
       const safeChunkIndex = Number.isFinite(chunkIndex) ? chunkIndex : Number.MAX_SAFE_INTEGER;
       const scoring = scoreManualChunkForTask(chunkText, taskTokens);
       return {
-        text: chunkText,
+        text: buildFocusedManualExcerpt(chunkText, taskTokens, { maxLen: 820 }),
         chunkIndex: safeChunkIndex,
         score: scoring.score,
         matchedCodes: scoring.matchedCodes
@@ -220,6 +249,58 @@ async function fetchApprovedManualChunkContext(db, asset = {}, task = {}) {
     });
   }
   return { items: results, hadManualWithoutExtractedText };
+}
+
+function buildManualCodeDefinitionExcerpt(definition = {}) {
+  const rawCode = `${definition.rawCode || definition.code || ''}`.trim();
+  const title = `${definition.title || ''}`.trim();
+  const meaning = `${definition.meaning || ''}`.trim();
+  const resetInstruction = `${definition.resetInstruction || ''}`.trim();
+  const lead = [rawCode, title].filter(Boolean).join(': ');
+  const line = [lead, meaning].filter(Boolean).join(' — ');
+  return [line, resetInstruction].filter(Boolean).join('. ');
+}
+
+async function fetchApprovedManualCodeDefinitionContext(db, asset = {}, task = {}, manuals = []) {
+  const companyId = `${asset.companyId || ''}`.trim();
+  const assetId = `${asset.id || ''}`.trim();
+  if (!db || !companyId || !assetId) return [];
+  const taskTokens = extractTaskCodeTokens(task);
+  const taskCodes = Array.isArray(taskTokens.codeTokens) ? taskTokens.codeTokens : [];
+  if (!taskCodes.length) return [];
+  const items = [];
+  for (const manual of manuals) {
+    const definitions = Array.isArray(manual.extractedCodeDefinitions) ? manual.extractedCodeDefinitions : [];
+    const matchedInline = definitions.filter((entry) => taskCodes.includes(normalizeCodeToken(entry?.code || entry?.rawCode || '')));
+    let matched = [...matchedInline];
+    if (!matched.length) {
+      const fetched = await Promise.all(taskCodes.map(async (code) => {
+        const snap = await db.collection('manuals').doc(manual.id).collection('codeDefinitions').doc(code).get().catch(() => null);
+        if (!snap?.exists) return [];
+        const row = snap.data() || {};
+        if (Array.isArray(row.definitions) && row.definitions.length) return row.definitions;
+        return row.bestDefinition ? [row.bestDefinition] : [];
+      }));
+      matched = fetched.flat();
+    }
+    const normalizedMatched = dedupeBy(matched, (entry) => `${normalizeCodeToken(entry?.code || entry?.rawCode || '')}|${normalizeComparable(entry?.meaning || entry?.title || '')}`);
+    if (!normalizedMatched.length) continue;
+    const excerpts = normalizedMatched
+      .map((entry) => buildManualCodeDefinitionExcerpt(entry))
+      .filter(Boolean)
+      .slice(0, 4);
+    if (!excerpts.length) continue;
+    items.push({
+      sourceType: 'approved_manual_code_definition',
+      title: `${manual.sourceTitle || manual.fileName || manual.sourceUrl || 'Manual'} error code definitions`,
+      manualId: manual.id,
+      matchedCodes: dedupeBy(normalizedMatched.map((entry) => normalizeCodeToken(entry?.code || entry?.rawCode || '')).filter(Boolean), (value) => value),
+      excerpts,
+      url: manual.sourceUrl || '',
+      storagePath: manual.storagePath || '',
+    });
+  }
+  return items;
 }
 
 function pickApprovedSuggestions(asset = {}) {
@@ -359,6 +440,20 @@ Manual context layering:
 
 async function buildDocumentationContext(db, { task = null, asset = null, troubleshootingLibrary = [] } = {}) {
   if (!asset) return { mode: 'web_internal_only', items: [] };
+  const companyId = `${asset.companyId || ''}`.trim();
+  const assetId = `${asset.id || ''}`.trim();
+  const manualSnap = await db.collection('manuals')
+    .where('companyId', '==', companyId)
+    .where('assetId', '==', assetId)
+    .limit(5)
+    .get()
+    .catch(() => ({ docs: [] }));
+  const recentManuals = manualSnap.docs
+    .map((doc) => ({ id: doc.id, ...doc.data() }))
+    .filter((manual) => ['completed', 'no_text_extracted'].includes(`${manual.extractionStatus || ''}`))
+    .sort((a, b) => (Date.parse(b.approvedAt || b.updatedAt || 0) || 0) - (Date.parse(a.approvedAt || a.updatedAt || 0) || 0))
+    .slice(0, 2);
+  const manualCodeDefinitionItems = await fetchApprovedManualCodeDefinitionContext(db, asset, task, recentManuals).catch(() => []);
   const manualChunkContext = await fetchApprovedManualChunkContext(db, asset, task).catch(() => ({ items: [], hadManualWithoutExtractedText: false }));
   const approvedChunkItems = Array.isArray(manualChunkContext.items) ? manualChunkContext.items : [];
   const linkedManualLibraryItem = await fetchManualLibraryContext(db, asset).catch(() => null);
@@ -392,6 +487,7 @@ async function buildDocumentationContext(db, { task = null, asset = null, troubl
 
   const selected = dedupeBy([...manualCandidates, ...fallbackCandidates, ...supportCandidates].filter((x) => !!x?.url), (item) => item.url).slice(0, 4);
   const items = [
+    ...manualCodeDefinitionItems,
     ...approvedChunkItems,
     ...(linkedManualLibraryItem ? [linkedManualLibraryItem] : []),
     ...(codeHintItem ? [codeHintItem] : []),
@@ -420,7 +516,7 @@ async function buildDocumentationContext(db, { task = null, asset = null, troubl
     }
   }
 
-  const mode = items.some((x) => ['approved_manual_chunk', 'approved_manual_code_chunk'].includes(x.sourceType))
+  const mode = items.some((x) => ['approved_manual_code_definition', 'approved_manual_chunk', 'approved_manual_code_chunk'].includes(x.sourceType))
     ? 'approved_manual_internal'
     : items.some((x) => x.sourceType === 'manual_library_link')
     ? 'manual_library_backed'

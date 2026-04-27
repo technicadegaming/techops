@@ -302,6 +302,157 @@ test('task AI context prioritizes matching approved manual code chunks even when
   assert.equal(context.documentationContext.mode, 'approved_manual_internal');
 });
 
+test('task AI context prioritizes approved manual code definitions before manual chunks when task references matching code', async () => {
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => 'text/html' },
+    text: async () => 'Support fallback'
+  });
+
+  const context = await gatherContext({
+    collection(name) {
+      if (name === 'tasks') {
+        return {
+          doc(id) {
+            return {
+              id,
+              async get() {
+                return {
+                  exists: true,
+                  id,
+                  data: () => ({ companyId: 'company-a', assetId: 'asset1', description: 'constant E11 on startup' })
+                };
+              }
+            };
+          },
+          where(field, op, value) { return buildDb().collection(name).where(field, op, value); }
+        };
+      }
+      if (name === 'assets') {
+        return {
+          doc(id) {
+            return {
+              id,
+              async get() {
+                return {
+                  exists: true,
+                  id,
+                  data: () => ({ companyId: 'company-a', name: 'SpongeBob Pineapple Arcade', supportResourcesSuggestion: [{ url: 'https://example.com/support' }] })
+                };
+              }
+            };
+          }
+        };
+      }
+      if (name === 'manuals') {
+        return {
+          where() {
+            return {
+              where() { return this; },
+              limit() { return this; },
+              async get() {
+                return {
+                  docs: [{
+                    id: 'm1',
+                    data: () => ({
+                      companyId: 'company-a',
+                      assetId: 'asset1',
+                      extractionStatus: 'completed',
+                      sourceTitle: 'SpongeBob Service Manual',
+                      extractedCodeDefinitions: [{
+                        code: 'E11',
+                        rawCode: 'ERROR 11',
+                        title: 'CARD DISPENSER ERROR',
+                        meaning: 'CARD EMPTY IN THE DISPENSER or CARD JAM or DISPENSING SENSOR PROBLEM.',
+                        resetInstruction: '(AFTER TAKING ACTION, PRESS RESET BUTTON)'
+                      }]
+                    })
+                  }]
+                };
+              }
+            };
+          },
+          doc(id) {
+            return {
+              id,
+              collection(sub) {
+                if (sub === 'chunks') {
+                  return {
+                    orderBy() { return this; },
+                    limit() { return this; },
+                    async get() { return { docs: [{ id: '0', data: () => ({ chunkIndex: 0, text: 'Generic manual intro.' }) }] }; }
+                  };
+                }
+                return { doc() { return { async get() { return { exists: false, data: () => ({}) }; } }; } };
+              }
+            };
+          }
+        };
+      }
+      return buildDb().collection(name);
+    }
+  }, 'task1');
+
+  assert.equal(context.documentationContext.items[0].sourceType, 'approved_manual_code_definition');
+  assert.match(context.documentationContext.items[0].excerpts[0], /ERROR 11: CARD DISPENSER ERROR/i);
+  assert.equal(context.documentationContext.mode, 'approved_manual_internal');
+});
+
+test('task AI chunk excerpt keeps code row visible even when it appears late in a long chunk', async () => {
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => 'text/html' },
+    text: async () => 'Support fallback'
+  });
+  const longPrefix = 'General maintenance guidance. '.repeat(80);
+  const longChunk = `${longPrefix} ERROR 11 | CARD DISPENSER ERROR | CARD EMPTY IN THE DISPENSER or CARD JAM or DISPENSING SENSOR PROBLEM. (AFTER TAKING ACTION, PRESS RESET BUTTON)`;
+  const context = await gatherContext({
+    collection(name) {
+      if (name === 'tasks') {
+        return {
+          doc(id) {
+            return {
+              id,
+              async get() { return { exists: true, id, data: () => ({ companyId: 'company-a', assetId: 'asset1', description: 'E11 repeating' }) }; }
+            };
+          },
+          where(field, op, value) { return buildDb().collection(name).where(field, op, value); }
+        };
+      }
+      if (name === 'assets') return buildDb().collection(name);
+      if (name === 'manuals') {
+        return {
+          where() {
+            return {
+              where() { return this; },
+              limit() { return this; },
+              async get() { return { docs: [{ id: 'm1', data: () => ({ companyId: 'company-a', assetId: 'asset1', extractionStatus: 'completed', sourceTitle: 'Manual' }) }] }; }
+            };
+          },
+          doc() {
+            return {
+              collection() {
+                return {
+                  orderBy() { return this; },
+                  limit() { return this; },
+                  async get() { return { docs: [{ id: '0', data: () => ({ chunkIndex: 0, text: longChunk }) }] }; }
+                };
+              }
+            };
+          }
+        };
+      }
+      return buildDb().collection(name);
+    }
+  }, 'task1');
+  const firstChunk = context.documentationContext.items.find((item) => item.sourceType === 'approved_manual_code_chunk');
+  assert.ok(firstChunk);
+  assert.match(firstChunk.excerpts[0], /ERROR 11/i);
+  assert.match(firstChunk.excerpts[0], /CARD DISPENSER ERROR/i);
+});
+
 test('task AI keeps manual/link-backed mode honest when manual exists but has no extracted chunks', async () => {
   global.fetch = async (url) => ({
     ok: true,
