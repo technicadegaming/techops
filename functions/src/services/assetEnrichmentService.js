@@ -2175,13 +2175,16 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
   const findReusableManuals = dependencies.findReusableVerifiedManuals || findReusableVerifiedManuals;
   const log = buildAssetEnrichmentLogger({ traceId, assetId, triggerSource });
   const callablePath = 'enrichAssetDocumentation';
+  const isFollowupAnswerTrigger = `${triggerSource || ''}`.trim() === 'followup_answer';
+  const followupAnswerText = `${followupAnswer || asset.enrichmentFollowupAnswer || ''}`.trim();
+  const followupAnswerSearchHints = followupAnswerText ? [followupAnswerText] : [];
   let terminalStatus = '';
   let lastPipelineMeta = null;
 
   log('start', {
     runId,
     existingStatus: asset.enrichmentStatus || 'idle',
-    followupProvided: Boolean(`${followupAnswer || ''}`.trim())
+    followupProvided: Boolean(followupAnswerText)
   });
   buildSingleAssetDocLog('start', {
     runId,
@@ -2201,6 +2204,10 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     enrichmentFailedAt: null,
     enrichmentErrorCode: '',
     enrichmentErrorMessage: '',
+    documentationFollowupStatus: isFollowupAnswerTrigger && followupAnswerText ? 'answered' : (asset.documentationFollowupStatus || ''),
+    documentationFollowupLastAnswer: isFollowupAnswerTrigger && followupAnswerText ? followupAnswerText : (asset.documentationFollowupLastAnswer || ''),
+    documentationFollowupAnsweredAt: isFollowupAnswerTrigger && followupAnswerText ? admin.firestore.FieldValue.serverTimestamp() : (asset.documentationFollowupAnsweredAt || null),
+    documentationFollowupAnsweredBy: isFollowupAnswerTrigger && followupAnswerText ? userId : (asset.documentationFollowupAnsweredBy || ''),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedBy: userId
   }, { merge: true });
@@ -2213,7 +2220,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       draftAsset: {
         ...asset,
         assetId,
-        followupAnswer,
+        followupAnswer: followupAnswerText,
         followupQuestionKey: fingerprintText(asset.enrichmentFollowupQuestion || ''),
         followupAnswerFingerprint: fingerprintText(asset.enrichmentFollowupAnswer || ''),
         consumedFollowupAnswerFingerprint: fingerprintText(asset.enrichmentFollowupAnswer || ''),
@@ -2374,7 +2381,6 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
               hasOnlyFailedVerification
             }))));
     const knownManufacturer = `${asset.manufacturer || manufacturerSuggestion || ''}`.trim();
-    const followupAnswerText = `${followupAnswer || asset.enrichmentFollowupAnswer || ''}`.trim();
     const previousQuestion = `${asset.enrichmentFollowupQuestion || ''}`.trim();
     const followupFingerprintStable = pipelineMeta.followupAnswerConsumed === true
       && pipelineMeta.queryPlanChanged === false
@@ -2484,6 +2490,9 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
         preview?.likelyCategory,
         preview?.normalizedName
       ].filter(Boolean).slice(0, 5),
+      followupAnswerUsed: isFollowupAnswerTrigger && !!followupAnswerText,
+      followupAnswerSearchHints,
+      lastDocumentationLookupResultMessage: '',
       enrichmentUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
       enrichmentPhase: 'terminalized',
       enrichmentHeartbeatAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -2497,7 +2506,25 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
       updatePayload.enrichmentFollowupAnswerFingerprint = fingerprintText(followupAnswerText);
       updatePayload.enrichmentFollowupConsumedAt = admin.firestore.FieldValue.serverTimestamp();
     }
+    if (isFollowupAnswerTrigger && followupAnswerText) {
+      updatePayload.documentationFollowupLastAnswer = followupAnswerText;
+      updatePayload.documentationFollowupAnsweredAt = admin.firestore.FieldValue.serverTimestamp();
+      updatePayload.documentationFollowupAnsweredBy = userId;
+      updatePayload.documentationFollowupStatus = 'answered';
+    }
     updatePayload.enrichmentFollowupQuestionKey = fingerprintText(cleanedResult.enrichmentFollowupQuestion || asset.enrichmentFollowupQuestion || '');
+    if (!cleanedResult.enrichmentFollowupQuestion) {
+      updatePayload.enrichmentFollowupQuestion = '';
+      updatePayload.documentationFollowupQuestion = '';
+      updatePayload.documentationFollowupPrompt = '';
+      updatePayload.documentationFollowupNeeded = false;
+      updatePayload.documentationFollowupStatus = updatePayload.documentationFollowupStatus === 'answered' ? 'resolved' : 'none';
+    } else {
+      updatePayload.documentationFollowupQuestion = cleanedResult.enrichmentFollowupQuestion;
+      updatePayload.documentationFollowupPrompt = cleanedResult.enrichmentFollowupQuestion;
+      updatePayload.documentationFollowupNeeded = true;
+      updatePayload.documentationFollowupStatus = 'pending';
+    }
 
     if (manufacturerSuggestion) updatePayload.manufacturerSuggestion = manufacturerSuggestion;
     updatePayload.supportResourcesSuggestion = cleanedResult.supportResourcesSuggestion;
@@ -2533,6 +2560,7 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
     if (shouldSetManufacturer) durableManualExtraPayload.manufacturer = manufacturerSuggestion;
 
     if (authoritativeManualAttached && finalManualFields.manualReady === true) {
+      updatePayload.lastDocumentationLookupResultMessage = 'Manual attached.';
       await persistDurableManualToAsset({
         assetRef,
         userId,
@@ -2549,6 +2577,11 @@ async function enrichAssetDocumentation({ db, assetId, userId, settings, trigger
         extraPayload: durableManualExtraPayload,
       });
     } else {
+      if (!updatePayload.lastDocumentationLookupResultMessage) {
+        if (finalStatus === 'no_match_yet') updatePayload.lastDocumentationLookupResultMessage = 'No matching manual found yet. Support resources are linked.';
+        else if (finalStatus === 'followup_needed') updatePayload.lastDocumentationLookupResultMessage = 'More info needed.';
+        else updatePayload.lastDocumentationLookupResultMessage = 'Documentation lookup completed with your answer.';
+      }
       await assetRef.set(updatePayload, { merge: true });
     }
     buildSingleAssetDocLog('asset_write', {

@@ -3,6 +3,7 @@ import { buildAssetCsv, buildAssetImportRow, enrichAssetIntakeRows, parseTitleBu
 import {
   approveSuggestedManualSources,
   buildFollowupEnrichmentRequest,
+  buildFollowupRetryWithoutAnswerRequest,
   buildManualEnrichmentRequest
 } from './assetEnrichmentPipeline.js';
 import {
@@ -150,6 +151,20 @@ export function createAssetActions(deps) {
       lastActionByAsset: {
         ...((state.assetUi && state.assetUi.lastActionByAsset) || {}),
         [assetId]: { message, tone }
+      }
+    };
+  };
+  const setFollowupUiState = (assetId, next = {}) => {
+    const key = `${assetId || ''}`.trim();
+    if (!key) return;
+    state.assetUi = {
+      ...(state.assetUi || {}),
+      followupByAsset: {
+        ...((state.assetUi && state.assetUi.followupByAsset) || {}),
+        [key]: {
+          ...(((state.assetUi && state.assetUi.followupByAsset) || {})[key] || {}),
+          ...next,
+        }
       }
     };
   };
@@ -308,32 +323,32 @@ export function createAssetActions(deps) {
 
     if (hasAttachedManual || status === 'docs_found' || status === 'verified_manual_found') {
       return {
-        message: `Documentation lookup finished. ${manualLibraryRef || manualStoragePath ? 'A shared manual was attached to this asset.' : 'Manual evidence is now linked to this asset.'}`,
+        message: 'Manual attached.',
         tone: 'success'
       };
     }
     if (reviewableCount > 0) {
       return {
-        message: `Documentation lookup finished. ${reviewableCount} reviewable manual suggestion${reviewableCount === 1 ? ' is' : 's are'} ready below.`,
+        message: 'Manual suggestions ready.',
         tone: 'success'
       };
     }
     if (status === 'followup_needed') {
       return {
         message: supportCount
-          ? 'Documentation lookup finished. No reviewable manual was auto-linked, but support links or follow-up guidance are ready below.'
-          : 'Documentation lookup finished. More detail is needed to confirm the right manual.',
+          ? 'No matching manual found yet. Support resources are linked.'
+          : 'More info needed.',
         tone: 'info'
       };
     }
     if (status === 'no_match_yet') {
       return {
-        message: 'Documentation lookup finished with no manual suggestion yet. The asset is no longer marked as searching.',
+        message: 'No matching manual found yet. Support resources are linked.',
         tone: 'info'
       };
     }
     return {
-      message: 'Documentation lookup finished.',
+      message: 'Documentation lookup completed with your answer.',
       tone: 'info'
     };
   };
@@ -921,11 +936,19 @@ export function createAssetActions(deps) {
       };
       render();
     },
-    submitEnrichmentFollowup: async (id, answer) => {
+    submitEnrichmentFollowup: async (id, answer) => safeWithGlobalBusy('Retrying documentation lookup…', 'Using your follow-up answer to search for better documentation.', async () => {
       const trimmedAnswer = `${answer || ''}`.trim();
       if (!trimmedAnswer) return alert('Please enter an answer before retrying enrichment.');
-      const current = state.assets.find((asset) => asset.id === id) || {};
-      await upsertEntity('assets', id, {
+      const current = findAssetByRecordId(state.assets, id) || {};
+      const canonicalAssetId = getAssetRecordId(current) || `${id || ''}`.trim();
+      if (!canonicalAssetId) return alert('Unable to resolve this asset. Refresh and try again.');
+      setFollowupUiState(canonicalAssetId, {
+        followupSubmitting: true,
+        followupMessage: 'Retrying documentation lookup with your answer…',
+        followupError: '',
+      });
+      setAssetActionFeedback(canonicalAssetId, 'Retrying documentation lookup with your answer…', 'info');
+      await upsertEntity('assets', canonicalAssetId, {
         ...current,
         enrichmentFollowupAnswer: trimmedAnswer,
         enrichmentFollowupAnsweredAt: new Date().toISOString(),
@@ -939,19 +962,80 @@ export function createAssetActions(deps) {
       await refreshData();
       render();
       try {
-        const result = await enrichAssetDocumentation(id, buildFollowupEnrichmentRequest(trimmedAnswer));
+        const result = await enrichAssetDocumentation(canonicalAssetId, withRequiredCompanyId({
+          ...buildFollowupEnrichmentRequest(trimmedAnswer),
+          followupQuestion: `${current.enrichmentFollowupQuestion || ''}`.trim(),
+          followupQuestionKey: `${current.enrichmentFollowupQuestionKey || ''}`.trim(),
+          companyId: `${current.companyId || state.activeMembership?.companyId || state.company?.id || ''}`.trim(),
+        }, 'retry asset documentation follow-up'));
         await refreshData();
-        const refreshed = state.assets.find((asset) => asset.id === id) || {};
+        const refreshed = findAssetByRecordId(state.assets, canonicalAssetId) || {};
         const feedback = buildCompletionFeedback(refreshed, result);
-        setAssetActionFeedback(id, feedback.message, feedback.tone);
+        setFollowupUiState(canonicalAssetId, {
+          followupSubmitting: false,
+          followupAnswer: '',
+          followupMessage: '',
+          followupError: '',
+        });
+        setAssetActionFeedback(canonicalAssetId, feedback.message, feedback.tone);
       } catch (error) {
         console.error('[asset_followup_enrichment]', error);
-        const failure = await markAssetEnrichmentFailure(id, error, true);
-        setAssetActionFeedback(id, failure.message, 'error');
+        const failure = await markAssetEnrichmentFailure(canonicalAssetId, error, true);
+        setFollowupUiState(canonicalAssetId, {
+          followupSubmitting: false,
+          followupError: failure.message,
+        });
+        setAssetActionFeedback(canonicalAssetId, failure.message, 'error');
       }
       await refreshData();
       render();
-    },
+    }),
+    retryEnrichmentWithoutFollowupAnswer: async (id) => safeWithGlobalBusy('Retrying documentation lookup…', 'Searching again without a follow-up answer.', async () => {
+      const current = findAssetByRecordId(state.assets, id) || {};
+      const canonicalAssetId = getAssetRecordId(current) || `${id || ''}`.trim();
+      if (!canonicalAssetId) return;
+      setFollowupUiState(canonicalAssetId, {
+        followupSubmitting: true,
+        followupMessage: 'Retrying documentation lookup…',
+        followupError: '',
+        followupAnswer: '',
+      });
+      await upsertEntity('assets', canonicalAssetId, {
+        ...current,
+        enrichmentFollowupAnswer: '',
+        enrichmentStatus: 'in_progress',
+        enrichmentRequestedAt: new Date().toISOString(),
+        enrichmentLastRunAt: new Date().toISOString(),
+        enrichmentErrorCode: '',
+        enrichmentErrorMessage: '',
+        enrichmentFailedAt: null
+      }, state.user);
+      await refreshData();
+      render();
+      try {
+        const result = await enrichAssetDocumentation(canonicalAssetId, withRequiredCompanyId({
+          ...buildFollowupRetryWithoutAnswerRequest(),
+          followupQuestion: `${current.enrichmentFollowupQuestion || ''}`.trim(),
+          followupQuestionKey: `${current.enrichmentFollowupQuestionKey || ''}`.trim(),
+          companyId: `${current.companyId || state.activeMembership?.companyId || state.company?.id || ''}`.trim(),
+        }, 'retry asset documentation without follow-up answer'));
+        await refreshData();
+        const refreshed = findAssetByRecordId(state.assets, canonicalAssetId) || {};
+        const feedback = buildCompletionFeedback(refreshed, result);
+        setAssetActionFeedback(canonicalAssetId, feedback.message, feedback.tone);
+      } catch (error) {
+        const failure = await markAssetEnrichmentFailure(canonicalAssetId, error, true);
+        setAssetActionFeedback(canonicalAssetId, failure.message, 'error');
+      } finally {
+        setFollowupUiState(canonicalAssetId, {
+          followupSubmitting: false,
+          followupAnswer: '',
+          followupMessage: '',
+        });
+      }
+      await refreshData();
+      render();
+    }),
     applyDocSuggestions: async (id) => {
       if (!isAdmin(state.permissions)) return;
       const current = state.assets.find((asset) => asset.id === id) || {};

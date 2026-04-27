@@ -3239,6 +3239,97 @@ test('enrichAssetDocumentation refines repeated follow-up when answer only repea
   assert.match(assetState.enrichmentFollowupQuestion, /model|subtitle|version|nameplate/i);
 });
 
+test('enrichAssetDocumentation followup_answer persists follow-up answer metadata and search hints', async () => {
+  const { db, assetWrites } = createEnrichmentDb({
+    name: 'Virtual Rabbids',
+    manufacturer: 'LAI Games',
+    companyId: 'company-1',
+    enrichmentFollowupQuestion: 'What exact nameplate text is visible?'
+  });
+  const result = await enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'followup_answer',
+    followupAnswer: 'LAI Games',
+    traceId: 'trace-followup-answer-state',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.2,
+        normalizedName: 'Virtual Rabbids',
+        likelyManufacturer: 'LAI Games',
+        documentationSuggestions: [],
+        supportResourcesSuggestion: [{ title: 'Support', url: 'https://example.com/support' }],
+        supportContactsSuggestion: [],
+        alternateNames: [],
+        searchHints: [],
+        oneFollowupQuestion: '',
+        likelyCategory: 'video',
+        topMatchReason: ''
+      }),
+      findReusableVerifiedManuals: async () => [],
+      verifyDocumentationSuggestions: async () => []
+    }
+  });
+  const finalWrite = assetWrites.at(-1).payload;
+  assert.equal(result.status, 'followup_needed');
+  assert.equal(finalWrite.documentationFollowupLastAnswer, 'LAI Games');
+  assert.equal(finalWrite.documentationFollowupStatus, 'pending');
+  assert.equal(finalWrite.followupAnswerUsed, true);
+  assert.deepEqual(finalWrite.followupAnswerSearchHints, ['LAI Games']);
+});
+
+test('enrichAssetDocumentation clears pending documentation follow-up fields when follow-up answer run terminally completes without a new prompt', async () => {
+  const { db, assetWrites } = createEnrichmentDb({
+    name: 'Quik Drop',
+    manufacturer: 'Bay Tek Games',
+    companyId: 'company-1',
+    enrichmentFollowupQuestion: 'What version is this?',
+    documentationFollowupStatus: 'pending',
+  });
+  const result = await enrichAssetDocumentation({
+    db,
+    assetId: 'asset-1',
+    userId: 'user-1',
+    settings: { aiConfidenceThreshold: 0.45 },
+    triggerSource: 'followup_answer',
+    followupAnswer: 'Deluxe',
+    traceId: 'trace-followup-clear-on-manual',
+    dependencies: {
+      runLookupPreview: async () => ({
+        confidence: 0.95,
+        normalizedName: 'Quik Drop',
+        likelyManufacturer: 'Bay Tek Games',
+        documentationSuggestions: [{
+          title: 'Quik Drop Manual',
+          url: 'https://example.com/quik-drop-manual.pdf',
+          verified: true,
+          trustedSource: true,
+          exactTitleMatch: true,
+          exactManualMatch: true,
+          matchScore: 96,
+          sourceType: 'manufacturer'
+        }],
+        supportResourcesSuggestion: [],
+        supportContactsSuggestion: [],
+        alternateNames: [],
+        searchHints: [],
+        oneFollowupQuestion: '',
+        likelyCategory: 'redemption',
+        topMatchReason: ''
+      }),
+      findReusableVerifiedManuals: async () => [],
+      verifyDocumentationSuggestions: async (entries) => entries
+    }
+  });
+  const finalWrite = assetWrites.at(-1).payload;
+  assert.ok(['no_match_yet', 'docs_found', 'verified_manual_found'].includes(result.status));
+  assert.equal(finalWrite.documentationFollowupNeeded, false);
+  assert.equal(finalWrite.documentationFollowupQuestion, '');
+  assert.equal(finalWrite.documentationFollowupStatus, 'resolved');
+});
+
 test('enrichAssetDocumentation keeps Break the Plate unresolved results out of lookup_failed', async () => {
   const { db, assetWrites } = createEnrichmentDb({ name: 'Break the Plate', companyId: 'company-1' });
 

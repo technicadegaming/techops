@@ -866,6 +866,7 @@ test('asset and admin enrichment surfaces share the same manual trigger request 
   const {
     approveSuggestedManualSources,
     buildFollowupEnrichmentRequest,
+    buildFollowupRetryWithoutAnswerRequest,
     buildManualEnrichmentRequest
   } = await loadAssetEnrichmentPipeline();
 
@@ -873,6 +874,9 @@ test('asset and admin enrichment surfaces share the same manual trigger request 
   assert.deepEqual(buildFollowupEnrichmentRequest('  exact subtitle  '), {
     trigger: 'followup_answer',
     followupAnswer: 'exact subtitle'
+  });
+  assert.deepEqual(buildFollowupRetryWithoutAnswerRequest(), {
+    trigger: 'followup_retry_without_answer'
   });
 
   const approvalCalls = [];
@@ -1478,6 +1482,39 @@ test('assets view shows csv bootstrap manual storage evidence and prioritizes ma
   assert.doesNotMatch(el.innerHTML, /Manual outcome: support links only/);
 });
 
+test('assets view hides stale follow-up card after answered terminal no-match state', async () => {
+  const { renderAssets } = await loadAssetsHelpers();
+  const state = {
+    permissions: { companyRole: 'manager', role: 'manager' },
+    tasks: [],
+    pmSchedules: [],
+    taskAiRuns: [],
+    manuals: [],
+    auditLogs: [],
+    troubleshootingLibrary: [],
+    companyLocations: [],
+    route: { tab: 'assets', location: 'all', assetFilter: 'all' },
+    assetDraft: {},
+    assetUi: { searchQuery: '', statusFilter: 'all', reviewFilter: 'all', enrichmentFilter: 'all' },
+    assets: [{
+      id: 'asset-followup',
+      name: 'Virtual Rabbids',
+      manufacturer: 'LAI Games',
+      enrichmentStatus: 'no_match_yet',
+      enrichmentFollowupQuestion: 'Is the cabinet nameplate manufacturer and model readable?',
+      documentationFollowupStatus: 'answered',
+      manualStatus: 'support_context_only',
+      supportResourcesSuggestion: [{ url: 'https://example.com/support', title: 'Support' }]
+    }]
+  };
+  const el = { innerHTML: '', querySelector: () => null, querySelectorAll: () => [] };
+  const actions = { setLocationFilter: () => {}, runBulkAssetEnrichment: () => {}, repairAssetManualText: () => {} };
+  renderAssets(el, state, actions);
+
+  assert.doesNotMatch(el.innerHTML, /Need one detail to improve the match/);
+  assert.match(el.innerHTML, /Lookup completed using your answer\. No reviewable manual was found yet\./);
+});
+
 test('asset actions bulk doc re-search uses visible ids, processes queued imports, and records progress summary', async () => {
   const { createAssetActions } = await loadAssetActions();
   const state = {
@@ -1535,6 +1572,123 @@ test('asset actions bulk doc re-search uses visible ids, processes queued import
   assert.equal(state.assetUi.bulkDocRerunProgress.failed, 1);
   assert.equal(state.assetUi.bulkDocRerunProgress.skipped, 0);
   assert.match(state.assetUi.bulkDocRerunSummary, /Succeeded 2, failed 1, skipped 0/);
+});
+
+test('asset actions submit follow-up answer uses canonical asset id/company and followup trigger', async () => {
+  const { createAssetActions } = await loadAssetActions();
+  const enrichCalls = [];
+  const busyCalls = [];
+  const state = {
+    assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
+    assetUi: {},
+    assets: [{
+      id: 'legacy-id',
+      firestoreDocId: 'asset-doc-1',
+      storedAssetId: 'legacy-id',
+      name: 'Virtual Rabbids',
+      companyId: 'company-a',
+      enrichmentFollowupQuestion: 'What exact subtitle/version is on the cabinet?'
+    }],
+    companyLocations: [],
+    permissions: { companyRole: 'manager', role: 'manager' },
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    user: { uid: 'user-1' }
+  };
+  const actions = createAssetActions({
+    state,
+    onLocationFilter: () => {},
+    render: () => {},
+    refreshData: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    deleteEntity: async () => {},
+    approveAssetManual: async () => {},
+    enrichAssetDocumentation: async (assetId, payload) => {
+      enrichCalls.push({ assetId, payload });
+      return { status: 'no_match_yet' };
+    },
+    previewAssetDocumentationLookup: async () => ({}),
+    researchAssetTitles: async () => ({}),
+    markAssetEnrichmentFailure: async () => ({ message: 'failed' }),
+    normalizeAssetId: (name) => name,
+    pickUniqueAssetId: (id) => id,
+    createEmptyAssetDraft: () => ({ previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } }),
+    withTimeout: async (promise) => promise,
+    normalizeSupportEntries: (entries) => entries,
+    canDelete: () => false,
+    isAdmin: () => true,
+    isManager: () => true,
+    buildAssetSaveErrorMessage: () => 'error',
+    buildAssetSaveDebugContext: () => ({}),
+    isPermissionRelatedError: () => false,
+    withGlobalBusy: async (title, detail, fn) => {
+      busyCalls.push({ title, detail });
+      return fn();
+    },
+    buildPreviewQueryKey: () => ''
+  });
+
+  await actions.submitEnrichmentFollowup('asset-doc-1', '  LAI Games ');
+
+  assert.equal(enrichCalls.length, 1);
+  assert.equal(enrichCalls[0].assetId, 'asset-doc-1');
+  assert.equal(enrichCalls[0].payload.trigger, 'followup_answer');
+  assert.equal(enrichCalls[0].payload.followupAnswer, 'LAI Games');
+  assert.equal(enrichCalls[0].payload.companyId, 'company-a');
+  assert.equal(busyCalls[0].title, 'Retrying documentation lookup…');
+});
+
+test('asset actions retry without answer clears follow-up draft and uses retry-without-answer trigger', async () => {
+  const { createAssetActions } = await loadAssetActions();
+  const enrichCalls = [];
+  const state = {
+    assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
+    assetUi: { followupByAsset: { 'asset-doc-1': { followupAnswer: 'stale answer' } } },
+    assets: [{ id: 'legacy-id', firestoreDocId: 'asset-doc-1', storedAssetId: 'legacy-id', name: 'Virtual Rabbids', companyId: 'company-a' }],
+    companyLocations: [],
+    permissions: { companyRole: 'manager', role: 'manager' },
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    user: { uid: 'user-1' }
+  };
+  const actions = createAssetActions({
+    state,
+    onLocationFilter: () => {},
+    render: () => {},
+    refreshData: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    deleteEntity: async () => {},
+    approveAssetManual: async () => {},
+    enrichAssetDocumentation: async (assetId, payload) => {
+      enrichCalls.push({ assetId, payload });
+      return { status: 'no_match_yet' };
+    },
+    previewAssetDocumentationLookup: async () => ({}),
+    researchAssetTitles: async () => ({}),
+    markAssetEnrichmentFailure: async () => ({ message: 'failed' }),
+    normalizeAssetId: (name) => name,
+    pickUniqueAssetId: (id) => id,
+    createEmptyAssetDraft: () => ({ previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } }),
+    withTimeout: async (promise) => promise,
+    normalizeSupportEntries: (entries) => entries,
+    canDelete: () => false,
+    isAdmin: () => true,
+    isManager: () => true,
+    buildAssetSaveErrorMessage: () => 'error',
+    buildAssetSaveDebugContext: () => ({}),
+    isPermissionRelatedError: () => false,
+    withGlobalBusy: async (_title, _detail, fn) => fn(),
+    buildPreviewQueryKey: () => ''
+  });
+
+  await actions.retryEnrichmentWithoutFollowupAnswer('asset-doc-1');
+
+  assert.equal(enrichCalls.length, 1);
+  assert.equal(enrichCalls[0].assetId, 'asset-doc-1');
+  assert.equal(enrichCalls[0].payload.trigger, 'followup_retry_without_answer');
+  assert.equal(state.assetUi.followupByAsset['asset-doc-1'].followupAnswer, '');
 });
 
 test('asset actions manual text repair calls callable and refreshes asset data', async () => {

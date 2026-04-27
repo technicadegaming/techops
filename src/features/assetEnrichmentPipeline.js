@@ -9,6 +9,12 @@ export function buildFollowupEnrichmentRequest(answer = '') {
   };
 }
 
+export function buildFollowupRetryWithoutAnswerRequest() {
+  return {
+    trigger: 'followup_retry_without_answer'
+  };
+}
+
 export async function approveSuggestedManualSources({
   assetId,
   urls = [],
