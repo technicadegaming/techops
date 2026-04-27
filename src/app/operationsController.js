@@ -131,6 +131,14 @@ export function createOperationsController({
 
   function buildTroubleshootingLibraryPayload(task = {}, asset = null, overrides = {}) {
     const snapshotRunId = `${task?.aiLastCompletedRunSnapshot?.runId || task?.currentAiRunId || ''}`.trim();
+    const sourceRows = Array.isArray(task?.aiLastCompletedRunSnapshot?.documentationSources) ? task.aiLastCompletedRunSnapshot.documentationSources : [];
+    const topCodeSource = sourceRows.find((row) => ['approved_manual_code_definition', 'web_code_definition', 'asset_code_hint'].includes(`${row?.sourceType || ''}`)) || null;
+    const sourceEvidenceIds = sourceRows
+      .map((row) => `${row?.manualId || row?.url || row?.title || ''}`.trim())
+      .filter(Boolean)
+      .slice(0, 8);
+    const matchedCode = (Array.isArray(topCodeSource?.matchedCodes) ? topCodeSource.matchedCodes[0] : (topCodeSource?.code || topCodeSource?.matchedCode || '')) || '';
+    const codeMeaning = Array.isArray(topCodeSource?.excerpts) ? `${topCodeSource.excerpts[0] || ''}`.trim() : '';
     return {
       taskId: task.id,
       assetId: task.assetId || asset?.id || '',
@@ -150,6 +158,12 @@ export function createOperationsController({
       resolutionSummary: '',
       notes: task.notes || '',
       sourceAiRunId: snapshotRunId,
+      codeToken: matchedCode,
+      codeMeaning,
+      sourceEvidenceIds,
+      sourceManualId: topCodeSource?.manualId || '',
+      sourceUrl: topCodeSource?.url || '',
+      reviewState: task.aiFixState || 'pending_review',
       ...overrides
     };
   }

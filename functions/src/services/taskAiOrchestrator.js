@@ -8,6 +8,7 @@ const DEFAULT_SETTINGS = {
   aiAutoAttach: false,
   aiUseInternalKnowledge: true,
   aiUseWebSearch: false,
+  operationsWebResearchEnabled: false,
   aiAskFollowups: true,
   aiModel: 'gpt-4.1-mini',
   aiMaxWebSources: 3,
@@ -31,6 +32,16 @@ function stripText(input = '') {
 
 function compactExcerpt(text = '', maxLen = 380) {
   return `${text || ''}`.slice(0, maxLen).trim();
+}
+
+function extractCodeDefinitionEvidenceItems(items = [], codeTokens = []) {
+  const targetCodes = new Set((Array.isArray(codeTokens) ? codeTokens : []).map((token) => normalizeCodeToken(token)).filter(Boolean));
+  return (Array.isArray(items) ? items : []).filter((item) => {
+    if (!['approved_manual_code_definition', 'web_code_definition', 'asset_code_hint'].includes(`${item?.sourceType || ''}`)) return false;
+    if (!targetCodes.size) return true;
+    const matchedCodes = Array.isArray(item?.matchedCodes) ? item.matchedCodes : [item?.code, item?.matchedCode];
+    return matchedCodes.map((value) => normalizeCodeToken(value)).some((value) => targetCodes.has(value));
+  });
 }
 
 function buildFocusedManualExcerpt(text = '', taskTokens = {}, options = {}) {
@@ -486,12 +497,21 @@ async function buildDocumentationContext(db, { task = null, asset = null, troubl
     : [];
 
   const selected = dedupeBy([...manualCandidates, ...fallbackCandidates, ...supportCandidates].filter((x) => !!x?.url), (item) => item.url).slice(0, 4);
+  const historyItems = [];
+  if (Array.isArray(asset?.history) && asset.history.length) {
+    historyItems.push({
+      sourceType: 'prior_task_history',
+      title: `${asset.name || 'Asset'} prior history`,
+      excerpts: asset.history.slice(0, 4).map((row) => compactExcerpt(stringifyTaskValue(row), 420)).filter(Boolean)
+    });
+  }
   const items = [
-    ...manualCodeDefinitionItems,
-    ...approvedChunkItems,
-    ...(linkedManualLibraryItem ? [linkedManualLibraryItem] : []),
     ...(codeHintItem ? [codeHintItem] : []),
     ...troubleshootingItems,
+    ...manualCodeDefinitionItems,
+    ...approvedChunkItems,
+    ...historyItems,
+    ...(linkedManualLibraryItem ? [linkedManualLibraryItem] : [])
   ];
   for (const source of selected) {
     if (source.sourceType === 'manual_library_link') continue;
@@ -676,6 +696,8 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
     }, { merge: true });
 
     const context = await gatherContext(db, taskId);
+    const taskTokens = extractTaskCodeTokens(context.task || {});
+    const hasInternalCodeDefinition = extractCodeDefinitionEvidenceItems(context.documentationContext?.items || [], taskTokens.codeTokens).some((item) => ['approved_manual_code_definition', 'asset_code_hint'].includes(item.sourceType));
 
     if (settings.aiAskFollowups && triggerSource !== 'followup' && isWeakTaskDescription(context.task)) {
       const followup = await requestFollowupQuestions({ model: settings.aiModel, traceId, context });
@@ -719,9 +741,41 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
       }
     }
 
-    const webContext = await fetchWebContextForTask({ db, taskId, settings, traceId }).catch(() => ({ summary: null, sources: [], failed: true }));
-    const fullContext = { ...context, followupAnswers, webContext };
-    const result = await requestTroubleshootingPlan({ model: settings.aiModel, traceId, settings, context: fullContext });
+    const shouldUseWebFallback = !hasInternalCodeDefinition;
+    const webContext = shouldUseWebFallback
+      ? await fetchWebContextForTask({ db, taskId, settings, traceId, task: context.task, asset: context.asset, taskTokens }).catch(() => ({ summary: null, sources: [], failed: true, configured: false }))
+      : { summary: 'Web research skipped because internal/manual code definition already exists.', sources: [], skipped: true, configured: true };
+    const webDefinitionItems = (Array.isArray(webContext.codeDefinitions) ? webContext.codeDefinitions : []).map((entry) => ({
+      sourceType: 'web_code_definition',
+      title: entry.sourceTitle || entry.sourceUrl || 'Web/manual source',
+      url: entry.sourceUrl || '',
+      matchedCodes: [entry.code || entry.matchedCode].filter(Boolean),
+      excerpts: [entry.excerpt || `${entry.code || ''}: ${entry.meaning || ''}`].filter(Boolean),
+      confidence: 0.45
+    }));
+    const mergedDocumentationContext = {
+      ...(context.documentationContext || { mode: 'web_internal_only', items: [] }),
+      items: [...(context.documentationContext?.items || []), ...webDefinitionItems]
+    };
+    const fullContext = { ...context, documentationContext: mergedDocumentationContext, followupAnswers, webContext, taskTokens };
+    let result = await requestTroubleshootingPlan({ model: settings.aiModel, traceId, settings, context: fullContext });
+    const hasDefinitionEvidence = extractCodeDefinitionEvidenceItems(mergedDocumentationContext.items || [], taskTokens.codeTokens).length > 0;
+    const summaryText = `${result?.parsed?.shortFrontlineVersion || ''} ${result?.parsed?.conciseIssueSummary || ''}`.toLowerCase();
+    const validationNeedsRetry = hasDefinitionEvidence && /(meaning not provided|definition not found)/i.test(summaryText);
+    if (validationNeedsRetry) {
+      await runRef.set({
+        validationStatus: 'retrying_definition_grounding',
+        validationMessage: 'Initial response omitted available code definition; regenerating once with stronger grounding.',
+        updatedAt: isoNow(),
+        updatedBy: userId
+      }, { merge: true });
+      result = await requestTroubleshootingPlan({
+        model: settings.aiModel,
+        traceId: `${traceId}-retry`,
+        settings,
+        context: { ...fullContext, validationOverride: { enforceDefinitionFirstSentence: true } }
+      });
+    }
 
     await runRef.set({
       taskId,
@@ -733,6 +787,7 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
         libraryCount: context.troubleshootingLibrary.length
       },
       webContextSummary: webContext.summary,
+      webSources: webContext.sources || [],
       finalSummary: result.parsed.conciseIssueSummary,
       probableCauses: result.parsed.probableCauses,
       immediateChecks: result.parsed.immediateChecks,
@@ -743,8 +798,8 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
       safetyNotes: result.parsed.safetyNotes,
       confidence: result.parsed.confidence,
       citations: result.parsed.citations,
-      documentationMode: context.documentationContext?.mode || 'web_internal_only',
-      documentationSources: context.documentationContext?.items || [],
+      documentationMode: mergedDocumentationContext?.mode || 'web_internal_only',
+      documentationSources: mergedDocumentationContext?.items || [],
       rawResponseMeta: { ...result.responseMeta, traceId },
       shortFrontlineVersion: result.parsed.shortFrontlineVersion,
       detailedManagerVersion: result.parsed.detailedManagerVersion,
@@ -764,7 +819,7 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
             result,
             taskId,
             companyId: latestTaskCompanyId || expectedCompanyId || null,
-            documentationContext: context.documentationContext || {}
+            documentationContext: mergedDocumentationContext || {}
           }),
           updatedAt: isoNow(),
           updatedBy: userId
@@ -813,5 +868,7 @@ module.exports = {
   runPipeline,
   isWeakTaskDescription,
   buildDocumentationContext,
-  gatherContext
+  gatherContext,
+  extractTaskCodeTokens,
+  extractCodeDefinitionEvidenceItems
 };

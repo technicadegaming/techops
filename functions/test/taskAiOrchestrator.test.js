@@ -61,7 +61,7 @@ test('task AI context prefers approved manual chunks, then linked manualLibrary 
   });
   const context = await gatherContext(buildDb(), 'task1');
   const sources = context.documentationContext.items.map((item) => item.sourceType);
-  assert.deepEqual(sources.slice(0, 4), ['approved_manual_chunk', 'manual_library_link', 'troubleshooting_fix', 'support']);
+  assert.deepEqual(sources.slice(0, 4), ['troubleshooting_fix', 'approved_manual_chunk', 'manual_library_link', 'support']);
   assert.equal(context.documentationContext.mode, 'approved_manual_internal');
   assert.equal(context.assetContext.locationName, 'Arcade Floor');
 });
@@ -104,9 +104,10 @@ test('task AI degrades gracefully to linked manualLibrary context when no approv
     }
   }, 'task1');
   assert.equal(context.documentationContext.mode, 'manual_library_backed');
-  assert.equal(context.documentationContext.items[0].sourceType, 'manual_library_link');
-  assert.match(context.documentationContext.items[0].excerpts[0], /Shared manual: Quik Drop Service Manual/);
-  assert.equal(context.documentationContext.items[0].excerpts.some((line) => /no extracted manual text was available for code lookup/i.test(line)), false);
+  const linked = context.documentationContext.items.find((item) => item.sourceType === 'manual_library_link');
+  assert.ok(linked);
+  assert.match(linked.excerpts[0], /Shared manual: Quik Drop Service Manual/);
+  assert.equal(linked.excerpts.some((line) => /no extracted manual text was available for code lookup/i.test(line)), false);
 });
 
 test('task AI context includes troubleshooting records that match by manufacturer or asset metadata', async () => {
@@ -397,6 +398,54 @@ test('task AI context prioritizes approved manual code definitions before manual
   assert.equal(context.documentationContext.items[0].sourceType, 'approved_manual_code_definition');
   assert.match(context.documentationContext.items[0].excerpts[0], /ERROR 11: CARD DISPENSER ERROR/i);
   assert.equal(context.documentationContext.mode, 'approved_manual_internal');
+});
+
+test('task AI context falls back to manuals/{manualId}/codeDefinitions/{code} when inline extractedCodeDefinitions are missing', async () => {
+  global.fetch = async () => ({ ok: true, status: 200, headers: { get: () => 'text/html' }, text: async () => 'Support fallback' });
+  const context = await gatherContext({
+    collection(name) {
+      if (name === 'tasks') {
+        return {
+          doc(id) {
+            return { id, async get() { return { exists: true, id, data: () => ({ companyId: 'company-a', assetId: 'asset1', description: 'constant E11 error' }) }; } };
+          },
+          where(field, op, value) { return buildDb().collection(name).where(field, op, value); }
+        };
+      }
+      if (name === 'assets') return buildDb().collection(name);
+      if (name === 'manuals') {
+        return {
+          where() { return { where() { return this; }, limit() { return this; }, async get() { return { docs: [{ id: 'm1', data: () => ({ companyId: 'company-a', assetId: 'asset1', extractionStatus: 'completed', sourceTitle: 'Manual' }) }] }; } }; },
+          doc() {
+            return {
+              collection(sub) {
+                if (sub === 'chunks') return { orderBy() { return this; }, limit() { return this; }, async get() { return { docs: [] }; } };
+                if (sub === 'codeDefinitions') {
+                  return {
+                    doc() {
+                      return {
+                        async get() {
+                          return {
+                            exists: true,
+                            data: () => ({ bestDefinition: { code: 'E11', rawCode: 'ERROR 11', title: 'CARD DISPENSER ERROR', meaning: 'CARD EMPTY IN THE DISPENSER or CARD JAM or DISPENSING SENSOR PROBLEM.' } })
+                          };
+                        }
+                      };
+                    }
+                  };
+                }
+                return {};
+              }
+            };
+          }
+        };
+      }
+      return buildDb().collection(name);
+    }
+  }, 'task1');
+  const definition = context.documentationContext.items.find((item) => item.sourceType === 'approved_manual_code_definition');
+  assert.ok(definition);
+  assert.match(definition.excerpts[0], /ERROR 11: CARD DISPENSER ERROR/i);
 });
 
 test('task AI chunk excerpt keeps code row visible even when it appears late in a long chunk', async () => {

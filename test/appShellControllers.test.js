@@ -2349,6 +2349,61 @@ test('operations AI source hint explains missing extracted manual text for manua
   assert.match(html, /Manual is attached, but extracted manual text is not available yet/);
 });
 
+test('operations AI panel renders evidence table with manual code definition excerpts', async () => {
+  const { __testOperationsAi } = await loadOperationsHelpers();
+  const task = {
+    id: 'task-4',
+    companyId: 'company-a',
+    aiStatus: 'completed',
+    aiLastCompletedRunSnapshot: { runId: 'run-4', taskId: 'task-4', companyId: 'company-a', completedAt: '2026-03-21T00:00:00.000Z', frontline: 'Use manual code definition.', documentationSources: [{ sourceType: 'approved_manual_code_definition', matchedCodes: ['E11'], title: 'Manual', excerpts: ['ERROR 11 — CARD DISPENSER ERROR'], confidence: 0.95 }] }
+  };
+  const run = {
+    id: 'run-4',
+    taskId: 'task-4',
+    companyId: 'company-a',
+    status: 'completed',
+    shortFrontlineVersion: 'Use manual code definition.',
+    documentationSources: [{ sourceType: 'approved_manual_code_definition', matchedCodes: ['E11'], title: 'Manual', excerpts: ['ERROR 11 — CARD DISPENSER ERROR'], confidence: 0.95 }]
+  };
+  const state = {
+    settings: { aiEnabled: true, aiUseWebSearch: true },
+    permissions: { companyRole: 'lead' },
+    operationsUi: { aiTaskStates: {}, aiDisplayRunsByTask: {} },
+    taskAiRuns: [run],
+    taskAiFollowups: []
+  };
+  const snapshot = __testOperationsAi.getTaskAiSnapshot(task, run);
+  const aiState = __testOperationsAi.getTaskAiState(task, state, run, null, snapshot);
+  const html = __testOperationsAi.renderAiPanel(task, state, { run, followup: null, snapshot, aiState });
+  assert.match(html, /AI evidence used/);
+  assert.match(html, /Manual code definition/);
+  assert.match(html, /ERROR 11 — CARD DISPENSER ERROR/);
+});
+
+test('operations AI panel renders web research not configured status when applicable', async () => {
+  const { __testOperationsAi } = await loadOperationsHelpers();
+  const task = { id: 'task-5', companyId: 'company-a', aiStatus: 'completed', aiLastCompletedRunSnapshot: { runId: 'run-5', taskId: 'task-5', companyId: 'company-a', completedAt: '2026-03-21T00:00:00.000Z' } };
+  const run = {
+    id: 'run-5',
+    taskId: 'task-5',
+    companyId: 'company-a',
+    status: 'completed',
+    webContextSummary: 'Web research is not configured. AI is using manuals/internal data only.',
+    documentationSources: []
+  };
+  const state = {
+    settings: { aiEnabled: true, aiUseWebSearch: true },
+    permissions: { companyRole: 'lead' },
+    operationsUi: { aiTaskStates: {}, aiDisplayRunsByTask: {} },
+    taskAiRuns: [run],
+    taskAiFollowups: []
+  };
+  const snapshot = __testOperationsAi.getTaskAiSnapshot(task, run);
+  const aiState = __testOperationsAi.getTaskAiState(task, state, run, null, snapshot);
+  const html = __testOperationsAi.renderAiPanel(task, state, { run, followup: null, snapshot, aiState });
+  assert.match(html, /Web research is not configured\. AI is using manuals\/internal data only\./);
+});
+
 test('operations source includes explicit create-task loading and error states', () => {
   const source = loadOperationsSource();
   assert.match(source, /creatingTask/);
@@ -2371,13 +2426,14 @@ test('assets source uses tabbed layout with asset records default and section se
   const source = loadAssetsSource();
   assert.match(source, /data-assets-tab="asset_records"/);
   assert.match(source, /data-assets-tab="documentation_review"/);
-  assert.match(source, /data-assets-tab="add_import"/);
+  assert.match(source, /data-assets-tab="add_asset"/);
   assert.match(source, /activeAssetsTab === 'asset_records'/);
   assert.match(source, /activeAssetsTab === 'documentation_review'/);
-  assert.match(source, /activeAssetsTab === 'add_import'/);
+  assert.match(source, /activeAssetsTab === 'add_asset'/);
   assert.match(source, /<b>Manual review queue<\/b>/);
-  assert.match(source, /<b>Research Titles<\/b>/);
-  assert.match(source, /Quick add asset/);
+  assert.doesNotMatch(source, /<b>Research Titles<\/b>/);
+  assert.match(source, /Manual asset form/);
+  assert.match(source, /Bulk import moved to <b>Admin → Bulk import<\/b>/);
 });
 
 test('assets source includes manual attach controls and upload actions', () => {

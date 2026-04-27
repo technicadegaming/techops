@@ -1359,6 +1359,17 @@ exports.saveTaskFixToTroubleshootingLibrary = onCall({}, async (request) => {
     ? `${request.data.source}`.trim()
     : 'manual_save_fix';
   const notes = cleanText(request.data?.notes || task.notes || '', 1000);
+  const snapshotSources = Array.isArray(task?.aiLastCompletedRunSnapshot?.documentationSources) ? task.aiLastCompletedRunSnapshot.documentationSources : [];
+  const topCodeSource = snapshotSources.find((row) => ['approved_manual_code_definition', 'web_code_definition', 'asset_code_hint'].includes(`${row?.sourceType || ''}`)) || {};
+  const codeToken = cleanText(request.data?.codeToken || topCodeSource?.matchedCodes?.[0] || topCodeSource?.code || topCodeSource?.matchedCode || '', 60);
+  const codeMeaning = cleanText(request.data?.codeMeaning || topCodeSource?.excerpts?.[0] || '', 500);
+  const sourceEvidenceIds = cleanList(
+    request.data?.sourceEvidenceIds?.length
+      ? request.data.sourceEvidenceIds
+      : snapshotSources.map((row) => row?.manualId || row?.url || row?.title).filter(Boolean),
+    12,
+    260
+  );
   const successfulFix = cleanText(
     request.data?.successfulFix
       || request.data?.resolutionSummary
@@ -1392,6 +1403,12 @@ exports.saveTaskFixToTroubleshootingLibrary = onCall({}, async (request) => {
     successfulFix,
     resolutionSummary: cleanText(request.data?.resolutionSummary || successfulFix, 1200),
     notes,
+    codeToken: codeToken || null,
+    codeMeaning: codeMeaning || null,
+    sourceEvidenceIds,
+    sourceManualId: cleanText(request.data?.sourceManualId || topCodeSource?.manualId || '', 180) || null,
+    sourceUrl: cleanText(request.data?.sourceUrl || topCodeSource?.url || '', 500) || null,
+    reviewState: cleanText(request.data?.reviewState || task.aiFixState || 'pending_review', 80) || 'pending_review',
     manualReferences: cleanList(request.data?.manualReferences, 12, 260),
     metadata: {
       sourcePayload: cleanObject(request.data?.metadata),

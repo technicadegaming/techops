@@ -58,6 +58,21 @@ function buildSystemInstructions(settings) {
   ].filter(Boolean).join('\n');
 }
 
+function buildGroundingDirective(context = {}) {
+  const codeTokens = Array.isArray(context?.taskTokens?.codeTokens) ? context.taskTokens.codeTokens : [];
+  if (!codeTokens.length) return '';
+  const sources = Array.isArray(context?.documentationContext?.items) ? context.documentationContext.items : [];
+  const manualDefinition = sources.find((item) => item?.sourceType === 'approved_manual_code_definition');
+  const webDefinition = sources.find((item) => item?.sourceType === 'web_code_definition');
+  if (manualDefinition?.excerpts?.[0]) {
+    return `Grounding rule: first sentence must state this approved manual code definition for ${codeTokens.join(', ')}: ${manualDefinition.excerpts[0]}`;
+  }
+  if (webDefinition?.excerpts?.[0]) {
+    return `Grounding rule: first sentence must state this web/manual code definition for ${codeTokens.join(', ')} and label it as web/manual source: ${webDefinition.excerpts[0]}`;
+  }
+  return `Grounding rule: code token(s) ${codeTokens.join(', ')} found but no definition evidence available. First sentence must say definition was not found and ask for manual attach/re-extraction or web research.`;
+}
+
 function buildSchemaPrompt() {
   return JSON.stringify({
     conciseIssueSummary: 'string',
@@ -267,6 +282,10 @@ async function requestFollowupQuestions({ model, traceId, context }) {
 
 async function requestTroubleshootingPlan({ model, traceId, settings, context }) {
   const client = getClient();
+  const groundingDirective = buildGroundingDirective(context);
+  const validationOverride = context?.validationOverride?.enforceDefinitionFirstSentence
+    ? 'Validation retry: you previously omitted a known code definition. You MUST begin with the code definition sentence from supplied evidence.'
+    : '';
   const response = await client.responses.create({
     model,
     metadata: { traceId, flow: 'task-troubleshooting' },
@@ -281,6 +300,7 @@ async function requestTroubleshootingPlan({ model, traceId, settings, context })
     input: [
       { role: 'system', content: buildSystemInstructions(settings) },
       { role: 'developer', content: `Output strict JSON schema: ${buildSchemaPrompt()}` },
+      { role: 'developer', content: [groundingDirective, validationOverride].filter(Boolean).join('\n') || 'Use supplied evidence order and grounding rules.' },
       { role: 'user', content: `Use this structured context: ${JSON.stringify(context)}` }
     ]
   });

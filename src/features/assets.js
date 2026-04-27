@@ -757,7 +757,7 @@ export function renderAssets(el, state, actions) {
         <p class="page-subtitle">Manage equipment records, documentation, history, and operational context.</p>
       </div>
       <div class="page-actions">
-        <button type="button" class="btn-primary" data-focus-add-asset>Add asset</button>
+        <button type="button" class="btn-primary" data-focus-add-asset>Add asset manually</button>
         <button type="button" class="btn-secondary" data-show-missing-docs>Review documentation</button>
       </div>
     </div>
@@ -821,7 +821,7 @@ export function renderAssets(el, state, actions) {
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         <button type="button" data-assets-tab="asset_records" ${activeAssetsTab === 'asset_records' ? 'class="primary"' : ''}>Asset records</button>
         <button type="button" data-assets-tab="documentation_review" ${activeAssetsTab === 'documentation_review' ? 'class="primary"' : ''}>Documentation review</button>
-        <button type="button" data-assets-tab="add_import" ${activeAssetsTab === 'add_import' ? 'class="primary"' : ''}>Add / import</button>
+        <button type="button" data-assets-tab="add_asset" ${activeAssetsTab === 'add_asset' ? 'class="primary"' : ''}>Add asset</button>
       </div>
     </div>
     ${activeAssetsTab === 'asset_records' ? `${assetFilter === 'missing_docs' ? '<div class="inline-state warn">Showing assets missing docs only.</div>' : ''}` : ''}
@@ -883,13 +883,13 @@ export function renderAssets(el, state, actions) {
       }).join('')}</div>` : '<div class="tiny" style="margin-top:8px;">No unresolved manual review queue items in this scope.</div>'}
     </details>
     ` : ''}
-    ${activeAssetsTab === 'add_import' ? `
+    ${activeAssetsTab === 'add_asset' ? `
     <details class="item" style="margin-bottom:12px;" open>
-      <summary><b>Add / import</b></summary>
+      <summary><b>Add asset manually</b></summary>
     <form id="assetForm" class="grid grid-2" style="margin-top:10px; margin-bottom:12px; border:1px solid #e5e7eb; border-radius:10px; padding:10px;">
-      <div class="tiny" style="grid-column:1/-1; font-weight:700;">Quick add asset</div>
+      <div class="tiny" style="grid-column:1/-1; font-weight:700;">Manual asset form</div>
       <label>Asset name <span class="field-badge required">Required</span><input name="name" value="${state.assetDraft?.name || ''}" placeholder="Asset name" required ${editable ? '' : 'disabled'} /><div class="form-helper">Use the cabinet/game name seen by technicians.</div></label>
-      <label>Manufacturer <span class="field-badge recommended">Recommended</span><input name="manufacturer" value="${state.assetDraft?.manufacturer || ''}" placeholder="Manufacturer" ${editable ? '' : 'disabled'} /><div class="form-helper">Recommended for stronger manual matching.</div></label>
+      <label>Manufacturer <span class="field-badge optional">Optional</span><input name="manufacturer" value="${state.assetDraft?.manufacturer || ''}" placeholder="Manufacturer" ${editable ? '' : 'disabled'} /><div class="form-helper">Optional now, but helps manual matching.</div></label>
       <select name="locationId" ${editable ? '' : 'disabled'}>
         <option value="">No linked location yet</option>
         ${locationOptions.filter((option) => option.id).map((option) => `<option value="${option.id}" ${option.id === state.assetDraft?.locationId ? 'selected' : ''}>${option.name}</option>`).join('')}
@@ -931,29 +931,7 @@ export function renderAssets(el, state, actions) {
       <button type="submit" class="btn btn-primary" ${editable && !state.assetDraft?.saving && !saveBlocked ? '' : 'disabled'}>${state.assetDraft?.saving ? 'Saving...' : 'Save asset'}</button>
       <datalist id="assetLocationNames">${locationOptions.filter((option) => option.name && option.id).map((option) => `<option value="${option.name}"></option>`).join('')}</datalist>
     </form>
-
-
-    <div class="item" style="margin-bottom:12px;">
-      <div style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; align-items:flex-start;">
-        <div>
-          <b>Research Titles</b>
-          <div class="tiny">Paste comma-separated titles or one title per line, run research, then review manual-ready vs source/support-only rows before import.</div>
-        </div>
-        <div class="tiny">Status: ${state.assetUi?.bulkIntakeStatus || 'idle'}</div>
-      </div>
-      <textarea data-bulk-intake-text rows="4" placeholder="Quick Drop, Jurassic Park, Virtual Rabbids, Air FX">${state.assetUi?.bulkIntakeText || ''}</textarea>
-      <div class="row mt" style="flex-wrap:wrap;">
-        <button type="button" data-bulk-parse>Prepare rows</button>
-        <button type="button" data-bulk-enrich ${state.assetUi?.bulkIntakeRows?.length ? '' : 'disabled'}>${state.assetUi?.bulkIntakeStatus === 'enriching' ? 'Researching...' : 'Research titles'}</button>
-        <button type="button" data-bulk-export ${state.assetUi?.bulkIntakeRows?.length ? '' : 'disabled'}>Export reviewed CSV</button>
-        <button type="button" class="btn btn-primary" data-bulk-import ${state.assetUi?.bulkIntakeRows?.length ? '' : 'disabled'}>Create accepted assets</button>
-      </div>
-      ${(state.assetUi?.bulkIntakeErrors || []).length ? `<div class="inline-state error mt"><ul>${(state.assetUi.bulkIntakeErrors || []).map((error) => `<li>${error}</li>`).join('')}</ul></div>` : ''}
-    </div>
-
-    ${(state.assetUi?.onboardingValidationErrors || []).length ? `<div class="item" style="border:1px solid #fca5a5; background:#fef2f2;"><b>Import validation issues</b><ul>${(state.assetUi?.onboardingValidationErrors || []).slice(0, 8).map((error) => `<li class="tiny">${error}</li>`).join('')}</ul></div>` : ''}
-    ${(state.assetUi?.bulkIntakeRows || []).length ? `<div class="item" style="margin-bottom:10px; overflow:auto;"><b>Research review grid</b><div class="tiny">Green = manual ready. Yellow = follow-up or family review. Red = unresolved. Only manual-ready rows should become docs found.</div><table class="tiny" style="width:100%; border-collapse:collapse; margin-top:8px;"><thead><tr><th>Original</th><th>Normalized</th><th>Manufacturer</th><th>Match type</th><th>Manual ready</th><th>Review required</th><th>Manual URL</th><th>Manual source URL</th><th>Support URL</th><th>Contact info</th><th>Confidence</th><th>Notes</th><th>Row status/action</th></tr></thead><tbody>${(state.assetUi.bulkIntakeRows || []).map((row, index) => { const tone = row.rowStatus === 'good_match' ? '#ecfdf5' : (row.rowStatus === 'needs_review' ? '#fffbeb' : '#fef2f2'); return `<tr data-bulk-row="${index}" style="background:${tone};"><td><input name="name" value="${row.name || ''}" /></td><td><input name="normalizedName" value="${row.normalizedTitle || row.normalizedName || ''}" /></td><td><input name="manufacturer" value="${row.manufacturer || row.manufacturerSuggestion || ''}" /></td><td><input name="matchType" value="${row.matchType || ''}" /></td><td><input name="manualReady" value="${typeof row.manualReady === 'boolean' ? String(row.manualReady) : (row.manualReady || '')}" /></td><td><input name="reviewRequired" value="${typeof row.reviewRequired === 'boolean' ? String(row.reviewRequired) : (row.reviewRequired || '')}" /></td><td><input name="manualUrl" value="${row.manualUrl || ''}" placeholder="https://..." /></td><td><input name="manualSourceUrl" value="${row.manualSourceUrl || ''}" placeholder="https://..." /></td><td><input name="supportUrl" value="${row.supportUrl || ''}" placeholder="https://support" /></td><td><input name="supportEmail" value="${row.supportEmail || ''}" placeholder="email" /><input name="supportPhone" value="${row.supportPhone || ''}" placeholder="phone" /></td><td><input name="matchConfidence" value="${row.matchConfidence || ''}" style="width:70px;" /></td><td><textarea name="matchNotes" rows="2">${row.matchNotes || ''}</textarea></td><td><select name="rowStatus"><option value="good_match" ${row.rowStatus === 'good_match' ? 'selected' : ''}>accepted-ready</option><option value="needs_review" ${row.rowStatus === 'needs_review' ? 'selected' : ''}>needs review</option><option value="unresolved" ${row.rowStatus === 'unresolved' ? 'selected' : ''}>unresolved</option><option value="skipped" ${row.rowStatus === 'skipped' ? 'selected' : ''}>skip</option></select><div style="display:flex; gap:4px; flex-wrap:wrap; margin-top:4px;"><button type="button" data-bulk-accept="${index}">Accept</button><button type="button" data-bulk-skip="${index}">Skip</button></div></td></tr>`; }).join('')}</tbody></table></div>` : ''}
-    ${(state.assetUi?.recentIntakeRows || []).length ? `<div class="item" style="margin-bottom:10px; overflow:auto;"><b>Recent import/research status</b><div class="tiny">These rows reconcile to real asset enrichment and review state after each refresh.</div><table class="tiny" style="width:100%; border-collapse:collapse; margin-top:8px;"><thead><tr><th>Title</th><th>Asset</th><th>Status</th><th>Review</th></tr></thead><tbody>${(state.assetUi.recentIntakeRows || []).map((row) => `<tr><td>${row.name || 'Untitled'}</td><td>${row.assetId ? `<a href="#asset-${row.assetId}">${row.assetId}</a>` : 'pending'}</td><td>${renderStatusChip(row.enrichmentStatus || row.intakeStatusBadge || 'idle')}<div>${row.intakeStatusLabel || ''}</div></td><td>${formatManualReviewLabel(row.manualReviewState || row.reviewState || 'n/a')}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      <div class="inline-state info">Bulk import moved to <b>Admin → Bulk import</b>.</div>
     </details>
     ` : ''}
 
