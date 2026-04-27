@@ -218,7 +218,24 @@ export function createAssetActions(deps) {
     if (/asset not found for manual attachment/i.test(raw)) return 'Asset not found for manual attachment. Refresh the asset list and try again.';
     if (/asset resolved but missing company context for manual attachment/i.test(raw)) return 'Asset resolved but missing company context for manual attachment.';
     if (/asset\/company mismatch for manual attachment/i.test(raw)) return 'Asset/company mismatch for manual attachment.';
+    if (/unsupported_file_type/i.test(raw)) return 'Attachment failed: unsupported file type.';
+    if (/download_timeout/i.test(raw)) return 'Attachment failed: download timed out.';
+    if (/download_failed/i.test(raw)) return 'Attachment failed: could not download the manual URL.';
     return `Attachment failed: ${raw.slice(0, 140)}`;
+  };
+  const pollManualAttachStatus = async (assetId, {
+    timeoutMs = 120000,
+    intervalMs = 4000,
+  } = {}) => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      await refreshData();
+      const latest = findAssetByRecordId(state.assets, assetId) || {};
+      const status = `${latest.manualAttachStatus || ''}`.trim().toLowerCase();
+      if (status === 'completed' || status === 'failed') return latest;
+      await pause(intervalMs);
+    }
+    return findAssetByRecordId(state.assets, assetId) || {};
   };
 
   const approveManualSources = (assetId, urls = [], current = {}, metadataByUrl = {}) => approveSuggestedManualSources({
@@ -942,6 +959,27 @@ export function createAssetActions(deps) {
       const current = findAssetByRecordId(state.assets, id) || {};
       const canonicalAssetId = getAssetRecordId(current) || `${id || ''}`.trim();
       if (!canonicalAssetId) return alert('Unable to resolve this asset. Refresh and try again.');
+      if (isHttpUrl(trimmedAnswer)) {
+        setFollowupUiState(canonicalAssetId, {
+          followupSubmitting: false,
+          followupAnswer: '',
+          followupMessage: 'This looks like a manual URL. Attaching it to this asset.',
+          followupError: '',
+        });
+        render();
+        await actions.attachManualFromUrl(canonicalAssetId, {
+          manualUrl: trimmedAnswer,
+          sourceTitle: `${current?.name || ''}`.trim(),
+        });
+        setFollowupUiState(canonicalAssetId, {
+          followupSubmitting: false,
+          followupAnswer: '',
+          followupMessage: '',
+          followupError: '',
+        });
+        render();
+        return;
+      }
       setFollowupUiState(canonicalAssetId, {
         followupSubmitting: true,
         followupMessage: 'Retrying documentation lookup with your answer…',
@@ -1036,6 +1074,11 @@ export function createAssetActions(deps) {
       await refreshData();
       render();
     }),
+    attachFollowupManualUrl: async (id, answer) => {
+      const trimmedAnswer = `${answer || ''}`.trim();
+      if (!isHttpUrl(trimmedAnswer)) return;
+      await actions.submitEnrichmentFollowup(id, trimmedAnswer);
+    },
     applyDocSuggestions: async (id) => {
       if (!isAdmin(state.permissions)) return;
       const current = state.assets.find((asset) => asset.id === id) || {};
@@ -1232,7 +1275,7 @@ export function createAssetActions(deps) {
       await refreshData();
       render();
     },
-    attachManualFromUrl: async (id, payload = {}) => safeWithGlobalBusy('Attaching manual…', 'This can take a few seconds. Please do not refresh.', async () => {
+    attachManualFromUrl: async (id, payload = {}) => safeWithGlobalBusy('Attaching manual…', 'Downloading and extracting manual text. This can take up to a minute.', async () => {
       if (!isManager(state.permissions) || typeof attachAssetManualFromUrl !== 'function') return;
       const resolution = resolveManualAttachAsset(id);
       if (!resolution.ok) {
@@ -1286,17 +1329,37 @@ export function createAssetActions(deps) {
           sourcePageUrl: `${payload.sourcePageUrl || ''}`.trim(),
           companyId: activeCompanyId,
         });
-        const chunkCount = Number(result?.chunkCount || 0) || 0;
-        const message = result?.warning
-          || (chunkCount > 0 ? `Manual attached and text extracted: ${chunkCount} chunks.` : 'Manual attached.');
-        setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: result?.warning ? 'warn' : 'success', message });
+        if (result?.queued) {
+          setManualAttachUi(resolution.assetId, { pending: true, phase: 'extracting', tone: 'info', message: 'Manual attachment queued. Extracting text…' });
+          render();
+          const latest = await pollManualAttachStatus(resolution.assetId);
+          const latestStatus = `${latest.manualAttachStatus || ''}`.trim().toLowerCase();
+          if (latestStatus === 'completed') {
+            const chunkCount = Number(latest?.manualChunkCount || 0) || 0;
+            const codeCount = Number(latest?.extractedCodeCount || 0) || 0;
+            setManualAttachUi(resolution.assetId, {
+              pending: false,
+              phase: 'idle',
+              tone: 'success',
+              message: `Manual attached and text extracted: ${chunkCount} chunks${codeCount ? `, ${codeCount} codes` : ''}.`,
+            });
+          } else if (latestStatus === 'failed') {
+            setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: 'error', message: 'Manual attachment failed. Please verify the URL and try again.' });
+          } else {
+            setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: 'info', message: 'Manual attachment is still processing. Refresh in a moment for final status.' });
+          }
+        } else {
+          const chunkCount = Number(result?.chunkCount || 0) || 0;
+          const message = result?.warning || (chunkCount > 0 ? `Manual attached and text extracted: ${chunkCount} chunks.` : 'Manual attached.');
+          setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: result?.warning ? 'warn' : 'success', message });
+        }
         await refreshData();
       } catch (error) {
         setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: 'error', message: mapManualAttachErrorMessage(error) });
       }
       render();
     }),
-    uploadAndAttachManualFile: async (id, file = null) => safeWithGlobalBusy('Attaching manual…', 'This can take a few seconds. Please do not refresh.', async () => {
+    uploadAndAttachManualFile: async (id, file = null) => safeWithGlobalBusy('Attaching manual…', 'Downloading and extracting manual text. This can take up to a minute.', async () => {
       if (!isManager(state.permissions) || typeof attachAssetManualFromStoragePath !== 'function') return;
       const resolution = resolveManualAttachAsset(id);
       if (!resolution.ok) {
@@ -1363,10 +1426,30 @@ export function createAssetActions(deps) {
           contentType: `${file.type || ''}`.trim(),
           companyId,
         });
-        const chunkCount = Number(result?.chunkCount || 0) || 0;
-        const message = result?.warning
-          || (chunkCount > 0 ? `Manual attached and text extracted: ${chunkCount} chunks.` : 'Manual attached.');
-        setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: result?.warning ? 'warn' : 'success', message });
+        if (result?.queued) {
+          setManualAttachUi(resolution.assetId, { pending: true, phase: 'extracting', tone: 'info', message: 'Manual attachment queued. Extracting text…' });
+          render();
+          const latest = await pollManualAttachStatus(resolution.assetId);
+          const latestStatus = `${latest.manualAttachStatus || ''}`.trim().toLowerCase();
+          if (latestStatus === 'completed') {
+            const chunkCount = Number(latest?.manualChunkCount || 0) || 0;
+            const codeCount = Number(latest?.extractedCodeCount || 0) || 0;
+            setManualAttachUi(resolution.assetId, {
+              pending: false,
+              phase: 'idle',
+              tone: 'success',
+              message: `Manual attached and text extracted: ${chunkCount} chunks${codeCount ? `, ${codeCount} codes` : ''}.`,
+            });
+          } else if (latestStatus === 'failed') {
+            setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: 'error', message: 'Manual attachment failed. Please verify the file and try again.' });
+          } else {
+            setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: 'info', message: 'Manual attachment is still processing. Refresh in a moment for final status.' });
+          }
+        } else {
+          const chunkCount = Number(result?.chunkCount || 0) || 0;
+          const message = result?.warning || (chunkCount > 0 ? `Manual attached and text extracted: ${chunkCount} chunks.` : 'Manual attached.');
+          setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: result?.warning ? 'warn' : 'success', message });
+        }
         await refreshData();
       } catch (error) {
         setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: 'error', message: mapManualAttachErrorMessage(error) });

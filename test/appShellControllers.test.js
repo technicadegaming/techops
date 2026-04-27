@@ -1639,6 +1639,69 @@ test('asset actions submit follow-up answer uses canonical asset id/company and 
   assert.equal(busyCalls[0].title, 'Retrying documentation lookup…');
 });
 
+test('asset actions submit follow-up URL routes to manual attach callable instead of followup enrichment', async () => {
+  const { createAssetActions } = await loadAssetActions();
+  const enrichCalls = [];
+  const attachCalls = [];
+  const state = {
+    assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
+    assetUi: {},
+    assets: [{
+      id: 'legacy-id',
+      firestoreDocId: 'asset-doc-1',
+      storedAssetId: 'legacy-id',
+      name: 'Test Asset',
+      companyId: 'company-a',
+      enrichmentFollowupQuestion: 'Share a manual link',
+      manualAttachStatus: 'queued',
+    }],
+    companyLocations: [],
+    permissions: { companyRole: 'manager', role: 'manager' },
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    user: { uid: 'user-1' }
+  };
+  const actions = createAssetActions({
+    state,
+    onLocationFilter: () => {},
+    render: () => {},
+    refreshData: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    deleteEntity: async () => {},
+    approveAssetManual: async () => {},
+    attachAssetManualFromUrl: async (payload) => {
+      attachCalls.push(payload);
+      return { ok: true, queued: false, chunkCount: 0 };
+    },
+    enrichAssetDocumentation: async (assetId, payload) => {
+      enrichCalls.push({ assetId, payload });
+      return {};
+    },
+    previewAssetDocumentationLookup: async () => ({}),
+    researchAssetTitles: async () => ({}),
+    markAssetEnrichmentFailure: async () => ({ message: 'failed' }),
+    normalizeAssetId: (name) => name,
+    pickUniqueAssetId: (id) => id,
+    createEmptyAssetDraft: () => ({ previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } }),
+    withTimeout: async (promise) => promise,
+    normalizeSupportEntries: (entries) => entries,
+    canDelete: () => false,
+    isAdmin: () => true,
+    isManager: () => true,
+    buildAssetSaveErrorMessage: () => 'error',
+    buildAssetSaveDebugContext: () => ({}),
+    isPermissionRelatedError: () => false,
+    withGlobalBusy: async (_title, _detail, fn) => fn(),
+    buildPreviewQueryKey: () => ''
+  });
+
+  await actions.submitEnrichmentFollowup('asset-doc-1', 'https://example.com/ops-manual.pdf');
+  assert.equal(attachCalls.length, 1);
+  assert.equal(enrichCalls.length, 0);
+  assert.equal(state.assetUi.followupByAsset['asset-doc-1'].followupAnswer, '');
+});
+
 test('asset actions retry without answer clears follow-up draft and uses retry-without-answer trigger', async () => {
   const { createAssetActions } = await loadAssetActions();
   const enrichCalls = [];
@@ -1802,6 +1865,57 @@ test('asset actions attach manual from URL uses exact asset.id and callable payl
   assert.equal(attachCalls[0].storedAssetId, 'legacy-name');
   assert.equal(attachCalls[0].manualUrl, 'https://example.com/manual.pdf');
   assert.equal(attachCalls[0].companyId, 'company-a');
+});
+
+test('asset actions attach manual from URL queued response shows extracting state and polling completion message', async () => {
+  const { createAssetActions } = await loadAssetActions();
+  const state = {
+    assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
+    assetUi: {},
+    assets: [{ id: 'asset-doc-queued', firestoreDocId: 'asset-doc-queued', name: 'Queued Asset', companyId: 'company-a', manualAttachStatus: 'queued' }],
+    companyLocations: [],
+    permissions: { companyRole: 'manager', role: 'manager' },
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    user: { uid: 'user-1' }
+  };
+  let refreshCalls = 0;
+  const actions = createAssetActions({
+    state,
+    onLocationFilter: () => {},
+    render: () => {},
+    refreshData: async () => {
+      refreshCalls += 1;
+      if (refreshCalls > 1) {
+        state.assets = [{ id: 'asset-doc-queued', firestoreDocId: 'asset-doc-queued', name: 'Queued Asset', companyId: 'company-a', manualAttachStatus: 'completed', manualChunkCount: 6, extractedCodeCount: 2 }];
+      }
+    },
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    deleteEntity: async () => {},
+    approveAssetManual: async () => {},
+    attachAssetManualFromUrl: async () => ({ ok: true, queued: true, jobId: 'job-queued' }),
+    enrichAssetDocumentation: async () => ({}),
+    previewAssetDocumentationLookup: async () => ({}),
+    researchAssetTitles: async () => ({}),
+    markAssetEnrichmentFailure: async () => ({}),
+    normalizeAssetId: (name) => name,
+    pickUniqueAssetId: (id) => id,
+    createEmptyAssetDraft: () => ({ previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } }),
+    withTimeout: async (promise) => promise,
+    normalizeSupportEntries: (entries) => entries,
+    canDelete: () => false,
+    isAdmin: () => true,
+    isManager: () => true,
+    buildAssetSaveErrorMessage: () => 'error',
+    buildAssetSaveDebugContext: () => ({}),
+    isPermissionRelatedError: () => false,
+    withGlobalBusy: async (_title, _detail, fn) => fn(),
+    buildPreviewQueryKey: () => ''
+  });
+
+  await actions.attachManualFromUrl('asset-doc-queued', { manualUrl: 'https://example.com/manual.pdf' });
+  assert.match(state.assetUi.manualAttachByAsset['asset-doc-queued'].message, /text extracted: 6 chunks, 2 codes/);
 });
 
 test('asset actions attach manual from URL blocks blank and invalid URLs', async () => {
