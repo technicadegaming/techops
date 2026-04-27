@@ -305,6 +305,67 @@ function parseManualCodeLead(line = '') {
   return { rawCode, code, remainder: `${match[2] || ''}`.trim() };
 }
 
+function cleanResetInstruction(value = '') {
+  return `${value || ''}`
+    .replace(/^\(+|\)+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function splitManualDefinitionRemainder(remainder = '', lookahead = []) {
+  const normalizedRemainder = `${remainder || ''}`.replace(/\s+/g, ' ').trim();
+  const normalizedLookahead = (Array.isArray(lookahead) ? lookahead : []).map((line) => `${line || ''}`.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const combined = [normalizedRemainder, ...normalizedLookahead].filter(Boolean).join(' ').trim();
+  if (!combined) return { title: '', meaning: '', confidence: 0.84 };
+
+  const resetPattern = /\(([^)]*reset[^)]*)\)|\b(after[^.]{0,140}reset[^.]*)/i;
+  const resetMatch = combined.match(resetPattern);
+  const resetInstruction = cleanResetInstruction(resetMatch ? (resetMatch[1] || resetMatch[0] || '') : '');
+  const withoutReset = resetMatch ? combined.replace(resetMatch[0], ' ').replace(/\s+/g, ' ').trim() : combined;
+  if (!withoutReset) return { title: '', meaning: '', resetInstruction, confidence: 0.84 };
+
+  const explicitSegments = withoutReset.split(/\s+[—–-]\s+|:\s+/).map((segment) => segment.trim()).filter(Boolean);
+  if (explicitSegments.length >= 2) {
+    return {
+      title: explicitSegments[0],
+      meaning: explicitSegments.slice(1).join(' — '),
+      resetInstruction,
+      confidence: 0.96,
+    };
+  }
+
+  const titleMatch = withoutReset.match(/^([A-Z0-9/&()' ]{5,90}?(?:ERROR|FAULT|ALARM|JAM|FAIL(?:URE)?))\s+(.+)$/);
+  if (titleMatch) {
+    return {
+      title: `${titleMatch[1] || ''}`.trim(),
+      meaning: `${titleMatch[2] || ''}`.trim(),
+      resetInstruction,
+      confidence: 0.95,
+    };
+  }
+
+  if (normalizedLookahead.length >= 2 && normalizedLookahead[0].length <= 120) {
+    return {
+      title: normalizedLookahead[0],
+      meaning: [normalizedRemainder, ...normalizedLookahead.slice(1)].filter(Boolean).join(' ').trim(),
+      resetInstruction,
+      confidence: 0.94,
+    };
+  }
+
+  const sentenceSplit = withoutReset.match(/^([A-Z0-9/&()' ]{5,90})\s+([A-Z].*[.])$/);
+  if (sentenceSplit && /(?:ERROR|FAULT|ALARM|JAM|FAIL)/i.test(sentenceSplit[1])) {
+    return {
+      title: `${sentenceSplit[1] || ''}`.trim(),
+      meaning: `${sentenceSplit[2] || ''}`.trim(),
+      resetInstruction,
+      confidence: 0.93,
+    };
+  }
+
+  return { title: '', meaning: withoutReset, resetInstruction, confidence: 0.86 };
+}
+
 function finalizeManualCodeDefinition({
   code = '',
   rawCode = '',
@@ -317,14 +378,21 @@ function finalizeManualCodeDefinition({
   const normalizedCode = normalizeManualErrorCode(code || rawCode);
   const normalizedTitle = normalizeManualSnippet(title, 120);
   const normalizedMeaning = normalizeManualSnippet(meaning, 240);
+  const normalizedResetInstruction = normalizeManualSnippet(cleanResetInstruction(resetInstruction), 140);
   if (!normalizedCode || (!normalizedTitle && !normalizedMeaning)) return null;
+  const normalizedRawCode = normalizeManualSnippet(rawCode || code, 40) || normalizedCode;
+  const synthesizedLine = [
+    [normalizedRawCode, normalizedTitle].filter(Boolean).join(' — '),
+    normalizedMeaning,
+    normalizedResetInstruction
+  ].filter(Boolean).join('. ').replace(/\s+/g, ' ').trim();
   return {
     code: normalizedCode,
-    rawCode: normalizeManualSnippet(rawCode || code, 40),
+    rawCode: normalizedRawCode,
     title: normalizedTitle,
     meaning: normalizedMeaning,
-    resetInstruction: normalizeManualSnippet(resetInstruction, 140),
-    line: normalizeManualSnippet(line, 280),
+    resetInstruction: normalizedResetInstruction,
+    line: normalizeManualSnippet(line || synthesizedLine, 280),
     confidence: Math.max(0.8, Math.min(Number(confidence || 0.8), 1)),
     source: 'manual_text',
   };
@@ -344,59 +412,15 @@ function extractManualErrorCodeDefinitions(text = '') {
       if (parseManualCodeLead(nextLine)) break;
       lookahead.push(nextLine);
     }
-    const combinedRemainder = [parsed.remainder, ...lookahead].filter(Boolean).join(' ').trim();
-    const rawLine = [line, ...lookahead].filter(Boolean).join(' | ');
-    const resetMatch = combinedRemainder.match(/\(([^)]*reset[^)]*)\)/i)
-      || combinedRemainder.match(/(after[^.]{0,120}reset[^.]*)/i);
-    const resetInstruction = resetMatch ? resetMatch[0] : '';
-    const bodyWithoutReset = combinedRemainder.replace(resetInstruction, '').replace(/\s+/g, ' ').trim();
-    if (!bodyWithoutReset && !resetInstruction) continue;
-
-    if (line.includes('|')) {
-      const parts = line.split('|').map((part) => part.trim()).filter(Boolean);
-      const title = parts[1] || lookahead[0] || '';
-      const meaning = [parts.slice(2).join(' | '), ...lookahead].filter(Boolean).join(' ').replace(title, '').trim();
-      const entry = finalizeManualCodeDefinition({
-        code: parsed.code,
-        rawCode: parsed.rawCode,
-        title,
-        meaning,
-        resetInstruction,
-        line: rawLine,
-        confidence: 0.97,
-      });
-      if (entry) definitions.push(entry);
-      continue;
-    }
-
-    if (/[:-]/.test(parsed.remainder) && parsed.remainder.length <= 240) {
-      const segments = parsed.remainder.split(/[:-]/).map((part) => part.trim()).filter(Boolean);
-      const title = segments[0] || '';
-      const meaning = segments.slice(1).join(' - ');
-      const entry = finalizeManualCodeDefinition({
-        code: parsed.code,
-        rawCode: parsed.rawCode,
-        title: meaning ? title : '',
-        meaning: meaning || title,
-        resetInstruction,
-        line: rawLine,
-        confidence: 0.95,
-      });
-      if (entry) definitions.push(entry);
-      continue;
-    }
-
-    const title = lookahead[0] && lookahead[0].length <= 120 ? lookahead[0] : '';
-    const meaning = [parsed.remainder, ...lookahead.slice(title ? 1 : 0)].filter(Boolean).join(' ').trim() || parsed.remainder;
-    if (!title && !meaning) continue;
+    const split = splitManualDefinitionRemainder(parsed.remainder, lookahead);
+    if (!split.title && !split.meaning) continue;
     const entry = finalizeManualCodeDefinition({
       code: parsed.code,
       rawCode: parsed.rawCode,
-      title,
-      meaning,
-      resetInstruction,
-      line: rawLine,
-      confidence: title && meaning ? 0.94 : 0.85,
+      title: split.title,
+      meaning: split.meaning,
+      resetInstruction: split.resetInstruction,
+      confidence: split.confidence,
     });
     if (entry) definitions.push(entry);
   }
@@ -406,7 +430,9 @@ function extractManualErrorCodeDefinitions(text = '') {
 function dedupeByManualCodeDefinition(definitions = []) {
   const seen = new Set();
   return (Array.isArray(definitions) ? definitions : []).filter((entry) => {
-    const key = `${entry?.code || ''}|${`${entry?.title || ''}`.toLowerCase()}|${`${entry?.meaning || ''}`.toLowerCase()}`;
+    const normalizedLine = `${entry?.line || ''}`.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const normalizedMeaning = `${entry?.meaning || entry?.title || ''}`.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const key = `${entry?.code || ''}|${normalizedMeaning || normalizedLine}`;
     if (!entry?.code || seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -527,6 +553,58 @@ async function rewriteManualCodeDefinitions({
   return { extractedCodeCount: codeDefinitions.length };
 }
 
+async function ensureManualCodeDefinitionsIndexed({
+  db,
+  manualId = '',
+  manualDoc = null,
+} = {}) {
+  if (!db || !manualId) {
+    return { indexed: false, extractedCodeCount: 0, codes: [], reason: 'missing_inputs' };
+  }
+  const manual = manualDoc || (await db.collection('manuals').doc(manualId).get().then((snap) => (snap.exists ? { id: snap.id, ...(snap.data() || {}) } : null)).catch(() => null));
+  if (!manual) return { indexed: false, extractedCodeCount: 0, codes: [], reason: 'manual_not_found' };
+  const existingExtractedCodeCount = Number(manual.extractedCodeCount || 0) || 0;
+  const existingInlineDefinitions = Array.isArray(manual.extractedCodeDefinitions) ? manual.extractedCodeDefinitions : [];
+  if (existingExtractedCodeCount > 0) {
+    const codeCollection = db.collection('manuals').doc(manualId).collection('codeDefinitions');
+    const existingCodeDocs = await (typeof codeCollection?.limit === 'function' ? codeCollection.limit(1).get() : (typeof codeCollection?.get === 'function' ? codeCollection.get() : Promise.resolve({ docs: [] }))).catch(() => ({ docs: [] }));
+    if ((existingCodeDocs.docs || []).length > 0) {
+      const codes = dedupeByManualCodeDefinition(existingInlineDefinitions).map((entry) => normalizeManualErrorCode(entry?.code || entry?.rawCode || '')).filter(Boolean);
+      return { indexed: false, extractedCodeCount: existingExtractedCodeCount, codes, reason: 'already_indexed' };
+    }
+  }
+
+  const chunkCollection = db.collection('manuals').doc(manualId).collection('chunks');
+  const chunkQuery = typeof chunkCollection?.orderBy === 'function'
+    ? chunkCollection.orderBy('chunkIndex', 'asc')
+    : chunkCollection;
+  const chunkQueryWithLimit = typeof chunkQuery?.limit === 'function' ? chunkQuery.limit(200) : chunkQuery;
+  const chunkSnap = await (typeof chunkQueryWithLimit?.get === 'function' ? chunkQueryWithLimit.get() : Promise.resolve({ docs: [] })).catch(() => ({ docs: [] }));
+  const chunks = (chunkSnap.docs || []).map((doc) => doc.data() || {}).filter((row) => `${row?.text || ''}`.trim());
+  if (!chunks.length) {
+    return { indexed: false, extractedCodeCount: existingExtractedCodeCount, codes: [], reason: 'no_chunks' };
+  }
+  const definitions = buildManualErrorCodeIndexFromChunks(chunks, { maxEntries: 100 });
+  const rewritten = await rewriteManualCodeDefinitions({
+    db,
+    manualId,
+    manual: {
+      companyId: `${manual.companyId || ''}`.trim(),
+      assetId: `${manual.assetId || ''}`.trim(),
+      sourceTitle: `${manual.sourceTitle || ''}`.trim(),
+      storagePath: `${manual.storagePath || ''}`.trim(),
+    },
+    definitions,
+  });
+  const codes = dedupeByManualCodeDefinition(definitions).map((entry) => normalizeManualErrorCode(entry?.code || entry?.rawCode || '')).filter(Boolean);
+  return {
+    indexed: true,
+    extractedCodeCount: Number(rewritten?.extractedCodeCount || definitions.length || 0) || 0,
+    codes,
+    reason: 'indexed_from_chunks',
+  };
+}
+
 function deriveManualStatusFromAsset(asset = {}) {
   const manualLibraryRef = normalizeString(asset?.manualLibraryRef, 180);
   const manualStoragePath = normalizeString(asset?.manualStoragePath, 500);
@@ -641,6 +719,19 @@ async function materializeApprovedManualForAsset({
       storagePath: tenantStoragePath,
     },
     definitions: extractedCodeDefinitions,
+  });
+  await ensureManualCodeDefinitionsIndexed({
+    db,
+    manualId,
+    manualDoc: {
+      id: manualId,
+      companyId,
+      assetId,
+      sourceTitle: sourceTitle || manualLibrary.canonicalTitle || manualLibrary.filename || asset.name || '',
+      storagePath: tenantStoragePath,
+      extractedCodeDefinitions,
+      extractedCodeCount: extractedCodeDefinitions.length,
+    },
   });
 
   return {
@@ -827,6 +918,19 @@ async function materializeStoredAssetManual({
       storagePath: normalizedStoragePath,
     },
     definitions: extractedCodeDefinitions,
+  });
+  await ensureManualCodeDefinitionsIndexed({
+    db,
+    manualId,
+    manualDoc: {
+      id: manualId,
+      companyId,
+      assetId,
+      sourceTitle: sourceTitle || asset.name || 'Attached manual',
+      storagePath: normalizedStoragePath,
+      extractedCodeDefinitions,
+      extractedCodeCount: extractedCodeDefinitions.length,
+    },
   });
 
   return {
@@ -1117,6 +1221,7 @@ module.exports = {
   materializeStoredAssetManual,
   materializeApprovedManualForAsset,
   normalizeManualErrorCode,
+  ensureManualCodeDefinitionsIndexed,
   rewriteManualCodeDefinitions,
   resolveManualStoragePath,
   resolveApprovedManualLibraryForAsset,

@@ -12,6 +12,7 @@ const {
   extractPdfText,
   extractTextFromBuffer,
   extractTextFromBufferAsync,
+  ensureManualCodeDefinitionsIndexed,
   materializeApprovedManualForAsset,
   materializeStoredAssetManual,
   resolveManualStoragePath,
@@ -33,6 +34,21 @@ CARD EMPTY IN THE DISPENSER or CARD JAM or DISPENSING SENSOR PROBLEM.
   assert.match(e11.meaning, /CARD JAM/i);
   assert.match(e11.meaning, /DISPENSING SENSOR/i);
   assert.match(e11.resetInstruction, /PRESS RESET BUTTON/i);
+  assert.match(e11.line, /ERROR 11 — CARD DISPENSER ERROR/i);
+});
+
+test('extractManualErrorCodeDefinitions parses flattened ERROR 06 and ERROR 11 table rows', () => {
+  const text = `ERROR 06 FRONT ELEVATOR HOPPER ERROR ELEVATOR HOPPER PROBLEM OR ELEVATOR COIN JAM PROBLEM. (AFTER TAKING ACTION, PRESS RESET BUTTON)
+ERROR 11 CARD DISPENSER ERROR CARD EMPTY IN THE DISPENSER or CARD JAM or DISPENSING SENSOR PROBLEM. (AFTER TAKING ACTION, PRESS RESET BUTTON)`;
+  const rows = extractManualErrorCodeDefinitions(text);
+  const e6 = rows.find((row) => row.code === 'E6');
+  const e11 = rows.find((row) => row.code === 'E11');
+  assert.ok(e6);
+  assert.match(e6.title, /FRONT ELEVATOR HOPPER ERROR/i);
+  assert.match(e6.meaning, /ELEVATOR HOPPER PROBLEM/i);
+  assert.ok(e11);
+  assert.match(e11.title, /CARD DISPENSER ERROR/i);
+  assert.match(e11.meaning, /CARD EMPTY IN THE DISPENSER/i);
 });
 
 test('extractManualErrorCodeDefinitions parses compact E-code entries', () => {
@@ -413,6 +429,74 @@ test('materializeStoredAssetManual creates deterministic manual doc and chunks f
   assert.equal(writes.codeDefinitions.some((row) => row.id === 'E10'), true);
   const chunkTexts = writes.chunks.map((entry) => entry.payload?.text || entry.text || '').join('\n');
   assert.match(chunkTexts, /E10:\s*Out of balloons/i);
+});
+
+test('ensureManualCodeDefinitionsIndexed backfills code definitions from chunks for half-indexed manual docs', async () => {
+  const writes = { manuals: {}, codeDefinitions: [] };
+  const db = {
+    collection(name) {
+      return {
+        doc(id) {
+          return {
+            id,
+            async get() {
+              if (name !== 'manuals') return { exists: false, data: () => ({}) };
+              return {
+                exists: true,
+                id,
+                data: () => ({
+                  companyId: 'company-a',
+                  assetId: 'asset1',
+                  sourceTitle: 'Manual',
+                  storagePath: 'companies/company-a/manuals/asset1/m1/source.pdf',
+                  extractedCodeCount: 0,
+                  extractedCodeDefinitions: [],
+                })
+              };
+            },
+            async set(payload, options = {}) {
+              if (name === 'manuals') writes.manuals[id] = options.merge ? { ...(writes.manuals[id] || {}), ...payload } : payload;
+            },
+            collection(subName) {
+              if (subName === 'chunks') {
+                return {
+                  orderBy() { return this; },
+                  limit() { return this; },
+                  async get() {
+                    return {
+                      docs: [{
+                        id: '0',
+                        data: () => ({ chunkIndex: 0, text: 'ERROR 11 CARD DISPENSER ERROR CARD EMPTY IN THE DISPENSER or CARD JAM or DISPENSING SENSOR PROBLEM.' })
+                      }]
+                    };
+                  }
+                };
+              }
+              if (subName === 'codeDefinitions') {
+                return {
+                  limit() { return this; },
+                  async get() { return { docs: [] }; },
+                  doc(code) {
+                    return {
+                      id: code,
+                      async set(payload) { writes.codeDefinitions.push({ code, payload }); }
+                    };
+                  }
+                };
+              }
+              return {};
+            }
+          };
+        }
+      };
+    }
+  };
+
+  const result = await ensureManualCodeDefinitionsIndexed({ db, manualId: 'm1' });
+  assert.equal(result.indexed, true);
+  assert.equal(Number(result.extractedCodeCount || 0) >= 1, true);
+  assert.equal(result.codes.includes('E11'), true);
+  assert.equal(writes.codeDefinitions.some((entry) => entry.code === 'E11'), true);
 });
 
 test('resolveManualStoragePath normalizes plain path, gs url, and firebase download url while rejecting external urls', () => {

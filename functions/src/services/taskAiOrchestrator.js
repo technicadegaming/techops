@@ -2,6 +2,10 @@ const { requestFollowupQuestions, requestTroubleshootingPlan } = require('./open
 const { fetchWebContextForTask } = require('./webContextService');
 const { isWeakTaskDescription } = require('../lib/followup');
 const { isoNow } = require('../lib/timestamps');
+const {
+  buildManualErrorCodeIndexFromChunks,
+  ensureManualCodeDefinitionsIndexed,
+} = require('./manualIngestionService');
 
 const DEFAULT_SETTINGS = {
   aiEnabled: false,
@@ -267,9 +271,8 @@ function buildManualCodeDefinitionExcerpt(definition = {}) {
   const title = `${definition.title || ''}`.trim();
   const meaning = `${definition.meaning || ''}`.trim();
   const resetInstruction = `${definition.resetInstruction || ''}`.trim();
-  const lead = [rawCode, title].filter(Boolean).join(': ');
-  const line = [lead, meaning].filter(Boolean).join(' — ');
-  return [line, resetInstruction].filter(Boolean).join('. ');
+  const lead = [rawCode, title].filter(Boolean).join(' — ');
+  return [lead, meaning, resetInstruction].filter(Boolean).join('. ').replace(/\s+/g, ' ').trim();
 }
 
 async function fetchApprovedManualCodeDefinitionContext(db, asset = {}, task = {}, manuals = []) {
@@ -281,7 +284,19 @@ async function fetchApprovedManualCodeDefinitionContext(db, asset = {}, task = {
   if (!taskCodes.length) return [];
   const items = [];
   for (const manual of manuals) {
-    const definitions = Array.isArray(manual.extractedCodeDefinitions) ? manual.extractedCodeDefinitions : [];
+    const inlineDefinitions = Array.isArray(manual.extractedCodeDefinitions) ? manual.extractedCodeDefinitions : [];
+    if (!inlineDefinitions.length || !(Number(manual.extractedCodeCount || 0) > 0)) {
+      await ensureManualCodeDefinitionsIndexed({ db, manualId: manual.id, manualDoc: manual }).catch(() => null);
+    }
+    let refreshedManual = manual;
+    if (!inlineDefinitions.length || !(Number(manual.extractedCodeCount || 0) > 0)) {
+      const manualRef = db.collection('manuals').doc(manual.id);
+      if (manualRef && typeof manualRef.get === 'function') {
+        const refreshed = await manualRef.get().catch(() => null);
+        if (refreshed?.exists) refreshedManual = { id: refreshed.id, ...(refreshed.data() || {}) };
+      }
+    }
+    const definitions = Array.isArray(refreshedManual.extractedCodeDefinitions) ? refreshedManual.extractedCodeDefinitions : [];
     const matchedInline = definitions.filter((entry) => taskCodes.includes(normalizeCodeToken(entry?.code || entry?.rawCode || '')));
     let matched = [...matchedInline];
     if (!matched.length) {
@@ -293,6 +308,16 @@ async function fetchApprovedManualCodeDefinitionContext(db, asset = {}, task = {
         return row.bestDefinition ? [row.bestDefinition] : [];
       }));
       matched = fetched.flat();
+    }
+    if (!matched.length) {
+      const chunkSnap = await db.collection('manuals').doc(manual.id).collection('chunks')
+        .orderBy('chunkIndex', 'asc')
+        .limit(MANUAL_CHUNK_SCAN_LIMIT)
+        .get()
+        .catch(() => ({ docs: [] }));
+      const chunks = (chunkSnap.docs || []).map((doc) => doc.data() || {});
+      const parsed = buildManualErrorCodeIndexFromChunks(chunks, { maxEntries: 100 });
+      matched = parsed.filter((entry) => taskCodes.includes(normalizeCodeToken(entry?.code || entry?.rawCode || '')));
     }
     const normalizedMatched = dedupeBy(matched, (entry) => `${normalizeCodeToken(entry?.code || entry?.rawCode || '')}|${normalizeComparable(entry?.meaning || entry?.title || '')}`);
     if (!normalizedMatched.length) continue;
@@ -506,9 +531,9 @@ async function buildDocumentationContext(db, { task = null, asset = null, troubl
     });
   }
   const items = [
+    ...manualCodeDefinitionItems,
     ...(codeHintItem ? [codeHintItem] : []),
     ...troubleshootingItems,
-    ...manualCodeDefinitionItems,
     ...approvedChunkItems,
     ...historyItems,
     ...(linkedManualLibraryItem ? [linkedManualLibraryItem] : [])
@@ -668,7 +693,8 @@ function buildTaskAiSnapshot({ runId, result, taskId, companyId, documentationCo
       probableCauses: Array.isArray(parsed.probableCauses) ? parsed.probableCauses.slice(0, 6) : []
       ,
       documentationMode: documentationContext.mode || 'web_internal_only',
-      documentationSources: Array.isArray(documentationContext.items) ? documentationContext.items.slice(0, 6) : []
+      documentationSources: Array.isArray(documentationContext.items) ? documentationContext.items.slice(0, 6) : [],
+      taskCodes: Array.isArray(documentationContext.taskCodes) ? documentationContext.taskCodes.slice(0, 8) : []
     }
   };
 }
@@ -760,8 +786,22 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
     const fullContext = { ...context, documentationContext: mergedDocumentationContext, followupAnswers, webContext, taskTokens };
     let result = await requestTroubleshootingPlan({ model: settings.aiModel, traceId, settings, context: fullContext });
     const hasDefinitionEvidence = extractCodeDefinitionEvidenceItems(mergedDocumentationContext.items || [], taskTokens.codeTokens).length > 0;
-    const summaryText = `${result?.parsed?.shortFrontlineVersion || ''} ${result?.parsed?.conciseIssueSummary || ''}`.toLowerCase();
-    const validationNeedsRetry = hasDefinitionEvidence && /(meaning not provided|definition not found)/i.test(summaryText);
+    const codeDefinitionItems = extractCodeDefinitionEvidenceItems(mergedDocumentationContext.items || [], taskTokens.codeTokens)
+      .filter((item) => item.sourceType === 'approved_manual_code_definition');
+    const summarizedResponse = `${result?.parsed?.shortFrontlineVersion || ''} ${result?.parsed?.conciseIssueSummary || ''}`.toLowerCase();
+    const definitionKeywords = codeDefinitionItems
+      .flatMap((item) => (Array.isArray(item.excerpts) ? item.excerpts : []))
+      .join(' ')
+      .toLowerCase();
+    const hasDefinitionPhrase = /(meaning not provided|definition not found)/i.test(summarizedResponse);
+    const missedDefinitionSignal = codeDefinitionItems.length > 0
+      && taskTokens.codeTokens.length > 0
+      && !taskTokens.codeTokens.some((token) => summarizedResponse.includes(token.toLowerCase()))
+      && !/error\s+\d{1,4}/i.test(summarizedResponse);
+    const omittedDefinitionSignal = codeDefinitionItems.length > 0
+      && definitionKeywords
+      && !definitionKeywords.split(/\W+/).filter((token) => token.length >= 5).slice(0, 8).some((token) => summarizedResponse.includes(token));
+    const validationNeedsRetry = hasDefinitionEvidence && (hasDefinitionPhrase || missedDefinitionSignal || omittedDefinitionSignal);
     if (validationNeedsRetry) {
       await runRef.set({
         validationStatus: 'retrying_definition_grounding',
@@ -776,6 +816,10 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
         context: { ...fullContext, validationOverride: { enforceDefinitionFirstSentence: true } }
       });
     }
+    const finalSummaryText = `${result?.parsed?.shortFrontlineVersion || ''} ${result?.parsed?.conciseIssueSummary || ''}`.toLowerCase();
+    const stillUngrounded = codeDefinitionItems.length > 0
+      && (/(meaning not provided|definition not found)/i.test(finalSummaryText)
+      || (!taskTokens.codeTokens.some((token) => finalSummaryText.includes(token.toLowerCase())) && !/error\s+\d{1,4}/i.test(finalSummaryText)));
 
     await runRef.set({
       taskId,
@@ -800,6 +844,9 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
       citations: result.parsed.citations,
       documentationMode: mergedDocumentationContext?.mode || 'web_internal_only',
       documentationSources: mergedDocumentationContext?.items || [],
+      taskCodes: taskTokens.codeTokens || [],
+      codeGroundingWarning: stillUngrounded,
+      codeGroundingWarningReason: stillUngrounded ? 'manual_code_definition_not_used' : '',
       rawResponseMeta: { ...result.responseMeta, traceId },
       shortFrontlineVersion: result.parsed.shortFrontlineVersion,
       detailedManagerVersion: result.parsed.detailedManagerVersion,
@@ -819,7 +866,7 @@ async function runPipeline({ db, taskId, userId, triggerSource, settings, traceI
             result,
             taskId,
             companyId: latestTaskCompanyId || expectedCompanyId || null,
-            documentationContext: mergedDocumentationContext || {}
+            documentationContext: { ...(mergedDocumentationContext || {}), taskCodes: taskTokens.codeTokens || [] }
           }),
           updatedAt: isoNow(),
           updatedBy: userId

@@ -2377,7 +2377,60 @@ test('operations AI panel renders evidence table with manual code definition exc
   const html = __testOperationsAi.renderAiPanel(task, state, { run, followup: null, snapshot, aiState });
   assert.match(html, /AI evidence used/);
   assert.match(html, /Manual code definition/);
-  assert.match(html, /ERROR 11 — CARD DISPENSER ERROR/);
+  assert.match(html, /E11/);
+  assert.match(html, /ERROR 11[\s\S]*CARD DISPENSER ERROR/);
+});
+
+test('operations AI evidence table truncates long manual excerpts with disclosure and prioritizes code definitions', async () => {
+  const { __testOperationsAi } = await loadOperationsHelpers();
+  const longExcerpt = `${'Long manual chunk text '.repeat(40)}ERROR 11 CARD DISPENSER ERROR`;
+  const run = {
+    id: 'run-6',
+    taskId: 'task-6',
+    companyId: 'company-a',
+    status: 'completed',
+    documentationSources: [
+      { sourceType: 'approved_manual_chunk', matchedCodes: [], title: 'Manual chunk', excerpts: [longExcerpt] },
+      { sourceType: 'approved_manual_code_definition', matchedCodes: ['E11'], title: 'Manual code row', excerpts: ['ERROR 11 — CARD DISPENSER ERROR — CARD EMPTY IN THE DISPENSER. AFTER TAKING ACTION, PRESS RESET BUTTON.'], confidence: 0.95 }
+    ]
+  };
+  const task = { id: 'task-6', companyId: 'company-a', aiStatus: 'completed', aiLastCompletedRunSnapshot: { runId: 'run-6', taskId: 'task-6', companyId: 'company-a', completedAt: '2026-03-21T00:00:00.000Z' } };
+  const state = {
+    settings: { aiEnabled: true, aiUseWebSearch: false },
+    permissions: { companyRole: 'lead' },
+    operationsUi: { aiTaskStates: {}, aiDisplayRunsByTask: {} },
+    taskAiRuns: [run],
+    taskAiFollowups: []
+  };
+  const snapshot = __testOperationsAi.getTaskAiSnapshot(task, run);
+  const aiState = __testOperationsAi.getTaskAiState(task, state, run, null, snapshot);
+  const html = __testOperationsAi.renderAiPanel(task, state, { run, followup: null, snapshot, aiState });
+  assert.match(html, /Show full excerpt/);
+  assert.match(html, /Manual code definition/);
+  assert.equal(html.indexOf('Manual code definition') < html.indexOf('Manual text excerpt'), true);
+});
+
+test('operations AI panel labels saved guidance from previous run when showing snapshot', async () => {
+  const { __testOperationsAi } = await loadOperationsHelpers();
+  const task = {
+    id: 'task-7',
+    companyId: 'company-a',
+    aiStatus: 'completed',
+    aiLastCompletedRunSnapshot: { runId: 'run-old', taskId: 'task-7', companyId: 'company-a', completedAt: '2026-03-20T00:00:00.000Z' }
+  };
+  const state = {
+    settings: { aiEnabled: true, aiAllowManualRerun: true },
+    permissions: { companyRole: 'lead' },
+    operationsUi: { aiTaskStates: {}, aiDisplayRunsByTask: {} },
+    taskAiRuns: [{ id: 'run-new', taskId: 'task-7', companyId: 'company-a', status: 'running', updatedAt: '2026-03-21T00:00:00.000Z' }],
+    taskAiFollowups: []
+  };
+  const run = __testOperationsAi.getTaskRun(task, state);
+  const snapshot = __testOperationsAi.getTaskAiSnapshot(task, null);
+  const aiState = __testOperationsAi.getTaskAiState(task, state, null, null, snapshot);
+  const html = __testOperationsAi.renderAiPanel(task, state, { run: null, followup: null, snapshot, aiState });
+  assert.match(html, /Saved guidance from previous run/);
+  assert.match(html, /newer AI run is currently in progress/i);
 });
 
 test('operations AI panel renders web research not configured status when applicable', async () => {

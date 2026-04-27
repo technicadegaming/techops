@@ -35,10 +35,9 @@ const {
 } = require('./services/assetEnrichmentService');
 const {
   approveAssetManual,
-  buildManualErrorCodeIndexFromChunks,
   backfillApprovedAssetManualLinkage,
   createAssetManualId,
-  rewriteManualCodeDefinitions,
+  ensureManualCodeDefinitionsIndexed,
   materializeStoredAssetManual,
   resolveManualStoragePath,
 } = require('./services/manualIngestionService');
@@ -738,28 +737,10 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
       : false;
     const needsReextract = ['no_text_extracted', 'failed'].includes(priorExtractionStatus) || !hasChunkDocs || chunkCount <= 0;
     if (manualDoc && hasChunkDocs && chunkCount > 0 && !needsReextract) {
-      let nextExtractedCodeCount = extractedCodeCount;
-      if (!extractedCodeCount) {
-        const chunkDocs = await db.collection('manuals').doc(manualId).collection('chunks')
-          .orderBy('chunkIndex', 'asc')
-          .limit(150)
-          .get()
-          .catch(() => ({ docs: [] }));
-        const chunks = chunkDocs.docs.map((doc) => doc.data() || {});
-        const extractedCodeDefinitions = buildManualErrorCodeIndexFromChunks(chunks, { maxEntries: 100 });
-        await rewriteManualCodeDefinitions({
-          db,
-          manualId,
-          manual: {
-            companyId,
-            assetId,
-            sourceTitle: `${manualDoc.sourceTitle || asset.name || ''}`.trim(),
-            storagePath: `${manualDoc.storagePath || manualStoragePath || ''}`.trim(),
-          },
-          definitions: extractedCodeDefinitions,
-        });
-        nextExtractedCodeCount = extractedCodeDefinitions.length;
-      }
+      const ensuredIndexing = await ensureManualCodeDefinitionsIndexed({ db, manualId, manualDoc });
+      const nextExtractedCodeCount = ensuredIndexing.indexed
+        ? Number(ensuredIndexing.extractedCodeCount || 0) || 0
+        : extractedCodeCount;
       report.manualMaterialization.alreadyHadChunks += 1;
       report.manualMaterialization.entries.push({
         assetId,
@@ -777,7 +758,7 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
         extension: `${manualDoc.fileName || ''}`.trim().split('.').pop() || '',
         extractedCodeCount: nextExtractedCodeCount,
         reason: 'already_has_chunks',
-        action: extractedCodeCount ? 'already_has_chunks' : 'backfilled_code_definitions_from_chunks',
+        action: ensuredIndexing.indexed ? 'backfilled_code_definitions_from_chunks' : 'already_has_chunks',
       });
       return;
     }
