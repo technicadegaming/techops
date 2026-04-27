@@ -2693,7 +2693,6 @@ test('operations AI panel labels saved guidance from previous run when showing s
     taskAiRuns: [{ id: 'run-new', taskId: 'task-7', companyId: 'company-a', status: 'running', updatedAt: '2026-03-21T00:00:00.000Z' }],
     taskAiFollowups: []
   };
-  const run = __testOperationsAi.getTaskRun(task, state);
   const snapshot = __testOperationsAi.getTaskAiSnapshot(task, null);
   const aiState = __testOperationsAi.getTaskAiState(task, state, null, null, snapshot);
   const html = __testOperationsAi.renderAiPanel(task, state, { run: null, followup: null, snapshot, aiState });
