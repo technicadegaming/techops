@@ -26,7 +26,8 @@ export function createAdminController({
   repairAssetDocumentationState,
   bootstrapAttachAssetManualFromCsvHint,
   createCompanyInvite,
-  revokeInvite
+  revokeInvite,
+  withGlobalBusy
 }) {
   const createActions = () => createAdminActions({
     state,
@@ -53,7 +54,8 @@ export function createAdminController({
     repairAssetDocumentationState,
     bootstrapAttachAssetManualFromCsvHint,
     createCompanyInvite,
-    revokeInvite
+    revokeInvite,
+    withGlobalBusy
   });
 
   return {

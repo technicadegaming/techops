@@ -69,6 +69,10 @@ export function createInitialState() {
       selectedSuggestionsByAsset: {}
     },
     operationsUi: { draft: {}, moreDetailsOpen: false, expandedTaskIds: [], scrollY: 0, statusFilter: 'open', ownershipFilter: 'all', exceptionFilter: 'all', taskSearch: '', assigneeFilter: 'all', lastSaveFeedback: '', lastSaveTone: 'info', aiTaskStates: {}, evidenceUploadsByTask: {}, lastSavedTaskId: null, creatingTask: false, createTaskMessage: '', createTaskError: '' },
-    adminSection: 'company', onboarding: null, onboardingUi: { tone: 'info', message: '', pendingAction: '', handoffStatus: 'idle' }, setupWizard: { active: false, step: 1, message: '', tone: 'info' }
+    adminSection: 'company', onboarding: null, onboardingUi: { tone: 'info', message: '', pendingAction: '', handoffStatus: 'idle' }, setupWizard: { active: false, step: 1, message: '', tone: 'info' },
+    ui: {
+      globalBusy: { active: false, title: '', detail: '', startedAt: '', blocking: true },
+      appearance: { mode: 'system', preset: 'scoot_default', textSize: 'comfortable', contrast: 'standard', motion: 'standard', customColors: { primary: '', accent: '', background: '', text: '' } }
+    }
   };
 }

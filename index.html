@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Scoot Business Operations Portal</title>
   <style>
-    :root{--bg:#f4f6fb;--card:#fff;--line:#d8dee8;--line-soft:#e6ebf2;--text:#14202b;--muted:#5d6c7f;--accent:#0f172a;--accent-2:#1d4ed8;--soft:#eef3fb;--good:#0f766e;--warn:#b45309;--bad:#b91c1c}
-    *{box-sizing:border-box} body{margin:0;font-family:Inter,Arial,sans-serif;background:linear-gradient(180deg,#f7f9fc,#eef3fa);color:var(--text);font-size:15px;line-height:1.45}
+    :root{--color-bg:#f4f6fb;--color-surface:#fff;--color-text:#14202b;--color-muted:#5d6c7f;--color-primary:#0f172a;--color-primary-text:#fff;--color-border:#d8dee8;--color-danger:#b91c1c;--color-success:#166534;--color-warning:#b45309;--bg:var(--color-bg);--card:var(--color-surface);--line:var(--color-border);--line-soft:#e6ebf2;--text:var(--color-text);--muted:var(--color-muted);--accent:var(--color-primary);--accent-2:#1d4ed8;--soft:#eef3fb;--good:var(--color-success);--warn:var(--color-warning);--bad:var(--color-danger)}
+    *{box-sizing:border-box} body{margin:0;font-family:Inter,Arial,sans-serif;background:linear-gradient(180deg,var(--color-bg),color-mix(in srgb, var(--color-bg) 80%, #dbeafe));color:var(--text);font-size:15px;line-height:1.45}
     .wrap{max-width:1500px;margin:0 auto;padding:26px}.card{background:var(--card);border:1px solid var(--line-soft);border-radius:20px;box-shadow:0 10px 28px rgba(15,23,42,.05);padding:22px}
     .hide{display:none}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.space{justify-content:space-between}.grid{display:grid;gap:12px}.grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
     @media(max-width:900px){.grid-2{grid-template-columns:1fr}}
@@ -17,7 +17,17 @@
     .section{display:none}.section.active{display:block}
     input,select,textarea,button{font:inherit} input,select,textarea{width:100%;padding:11px 12px;border-radius:12px;border:1px solid #cfd8e7;background:#fff} textarea{min-height:96px}
     button{padding:10px 14px;border-radius:12px;border:1px solid #cad5e6;background:#fff;cursor:pointer;font-weight:600}
-    button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+    .btn,button{min-height:42px;padding:10px 16px;border:1px solid var(--line);border-radius:12px;background:var(--color-surface);color:var(--text);font-weight:650;transition:all .15s ease}
+    .btn:hover,button:hover{filter:brightness(.98)}
+    .btn:disabled,button:disabled{opacity:.55;cursor:not-allowed}
+    .btn-primary,button.primary{background:var(--color-primary);color:var(--color-primary-text);border-color:var(--color-primary)}
+    .btn-secondary{background:var(--color-surface);color:var(--text);border-color:var(--line)}
+    .btn-danger,.danger{background:#fff5f5;color:var(--color-danger);border-color:#fca5a5}
+    .btn-success{background:#ecfdf5;color:var(--color-success);border-color:#86efac}
+    .btn-ghost{background:transparent;border-color:transparent}
+    .btn-small{min-height:34px;padding:6px 10px;font-size:13px}
+    .btn-icon{min-width:42px;padding:8px 10px}
+    .btn-loading{position:relative;pointer-events:none}
     .badge{display:inline-flex;align-items:center;padding:7px 11px;border-radius:999px;background:var(--soft);border:1px solid var(--line-soft);font-size:13px;font-weight:700}
     .company-switcher,.location-switcher{min-width:220px;max-width:320px}
     .app-context{display:grid;gap:8px;justify-items:end}
@@ -125,6 +135,19 @@
     .thinking{display:inline-flex;align-items:center;gap:8px}
     .thinking::before{content:'';width:10px;height:10px;border-radius:999px;background:#1d4ed8;animation:pulse 1.1s ease-in-out infinite}
     @keyframes pulse{0%,100%{opacity:.3;transform:scale(.9)}50%{opacity:1;transform:scale(1.15)}}
+
+    .field-badge{display:inline-flex;padding:2px 8px;border-radius:999px;font-size:11px;border:1px solid var(--line);margin-left:6px}
+    .field-badge.required{background:#fee2e2;color:#7f1d1d;border-color:#fecaca}
+    .field-badge.optional{background:#eff6ff;color:#1e3a8a;border-color:#bfdbfe}
+    .field-badge.recommended{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+    .form-helper{font-size:12px;color:var(--muted);margin-top:4px}
+    .global-busy-overlay{position:fixed;inset:0;background:rgba(15,23,42,.38);display:flex;align-items:center;justify-content:center;z-index:9999;backdrop-filter:blur(1px)}
+    .global-busy-card{background:var(--color-surface);border:1px solid var(--line);border-radius:16px;padding:18px 22px;min-width:min(460px,90vw);box-shadow:0 20px 40px rgba(0,0,0,.25)}
+    .global-busy-card h3{margin:0 0 6px}
+    .global-busy-card p{margin:0;color:var(--muted)}
+    .global-busy-spinner{width:28px;height:28px;border-radius:999px;border:3px solid #cbd5e1;border-top-color:var(--color-primary);animation:spin 1s linear infinite;margin-bottom:8px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
     @media(max-width:640px){.wrap{padding:12px}.card{padding:14px;border-radius:14px} input,select,textarea,button{font-size:16px}}
     @media(max-width:640px){.kpi-line{gap:8px}.ops-location-field{min-width:0;width:100%}.task-summary{padding:12px}.task-body{padding:0 12px 12px}.action-row button{flex:1 1 calc(50% - 8px)}.closeout-actions button{width:100%}.task-summary-meta span{width:100%}.task-primary-actions button{flex:1 1 100%}}
     @media(max-width:640px){.onboarding-row{display:grid;grid-template-columns:1fr;gap:10px}}
@@ -142,7 +165,7 @@
           <h3>Login</h3>
           <input name="email" type="email" placeholder="Email" required />
           <input name="password" type="password" placeholder="Password" required />
-          <button class="primary" type="submit">Login</button>
+          <button class="btn btn-primary" type="submit">Login</button>
           <button type="button" id="forgotPasswordBtn">Forgot password?</button>
           <button type="button" id="googleLoginBtn">Continue with Google</button>
         </form>
@@ -154,7 +177,7 @@
           <input name="password" type="password" placeholder="Password" autocomplete="new-password" required />
           <input name="confirmPassword" type="password" placeholder="Confirm password" autocomplete="new-password" required />
           <div class="tiny" id="registerPasswordHelp">Use at least 8 characters with upper, lower, and a number.</div>
-          <button class="primary" type="submit">Register</button>
+          <button class="btn btn-primary" type="submit">Register</button>
           <button type="button" id="googleRegisterBtn">Continue with Google</button>
         </form>
       </div>

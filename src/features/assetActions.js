@@ -43,8 +43,12 @@ export function createAssetActions(deps) {
     isManager,
     buildAssetSaveErrorMessage,
     buildAssetSaveDebugContext,
-    isPermissionRelatedError
+    isPermissionRelatedError,
+    withGlobalBusy
   } = deps;
+  const safeWithGlobalBusy = typeof withGlobalBusy === 'function'
+    ? withGlobalBusy
+    : async (_title, _detail, fn) => fn();
 
   const parseReferenceList = (value = '') => `${value || ''}`
     .split(/\r?\n|,/)
@@ -818,7 +822,7 @@ export function createAssetActions(deps) {
         return { ok: false, assetId: id, error };
       }
     },
-    repairAssetManualText: async (id, options = {}) => {
+    repairAssetManualText: async (id, options = {}) => safeWithGlobalBusy(options?.dryRun ? 'Checking manual text…' : 'Extracting manual text…', 'This can take a few seconds. Please do not refresh.', async () => {
       if (!isManager(state.permissions) || typeof repairAssetDocumentationState !== 'function') return;
       const dryRun = options?.dryRun === true;
       const current = findAssetByRecordId(state.assets, id) || {};
@@ -839,7 +843,7 @@ export function createAssetActions(deps) {
         render();
         return null;
       }
-    },
+    }),
     runBulkAssetEnrichment: async (assetIds = [], options = {}) => {
       if (state.assetUi?.bulkDocRerunStatus === 'running') return;
       const visibleIds = Array.from(new Set((Array.isArray(assetIds) ? assetIds : []).map((id) => `${id || ''}`.trim()).filter(Boolean)));
@@ -1144,7 +1148,7 @@ export function createAssetActions(deps) {
       await refreshData();
       render();
     },
-    attachManualFromUrl: async (id, payload = {}) => {
+    attachManualFromUrl: async (id, payload = {}) => safeWithGlobalBusy('Attaching manual…', 'This can take a few seconds. Please do not refresh.', async () => {
       if (!isManager(state.permissions) || typeof attachAssetManualFromUrl !== 'function') return;
       const resolution = resolveManualAttachAsset(id);
       if (!resolution.ok) {
@@ -1155,7 +1159,7 @@ export function createAssetActions(deps) {
       }
       const manualUrl = `${payload.manualUrl || ''}`.trim();
       if (!manualUrl) {
-        setManualAttachUi(resolution.assetId, { tone: 'error', message: 'Enter a manual URL first.' });
+        setManualAttachUi(resolution.assetId, { tone: 'error', message: 'Manual URL is required.' });
         render();
         return;
       }
@@ -1207,8 +1211,8 @@ export function createAssetActions(deps) {
         setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: 'error', message: mapManualAttachErrorMessage(error) });
       }
       render();
-    },
-    uploadAndAttachManualFile: async (id, file = null) => {
+    }),
+    uploadAndAttachManualFile: async (id, file = null) => safeWithGlobalBusy('Attaching manual…', 'This can take a few seconds. Please do not refresh.', async () => {
       if (!isManager(state.permissions) || typeof attachAssetManualFromStoragePath !== 'function') return;
       const resolution = resolveManualAttachAsset(id);
       if (!resolution.ok) {
@@ -1284,7 +1288,7 @@ export function createAssetActions(deps) {
         setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: 'error', message: mapManualAttachErrorMessage(error) });
       }
       render();
-    },
+    }),
     editAsset: async (currentId, payload) => {
       if (!isAdmin(state.permissions)) return;
       const current = state.assets.find((asset) => asset.id === currentId) || {};
@@ -1332,12 +1336,12 @@ export function createAssetActions(deps) {
       await refreshData();
       render();
     },
-    deleteAsset: async (id) => {
+    deleteAsset: async (id) => safeWithGlobalBusy('Deleting asset…', 'This can take a few seconds. Please do not refresh.', async () => {
       if (!canDelete(state.permissions)) return;
       await deleteEntity('assets', id, state.user);
       await refreshData();
       render();
-    },
+    }),
     setLocationFilter: (locationKey) => {
       state.route = { ...state.route, locationKey: locationKey || null };
       if (typeof onLocationFilter === 'function') onLocationFilter(locationKey || null);
