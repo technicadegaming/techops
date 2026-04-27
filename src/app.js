@@ -84,6 +84,8 @@ import { createEmptyAssetDraft, createInitialState, sections, setOnboardingFeedb
 import { finalizeOnboardingBootstrap, shouldFinalizeOnboardingBootstrap } from './app/bootstrapRepair.js';
 import { buildBootstrapErrorMessage } from './app/bootstrapErrors.js';
 import { canFallbackToOnboarding, buildOnboardingFallbackState } from './app/authHandoff.js';
+import { createGlobalBusyHelpers, renderGlobalBusyOverlay } from './app/globalBusy.js';
+import { applyAppearancePreference, loadAppearancePreference } from './app/theme.js';
 
 const {
   authView,
@@ -97,10 +99,11 @@ const {
   notificationPanel
 } = resolveAppElements(document);
 const state = createInitialState();
+state.ui = { ...(state.ui || {}), appearance: loadAppearancePreference() };
 
 const runAction = runActionFactory({ reportActionError });
 const withActiveCompanyId = (payload = {}, actionLabel = 'continue') => withRequiredCompanyId(state, payload, actionLabel);
-
+const globalBusy = createGlobalBusyHelpers(state, () => render());
 
 let onboardingRepairInFlight = null;
 
@@ -214,11 +217,15 @@ function downloadJson(filename, payload) {
 
 async function render() {
   state.storageRuntime = { storage, storageRef, getDownloadURL };
+  applyAppearancePreference(state.ui?.appearance || {});
   navigationController.renderTabs();
   contextSwitcherController.renderHeaderContext();
   notificationController.renderNotificationCenter();
 
   if (state.onboardingRequired || state.setupWizard?.active) {
+    const appView = document.getElementById('appView');
+    appView?.querySelector('.global-busy-overlay')?.remove();
+    if (appView) appView.insertAdjacentHTML('beforeend', renderGlobalBusyOverlay(state));
     renderOnboarding(document.getElementById('dashboard'), state, onboardingController);
     navigationController.openTab('dashboard');
     return;
@@ -252,7 +259,8 @@ async function render() {
     logAudit,
     reportActionError,
     createEmptyAssetDraft,
-    buildCompanyEvidencePath
+    buildCompanyEvidencePath,
+    withGlobalBusy: globalBusy.withGlobalBusy
   });
   const operationsActions = operationsController.createActions();
   renderOperations(document.getElementById('operations'), state, operationsActions);
@@ -278,7 +286,8 @@ async function render() {
     uploadBytes,
     canDelete,
     isAdmin,
-    isManager
+    isManager,
+    withGlobalBusy: globalBusy.withGlobalBusy
   });
   renderAssets(document.getElementById('assets'), state, assetsController.createActions());
   renderCalendar(document.getElementById('calendar'), state);
@@ -289,7 +298,9 @@ async function render() {
     resendVerificationEmail,
     refreshAuthUser,
     syncSecuritySnapshot,
-    sendForgotPasswordEmail
+    sendForgotPasswordEmail,
+    persistAppearancePreference: (next) => { state.ui = { ...(state.ui || {}), appearance: next }; },
+    withGlobalBusy: globalBusy.withGlobalBusy
   });
   accountController.renderAccountSection(document.getElementById('account'));
   const adminController = createAdminController({
@@ -317,9 +328,14 @@ async function render() {
     repairAssetDocumentationState,
     bootstrapAttachAssetManualFromCsvHint,
     createCompanyInvite,
-    revokeInvite
+    revokeInvite,
+    withGlobalBusy: globalBusy.withGlobalBusy
   });
   adminController.renderAdminSection(document.getElementById('admin'));
+  const appViewElement = document.getElementById('appView');
+  appViewElement?.querySelector('.global-busy-overlay')?.remove();
+  appViewElement?.insertAdjacentHTML('beforeend', renderGlobalBusyOverlay(state));
+
   if (state.route?.tab === 'operations' && Number.isFinite(state.operationsUi?.scrollY)) {
     requestAnimationFrame(() => window.scrollTo({ top: state.operationsUi.scrollY, behavior: 'auto' }));
   }

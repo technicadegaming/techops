@@ -109,7 +109,7 @@ function renderUploadedEvidence(task = {}, state = {}, editable = false) {
     <div class="tiny">Image uploads only for now. Other file types can be added later.</div>
     ${editable ? `<div class="row mt"><input type="file" accept="image/*" data-task-evidence-file="${task.id}" /><button type="button" data-upload-task-evidence="${task.id}" ${uiState.uploading ? 'disabled' : ''}>${uiState.uploading ? 'Uploading…' : 'Upload image'}</button></div>` : ''}
     ${uiState.message ? `<div class="inline-state ${uiState.tone || 'info'} mt">${uiState.message}</div>` : ''}
-    ${files.length ? `<div class="attachment-block mt">${files.map((entry) => `<div class="attachment-group"><div class="row space"><span class="state-chip muted">${entry.filename || entry.storagePath || 'file'}</span>${editable ? `<button type="button" class="danger" data-remove-task-evidence="${task.id}" data-evidence-id="${entry.id}">Remove</button>` : ''}</div><div class="tiny mt">${entry.contentType || 'unknown type'} • ${formatFileSize(entry.sizeBytes)} • uploaded ${formatDateTime(entry.uploadedAt)} by ${entry.uploadedBy || 'unknown'}</div>${entry.downloadURL ? `<div class="tiny mt"><a href="${entry.downloadURL}" target="_blank" rel="noopener">Open file</a></div>` : ''}</div>`).join('')}</div>` : '<div class="inline-state info mt">No uploaded evidence files yet.</div>'}
+    ${files.length ? `<div class="attachment-block mt">${files.map((entry) => `<div class="attachment-group"><div class="row space"><span class="state-chip muted">${entry.filename || entry.storagePath || 'file'}</span>${editable ? `<button type="button" class="btn btn-danger" data-remove-task-evidence="${task.id}" data-evidence-id="${entry.id}">Remove</button>` : ''}</div><div class="tiny mt">${entry.contentType || 'unknown type'} • ${formatFileSize(entry.sizeBytes)} • uploaded ${formatDateTime(entry.uploadedAt)} by ${entry.uploadedBy || 'unknown'}</div>${entry.downloadURL ? `<div class="tiny mt"><a href="${entry.downloadURL}" target="_blank" rel="noopener">Open file</a></div>` : ''}</div>`).join('')}</div>` : '<div class="inline-state info mt">No uploaded evidence files yet.</div>'}
   </div>`;
 }
 
@@ -715,7 +715,7 @@ function renderAiPanel(task, state, meta) {
     ${safety.length ? `<div class="mt"><b>Safety notes</b><ul class="tiny">${safety.map((entry) => `<li>${entry}</li>`).join('')}</ul></div>` : ''}
     ${sources.length ? `<div class="mt"><b>Sources used</b><ul class="tiny">${sources.map((entry) => `<li>${entry.title || entry.url || entry}</li>`).join('')}</ul></div>` : ''}
     ${followup?.questions?.length ? `<div class="inline-state warn mt">AI cannot advance until the follow-up answers below are submitted.</div>
-      <form data-followup="${task.id}" data-run="${run.id}" class="grid mt followup-form">${followup.questions.map((question, index) => `<label class="tiny">${question}<input name="a${index}" placeholder="Answer" ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'} /></label>`).join('')}<button class="primary" ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'}>Submit follow-up answers</button></form>` : ''}
+      <form data-followup="${task.id}" data-run="${run.id}" class="grid mt followup-form">${followup.questions.map((question, index) => `<label class="tiny">${question}<input name="a${index}" placeholder="Answer" ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'} /></label>`).join('')}<button class="btn btn-primary" ${canAnswerAiFollowups(state.permissions) ? '' : 'disabled'}>Submit follow-up answers</button></form>` : ''}
     ${!canAnswerAiFollowups(state.permissions) && followup?.questions?.length ? `<div class="tiny mt">Follow-up answers require staff or higher.</div>` : ''}
     ${!eligibility.canRun && aiState.status !== 'completed' ? `<div class="tiny mt">${eligibility.reason}</div>` : ''}
     <div class="action-row mt">
@@ -772,7 +772,7 @@ function renderCloseout(task, state) {
         <label>Evidence references<textarea name="evidenceRefs" placeholder="Logs, tickets, measurements, or other evidence"></textarea></label>
       </div>
       <div class="closeout-actions closeout-wide">
-        <button class="primary">Resolve and close task</button>
+        <button class="btn btn-primary">Resolve and close task</button>
       </div>
     </form>
   </details>`;
@@ -1035,12 +1035,13 @@ export function renderOperations(el, state, actions) {
     ${!scopedAssets.length ? '<div class="inline-state warn">No assets exist in this location scope yet. Create or import an asset in Assets/Admin before opening Operations intake.</div>' : ''}
 
     <form id="taskForm" class="grid mt ops-intake-form">
+      ${state.operationsUi?.validationSummary ? `<div class="inline-state error">${state.operationsUi.validationSummary}</div>` : ""}
       <div class="grid grid-2">
         <label>Task ID<input name="id" readonly /></label>
         <label>Opened date/time<input name="openedAt" type="datetime-local" readonly /></label>
       </div>
       <section class="item ops-intake-step">
-        <h3>Step 1 · Asset / game <span class="tiny">Required</span></h3>
+        <h3>Step 1 · Asset / game <span class="field-badge required">Required</span></h3>
         <div class="tiny">Choose the affected asset in this location scope.</div>
         <label class="mt">Asset / game
         <input name="assetSearch" list="assetOptions" placeholder="${scopedAssets.length ? 'Search by asset name' : 'No assets in the current location yet'}" required ${canCreate ? '' : 'disabled'} />
@@ -1049,16 +1050,16 @@ export function renderOperations(el, state, actions) {
       </section>
 
       <section class="item ops-intake-step">
-        <h3>Step 2 · Problem description <span class="tiny">Required</span></h3>
+        <h3>Step 2 · Problem description <span class="field-badge required">Required</span></h3>
         <div class="tiny">Describe what is wrong so the next technician can reproduce quickly.</div>
         <label class="mt">Issue details
           <textarea name="description" placeholder="Describe the issue / concern" required ${canCreate ? '' : 'disabled'}></textarea>
         </label>
-        <label>Reported by <span class="tiny">Required</span><input name="reporter" placeholder="Reported by" required ${canCreate ? '' : 'disabled'} /></label>
+        <label>Reported by <span class="field-badge required">Required</span><input name="reporter" placeholder="Reported by" required ${canCreate ? '' : 'disabled'} /></label>
       </section>
 
       <section class="item ops-intake-step">
-        <h3>Step 3 · What has been tried</h3>
+        <h3>Step 3 · What has been tried <span class="field-badge recommended">Recommended</span></h3>
         <div class="tiny">Capture prior troubleshooting so work is not repeated. This is included directly in AI troubleshooting context.</div>
         <label class="mt">What did you already try / perform?
           <input name="alreadyTried" placeholder="What did you already try / perform?" ${canCreate ? '' : 'disabled'} />
@@ -1066,7 +1067,7 @@ export function renderOperations(el, state, actions) {
       </section>
 
       <details data-more-details ${state.operationsUi.moreDetailsOpen ? 'open' : ''} class="item ops-intake-step">
-        <summary><b>Step 4 · Optional details</b> <span class="tiny">Expand for severity, assignment, timeline seed, and evidence refs.</span></summary>
+        <summary><b>Step 4 · Optional details</b> <span class="field-badge optional">Optional</span> <span class="tiny">Expand for severity, assignment, timeline seed, and evidence refs.</span></summary>
         <div class="grid grid-2 mt">
           <input name="issueCategory" placeholder="Issue category" ${canCreate ? '' : 'disabled'} />
           <select name="severity" ${canCreate ? '' : 'disabled'}><option>critical</option><option>high</option><option selected>medium</option><option>low</option></select>
@@ -1103,7 +1104,7 @@ export function renderOperations(el, state, actions) {
       <section class="item ops-intake-step">
         <h3>Step 5 · Create task</h3>
         <div class="tiny">Save now, then use the task card actions to assign/start work, run AI, update timeline, and close out.</div>
-        <button class="primary mt" ${canCreate && !state.operationsUi?.creatingTask ? '' : 'disabled'}>${state.operationsUi?.creatingTask ? (state.settings?.aiEnabled ? 'Creating task & starting AI…' : 'Creating task…') : (state.settings?.aiEnabled ? 'Create task & run AI' : 'Create task')}</button>
+        <button class="btn btn-primary mt" ${canCreate && !state.operationsUi?.creatingTask ? '' : 'disabled'}>${state.operationsUi?.creatingTask ? (state.settings?.aiEnabled ? 'Creating task & starting AI…' : 'Creating task…') : (state.settings?.aiEnabled ? 'Create task & run AI' : 'Create task')}</button>
         ${state.operationsUi?.createTaskMessage ? `<div class="inline-state info mt">${state.operationsUi.createTaskMessage}</div>` : ''}
         ${state.operationsUi?.createTaskError ? `<div class="inline-state error mt">${state.operationsUi.createTaskError}</div>` : ''}
         ${state.settings?.aiEnabled ? '' : '<div class="inline-state info mt">Operations AI is disabled in Admin settings. You can still create and manage tasks.</div>'}
@@ -1161,14 +1162,14 @@ export function renderOperations(el, state, actions) {
               <div class="task-actions mt">
                 <div class="tiny"><b>Next actions</b></div>
                 <div class="action-row task-primary-actions mt">
-                ${editable && task.status === 'open' ? `<button type="button" data-quick-status="${task.id}" data-next-status="in_progress" class="primary" ${meta.assignedWorkers.length ? '' : 'disabled'}>Start now</button>` : ''}
+                ${editable && task.status === 'open' ? `<button type="button" data-quick-status="${task.id}" data-next-status="in_progress" class="btn btn-primary" ${meta.assignedWorkers.length ? '' : 'disabled'}>Start now</button>` : ''}
                 ${editable && task.status === 'in_progress' ? `<button type="button" data-quick-status="${task.id}" data-next-status="open">Move back to open</button>` : ''}
                 ${task.status !== 'completed' && canCloseTasks(state.permissions) ? `<button type="button" data-open-closeout="${task.id}">Resolve / close</button>` : ''}
                 ${meta.needsFollowup ? `<button type="button" data-open-followup="${task.id}">Answer follow-up</button>` : ''}
                 </div>
                 <div class="action-row mt">
                 ${(meta.awaitingAssignment || meta.unavailable.length) ? `<button type="button" data-reassign="${task.id}">Quick reassign</button>` : ''}
-                ${canDelete(state.permissions) ? `<button type="button" data-del="${task.id}" class="danger">Delete</button>` : ''}
+                ${canDelete(state.permissions) ? `<button type="button" data-del="${task.id}" class="btn btn-danger">Delete</button>` : ''}
                 </div>
               </div>
               ${editable ? `<form data-add-timeline="${task.id}" class="grid mt">
@@ -1292,7 +1293,7 @@ export function renderOperations(el, state, actions) {
   syncAssignmentHint();
   syncMissingAssetPrompt();
 
-  form?.addEventListener('input', persistDraft);
+  form?.addEventListener('input', () => { state.operationsUi.validationSummary = ""; persistDraft(); });
   assetInput?.addEventListener('input', () => {
     persistDraft();
     syncMissingAssetPrompt();
@@ -1319,12 +1320,14 @@ export function renderOperations(el, state, actions) {
     const assetLocation = selectedAsset ? getAssetLocationRecord(state, selectedAsset) : null;
     if (!selectedAsset) {
       state.operationsUi.lastSaveFeedback = `Asset "${`${fd.get('assetSearch') || ''}`.trim()}" does not exist yet. Create the asset first, then save the task.`;
+      state.operationsUi.validationSummary = 'Select a valid asset before creating the task.';
       state.operationsUi.lastSaveTone = 'error';
       rerender();
       return;
     }
     if (requestedStatus === 'in_progress' && !assignedWorker) {
       state.operationsUi.lastSaveFeedback = 'Cannot save: status is in progress but no worker is assigned.';
+      state.operationsUi.validationSummary = 'Assign a worker before saving with In progress status.';
       state.operationsUi.lastSaveTone = 'error';
       rerender();
       return;
@@ -1364,6 +1367,7 @@ export function renderOperations(el, state, actions) {
     const validation = validateTaskIntake(payload, ['assetId', 'description', 'reporter']);
     if (!validation.ok) {
       state.operationsUi.lastSaveFeedback = `Missing required fields: ${validation.missing.join(', ')}`;
+      state.operationsUi.validationSummary = `Please complete required fields: ${validation.missing.join(', ')}`;
       state.operationsUi.lastSaveTone = 'error';
       rerender();
       return;
@@ -1371,6 +1375,7 @@ export function renderOperations(el, state, actions) {
 
     const saved = await actions.saveTask(payload.id || `${fd.get('id') || ''}`.trim(), payload);
     if (!saved) return;
+    state.operationsUi.validationSummary = "";
     resetTaskForm();
   });
 

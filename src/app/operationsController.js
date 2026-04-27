@@ -70,8 +70,13 @@ export function createOperationsController({
   logAudit,
   reportActionError,
   createEmptyAssetDraft,
-  buildCompanyEvidencePath = buildTaskEvidenceStoragePath
+  buildCompanyEvidencePath = buildTaskEvidenceStoragePath,
+  withGlobalBusy
 }) {
+  const safeWithGlobalBusy = typeof withGlobalBusy === 'function'
+    ? withGlobalBusy
+    : async (_title, _detail, fn) => fn();
+
   function setTaskAiUiState(taskId, nextState = null) {
     if (!taskId) return;
     const currentStates = { ...(state.operationsUi?.aiTaskStates || {}) };
@@ -385,7 +390,7 @@ export function createOperationsController({
           navigationController.showOperationsForLocation(locationKey);
           render();
         },
-        saveTask: async (_id, payload) => {
+        saveTask: async (_id, payload) => safeWithGlobalBusy('Creating operation task…', 'This can take a few seconds. Please do not refresh.', async () => {
           const taskId = `${payload?.id || ''}`.trim() || `${_id || ''}`.trim();
           if (!taskId) return alert('Unable to save task: missing generated task ID.');
           const existing = state.tasks.find((entry) => entry.id === taskId);
@@ -453,7 +458,7 @@ export function createOperationsController({
             state.operationsUi = { ...(state.operationsUi || {}), isSavingTask: false, creatingTask: false };
           }));
           return !!saved;
-        },
+        }),
         appendTaskTimeline: async (taskId, entry = {}) => {
           const task = state.tasks.find((row) => row.id === taskId);
           if (!task) return;
@@ -525,7 +530,7 @@ export function createOperationsController({
           await refreshData();
           render();
         },
-        completeTask: async (taskId, closeout) => {
+        completeTask: async (taskId, closeout) => safeWithGlobalBusy('Closing task…', 'This can take a few seconds. Please do not refresh.', async () => {
           const task = state.tasks.find((entry) => entry.id === taskId);
           if (!task) return;
           await withTaskPendingAction(taskId, 'complete_task', 'Saving…', async () => {
@@ -582,14 +587,14 @@ export function createOperationsController({
             await refreshData();
             render();
           });
-        },
+        }),
         deleteTask: async (id) => {
           if (!canDelete(state.permissions)) return;
           await deleteEntity('tasks', id, state.user);
           await refreshData();
           render();
         },
-        runAi: async (taskId) => {
+        runAi: async (taskId) => safeWithGlobalBusy('Running AI troubleshooting…', 'This can take a few seconds. Please do not refresh.', async () => {
           await withTaskPendingAction(taskId, 'run_ai', 'AI running…', async () => {
             setTaskAiUiState(taskId, { status: 'running', message: 'AI run started for this task.' });
           const task = state.tasks.find((entry) => entry.id === taskId);
@@ -617,8 +622,8 @@ export function createOperationsController({
           }
           await handleAiRunLifecycle({ taskId, result, statusPrefix: 'AI run' });
           });
-        },
-        rerunAi: async (taskId) => {
+        }),
+        rerunAi: async (taskId) => safeWithGlobalBusy('Rerunning AI troubleshooting…', 'This can take a few seconds. Please do not refresh.', async () => {
           await withTaskPendingAction(taskId, 'rerun_ai', 'Rerunning…', async () => {
           setTaskAiUiState(taskId, { status: 'running', message: 'AI rerun started for this task.' });
           render();
@@ -633,8 +638,8 @@ export function createOperationsController({
           }
           await handleAiRunLifecycle({ taskId, result, statusPrefix: 'AI rerun' });
           });
-        },
-        submitFollowup: async (taskId, runId, answers) => {
+        }),
+        submitFollowup: async (taskId, runId, answers) => safeWithGlobalBusy('Submitting follow-up answers…', 'This can take a few seconds. Please do not refresh.', async () => {
           await withTaskPendingAction(taskId, 'submit_followup', 'Saving…', async () => {
           setTaskAiUiState(taskId, { status: 'running', message: 'Submitting follow-up answers…' });
           let result = null;
@@ -662,7 +667,7 @@ export function createOperationsController({
           }
           await handleAiRunLifecycle({ taskId, result, statusPrefix: 'AI follow-up run' });
           });
-        },
+        }),
         saveFix: async (taskId) => {
           const successfulFix = prompt('Summarize the successful fix for the troubleshooting library:');
           if (!successfulFix) return;

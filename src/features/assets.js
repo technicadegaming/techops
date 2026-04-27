@@ -865,7 +865,7 @@ export function renderAssets(el, state, actions) {
               ${renderStatusChip(item.hasManualLibraryEntry ? 'Shared manual record linked' : 'No shared manual record', item.hasManualLibraryEntry ? 'warn' : 'muted')}
             </div>
             <div class="action-row mt">
-              <button type="button" data-enrich="${asset.id}" class="primary">Review / rerun lookup</button>
+              <button type="button" data-enrich="${asset.id}" class="btn btn-primary">Review / rerun lookup</button>
               <button type="button" data-queue-approve="${asset.id}" data-queue-candidate-url="${encodeURIComponent(item.selectedCandidateUrl || '')}" ${item.selectedCandidateUrl ? '' : 'disabled'}>Approve</button>
               <button type="button" data-queue-reject="${asset.id}" data-queue-candidate-url="${encodeURIComponent(item.selectedCandidateUrl || '')}" ${item.selectedCandidateUrl ? '' : 'disabled'}>Reject</button>
               <button type="button" data-queue-needs-title="${asset.id}">Needs title clarification</button>
@@ -888,8 +888,8 @@ export function renderAssets(el, state, actions) {
       <summary><b>Add / import</b></summary>
     <form id="assetForm" class="grid grid-2" style="margin-top:10px; margin-bottom:12px; border:1px solid #e5e7eb; border-radius:10px; padding:10px;">
       <div class="tiny" style="grid-column:1/-1; font-weight:700;">Quick add asset</div>
-      <input name="name" value="${state.assetDraft?.name || ''}" placeholder="Asset name *" required ${editable ? '' : 'disabled'} />
-      <input name="manufacturer" value="${state.assetDraft?.manufacturer || ''}" placeholder="Manufacturer *" required ${editable ? '' : 'disabled'} />
+      <label>Asset name <span class="field-badge required">Required</span><input name="name" value="${state.assetDraft?.name || ''}" placeholder="Asset name" required ${editable ? '' : 'disabled'} /><div class="form-helper">Use the cabinet/game name seen by technicians.</div></label>
+      <label>Manufacturer <span class="field-badge recommended">Recommended</span><input name="manufacturer" value="${state.assetDraft?.manufacturer || ''}" placeholder="Manufacturer" ${editable ? '' : 'disabled'} /><div class="form-helper">Recommended for stronger manual matching.</div></label>
       <select name="locationId" ${editable ? '' : 'disabled'}>
         <option value="">No linked location yet</option>
         ${locationOptions.filter((option) => option.id).map((option) => `<option value="${option.id}" ${option.id === state.assetDraft?.locationId ? 'selected' : ''}>${option.name}</option>`).join('')}
@@ -898,11 +898,11 @@ export function renderAssets(el, state, actions) {
       <details style="grid-column:1/-1;">
         <summary class="tiny">Advanced fields (optional)</summary>
         <div class="grid grid-2" style="margin-top:8px;">
-          <input name="serialNumber" value="${state.assetDraft?.serialNumber || ''}" placeholder="Serial number" ${editable ? '' : 'disabled'} />
+          <label>Serial <span class="field-badge optional">Optional</span><input name="serialNumber" value="${state.assetDraft?.serialNumber || ''}" placeholder="Serial number" ${editable ? '' : 'disabled'} /></label>
           <input name="id" value="${state.assetDraft?.id || ''}" placeholder="Asset ID (optional; auto-generated if blank)" ${editable ? '' : 'disabled'} />
           <input name="status" value="${state.assetDraft?.status || ''}" placeholder="Current status" ${editable ? '' : 'disabled'} />
           <input name="ownerWorkers" value="${state.assetDraft?.ownerWorkers || ''}" placeholder="Assigned workers / owners (comma-separated)" ${editable ? '' : 'disabled'} />
-          <input name="manualLinks" value="${state.assetDraft?.manualLinksText || ''}" placeholder="Manual links (comma-separated URLs)" ${editable ? '' : 'disabled'} />
+          <input name="manualLinks" value="${state.assetDraft?.manualLinksText || ''}" placeholder="Manual links (comma-separated URLs, optional)" ${editable ? '' : 'disabled'} />
           <input name="maintenanceIntervalDays" value="${state.assetDraft?.maintenanceIntervalDays || ''}" placeholder="PM interval days (e.g., 30)" ${editable ? '' : 'disabled'} />
           <textarea name="maintenanceChecklist" placeholder="PM checklist (comma or newline separated)" ${editable ? '' : 'disabled'}>${state.assetDraft?.maintenanceChecklist || ''}</textarea>
           <textarea name="maintenanceJobPlan" placeholder="Job plan summary for repeat maintenance work" ${editable ? '' : 'disabled'}>${state.assetDraft?.maintenanceJobPlan || ''}</textarea>
@@ -928,7 +928,7 @@ export function renderAssets(el, state, actions) {
       ${state.assetDraft?.saveFeedback ? `<div class="tiny" style="grid-column:1/-1; color:${state.assetDraft?.saveFeedbackTone === 'error' ? '#b91c1c' : '#166534'};">${state.assetDraft.saveFeedback}</div>` : ''}
       ${state.assetDraft?.saveSecondaryFeedback ? `<div class="tiny" style="grid-column:1/-1; color:#4b5563;">${state.assetDraft.saveSecondaryFeedback}</div>` : ''}
       ${state.assetDraft?.saveDebugContext ? `<div class="tiny" style="grid-column:1/-1; color:#6b7280;">${state.assetDraft.saveDebugContext}</div>` : ''}
-      <button type="submit" class="primary" ${editable && !state.assetDraft?.saving && !saveBlocked ? '' : 'disabled'}>${state.assetDraft?.saving ? 'Saving...' : 'Save asset'}</button>
+      <button type="submit" class="btn btn-primary" ${editable && !state.assetDraft?.saving && !saveBlocked ? '' : 'disabled'}>${state.assetDraft?.saving ? 'Saving...' : 'Save asset'}</button>
       <datalist id="assetLocationNames">${locationOptions.filter((option) => option.name && option.id).map((option) => `<option value="${option.name}"></option>`).join('')}</datalist>
     </form>
 
@@ -946,7 +946,7 @@ export function renderAssets(el, state, actions) {
         <button type="button" data-bulk-parse>Prepare rows</button>
         <button type="button" data-bulk-enrich ${state.assetUi?.bulkIntakeRows?.length ? '' : 'disabled'}>${state.assetUi?.bulkIntakeStatus === 'enriching' ? 'Researching...' : 'Research titles'}</button>
         <button type="button" data-bulk-export ${state.assetUi?.bulkIntakeRows?.length ? '' : 'disabled'}>Export reviewed CSV</button>
-        <button type="button" class="primary" data-bulk-import ${state.assetUi?.bulkIntakeRows?.length ? '' : 'disabled'}>Create accepted assets</button>
+        <button type="button" class="btn btn-primary" data-bulk-import ${state.assetUi?.bulkIntakeRows?.length ? '' : 'disabled'}>Create accepted assets</button>
       </div>
       ${(state.assetUi?.bulkIntakeErrors || []).length ? `<div class="inline-state error mt"><ul>${(state.assetUi.bulkIntakeErrors || []).map((error) => `<li>${error}</li>`).join('')}</ul></div>` : ''}
     </div>
@@ -1033,29 +1033,29 @@ export function renderAssets(el, state, actions) {
               <b>Attach manual</b>
               <div class="tiny" style="margin-top:4px;">Paste a manual URL or upload a PDF/manual file. Scoot will attach it to this asset and extract searchable text for Operations AI.</div>
               <div class="grid grid-2 mt">
-                <label class="tiny">Manual URL
+                <label class="tiny">Manual URL <span class="field-badge required">Required</span>
                   <input data-manual-url-input data-asset-id="${asset.id}" placeholder="https://..." ${attachBusy ? 'disabled' : ''} />
                 </label>
-                <label class="tiny">Manual title (optional)
+                <label class="tiny">Manual title <span class="field-badge optional">Optional</span>
                   <input data-manual-title-input data-asset-id="${asset.id}" placeholder="Manual title" ${attachBusy ? 'disabled' : ''} />
                 </label>
               </div>
               <div class="action-row mt">
-                <button type="button" data-attach-manual-url="${asset.id}" data-asset-id="${asset.id}" ${attachBusy ? 'disabled' : ''}>${attachBusy && attachUi.phase === 'attaching' ? 'Attaching manual…' : 'Attach manual from link'}</button>
+                <button type="button" class="btn btn-secondary" data-attach-manual-url="${asset.id}" data-asset-id="${asset.id}" ${attachBusy ? 'disabled' : ''}>${attachBusy && attachUi.phase === 'attaching' ? 'Attaching manual…' : 'Attach manual from link'}</button>
               </div>
               <div class="grid mt">
-                <label class="tiny">Manual file
+                <label class="tiny">Manual file <span class="field-badge required">Required</span>
                   <input type="file" accept=".pdf,.txt,.html,.doc,.docx" data-manual-file-input data-asset-id="${asset.id}" ${attachBusy ? 'disabled' : ''} />
                 </label>
               </div>
               <div class="action-row mt">
-                <button type="button" data-upload-manual-file="${asset.id}" data-asset-id="${asset.id}" ${attachBusy ? 'disabled' : ''}>${attachBusy && attachUi.phase === 'uploading' ? 'Uploading manual…' : attachBusy && attachUi.phase === 'extracting' ? 'Extracting manual text…' : 'Upload and extract manual'}</button>
+                <button type="button" class="btn btn-primary" data-upload-manual-file="${asset.id}" data-asset-id="${asset.id}" ${attachBusy ? 'disabled' : ''}>${attachBusy && attachUi.phase === 'uploading' ? 'Uploading manual…' : attachBusy && attachUi.phase === 'extracting' ? 'Extracting manual text…' : 'Upload and extract manual'}</button>
               </div>
               ${attachUi?.message ? renderInlineFeedback(attachUi.message, attachUi.tone || 'info') : ''}
             </div>` : ''}
             ${manager ? `<div class="action-row" style="margin-top:6px;">
-              <button type="button" data-check-manual-text="${asset.id}">Check manual text</button>
-              <button type="button" data-reextract-manual-text="${asset.id}" class="primary">Re-extract manual text</button>
+              <button type="button" class="btn btn-secondary" data-check-manual-text="${asset.id}">Check manual text</button>
+              <button type="button" data-reextract-manual-text="${asset.id}" class="btn btn-danger">Re-extract manual text</button>
             </div>` : ''}
             <div class="tiny" style="margin:4px 0;">Attached manual:</div>
             <div style="margin:4px 0 8px;">${manualState.manualLinks.length ? manualState.manualLinks.map((url) => renderLinkChip(url, {

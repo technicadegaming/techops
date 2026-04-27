@@ -86,7 +86,8 @@ export function createAssetsController({
   uploadBytes,
   canDelete,
   isAdmin,
-  isManager
+  isManager,
+  withGlobalBusy
 }) {
   async function markAssetEnrichmentFailure(assetId, error, preserveFollowup = false) {
     const current = state.assets.find((entry) => entry.id === assetId) || {};
@@ -153,7 +154,8 @@ export function createAssetsController({
         buildAssetSaveErrorMessage,
         buildAssetSaveDebugContext,
         isPermissionRelatedError,
-        buildPreviewQueryKey
+        buildPreviewQueryKey,
+        withGlobalBusy
       });
     }
   };

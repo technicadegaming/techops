@@ -1,3 +1,4 @@
+import { persistAppearancePreference } from './theme.js';
 import { renderAccount } from '../account.js';
 
 export function createAccountController({
@@ -6,8 +7,12 @@ export function createAccountController({
   resendVerificationEmail,
   refreshAuthUser,
   syncSecuritySnapshot,
-  sendForgotPasswordEmail
+  sendForgotPasswordEmail,
+  persistAppearancePreference: persistAppearanceState,
+  withGlobalBusy
 }) {
+  const safeWithGlobalBusy = typeof withGlobalBusy === 'function' ? withGlobalBusy : async (_t,_d,fn) => fn();
+
   async function syncAccountSecurityProfile(user) {
     state.profile = await syncSecuritySnapshot(
       user || { uid: state.user?.uid, email: state.user?.email },
@@ -18,20 +23,26 @@ export function createAccountController({
 
   function createActions() {
     return {
-      resendVerification: async () => {
+      resendVerification: async () => safeWithGlobalBusy('Saving changes…', 'This can take a few seconds. Please do not refresh.', async () => {
         await resendVerificationEmail();
         const refreshed = await refreshAuthUser();
         await syncAccountSecurityProfile(refreshed);
         render();
-      },
-      refreshVerification: async () => {
+      }),
+      refreshVerification: async () => safeWithGlobalBusy('Saving changes…', 'This can take a few seconds. Please do not refresh.', async () => {
         const refreshed = await refreshAuthUser();
         if (!refreshed) throw new Error('No authenticated user found.');
         await syncAccountSecurityProfile(refreshed);
         render();
-      },
+      }),
       sendPasswordReset: async () => {
         await sendForgotPasswordEmail(state.user?.email || '');
+      },
+      updateAppearance: (next) => {
+        state.ui = { ...(state.ui || {}), appearance: next };
+        if (typeof persistAppearanceState === 'function') persistAppearanceState(next);
+        persistAppearancePreference(next);
+        render();
       }
     };
   }

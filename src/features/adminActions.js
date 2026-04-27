@@ -28,12 +28,17 @@ export function createAdminActions(deps) {
     repairAssetDocumentationState,
     bootstrapAttachAssetManualFromCsvHint,
     createCompanyInvite,
-    revokeInvite
+    revokeInvite,
+    withGlobalBusy
   } = deps;
 
   const setAdminFeedback = ({ tone = 'info', message = '' } = {}) => {
     state.adminUi = { ...(state.adminUi || {}), tone, message };
   };
+
+  const safeWithGlobalBusy = typeof withGlobalBusy === 'function'
+    ? withGlobalBusy
+    : async (_title, _detail, fn) => fn();
 
   const setImportFeedback = ({ tone = 'info', summary = '', preview = '', progress = null } = {}) => {
     state.adminUi = { ...(state.adminUi || {}), importTone: tone, importSummary: summary, importPreview: preview, importProgress: progress };
@@ -364,7 +369,7 @@ export function createAdminActions(deps) {
     },
     downloadAssetTemplate: () => downloadFile('asset-template.csv', ASSET_CSV_TEMPLATE, 'text/csv'),
     downloadEmployeeTemplate: () => downloadFile('employee-template.csv', 'name,email,role,enabled,available,shift start,skills,location,phone\n', 'text/csv'),
-    importAssets: async (rows, options = {}) => {
+    importAssets: async (rows, options = {}) => safeWithGlobalBusy('Importing accepted assets…', 'This can take a few seconds. Please do not refresh.', async () => {
       if (!rows.length) {
         setImportFeedback({ tone: 'error', summary: 'No asset rows were imported.', preview: state.adminUi?.importPreview || '' });
         return;
@@ -605,7 +610,7 @@ export function createAdminActions(deps) {
         ]
       };
       render();
-    },
+    }),
     importEmployees: async (rows) => {
       if (!rows.length) {
         setImportFeedback({ tone: 'error', summary: 'No worker rows were imported.', preview: state.adminUi?.importPreview || '' });
@@ -700,7 +705,7 @@ export function createAdminActions(deps) {
       await refreshData();
       render();
     },
-    checkManualTextExtraction: async ({ limit = 100 } = {}) => {
+    checkManualTextExtraction: async ({ limit = 100 } = {}) => safeWithGlobalBusy('Checking manual text…', 'This can take a few seconds. Please do not refresh.', async () => {
       if (!canRunManualRepair()) return;
       const companyId = `${state.company?.id || ''}`.trim();
       if (!companyId) {
@@ -755,7 +760,7 @@ export function createAdminActions(deps) {
         };
       }
       render();
-    },
+    }),
     selectAllManualRepairRows: () => {
       const rows = state.adminUi?.manualRepairRows || [];
       upsertManualRepairSelection(getRepairableAssetIds(rows));
@@ -772,7 +777,7 @@ export function createAdminActions(deps) {
       upsertManualRepairSelection([...existing]);
       render();
     },
-    runManualRepairForSelection: async ({ assetIds = null, concurrency = 3 } = {}) => {
+    runManualRepairForSelection: async ({ assetIds = null, concurrency = 3 } = {}) => safeWithGlobalBusy('Extracting manual text…', 'This can take a few seconds. Please do not refresh.', async () => {
       if (!canRunManualRepair()) return;
       const selectedIds = (Array.isArray(assetIds) ? assetIds : (state.adminUi?.manualRepairSelectedAssetIds || [])).filter(Boolean);
       if (!selectedIds.length) {
@@ -835,7 +840,7 @@ export function createAdminActions(deps) {
         manualRepairSummary: buildManualRepairSummary(Array.from(rowsById.values()))
       };
       render();
-    },
+    }),
     downloadManualRepairResultsCsv: () => {
       const rows = state.adminUi?.manualRepairRows || [];
       if (!rows.length || typeof downloadFile !== 'function') return;
