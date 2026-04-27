@@ -35,8 +35,10 @@ const {
 } = require('./services/assetEnrichmentService');
 const {
   approveAssetManual,
+  buildManualErrorCodeIndexFromChunks,
   backfillApprovedAssetManualLinkage,
   createAssetManualId,
+  rewriteManualCodeDefinitions,
   materializeStoredAssetManual,
   resolveManualStoragePath,
 } = require('./services/manualIngestionService');
@@ -639,6 +641,8 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
       noTextExtracted: 0,
       failed: 0,
       skipped: 0,
+      extractedCodeCountTotal: 0,
+      manualsWithCodeDefinitions: 0,
       entries: [],
     },
   };
@@ -727,12 +731,35 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
     const manualDoc = manualSnap?.exists ? { id: manualSnap.id, ...(manualSnap.data() || {}) } : null;
     const priorExtractionStatus = `${manualDoc?.extractionStatus || asset.manualTextExtractionStatus || 'unknown'}`.trim() || 'unknown';
     const chunkCount = Number(manualDoc?.chunkCount || asset.manualChunkCount || 0);
+    const extractedCodeCount = Number(manualDoc?.extractedCodeCount || 0) || 0;
     const priorChunkCount = chunkCount;
     const hasChunkDocs = manualDoc
       ? (await db.collection('manuals').doc(manualId).collection('chunks').limit(1).get().catch(() => ({ docs: [] }))).docs.length > 0
       : false;
     const needsReextract = ['no_text_extracted', 'failed'].includes(priorExtractionStatus) || !hasChunkDocs || chunkCount <= 0;
     if (manualDoc && hasChunkDocs && chunkCount > 0 && !needsReextract) {
+      let nextExtractedCodeCount = extractedCodeCount;
+      if (!extractedCodeCount) {
+        const chunkDocs = await db.collection('manuals').doc(manualId).collection('chunks')
+          .orderBy('chunkIndex', 'asc')
+          .limit(150)
+          .get()
+          .catch(() => ({ docs: [] }));
+        const chunks = chunkDocs.docs.map((doc) => doc.data() || {});
+        const extractedCodeDefinitions = buildManualErrorCodeIndexFromChunks(chunks, { maxEntries: 100 });
+        await rewriteManualCodeDefinitions({
+          db,
+          manualId,
+          manual: {
+            companyId,
+            assetId,
+            sourceTitle: `${manualDoc.sourceTitle || asset.name || ''}`.trim(),
+            storagePath: `${manualDoc.storagePath || manualStoragePath || ''}`.trim(),
+          },
+          definitions: extractedCodeDefinitions,
+        });
+        nextExtractedCodeCount = extractedCodeDefinitions.length;
+      }
       report.manualMaterialization.alreadyHadChunks += 1;
       report.manualMaterialization.entries.push({
         assetId,
@@ -748,8 +775,9 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
         storagePath: manualStoragePath,
         contentType: `${manualDoc.contentType || asset.manualContentType || ''}`.trim(),
         extension: `${manualDoc.fileName || ''}`.trim().split('.').pop() || '',
+        extractedCodeCount: nextExtractedCodeCount,
         reason: 'already_has_chunks',
-        action: 'already_has_chunks',
+        action: extractedCodeCount ? 'already_has_chunks' : 'backfilled_code_definitions_from_chunks',
       });
       return;
     }
@@ -771,6 +799,7 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
         extension: `${manualDoc?.fileName || ''}`.trim().split('.').pop() || '',
         reason: 'dry_run_materialization_planned',
         action: manualDoc ? 'would_reextract' : 'would_materialize',
+        extractedCodeCount: extractedCodeCount || 0,
       });
       return;
     }
@@ -817,7 +846,13 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
           extension: `${result.extension || (manualStoragePath.split('.').pop() || '').toLowerCase()}`.trim(),
           reason: failureReason,
           action: 'extraction_failed',
+          extractedCodeCount: Number(result.extractedCodeCount || 0) || 0,
         });
+        const failedExtractedCodeCount = Number(result.extractedCodeCount || 0) || 0;
+        if (failedExtractedCodeCount > 0) {
+          report.manualMaterialization.extractedCodeCountTotal += failedExtractedCodeCount;
+          report.manualMaterialization.manualsWithCodeDefinitions += 1;
+        }
         return;
       }
       const nextChunkCount = Number(result.chunkCount || 0);
@@ -849,7 +884,13 @@ exports.repairAssetDocumentationState = onCall({ secrets: [OPENAI_API_KEY] }, as
         extension,
         reason: result.extractionReason || (nextChunkCount > 0 ? 'text_extracted' : 'no_readable_text_found'),
         action: nextChunkCount > 0 ? (manualDoc ? 'reextracted' : 'materialized') : 'materialized_without_text',
+        extractedCodeCount: Number(result.extractedCodeCount || 0) || 0,
       });
+      const materializedExtractedCodeCount = Number(result.extractedCodeCount || 0) || 0;
+      if (materializedExtractedCodeCount > 0) {
+        report.manualMaterialization.extractedCodeCountTotal += materializedExtractedCodeCount;
+        report.manualMaterialization.manualsWithCodeDefinitions += 1;
+      }
     } catch (error) {
       report.manualMaterialization.failed += 1;
       const message = `${error?.message || String(error)}`.slice(0, 240);

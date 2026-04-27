@@ -279,6 +279,155 @@ function chunkManualText(text = '', options = {}) {
   return chunks.map((chunk, index) => ({ ...chunk, chunkIndex: index }));
 }
 
+function normalizeManualErrorCode(value = '') {
+  const raw = `${value || ''}`.trim().toUpperCase();
+  if (!raw) return '';
+  const normalized = raw.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const direct = normalized.match(/^([A-Z]{1,4})\s*(\d{1,4})$/);
+  if (direct) return `${direct[1]}${Number(direct[2])}`;
+  const mapped = normalized.match(/^(?:ERROR(?:\s+CODE)?|CODE)\s*[:#-]?\s*(\d{1,4})$/);
+  if (mapped) return `E${Number(mapped[1])}`;
+  return '';
+}
+
+function normalizeManualSnippet(value = '', max = 240) {
+  return `${value || ''}`.replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function parseManualCodeLead(line = '') {
+  const text = `${line || ''}`.trim();
+  if (!text) return null;
+  const match = text.match(/^(E\s*\d{1,4}|ERROR(?:\s+CODE)?\s*[:#-]?\s*\d{1,4}|CODE\s*[:#-]?\s*\d{1,4})\b[:#-]?\s*(.*)$/i);
+  if (!match) return null;
+  const rawCode = `${match[1] || ''}`.trim();
+  const code = normalizeManualErrorCode(rawCode);
+  if (!code) return null;
+  return { rawCode, code, remainder: `${match[2] || ''}`.trim() };
+}
+
+function finalizeManualCodeDefinition({
+  code = '',
+  rawCode = '',
+  title = '',
+  meaning = '',
+  resetInstruction = '',
+  line = '',
+  confidence = 0.8
+} = {}) {
+  const normalizedCode = normalizeManualErrorCode(code || rawCode);
+  const normalizedTitle = normalizeManualSnippet(title, 120);
+  const normalizedMeaning = normalizeManualSnippet(meaning, 240);
+  if (!normalizedCode || (!normalizedTitle && !normalizedMeaning)) return null;
+  return {
+    code: normalizedCode,
+    rawCode: normalizeManualSnippet(rawCode || code, 40),
+    title: normalizedTitle,
+    meaning: normalizedMeaning,
+    resetInstruction: normalizeManualSnippet(resetInstruction, 140),
+    line: normalizeManualSnippet(line, 280),
+    confidence: Math.max(0.8, Math.min(Number(confidence || 0.8), 1)),
+    source: 'manual_text',
+  };
+}
+
+function extractManualErrorCodeDefinitions(text = '') {
+  const lines = `${text || ''}`.replace(/\r/g, '\n').split('\n');
+  const definitions = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = `${lines[index] || ''}`.trim();
+    const parsed = parseManualCodeLead(line);
+    if (!parsed) continue;
+    const lookahead = [];
+    for (let offset = 1; offset <= 3 && index + offset < lines.length; offset += 1) {
+      const nextLine = `${lines[index + offset] || ''}`.trim();
+      if (!nextLine) continue;
+      if (parseManualCodeLead(nextLine)) break;
+      lookahead.push(nextLine);
+    }
+    const combinedRemainder = [parsed.remainder, ...lookahead].filter(Boolean).join(' ').trim();
+    const rawLine = [line, ...lookahead].filter(Boolean).join(' | ');
+    const resetMatch = combinedRemainder.match(/\(([^)]*reset[^)]*)\)/i)
+      || combinedRemainder.match(/(after[^.]{0,120}reset[^.]*)/i);
+    const resetInstruction = resetMatch ? resetMatch[0] : '';
+    const bodyWithoutReset = combinedRemainder.replace(resetInstruction, '').replace(/\s+/g, ' ').trim();
+    if (!bodyWithoutReset && !resetInstruction) continue;
+
+    if (line.includes('|')) {
+      const parts = line.split('|').map((part) => part.trim()).filter(Boolean);
+      const title = parts[1] || lookahead[0] || '';
+      const meaning = [parts.slice(2).join(' | '), ...lookahead].filter(Boolean).join(' ').replace(title, '').trim();
+      const entry = finalizeManualCodeDefinition({
+        code: parsed.code,
+        rawCode: parsed.rawCode,
+        title,
+        meaning,
+        resetInstruction,
+        line: rawLine,
+        confidence: 0.97,
+      });
+      if (entry) definitions.push(entry);
+      continue;
+    }
+
+    if (/[:-]/.test(parsed.remainder) && parsed.remainder.length <= 240) {
+      const segments = parsed.remainder.split(/[:-]/).map((part) => part.trim()).filter(Boolean);
+      const title = segments[0] || '';
+      const meaning = segments.slice(1).join(' - ');
+      const entry = finalizeManualCodeDefinition({
+        code: parsed.code,
+        rawCode: parsed.rawCode,
+        title: meaning ? title : '',
+        meaning: meaning || title,
+        resetInstruction,
+        line: rawLine,
+        confidence: 0.95,
+      });
+      if (entry) definitions.push(entry);
+      continue;
+    }
+
+    const title = lookahead[0] && lookahead[0].length <= 120 ? lookahead[0] : '';
+    const meaning = [parsed.remainder, ...lookahead.slice(title ? 1 : 0)].filter(Boolean).join(' ').trim() || parsed.remainder;
+    if (!title && !meaning) continue;
+    const entry = finalizeManualCodeDefinition({
+      code: parsed.code,
+      rawCode: parsed.rawCode,
+      title,
+      meaning,
+      resetInstruction,
+      line: rawLine,
+      confidence: title && meaning ? 0.94 : 0.85,
+    });
+    if (entry) definitions.push(entry);
+  }
+  return dedupeByManualCodeDefinition(definitions);
+}
+
+function dedupeByManualCodeDefinition(definitions = []) {
+  const seen = new Set();
+  return (Array.isArray(definitions) ? definitions : []).filter((entry) => {
+    const key = `${entry?.code || ''}|${`${entry?.title || ''}`.toLowerCase()}|${`${entry?.meaning || ''}`.toLowerCase()}`;
+    if (!entry?.code || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function buildManualErrorCodeIndexFromChunks(chunks = [], options = {}) {
+  const candidates = [];
+  if (typeof chunks === 'string') {
+    candidates.push(...extractManualErrorCodeDefinitions(chunks));
+  } else {
+    (Array.isArray(chunks) ? chunks : []).forEach((chunk) => {
+      const text = typeof chunk === 'string' ? chunk : (chunk?.text || '');
+      if (text) candidates.push(...extractManualErrorCodeDefinitions(text));
+    });
+  }
+  const deduped = dedupeByManualCodeDefinition(candidates);
+  const maxEntries = Math.max(1, Number(options.maxEntries || 100));
+  return deduped.slice(0, maxEntries);
+}
+
 function guessExtension(contentType = '', sourceUrl = '') {
   if (/\.pdf($|\?|#)/i.test(sourceUrl) || `${contentType}`.toLowerCase().includes('pdf')) return 'pdf';
   if (/html/i.test(contentType)) return 'html';
@@ -334,6 +483,48 @@ async function rewriteManualChunks({ db, manualId = '', chunks = [] } = {}) {
     return;
   }
   await Promise.all(writes.map((chunk) => chunkCollection.doc(`${chunk.chunkIndex}`).set(chunk)));
+}
+
+async function rewriteManualCodeDefinitions({
+  db,
+  manualId = '',
+  manual = {},
+  definitions = [],
+} = {}) {
+  if (!db || !manualId) return { extractedCodeCount: 0 };
+  const codeDefinitions = Array.isArray(definitions) ? definitions.slice(0, 100) : [];
+  const now = isoNow();
+  await db.collection('manuals').doc(manualId).set({
+    extractedCodeDefinitions: codeDefinitions,
+    extractedCodeCount: codeDefinitions.length,
+    extractedCodeUpdatedAt: now,
+  }, { merge: true });
+  if (!codeDefinitions.length) return { extractedCodeCount: 0 };
+  const byCode = new Map();
+  codeDefinitions.forEach((entry) => {
+    const code = `${entry.code || ''}`.trim();
+    if (!code) return;
+    const rows = byCode.get(code) || [];
+    rows.push(entry);
+    byCode.set(code, rows);
+  });
+  const subCollection = db.collection('manuals').doc(manualId).collection('codeDefinitions');
+  await Promise.all(Array.from(byCode.entries()).map(([code, entries]) => {
+    const best = entries[0] || {};
+    return subCollection.doc(code).set({
+      code,
+      definitions: entries,
+      bestDefinition: best,
+      manualId,
+      companyId: `${manual.companyId || ''}`.trim(),
+      assetId: `${manual.assetId || ''}`.trim(),
+      sourceTitle: `${manual.sourceTitle || ''}`.trim(),
+      storagePath: `${manual.storagePath || ''}`.trim(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      extractedCodeUpdatedAt: now,
+    }, { merge: true });
+  }));
+  return { extractedCodeCount: codeDefinitions.length };
 }
 
 function deriveManualStatusFromAsset(asset = {}) {
@@ -396,6 +587,7 @@ async function materializeApprovedManualForAsset({
   const extracted = await extractTextFromBufferAsync(buffer, manualLibrary.contentType || '', sourceUrl || manualLibrary.originalDownloadUrl || sharedStoragePath);
   const extractedText = extracted.text;
   const chunks = chunkManualText(extractedText);
+  const extractedCodeDefinitions = buildManualErrorCodeIndexFromChunks(chunks.length ? chunks : extractedText);
   const extractionStatus = chunks.length ? 'completed' : 'no_text_extracted';
   const extractionReason = chunks.length ? 'text_extracted' : 'no_readable_text_found';
   const now = isoNow();
@@ -432,10 +624,24 @@ async function materializeApprovedManualForAsset({
     extractedTextLength: extracted.extractedTextLength || extractedText.length || 0,
     extractionWarning: extracted.extractionWarning || '',
     chunkCount: chunks.length,
+    extractedCodeDefinitions,
+    extractedCodeCount: extractedCodeDefinitions.length,
+    extractedCodeUpdatedAt: now,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedBy: userId || '',
   }, { merge: true });
   await rewriteManualChunks({ db, manualId, chunks });
+  await rewriteManualCodeDefinitions({
+    db,
+    manualId,
+    manual: {
+      companyId,
+      assetId,
+      sourceTitle: sourceTitle || manualLibrary.canonicalTitle || manualLibrary.filename || asset.name || '',
+      storagePath: tenantStoragePath,
+    },
+    definitions: extractedCodeDefinitions,
+  });
 
   return {
     ok: true,
@@ -447,6 +653,7 @@ async function materializeApprovedManualForAsset({
     chunkCount: chunks.length,
     extractionEngine: extracted.extractionEngine || 'none',
     contentType: manualLibrary.contentType || '',
+    extractedCodeCount: extractedCodeDefinitions.length,
   };
 }
 
@@ -536,12 +743,21 @@ async function materializeStoredAssetManual({
       extractionEngine: 'none',
       extractedTextLength: 0,
       chunkCount: 0,
+      extractedCodeDefinitions: [],
+      extractedCodeCount: 0,
+      extractedCodeUpdatedAt: now,
       attachmentMode: attachmentMode || '',
       manualProvenance: manualProvenance || '',
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedBy: userId || '',
     }, { merge: true });
     await rewriteManualChunks({ db, manualId, chunks: [] });
+    await rewriteManualCodeDefinitions({
+      db,
+      manualId,
+      manual: { companyId, assetId, sourceTitle: sourceTitle || asset.name || 'Attached manual', storagePath: normalizedStoragePath },
+      definitions: [],
+    });
     return {
       ok: true,
       manualId,
@@ -559,6 +775,7 @@ async function materializeStoredAssetManual({
   const extracted = await extractTextFromBufferAsync(buffer, resolvedContentType, normalizedSourceUrl || normalizedStoragePath);
   const extractedText = extracted.text;
   const chunks = chunkManualText(extractedText);
+  const extractedCodeDefinitions = buildManualErrorCodeIndexFromChunks(chunks.length ? chunks : extractedText);
   const extractionStatus = chunks.length ? 'completed' : 'no_text_extracted';
   const extractionReason = chunks.length ? 'text_extracted' : 'no_readable_text_found';
   const now = isoNow();
@@ -591,12 +808,26 @@ async function materializeStoredAssetManual({
     extractedTextLength: extracted.extractedTextLength || extractedText.length || 0,
     extractionWarning: extracted.extractionWarning || '',
     chunkCount: chunks.length,
+    extractedCodeDefinitions,
+    extractedCodeCount: extractedCodeDefinitions.length,
+    extractedCodeUpdatedAt: now,
     attachmentMode: attachmentMode || '',
     manualProvenance: manualProvenance || '',
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedBy: userId || '',
   }, { merge: true });
   await rewriteManualChunks({ db, manualId, chunks });
+  await rewriteManualCodeDefinitions({
+    db,
+    manualId,
+    manual: {
+      companyId,
+      assetId,
+      sourceTitle: sourceTitle || asset.name || 'Attached manual',
+      storagePath: normalizedStoragePath,
+    },
+    definitions: extractedCodeDefinitions,
+  });
 
   return {
     ok: true,
@@ -611,6 +842,7 @@ async function materializeStoredAssetManual({
     contentType: resolvedContentType || '',
     extension,
     sourceKind: resolvedPath.sourceKind,
+    extractedCodeCount: extractedCodeDefinitions.length,
   };
 }
 
@@ -874,14 +1106,18 @@ module.exports = {
   approveAssetManual,
   backfillApprovedAssetManualLinkage,
   buildManualStoragePath,
+  buildManualErrorCodeIndexFromChunks,
   chunkManualText,
   createAssetManualId,
+  extractManualErrorCodeDefinitions,
   extractPdfTextRobust,
   extractPdfText,
   extractTextFromBuffer,
   extractTextFromBufferAsync,
   materializeStoredAssetManual,
   materializeApprovedManualForAsset,
+  normalizeManualErrorCode,
+  rewriteManualCodeDefinitions,
   resolveManualStoragePath,
   resolveApprovedManualLibraryForAsset,
   stripHtml

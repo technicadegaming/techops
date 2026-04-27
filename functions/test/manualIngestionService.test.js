@@ -5,8 +5,10 @@ const { deflateSync } = require('node:zlib');
 const {
   backfillApprovedAssetManualLinkage,
   buildManualStoragePath,
+  buildManualErrorCodeIndexFromChunks,
   chunkManualText,
   createAssetManualId,
+  extractManualErrorCodeDefinitions,
   extractPdfText,
   extractTextFromBuffer,
   extractTextFromBufferAsync,
@@ -16,6 +18,43 @@ const {
   resolveApprovedManualLibraryForAsset,
   stripHtml,
 } = require('../src/services/manualIngestionService');
+
+test('extractManualErrorCodeDefinitions parses multiline table-style error definitions with reset instruction', () => {
+  const text = `ERROR 11
+CARD DISPENSER ERROR
+CARD EMPTY IN THE DISPENSER or CARD JAM or DISPENSING SENSOR PROBLEM.
+(AFTER TAKING ACTION, PRESS RESET BUTTON)`;
+  const rows = extractManualErrorCodeDefinitions(text);
+  assert.equal(rows.length >= 1, true);
+  const e11 = rows.find((row) => row.code === 'E11');
+  assert.ok(e11);
+  assert.equal(e11.title, 'CARD DISPENSER ERROR');
+  assert.match(e11.meaning, /CARD EMPTY/i);
+  assert.match(e11.meaning, /CARD JAM/i);
+  assert.match(e11.meaning, /DISPENSING SENSOR/i);
+  assert.match(e11.resetInstruction, /PRESS RESET BUTTON/i);
+});
+
+test('extractManualErrorCodeDefinitions parses compact E-code entries', () => {
+  const rows = extractManualErrorCodeDefinitions('E10: Out of Balloons\nE11: Balloon Load Error');
+  assert.equal(rows.some((row) => row.code === 'E10' && /Out of Balloons/i.test(row.meaning)), true);
+  assert.equal(rows.some((row) => row.code === 'E11' && /Balloon Load Error/i.test(row.meaning)), true);
+});
+
+test('extractManualErrorCodeDefinitions avoids false positives from plain page numbers', () => {
+  const rows = extractManualErrorCodeDefinitions('Page 11\nSection 11.2\nMaintenance schedule every 11 days');
+  assert.equal(rows.length, 0);
+});
+
+test('buildManualErrorCodeIndexFromChunks deduplicates by code and meaning/title', () => {
+  const rows = buildManualErrorCodeIndexFromChunks([
+    { text: 'Error 10: Out of Balloons' },
+    { text: 'E10 - Out of Balloons' },
+    { text: 'Error 11: Card Dispenser Error - Card Jam' }
+  ]);
+  assert.equal(rows.filter((row) => row.code === 'E10').length, 1);
+  assert.equal(rows.some((row) => row.code === 'E11'), true);
+});
 
 test('buildManualStoragePath uses company/asset/manual scoped structure', () => {
   assert.equal(
@@ -292,7 +331,7 @@ test('materializeApprovedManualForAsset reuses stable asset manual identity and 
 });
 
 test('materializeStoredAssetManual creates deterministic manual doc and chunks from tenant storage path', async () => {
-  const writes = { manuals: {}, chunks: [] };
+  const writes = { manuals: {}, chunks: [], codeDefinitions: [] };
   const storagePath = 'companies/company-a/asset-manual-bootstrap/asset1/manual.txt';
   const db = {
     collection(name) {
@@ -304,13 +343,16 @@ test('materializeStoredAssetManual creates deterministic manual doc and chunks f
               if (name === 'manuals') writes.manuals[id] = options.merge ? { ...(writes.manuals[id] || {}), ...payload } : payload;
             },
             collection(subName) {
-              if (subName !== 'chunks') throw new Error('unexpected');
+              if (!['chunks', 'codeDefinitions'].includes(subName)) throw new Error('unexpected');
               return {
                 manualId: id,
-                doc(chunkId) {
+                doc(rowId) {
                   return {
-                    id: chunkId,
-                    set: async (payload) => writes.chunks.push({ id: chunkId, payload })
+                    id: rowId,
+                    set: async (payload) => {
+                      if (subName === 'chunks') writes.chunks.push({ id: rowId, payload });
+                      if (subName === 'codeDefinitions') writes.codeDefinitions.push({ id: rowId, payload });
+                    }
                   };
                 }
               };
@@ -366,6 +408,9 @@ test('materializeStoredAssetManual creates deterministic manual doc and chunks f
   assert.equal(['text', 'pdf-parse', 'legacy_pdf_operator_parser'].includes(writes.manuals[result.manualId].extractionEngine), true);
   assert.ok(Number(writes.manuals[result.manualId].extractedTextLength || 0) > 0);
   assert.ok(writes.chunks.length > 0);
+  assert.ok(Array.isArray(writes.manuals[result.manualId].extractedCodeDefinitions));
+  assert.ok(Number(writes.manuals[result.manualId].extractedCodeCount || 0) >= 1);
+  assert.equal(writes.codeDefinitions.some((row) => row.id === 'E10'), true);
   const chunkTexts = writes.chunks.map((entry) => entry.payload?.text || entry.text || '').join('\n');
   assert.match(chunkTexts, /E10:\s*Out of balloons/i);
 });

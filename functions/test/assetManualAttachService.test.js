@@ -7,7 +7,7 @@ const {
 } = require('../src/services/assetManualAttachService');
 
 function createMockDb(asset = {}) {
-  const state = { assets: { [asset.id]: { ...asset } }, manuals: {}, manualChunks: {} };
+  const state = { assets: { [asset.id]: { ...asset } }, manuals: {}, manualChunks: {}, manualCodeDefinitions: {} };
   return {
     state,
     batch() {
@@ -19,6 +19,10 @@ function createMockDb(asset = {}) {
             if (ref?.collectionName === 'chunks') {
               if (!state.manualChunks[ref.manualId]) state.manualChunks[ref.manualId] = {};
               state.manualChunks[ref.manualId][ref.docId] = payload;
+            }
+            if (ref?.collectionName === 'codeDefinitions') {
+              if (!state.manualCodeDefinitions[ref.manualId]) state.manualCodeDefinitions[ref.manualId] = {};
+              state.manualCodeDefinitions[ref.manualId][ref.docId] = payload;
             }
           });
         }
@@ -43,12 +47,26 @@ function createMockDb(asset = {}) {
               }
             },
             collection(subName) {
-              if (name !== 'manuals' || subName !== 'chunks') throw new Error('Unexpected subcollection');
+              if (name !== 'manuals' || !['chunks', 'codeDefinitions'].includes(subName)) throw new Error('Unexpected subcollection');
               return {
                 manualId: id,
-                collectionName: 'chunks',
+                collectionName: subName,
                 doc(docId) {
-                  return { manualId: id, collectionName: 'chunks', docId };
+                  return {
+                    manualId: id,
+                    collectionName: subName,
+                    docId,
+                    async set(payload) {
+                      if (subName === 'chunks') {
+                        if (!state.manualChunks[id]) state.manualChunks[id] = {};
+                        state.manualChunks[id][docId] = payload;
+                      }
+                      if (subName === 'codeDefinitions') {
+                        if (!state.manualCodeDefinitions[id]) state.manualCodeDefinitions[id] = {};
+                        state.manualCodeDefinitions[id][docId] = payload;
+                      }
+                    }
+                  };
                 }
               };
             },
