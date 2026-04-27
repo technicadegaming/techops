@@ -396,7 +396,8 @@ test('task AI context prioritizes approved manual code definitions before manual
   }, 'task1');
 
   assert.equal(context.documentationContext.items[0].sourceType, 'approved_manual_code_definition');
-  assert.match(context.documentationContext.items[0].excerpts[0], /ERROR 11: CARD DISPENSER ERROR/i);
+  assert.match(context.documentationContext.items[0].excerpts[0], /ERROR 11.*CARD DISPENSER ERROR/i);
+  assert.deepEqual(context.documentationContext.items[0].matchedCodes, ['E11']);
   assert.equal(context.documentationContext.mode, 'approved_manual_internal');
 });
 
@@ -445,7 +446,44 @@ test('task AI context falls back to manuals/{manualId}/codeDefinitions/{code} wh
   }, 'task1');
   const definition = context.documentationContext.items.find((item) => item.sourceType === 'approved_manual_code_definition');
   assert.ok(definition);
-  assert.match(definition.excerpts[0], /ERROR 11: CARD DISPENSER ERROR/i);
+  assert.match(definition.excerpts[0], /ERROR 11.*CARD DISPENSER ERROR/i);
+  assert.deepEqual(definition.matchedCodes, ['E11']);
+});
+
+test('task AI context keeps approved manual code definition before manual text excerpts for matched task codes', async () => {
+  global.fetch = async () => ({ ok: true, status: 200, headers: { get: () => 'text/html' }, text: async () => 'Support fallback' });
+  const context = await gatherContext({
+    collection(name) {
+      if (name === 'tasks') {
+        return {
+          doc(id) {
+            return { id, async get() { return { exists: true, id, data: () => ({ companyId: 'company-a', assetId: 'asset1', description: 'ERROR 11 shown' }) }; } };
+          },
+          where(field, op, value) { return buildDb().collection(name).where(field, op, value); }
+        };
+      }
+      if (name === 'assets') return buildDb().collection(name);
+      if (name === 'manuals') {
+        return {
+          where() { return { where() { return this; }, limit() { return this; }, async get() { return { docs: [{ id: 'm1', data: () => ({ companyId: 'company-a', assetId: 'asset1', extractionStatus: 'completed', sourceTitle: 'Manual', extractedCodeDefinitions: [{ code: 'E11', rawCode: 'ERROR 11', title: 'CARD DISPENSER ERROR', meaning: 'CARD EMPTY IN THE DISPENSER.' }] }) }] }; } }; },
+          doc() {
+            return {
+              collection(sub) {
+                if (sub === 'chunks') return { orderBy() { return this; }, limit() { return this; }, async get() { return { docs: [{ id: '0', data: () => ({ chunkIndex: 0, text: 'ERROR 11 CARD DISPENSER ERROR CARD EMPTY IN THE DISPENSER.' }) }] }; } };
+                return { doc() { return { async get() { return { exists: false, data: () => ({}) }; } }; } };
+              }
+            };
+          }
+        };
+      }
+      return buildDb().collection(name);
+    }
+  }, 'task1');
+  const sourceTypes = context.documentationContext.items.map((item) => item.sourceType);
+  const definitionIndex = sourceTypes.indexOf('approved_manual_code_definition');
+  const chunkIndex = sourceTypes.indexOf('approved_manual_code_chunk');
+  assert.equal(definitionIndex >= 0, true);
+  assert.equal(chunkIndex > definitionIndex, true);
 });
 
 test('task AI chunk excerpt keeps code row visible even when it appears late in a long chunk', async () => {
