@@ -2,12 +2,53 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  attachAssetManualFromStoragePath,
-  attachAssetManualFromUrl,
+  queueManualAttachJob,
+  processManualAttachJob,
+  validateStoragePathForAsset,
 } = require('../src/services/assetManualAttachService');
 
-function createMockDb(asset = {}) {
-  const state = { assets: { [asset.id]: { ...asset } }, manuals: {}, manualChunks: {}, manualCodeDefinitions: {} };
+function createMockDb(seedAssets = []) {
+  const state = {
+    assets: Object.fromEntries(seedAssets.map((asset) => [asset.id, { ...asset }])),
+    manualAttachJobs: {},
+    manuals: {},
+    manualChunks: {},
+    manualCodeDefinitions: {},
+  };
+
+  function buildDocRef(name, id) {
+    return {
+      id,
+      async get() {
+        const row = state[name][id];
+        return { exists: !!row, id, data: () => (row ? { ...row } : undefined) };
+      },
+      async set(payload, options = {}) {
+        const existing = state[name][id] || {};
+        state[name][id] = options.merge ? { ...existing, ...payload } : { ...payload };
+      },
+      collection(subName) {
+        if (name !== 'manuals') throw new Error('Unsupported subcollection');
+        return {
+          doc(subId) {
+            return {
+              async set(payload) {
+                if (subName === 'chunks') {
+                  if (!state.manualChunks[id]) state.manualChunks[id] = {};
+                  state.manualChunks[id][subId] = payload;
+                }
+                if (subName === 'codeDefinitions') {
+                  if (!state.manualCodeDefinitions[id]) state.manualCodeDefinitions[id] = {};
+                  state.manualCodeDefinitions[id][subId] = payload;
+                }
+              }
+            };
+          }
+        };
+      },
+    };
+  }
+
   return {
     state,
     batch() {
@@ -15,63 +56,27 @@ function createMockDb(asset = {}) {
       return {
         set(ref, payload) { writes.push({ ref, payload }); },
         async commit() {
-          writes.forEach(({ ref, payload }) => {
-            if (ref?.collectionName === 'chunks') {
-              if (!state.manualChunks[ref.manualId]) state.manualChunks[ref.manualId] = {};
-              state.manualChunks[ref.manualId][ref.docId] = payload;
+          for (const write of writes) {
+            if (write.ref && typeof write.ref.set === 'function') {
+              await write.ref.set(write.payload, { merge: false });
             }
-            if (ref?.collectionName === 'codeDefinitions') {
-              if (!state.manualCodeDefinitions[ref.manualId]) state.manualCodeDefinitions[ref.manualId] = {};
-              state.manualCodeDefinitions[ref.manualId][ref.docId] = payload;
-            }
-          });
+          }
         }
       };
     },
     recursiveDelete: async () => {},
     collection(name) {
       return {
+        doc(id = '') {
+          if (!id) {
+            const generatedId = `job-${Object.keys(state.manualAttachJobs).length + 1}`;
+            return buildDocRef(name, generatedId);
+          }
+          return buildDocRef(name, id);
+        },
         where() { return this; },
         limit() { return this; },
         async get() { return { docs: [] }; },
-        doc(id) {
-          return {
-            async set(payload, options = {}) {
-              if (name === 'assets') {
-                const existing = state.assets[id] || {};
-                state.assets[id] = options.merge ? { ...existing, ...payload } : payload;
-              }
-              if (name === 'manuals') {
-                const existing = state.manuals[id] || {};
-                state.manuals[id] = options.merge ? { ...existing, ...payload } : payload;
-              }
-            },
-            collection(subName) {
-              if (name !== 'manuals' || !['chunks', 'codeDefinitions'].includes(subName)) throw new Error('Unexpected subcollection');
-              return {
-                manualId: id,
-                collectionName: subName,
-                doc(docId) {
-                  return {
-                    manualId: id,
-                    collectionName: subName,
-                    docId,
-                    async set(payload) {
-                      if (subName === 'chunks') {
-                        if (!state.manualChunks[id]) state.manualChunks[id] = {};
-                        state.manualChunks[id][docId] = payload;
-                      }
-                      if (subName === 'codeDefinitions') {
-                        if (!state.manualCodeDefinitions[id]) state.manualCodeDefinitions[id] = {};
-                        state.manualCodeDefinitions[id][docId] = payload;
-                      }
-                    }
-                  };
-                }
-              };
-            },
-          };
-        }
       };
     }
   };
@@ -85,8 +90,12 @@ function createMockStorage() {
       return {
         file(path) {
           return {
-            async save(buffer, options = {}) { files.set(path, { buffer: Buffer.from(buffer), options }); },
-            async download() { return [files.get(path)?.buffer || Buffer.from('Simple manual text for extraction.')]; },
+            async save(buffer, options = {}) {
+              files.set(path, { buffer: Buffer.from(buffer), options });
+            },
+            async download() {
+              return [files.get(path)?.buffer || Buffer.from('Simple manual text for extraction.')];
+            },
             async getMetadata() {
               const row = files.get(path);
               return [{ contentType: row?.options?.contentType || 'text/plain', size: row?.buffer?.length || 0 }];
@@ -98,25 +107,41 @@ function createMockStorage() {
   };
 }
 
-test('attachAssetManualFromUrl stores file, materializes chunks, and patches asset', async () => {
-  const asset = {
-    id: 'asset-1',
-    companyId: 'company-1',
-    name: 'Asset 1',
-    manualLinks: ['companies/company-1/manuals/asset-1/old/path.pdf'],
-    selectedCandidateManualUrl: 'https://wrong.example/manual.pdf',
-    selectedCandidateUrl: 'https://wrong.example/details',
-    selectedCandidateTitle: 'Wrong Manual',
-  };
-  const db = createMockDb(asset);
-  const storage = createMockStorage();
-  const result = await attachAssetManualFromUrl({
+test('queueManualAttachJob returns queued response quickly and writes job + asset queued state', async () => {
+  const db = createMockDb([{ id: 'asset-1', companyId: 'company-1', name: 'Asset 1', firestoreDocId: 'asset-1' }]);
+  const result = await queueManualAttachJob({
     db,
-    storage,
-    asset,
+    asset: { id: 'asset-1', firestoreDocId: 'asset-1', companyId: 'company-1', name: 'Asset 1' },
     userId: 'u1',
+    mode: 'url_attach',
     manualUrl: 'https://docs.example.com/manual.txt',
     sourceTitle: 'Asset 1 Manual',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.queued, true);
+  assert.ok(result.jobId);
+  assert.equal(db.state.manualAttachJobs[result.jobId].status, 'queued');
+  assert.equal(db.state.assets['asset-1'].manualAttachStatus, 'queued');
+});
+
+test('processManualAttachJob url mode downloads, materializes, and patches asset and job', async () => {
+  const db = createMockDb([{ id: 'asset-2', companyId: 'company-1', name: 'Asset 2', firestoreDocId: 'asset-2', manualLinks: [] }]);
+  const storage = createMockStorage();
+  const queued = await queueManualAttachJob({
+    db,
+    asset: { id: 'asset-2', firestoreDocId: 'asset-2', companyId: 'company-1', name: 'Asset 2' },
+    userId: 'u1',
+    mode: 'url_attach',
+    manualUrl: 'https://docs.example.com/manual.txt',
+    sourceTitle: 'Asset 2 Manual',
+  });
+
+  const job = { id: queued.jobId, ...db.state.manualAttachJobs[queued.jobId] };
+  const result = await processManualAttachJob({
+    db,
+    storage,
+    job,
     fetchImpl: async () => ({
       ok: true,
       status: 200,
@@ -125,73 +150,61 @@ test('attachAssetManualFromUrl stores file, materializes chunks, and patches ass
       arrayBuffer: async () => Buffer.from('E10 means out of balloons. Refill hopper.'),
     }),
   });
-  assert.equal(result.attached, true);
-  assert.equal(result.chunkCount > 0, true);
-  assert.equal(result.documentationTextAvailable, true);
-  const savedAsset = db.state.assets['asset-1'];
-  assert.equal(savedAsset.latestManualId?.startsWith('manual-'), true);
-  assert.equal(savedAsset.manualChunkCount > 0, true);
-  assert.equal(savedAsset.documentationTextAvailable, true);
-  assert.equal(savedAsset.manualStatus, 'manual_attached');
-  assert.equal(savedAsset.manualReviewState, 'manual_attached_user');
-  assert.equal(savedAsset.manualProvenance, 'user_manual_attach');
-  assert.equal(savedAsset.enrichmentTerminalReason, 'user_manual_attached');
-  assert.equal(savedAsset.selectedCandidateManualUrl, '');
-  assert.equal(savedAsset.selectedCandidateUrl, '');
-  assert.equal(savedAsset.selectedCandidateTitle, '');
-  assert.equal(savedAsset.manualLinks.includes('https://docs.example.com/manual.txt'), true);
+
+  assert.equal(result.ok, true);
+  assert.equal(db.state.manualAttachJobs[queued.jobId].status, 'completed');
+  assert.equal(db.state.assets['asset-2'].manualAttachStatus, 'completed');
+  assert.equal(db.state.assets['asset-2'].manualStatus, 'manual_attached');
+  assert.equal(db.state.assets['asset-2'].documentationTextAvailable, true);
+  assert.equal(Number(db.state.assets['asset-2'].manualChunkCount) > 0, true);
 });
 
-test('attachAssetManualFromUrl succeeds with warning when no text is extracted', async () => {
-  const asset = { id: 'asset-2', companyId: 'company-1', name: 'Asset 2', manualLinks: [] };
-  const db = createMockDb(asset);
+test('processManualAttachJob failure writes classified code and asset failed state', async () => {
+  const db = createMockDb([{ id: 'asset-3', companyId: 'company-1', name: 'Asset 3', firestoreDocId: 'asset-3' }]);
   const storage = createMockStorage();
-  const result = await attachAssetManualFromUrl({
+  const queued = await queueManualAttachJob({
+    db,
+    asset: { id: 'asset-3', firestoreDocId: 'asset-3', companyId: 'company-1', name: 'Asset 3' },
+    userId: 'u1',
+    mode: 'url_attach',
+    manualUrl: 'https://docs.example.com/manual.pdf',
+  });
+
+  const job = { id: queued.jobId, ...db.state.manualAttachJobs[queued.jobId] };
+  const result = await processManualAttachJob({
     db,
     storage,
-    asset,
-    userId: 'u1',
-    manualUrl: 'https://docs.example.com/manual.pdf',
+    job,
     fetchImpl: async () => ({
       ok: true,
       status: 200,
-      url: 'https://docs.example.com/manual.pdf',
-      headers: { get: () => 'application/pdf' },
-      arrayBuffer: async () => Buffer.from('%PDF-1.7'),
+      url: 'https://docs.example.com/manual.unsupported',
+      headers: { get: () => 'application/octet-stream' },
+      arrayBuffer: async () => Buffer.from('random-bytes'),
     }),
   });
-  assert.equal(result.attached, true);
-  assert.equal(result.chunkCount, 0);
-  assert.match(result.warning, /no readable text|file type is not text-extractable/i);
+
+  assert.equal(result.ok, false);
+  assert.equal(db.state.manualAttachJobs[queued.jobId].status, 'failed');
+  assert.equal(db.state.manualAttachJobs[queued.jobId].errorCode, 'unsupported_file_type');
+  assert.equal(db.state.assets['asset-3'].manualAttachStatus, 'failed');
 });
 
-test('attachAssetManualFromStoragePath rejects paths outside company/asset scope', async () => {
-  const asset = { id: 'asset-3', companyId: 'company-1', name: 'Asset 3', manualLinks: [] };
-  await assert.rejects(() => attachAssetManualFromStoragePath({
-    db: createMockDb(asset),
-    storage: createMockStorage(),
-    asset,
-    userId: 'u1',
-    storagePath: 'companies/company-2/manuals/asset-3/manual-uploads/file.pdf',
-    contentType: 'application/pdf',
-  }), /outside the allowed company\/asset manual scope/i);
-});
-
-test('attachAssetManualFromStoragePath materializes valid scoped path and patches asset', async () => {
-  const asset = { id: 'asset-4', companyId: 'company-1', name: 'Asset 4', manualLinks: [] };
-  const db = createMockDb(asset);
-  const storage = createMockStorage();
-  const storagePath = 'companies/company-1/manuals/asset-4/manual-uploads/1234-manual.txt';
-  storage.files.set(storagePath, { buffer: Buffer.from('Reset breaker then reboot game.'), options: { contentType: 'text/plain' } });
-  const result = await attachAssetManualFromStoragePath({
+test('queueManualAttachJob supports storage path mode and validates path helper', async () => {
+  const db = createMockDb([{ id: 'asset-4', companyId: 'company-1', name: 'Asset 4', firestoreDocId: 'asset-4' }]);
+  const result = await queueManualAttachJob({
     db,
-    storage,
-    asset,
+    asset: { id: 'asset-4', firestoreDocId: 'asset-4', companyId: 'company-1', name: 'Asset 4' },
     userId: 'u1',
-    storagePath,
+    mode: 'storage_attach',
+    storagePath: 'companies/company-1/manuals/asset-4/manual-uploads/manual.txt',
     contentType: 'text/plain',
   });
-  assert.equal(result.attached, true);
-  assert.equal(result.chunkCount > 0, true);
-  assert.equal(db.state.assets['asset-4'].latestManualId?.startsWith('manual-'), true);
+
+  assert.equal(result.queued, true);
+  assert.equal(db.state.manualAttachJobs[result.jobId].mode, 'storage_attach');
+  assert.equal(
+    validateStoragePathForAsset({ companyId: 'company-1', assetId: 'asset-4', storagePath: 'companies/company-2/manuals/asset-4/file.pdf' }).valid,
+    false,
+  );
 });

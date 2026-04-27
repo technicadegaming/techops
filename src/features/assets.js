@@ -599,6 +599,8 @@ function renderEnrichmentDetails(asset, manager, state) {
   const hiddenDeadLinks = (Array.isArray(asset.documentationSuggestions) ? asset.documentationSuggestions : []).length - suggestionBuckets.allCandidates.length;
   const contacts = Array.isArray(asset.supportContactsSuggestion) ? asset.supportContactsSuggestion : [];
   const followupUiState = state?.assetUi?.followupByAsset?.[asset.id] || {};
+  const followupDraftAnswer = `${followupUiState.followupAnswer ?? (asset.enrichmentFollowupAnswer || '')}`.trim();
+  const canAttachFollowupUrl = /^https?:\/\//i.test(followupDraftAnswer);
   const followupStatus = `${asset.documentationFollowupStatus || ''}`.trim().toLowerCase();
   const showFollowup = status === 'followup_needed'
     && followupStatus !== 'answered'
@@ -686,7 +688,7 @@ function renderEnrichmentDetails(asset, manager, state) {
       ${manager && contacts.length ? `<div style="margin-top:6px;"><button data-apply-enrichment="contacts" data-asset-id="${asset.id}" type="button">Apply contacts and notes</button></div>` : ''}
     </div>
 
-    ${showFollowup ? `<div style="border:1px solid #fbbf24; background:#fffbeb; border-radius:8px; padding:8px; margin-bottom:10px;"><div class="tiny" style="font-weight:700; margin-bottom:4px;">Need one detail to improve the match</div><div class="tiny" style="margin-bottom:6px;">${asset.enrichmentFollowupQuestion}</div><form data-enrichment-followup-form="${asset.id}" class="grid" style="gap:4px;"><textarea name="followupAnswer" rows="2" placeholder="Add answer to improve match..." ${followupUiState.followupSubmitting ? 'disabled' : ''}>${followupUiState.followupAnswer ?? (asset.enrichmentFollowupAnswer || '')}</textarea><div style="display:flex; gap:6px; flex-wrap:wrap;"><button type="submit" ${followupUiState.followupSubmitting ? 'disabled' : ''}>Submit answer and retry</button><button data-followup-retry="${asset.id}" type="button" ${followupUiState.followupSubmitting ? 'disabled' : ''}>Retry without answer</button></div>${followupUiState.followupMessage ? `<div class="tiny">${followupUiState.followupMessage}</div>` : ''}${followupUiState.followupError ? `<div class="inline-state error">${followupUiState.followupError}</div>` : ''}</form></div>` : ''}
+    ${showFollowup ? `<div style="border:1px solid #fbbf24; background:#fffbeb; border-radius:8px; padding:8px; margin-bottom:10px;"><div class="tiny" style="font-weight:700; margin-bottom:4px;">Need one detail to improve the match</div><div class="tiny" style="margin-bottom:6px;">${asset.enrichmentFollowupQuestion}</div><form data-enrichment-followup-form="${asset.id}" class="grid" style="gap:4px;"><textarea name="followupAnswer" rows="2" placeholder="Add answer to improve match..." ${followupUiState.followupSubmitting ? 'disabled' : ''}>${followupDraftAnswer}</textarea><div style="display:flex; gap:6px; flex-wrap:wrap;"><button type="submit" ${followupUiState.followupSubmitting ? 'disabled' : ''}>Submit answer and retry</button><button data-followup-retry="${asset.id}" type="button" ${followupUiState.followupSubmitting ? 'disabled' : ''}>Retry without answer</button><button data-followup-attach-url="${asset.id}" type="button" ${(followupUiState.followupSubmitting || !canAttachFollowupUrl) ? 'disabled' : ''}>Attach this as manual URL</button></div>${followupUiState.followupMessage ? `<div class="tiny">${followupUiState.followupMessage}</div>` : ''}${followupUiState.followupError ? `<div class="inline-state error">${followupUiState.followupError}</div>` : ''}</form></div>` : ''}
     ${!showFollowup && followupStatus === 'answered' && status === 'no_match_yet' ? renderInlineFeedback('Lookup completed using your answer. No reviewable manual was found yet.', 'info') : ''}
 
     <div style="display:flex; gap:6px; flex-wrap:wrap;">
@@ -1237,6 +1239,11 @@ export function renderAssets(el, state, actions) {
     event.preventDefault();
     const fd = new FormData(followupForm);
     actions.submitEnrichmentFollowup(followupForm.dataset.enrichmentFollowupForm, `${fd.get('followupAnswer') || ''}`);
+  }));
+  el.querySelectorAll('[data-followup-attach-url]').forEach((button) => button.addEventListener('click', () => {
+    const form = button.closest('form');
+    const textarea = form ? form.querySelector('textarea[name="followupAnswer"]') : null;
+    actions.attachFollowupManualUrl(button.dataset.followupAttachUrl, `${textarea?.value || ''}`);
   }));
   el.querySelectorAll('[data-followup-retry]').forEach((button) => button.addEventListener('click', () => actions.retryEnrichmentWithoutFollowupAnswer(button.dataset.followupRetry)));
   el.querySelectorAll('[data-apply-docs]').forEach((button) => button.addEventListener('click', () => actions.applyDocSuggestions(button.dataset.applyDocs)));

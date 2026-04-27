@@ -49,8 +49,8 @@ const {
   bootstrapAttachManualFromCsvHint,
 } = require('./services/csvBootstrapManualAttachService');
 const {
-  attachAssetManualFromUrl,
-  attachAssetManualFromStoragePath,
+  queueManualAttachJob,
+  processManualAttachJob,
 } = require('./services/assetManualAttachService');
 const { OPENAI_API_KEY } = require('./services/openaiService');
 
@@ -1152,11 +1152,11 @@ exports.attachAssetManualFromUrl = onCall({}, async (request) => {
     if (requestedCompanyId && `${normalizedAsset.companyId || ''}`.trim() && requestedCompanyId !== `${normalizedAsset.companyId || ''}`.trim()) {
       throw new HttpsError('permission-denied', 'Asset/company mismatch for manual attachment.');
     }
-    return attachAssetManualFromUrl({
+    return queueManualAttachJob({
       db,
-      storage: admin.storage(),
       asset: normalizedAsset,
       userId: request.auth.uid,
+      mode: 'url_attach',
       manualUrl,
       sourceTitle: attachContext.sourceTitle,
       sourcePageUrl: `${request.data?.sourcePageUrl || ''}`.trim(),
@@ -1249,11 +1249,11 @@ exports.attachAssetManualFromStoragePath = onCall({}, async (request) => {
     if (requestedCompanyId && `${normalizedAsset.companyId || ''}`.trim() && requestedCompanyId !== `${normalizedAsset.companyId || ''}`.trim()) {
       throw new HttpsError('permission-denied', 'Asset/company mismatch for manual attachment.');
     }
-    return attachAssetManualFromStoragePath({
+    return queueManualAttachJob({
       db,
-      storage: admin.storage(),
       asset: normalizedAsset,
       userId: request.auth.uid,
+      mode: 'storage_attach',
       storagePath,
       sourceTitle: attachContext.sourceTitle,
       originalFileName: `${request.data?.originalFileName || ''}`.trim(),
@@ -1274,6 +1274,21 @@ exports.attachAssetManualFromStoragePath = onCall({}, async (request) => {
     });
     throw new HttpsError('internal', 'Manual attachment failed unexpectedly. Check function logs for details.');
   }
+});
+
+exports.processManualAttachJob = onDocumentCreated({
+  document: 'manualAttachJobs/{jobId}',
+  timeoutSeconds: 540,
+}, async (event) => {
+  const snapshot = event.data;
+  if (!snapshot?.exists) return;
+  const job = { id: snapshot.id, ...(snapshot.data() || {}) };
+  if (`${job.status || ''}`.trim() !== 'queued') return;
+  await processManualAttachJob({
+    db,
+    storage: admin.storage(),
+    job,
+  });
 });
 
 exports.fetchWebContextForTask = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
