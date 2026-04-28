@@ -125,6 +125,9 @@ export function createAssetsController({
           navigationController.showAssetsForLocation(locationKey);
           render();
         },
+        onCreateTaskForAsset: ({ locationKey } = {}) => {
+          navigationController.showOperationsForLocation(locationKey || state.route?.locationKey || state.route?.location || 'all');
+        },
         render,
         refreshData,
         runAction,

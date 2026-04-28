@@ -1,4 +1,4 @@
-import { canDelete, canEditAssets, isAdmin, isManager } from '../roles.js';
+import { canCreateTasks, canDelete, canEditAssets, canEditTasks, isAdmin, isManager } from '../roles.js';
 import { detectRepeatIssues } from './workflow.js';
 import {
   buildLocationOptions,
@@ -707,6 +707,9 @@ export function renderAssets(el, state, actions) {
   const previewContextMatches = !state.assetDraft?.preview || doesPreviewContextMatch(draftContext, state.assetDraft?.previewContext || {});
   const saveBlocked = !draftContext.ok || !previewContextMatches;
   const manager = isManager(state.permissions);
+  const canStartTaskFromAsset = (typeof canCreateTasks === 'function' && canCreateTasks(state.permissions))
+    || (typeof canEditTasks === 'function' && canEditTasks(state.permissions))
+    || (!!state.user && (typeof canCreateTasks !== 'function' || typeof canEditTasks !== 'function'));
   const repeatPatterns = detectRepeatIssues(state.tasks || []);
   const locationOptions = buildLocationOptions(state);
   const scope = buildLocationSummary(state);
@@ -992,6 +995,7 @@ export function renderAssets(el, state, actions) {
             ${asset.manualReviewState ? `<div class="tiny">Manual review state: ${asset.manualReviewState.replace(/_/g, ' ')}</div>` : ''}
             ${renderAssetScanChips(asset, { docsStatus, openTasks, overduePm: openPm })}
             <div class="action-row">
+              ${canStartTaskFromAsset ? `<button type="button" data-create-task-for-asset="${asset.id}" data-location-key="${encodeURIComponent(scope.selection?.key || '')}" data-location-label="${encodeURIComponent(getLocationScopeLabel(scope.selection) || '')}">Create task for this asset</button>` : ''}
               ${openTasks[0] ? `<a href="?tab=operations&taskId=${encodeURIComponent(openTasks[0].id)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open active task</a>` : ''}
               ${completedTasks[0] ? `<a href="?tab=operations&taskId=${encodeURIComponent(completedTasks[0].id)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open latest completed task</a>` : ''}
               ${openPm[0] ? `<a href="?tab=calendar&pmFilter=overdue&location=${encodeURIComponent(scope.selection?.key || '')}">Open PM queue</a>` : ''}
@@ -1230,6 +1234,10 @@ export function renderAssets(el, state, actions) {
     renderAssets(el, state, actions);
   });
   el.querySelector('[data-bulk-visible-enrich]')?.addEventListener('click', () => actions.runBulkAssetEnrichment(scopedAssets.map((asset) => asset.id), { confirmStart: true }));
+  el.querySelectorAll('[data-create-task-for-asset]').forEach((button) => button.addEventListener('click', () => actions.createTaskForAsset(button.dataset.createTaskForAsset, {
+    locationKey: decodeURIComponent(button.dataset.locationKey || ''),
+    locationScopeLabel: decodeURIComponent(button.dataset.locationLabel || ''),
+  })));
   el.querySelectorAll('[data-docs]').forEach((button) => button.addEventListener('click', () => actions.markDocsReviewed(button.dataset.docs)));
   el.querySelectorAll('[data-del]').forEach((button) => button.addEventListener('click', () => actions.deleteAsset(button.dataset.del)));
   el.querySelectorAll('[data-enrich]').forEach((button) => button.addEventListener('click', () => actions.runAssetEnrichment(button.dataset.enrich)));

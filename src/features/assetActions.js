@@ -18,6 +18,7 @@ export function createAssetActions(deps) {
   const {
     state,
     onLocationFilter,
+    onCreateTaskForAsset,
     render,
     refreshData,
     withRequiredCompanyId,
@@ -372,6 +373,23 @@ export function createAssetActions(deps) {
   };
 
   const actions = {
+    createTaskForAsset: (assetId, options = {}) => {
+      const target = findAssetByRecordId(state.assets, assetId) || {};
+      const scopedLocationLabel = `${options.locationScopeLabel || ''}`.trim();
+      const location = `${target.locationName || target.location || scopedLocationLabel}`.trim();
+      const assetSearch = `${target.name || target.id || assetId || ''}`.trim();
+      state.operationsUi = {
+        ...(state.operationsUi || {}),
+        draft: {
+          ...((state.operationsUi && state.operationsUi.draft) || {}),
+          assetSearch,
+          location,
+          status: 'open'
+        }
+      };
+      if (typeof onCreateTaskForAsset === 'function') onCreateTaskForAsset(options);
+      render();
+    },
     saveAsset: async (id, payload) => {
       const name = `${payload.name || ''}`.trim();
       const manufacturer = `${payload.manufacturer || ''}`.trim();
