@@ -374,7 +374,9 @@ export function createAdminActions(deps) {
         render();
         return;
       }
-      await runAction('update_company_profile', async () => {
+      state.adminUi = { ...(state.adminUi || {}), companySettingsBusy: true };
+      render();
+      await safeWithGlobalBusy('Saving company settings…', 'Uploading logo and updating workspace branding.', async () => runAction('update_company_profile', async () => {
         let logoStoragePath = `${state.company?.logoStoragePath || ''}`.trim();
         let logoUrl = `${payload.logoUrl || ''}`.trim();
         const file = payload.logoFile;
@@ -390,7 +392,7 @@ export function createAdminActions(deps) {
           await uploadBytes(logoRef, file, { contentType: file.type || 'application/octet-stream' });
           logoUrl = await getDownloadURL(logoRef).catch(() => logoUrl);
         }
-        await upsertEntity('companies', state.company.id, withRequiredCompanyId({
+        const updatedCompany = withRequiredCompanyId({
           ...state.company,
           name: `${payload.name || state.company?.name || ''}`.trim(),
           primaryEmail: `${payload.primaryEmail || state.company?.primaryEmail || ''}`.trim(),
@@ -404,11 +406,30 @@ export function createAdminActions(deps) {
           hqCity: `${payload.hqCity || ''}`.trim(),
           hqState: `${payload.hqState || ''}`.trim(),
           hqZip: `${payload.hqZip || ''}`.trim()
-        }, 'update company profile'), state.user);
+        }, 'update company profile');
+        await upsertEntity('companies', state.company.id, updatedCompany, state.user);
+        state.company = { ...(state.company || {}), ...updatedCompany };
         setAdminFeedback({ tone: 'success', message: 'Company profile settings saved.' });
         await refreshData();
         render();
-      }, { fallbackMessage: 'Unable to update company profile.' });
+      }, {
+        fallbackMessage: 'Unable to update company profile.',
+        onFinally: () => {
+          state.adminUi = { ...(state.adminUi || {}), companySettingsBusy: false };
+          render();
+        }
+      }));
+    },
+    copyInviteCode: async (inviteCode) => {
+      const code = `${inviteCode || ''}`.trim();
+      if (!code) return;
+      try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) await navigator.clipboard.writeText(code);
+        setAdminFeedback({ tone: 'success', message: `Invite code ${code} copied to clipboard.` });
+      } catch {
+        setAdminFeedback({ tone: 'error', message: `Unable to copy invite code automatically. Copy manually: ${code}` });
+      }
+      render();
     },
     updateLocation: async (id, payload) => {
       const existing = (state.companyLocations || []).find((location) => location.id === id);

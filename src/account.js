@@ -49,8 +49,9 @@ export function renderAccount(el, state, actions) {
           <button type="button" class="btn btn-secondary" data-account-refresh-verify ${refreshBusy ? 'disabled' : ''}>${refreshBusy ? 'Refreshing status…' : 'Refresh verification status'}</button>
           <button type="button" class="btn btn-secondary" data-account-reset-password>Password reset email</button>
         </div>
+        ${profile.emailVerified ? '<p class="tiny mt">Email is already verified.</p>' : ''}
         <p class="tiny mt">MFA enrollment is currently managed in your Google/Firebase auth provider account settings.</p>
-        ${isAdminUser ? '<div class="inline-state warn mt">Admin recommendation: require verified email + MFA before granting admin/owner level access.</div>' : ''}
+        ${isAdminUser ? '<div class="inline-state warn mt">Elevated access account: owner/admin users should use verified email + MFA before keeping admin or owner permissions.</div>' : ''}
       </section>
 
       <section class="item">
@@ -83,6 +84,7 @@ export function renderAccount(el, state, actions) {
               <option value="soft_blue" ${appearance.preset === 'soft_blue' ? 'selected' : ''}>Soft blue</option>
               <option value="warm_neutral" ${appearance.preset === 'warm_neutral' ? 'selected' : ''}>Warm neutral</option>
               <option value="green_operations" ${appearance.preset === 'green_operations' ? 'selected' : ''}>Green operations</option>
+              <option value="wow_red_gray" ${appearance.preset === 'wow_red_gray' ? 'selected' : ''}>WOW red / gray</option>
               <option value="company_brand" ${appearance.preset === 'company_brand' ? 'selected' : ''}>Company brand</option>
             </select>
           </label>
