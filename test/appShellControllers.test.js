@@ -17,6 +17,10 @@ async function loadAuthControllerHelpers() {
   return import('../src/app/authController.helpers.js');
 }
 
+async function loadViewVisibilityHelpers() {
+  return import('../src/app/viewVisibility.js');
+}
+
 async function loadBootstrapErrors() {
   return import('../src/app/bootstrapErrors.js');
 }
@@ -868,6 +872,58 @@ test('auth controller password helpers report unmet requirements and confirm-sta
     buildRegisterPasswordHelpText('lowercase', 'different'),
     'ok at least 8 characters | missing one uppercase letter | ok one lowercase letter | missing one number | passwords do not match'
   );
+});
+
+test('auth invite code UI wires explicit join button and Enter-key handling', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const indexSource = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const authControllerSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'app', 'authController.js'), 'utf8');
+
+  assert.match(indexSource, /id="authInviteForm"/);
+  assert.match(indexSource, /id="applyInviteCodeBtn"/);
+  assert.match(indexSource, /Join with invite/);
+  assert.match(authControllerSource, /authInviteForm\?\.addEventListener\('submit', handleInviteCodeSubmit\)/);
+  assert.match(authControllerSource, /authInviteCodeInput\?\.addEventListener\('keydown'/);
+  assert.match(authControllerSource, /if \(event\.key !== 'Enter'\) return;/);
+  assert.match(authControllerSource, /await applyInviteCode\(inviteCode\)/);
+});
+
+test('root visibility helper keeps auth and app shell mutually exclusive', async () => {
+  const { setRootViewVisibility } = await loadViewVisibilityHelpers();
+  const authView = {
+    classList: {
+      calls: [],
+      toggle(name, active) { this.calls.push({ name, active }); }
+    }
+  };
+  const appView = {
+    classList: {
+      calls: [],
+      toggle(name, active) { this.calls.push({ name, active }); }
+    }
+  };
+
+  setRootViewVisibility({ authView, appView, showAuth: true });
+  assert.deepEqual(authView.classList.calls[0], { name: 'hide', active: false });
+  assert.deepEqual(appView.classList.calls[0], { name: 'hide', active: true });
+
+  setRootViewVisibility({ authView, appView, showAuth: false });
+  assert.deepEqual(authView.classList.calls[1], { name: 'hide', active: true });
+  assert.deepEqual(appView.classList.calls[1], { name: 'hide', active: false });
+});
+
+test('signed-in invite acceptance path refreshes membership state and routes into app shell', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const appSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'app.js'), 'utf8');
+
+  assert.match(appSource, /applyInviteCode: async \(inviteCode\) => \{/);
+  assert.match(appSource, /await acceptCompanyInvite\(\{ inviteCode, user: state\.user \}\)/);
+  assert.match(appSource, /await bootstrapCompanyContext\(\)/);
+  assert.match(appSource, /await refreshData\(\)/);
+  assert.match(appSource, /await render\(\)/);
+  assert.match(appSource, /setRootViewVisibility\(\{ authView, appView, showAuth: false \}\)/);
 });
 
 test('asset and admin enrichment surfaces share the same manual trigger request and approval helper', async () => {

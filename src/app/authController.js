@@ -11,6 +11,7 @@ export function createAuthController({
   register,
   loginWithGoogle,
   sendForgotPasswordEmail,
+  applyInviteCode,
   documentRef = document
 }) {
   const loginForm = documentRef.getElementById('loginForm');
@@ -18,6 +19,7 @@ export function createAuthController({
   const googleLoginBtn = documentRef.getElementById('googleLoginBtn');
   const googleRegisterBtn = documentRef.getElementById('googleRegisterBtn');
   const forgotPasswordBtn = documentRef.getElementById('forgotPasswordBtn');
+  const authInviteForm = documentRef.getElementById('authInviteForm');
   const authInviteCodeInput = documentRef.getElementById('authInviteCode');
   const registerPasswordInput = registerForm?.querySelector('[name="password"]');
   const registerConfirmInput = registerForm?.querySelector('[name="confirmPassword"]');
@@ -93,12 +95,45 @@ export function createAuthController({
     }
   }
 
+  async function handleInviteCodeSubmit(event) {
+    event?.preventDefault?.();
+    syncPendingInviteCode(state, documentRef);
+    const inviteCode = `${authInviteCodeInput?.value || ''}`.trim();
+    if (!inviteCode) {
+      setAuthMessage('Enter an invite code first.');
+      return;
+    }
+
+    if (!state.user?.uid) {
+      setAuthMessage('Invite code saved. Sign in or create an account, then we’ll finish joining your workspace.');
+      return;
+    }
+
+    if (typeof applyInviteCode !== 'function') {
+      setAuthMessage('Invite join is not available right now. Refresh and try again.');
+      return;
+    }
+
+    try {
+      await applyInviteCode(inviteCode);
+      setAuthMessage('Invite accepted. Loading your workspace…');
+    } catch (error) {
+      setAuthMessage(formatActionError(error, 'Unable to accept invite.'));
+    }
+  }
+
   function bindAuthUi() {
     loginForm?.addEventListener('submit', handleLoginSubmit);
     registerForm?.addEventListener('submit', handleRegisterSubmit);
     googleLoginBtn?.addEventListener('click', handleGoogleAuth);
     googleRegisterBtn?.addEventListener('click', handleGoogleAuth);
     forgotPasswordBtn?.addEventListener('click', handleForgotPassword);
+    authInviteForm?.addEventListener('submit', handleInviteCodeSubmit);
+    authInviteCodeInput?.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      handleInviteCodeSubmit(event);
+    });
     authInviteCodeInput?.addEventListener('input', () => syncPendingInviteCode(state, documentRef));
     registerPasswordInput?.addEventListener('input', syncRegisterPasswordHelp);
     registerConfirmInput?.addEventListener('input', syncRegisterPasswordHelp);

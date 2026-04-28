@@ -52,7 +52,7 @@ import {
   saveTaskFixToTroubleshootingLibrary
 } from './aiAdapter.js';
 import { buildNotificationCandidates, formatRelativeTime } from './features/notifications.js';
-import { createCompanyInvite, revokeInvite } from './company.js';
+import { acceptInvite as acceptCompanyInvite, createCompanyInvite, revokeInvite } from './company.js';
 import { logAudit } from './audit.js';
 import { storage } from './firebase.js';
 import { buildCompanyBrandingLogoPath, buildCompanyEvidencePath } from './storagePaths.js';
@@ -86,6 +86,7 @@ import { buildBootstrapErrorMessage } from './app/bootstrapErrors.js';
 import { canFallbackToOnboarding, buildOnboardingFallbackState } from './app/authHandoff.js';
 import { createGlobalBusyHelpers, renderGlobalBusyOverlay } from './app/globalBusy.js';
 import { applyAppearancePreference, loadAppearancePreference } from './app/theme.js';
+import { setRootViewVisibility } from './app/viewVisibility.js';
 
 const {
   authView,
@@ -219,7 +220,15 @@ const authController = createAuthController({
   login,
   register,
   loginWithGoogle,
-  sendForgotPasswordEmail
+  sendForgotPasswordEmail,
+  applyInviteCode: async (inviteCode) => {
+    await acceptCompanyInvite({ inviteCode, user: state.user });
+    state.onboardingUi = { ...(state.onboardingUi || {}), inviteCodePrefill: '' };
+    await bootstrapCompanyContext();
+    await refreshData();
+    await render();
+    setRootViewVisibility({ authView, appView, showAuth: false });
+  }
 });
 
 function normalizeAssetId(name = '') {
@@ -396,14 +405,12 @@ watchAuth(async (user) => {
     state.activeMembership = null;
     notificationController.resetNotifications();
     setOnboardingFeedback(state, '', 'info', { pendingAction: '', handoffStatus: 'idle' });
-    authView.classList.remove('hide');
-    appView.classList.add('hide');
+    setRootViewVisibility({ authView, appView, showAuth: true });
     return;
   }
   try {
     authController.setAuthMessage('Finishing workspace setup…');
-    authView.classList.remove('hide');
-    appView.classList.add('hide');
+    setRootViewVisibility({ authView, appView, showAuth: true });
     setActiveCompanyContext(null);
     setOnboardingFeedback(state, '', 'info', { pendingAction: '', handoffStatus: 'working' });
     state.user = { uid: user.uid, email: user.email, displayName: user.displayName };
@@ -415,9 +422,18 @@ watchAuth(async (user) => {
       authController.setAuthMessage('This account is disabled.');
       return;
     }
-    authController.setAuthMessage('');
-    authView.classList.add('hide');
-    appView.classList.remove('hide');
+    const pendingInviteCode = `${state.onboardingUi?.inviteCodePrefill || ''}`.trim();
+    if (pendingInviteCode) {
+      try {
+        await acceptCompanyInvite({ inviteCode: pendingInviteCode, user: state.user });
+        state.onboardingUi = { ...(state.onboardingUi || {}), inviteCodePrefill: '' };
+      } catch (error) {
+        console.warn('[watchAuth] Pending invite acceptance failed during sign-in handoff.', error);
+        authController.setAuthMessage(formatActionError(error, 'Signed in, but invite acceptance failed. You can retry from onboarding.'));
+      }
+    }
+    if (!authMessage.textContent) authController.setAuthMessage('');
+    setRootViewVisibility({ authView, appView, showAuth: false });
     await bootstrapCompanyContext();
     await refreshData();
     await render();
@@ -429,8 +445,7 @@ watchAuth(async (user) => {
       state.permissions = buildPermissionContext({ profile: state.profile, membership: null });
       authController.setAuthMessage('');
       setOnboardingFeedback(state, 'Signed in. Continue with workspace setup.', 'info', { pendingAction: '', handoffStatus: 'degraded' });
-      authView.classList.add('hide');
-      appView.classList.remove('hide');
+      setRootViewVisibility({ authView, appView, showAuth: false });
       await render();
       return;
     }
@@ -438,8 +453,7 @@ watchAuth(async (user) => {
     console.error('[watchAuth]', error);
     authController.setAuthMessage(buildBootstrapErrorMessage(error));
     setOnboardingFeedback(state, authMessage.textContent, 'error', { pendingAction: '', handoffStatus: 'error' });
-    authView.classList.remove('hide');
-    appView.classList.add('hide');
+    setRootViewVisibility({ authView, appView, showAuth: true });
     setActiveCompanyContext(null);
   }
 });
