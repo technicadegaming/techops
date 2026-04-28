@@ -415,6 +415,26 @@ test('storage: asset-manual-bootstrap path allows same-company access and blocks
   await assertFails(getBytes(ref(staffAStorage, crossCompanyPath)));
 });
 
+test('storage: company branding logo path allows profile-edit roles and blocks cross-company writes', async () => {
+  await seedMembership({ uid: 'owner-a', companyId: 'company-a', role: 'owner' });
+  await seedMembership({ uid: 'manager-a', companyId: 'company-a', role: 'manager' });
+  await seedMembership({ uid: 'staff-a', companyId: 'company-a', role: 'staff' });
+  await seedMembership({ uid: 'manager-b', companyId: 'company-b', role: 'manager' });
+  const testEnv = await rulesTestEnvPromise;
+
+  const ownerStorage = testEnv.authenticatedContext('owner-a').storage();
+  const managerStorage = testEnv.authenticatedContext('manager-a').storage();
+  const staffStorage = testEnv.authenticatedContext('staff-a').storage();
+  const crossCompanyStorage = testEnv.authenticatedContext('manager-b').storage();
+  const logoPath = 'companies/company-a/branding/logo/company-logo.png';
+
+  await assertSucceeds(uploadString(ref(ownerStorage, logoPath), 'logo-owner'));
+  await assertSucceeds(uploadString(ref(managerStorage, logoPath), 'logo-manager'));
+  await assertSucceeds(getBytes(ref(staffStorage, logoPath)));
+  await assertFails(uploadString(ref(staffStorage, logoPath), 'logo-staff-blocked'));
+  await assertFails(uploadString(ref(crossCompanyStorage, logoPath), 'logo-cross-company-blocked'));
+});
+
 test('storage: shared manual-library path allows enabled signed-in reads but blocks writes', async () => {
   await seedMembership({ uid: 'staff-a', companyId: 'company-a', role: 'staff' });
   const testEnv = await rulesTestEnvPromise;

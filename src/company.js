@@ -1,5 +1,7 @@
 import { collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from 'https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore.js';
+import { httpsCallable } from 'https://www.gstatic.com/firebasejs/10.12.3/firebase-functions.js';
 import { db } from './firebase.js';
+import { functions } from './firebase.js';
 import { appConfig, isBootstrapAdminEmail } from './config.js';
 import { normalizeMembershipRecords } from './app/membershipCompatibility.js';
 import { logAudit } from './audit.js';
@@ -290,43 +292,11 @@ export async function revokeInvite(inviteId, user) {
 }
 
 export async function acceptInvite({ inviteCode, user }) {
-  const invite = await getCompanyByInviteCode(inviteCode);
-  if (!invite) throw new Error('Invite not found or no longer valid.');
-  if (invite.email && user.email && invite.email !== user.email.toLowerCase()) {
-    throw new Error('Invite email does not match signed-in user.');
-  }
-  const membershipId = `${invite.companyId}_${user.uid}`;
-  await setDoc(doc(db, C.companyMemberships, membershipId), {
-    id: membershipId,
-    companyId: invite.companyId,
-    userId: user.uid,
-    role: invite.role || 'staff',
-    status: 'active',
-    inviteId: invite.id,
-    createdAt: serverTimestamp(),
-    createdBy: user.uid
-  }, { merge: true });
-  await updateDoc(doc(db, C.companyInvites, invite.id), {
-    status: 'accepted',
-    acceptedAt: serverTimestamp(),
-    acceptedBy: user.uid,
-    updatedAt: serverTimestamp(),
-    updatedBy: user.uid
+  const callable = httpsCallable(functions, 'acceptCompanyInvite');
+  const result = await callable({
+    inviteCode: `${inviteCode || ''}`.trim()
   });
-  await logAudit({
-    action: 'update',
-    actionType: 'invite_accepted',
-    category: 'people_access',
-    entityType: 'companyInvites',
-    entityId: invite.id,
-    targetType: 'invite',
-    targetId: invite.id,
-    targetLabel: invite.email || invite.id,
-    summary: `Invite accepted by ${user.displayName || user.email || user.uid}`,
-    user,
-    metadata: { companyId: invite.companyId, role: invite.role || 'staff' }
-  });
-  return invite.companyId;
+  return `${result?.data?.companyId || ''}`.trim();
 }
 
 export async function deleteCompanyInvite(inviteId) {

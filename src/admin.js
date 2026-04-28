@@ -191,6 +191,7 @@ export function renderAdmin(el, state, actions) {
   const importProgressMarkup = importProgress?.totalRows
     ? `<div class="item mt"><div class="row space tiny"><b>Import progress</b><span>${progressPercent}%</span></div><progress max="${importProgress.totalRows}" value="${Math.min(importProgress.completedRows || 0, importProgress.totalRows)}" style="width:100%;"></progress><div class="tiny mt">${importProgress.bootstrapMode ? 'Mode: direct CSV bootstrap (admin import mode)' : 'Mode: standard documentation lookup queue'} · Total rows ${importProgress.totalRows} · Imported assets ${importProgress.importedAssets || 0} · Direct manuals attached ${importProgress.directManualsAttached || 0} · Direct attach failed ${importProgress.directManualAttachFailed || 0} · No direct manual URL ${importProgress.noDirectManualUrl || 0} · Completed rows ${importProgress.completedRows || 0}</div></div>`
     : '';
+  const readinessBusy = `${adminUi.readinessAction || ''}`.trim();
 
   const locationManagerChoices = members.map((member) => `<option value="${getReadablePersonName(member.person || member)}">${getReadablePersonName(member.person || member)}</option>`).join('');
 
@@ -203,8 +204,8 @@ export function renderAdmin(el, state, actions) {
     </div>
     ${adminUi.message ? `<div class="inline-state ${adminUi.tone === 'error' ? 'error' : (adminUi.tone === 'success' ? 'success' : 'info')}" role="status" aria-live="polite">${adminUi.message}</div>` : ''}
     ${readinessDismissed
-      ? `<div class="item"><div class="row space"><b>Workspace readiness</b><button type="button" data-show-readiness="1">Show again</button></div><div class="tiny mt">This panel is currently dismissed.</div></div>`
-      : renderWorkspaceReadinessCard(state, { compact: true, dismissible: true })}
+      ? `<div class="tiny mt"><button type="button" class="btn btn-ghost" data-show-readiness="1" ${readinessBusy === 'show' ? 'disabled' : ''}>${readinessBusy === 'show' ? 'Showing workspace readiness…' : 'Show workspace readiness'}</button></div>`
+      : renderWorkspaceReadinessCard(state, { compact: true, dismissible: true, busy: readinessBusy === 'dismiss' })}
     ${renderSectionTabs(activeSection)}
 
     <section class="item ${activeSection === 'company' ? '' : 'hide'}" data-admin-section="company">

@@ -204,20 +204,36 @@ export function createAdminActions(deps) {
         render();
         return;
       }
+      state.adminUi = { ...(state.adminUi || {}), readinessAction: 'dismiss' };
+      render();
       await runAction('dismiss_workspace_readiness', async () => {
         await saveAppSettings({ ...state.settings, workspaceReadinessDismissedAt: new Date().toISOString() }, state.user);
         await refreshData();
         setAdminFeedback({ tone: 'success', message: 'Workspace readiness panel dismissed. You can show it again anytime.' });
         render();
-      }, { fallbackMessage: 'Unable to dismiss workspace readiness panel.' });
+      }, {
+        fallbackMessage: 'Unable to dismiss workspace readiness panel.',
+        onFinally: () => {
+          state.adminUi = { ...(state.adminUi || {}), readinessAction: '' };
+          render();
+        }
+      });
     },
     showReadinessCard: async () => {
+      state.adminUi = { ...(state.adminUi || {}), readinessAction: 'show' };
+      render();
       await runAction('show_workspace_readiness', async () => {
         await saveAppSettings({ ...state.settings, workspaceReadinessDismissedAt: null }, state.user);
         await refreshData();
         setAdminFeedback({ tone: 'success', message: 'Workspace readiness panel is visible again.' });
         render();
-      }, { fallbackMessage: 'Unable to restore workspace readiness panel.' });
+      }, {
+        fallbackMessage: 'Unable to restore workspace readiness panel.',
+        onFinally: () => {
+          state.adminUi = { ...(state.adminUi || {}), readinessAction: '' };
+          render();
+        }
+      });
     },
     saveWorker: async (id, payload) => {
       const existing = state.workers.find((worker) => worker.id === id) || {};

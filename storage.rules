@@ -50,12 +50,26 @@ service firebase.storage {
         : null;
     }
 
-	function isActiveCompanyMember(companyId) {
-		return hasEnabledUserRecord()
-			&& hasMembershipDoc(companyId)
-			&& membershipSnapshot(companyId).data.status == 'active'
-			&& membershipSnapshot(companyId).data.companyId == companyId;
-}
+    function isActiveCompanyMember(companyId) {
+      return hasEnabledUserRecord()
+        && hasMembershipDoc(companyId)
+        && membershipSnapshot(companyId).data.status == 'active'
+        && membershipSnapshot(companyId).data.companyId == companyId;
+    }
+
+    function hasCompanyProfileEditAccess(companyId) {
+      return isGlobalAdmin()
+        || (
+          isActiveCompanyMember(companyId)
+          && companyRole(companyId) in ['owner', 'admin', 'manager']
+          && (
+            !membershipSnapshot(companyId).data.keys().hasAny(['permissions'])
+            || membershipSnapshot(companyId).data.permissions == null
+            || !membershipSnapshot(companyId).data.permissions.keys().hasAny(['profileEdit'])
+            || membershipSnapshot(companyId).data.permissions.profileEdit == true
+          )
+        );
+    }
 
     function canAccessCompanyEvidence(companyId) {
       return isGlobalAdmin()
@@ -106,6 +120,11 @@ service firebase.storage {
           isActiveCompanyMember(companyId)
           && companyRole(companyId) in ['owner', 'admin', 'manager']
         );
+    }
+
+    match /companies/{companyId}/branding/logo/{allPaths=**} {
+      allow read: if isActiveCompanyMember(companyId) || isGlobalAdmin();
+      allow write, delete: if hasCompanyProfileEditAccess(companyId);
     }
 
     // Shared manual library assets are durable references and read-only for enabled signed-in users.
