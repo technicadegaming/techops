@@ -898,7 +898,7 @@ test('auth invite code UI wires explicit join button and Enter-key handling', as
   assert.match(indexSource, /id="authInviteForm"/);
   assert.match(indexSource, /id="applyInviteCodeBtn"/);
   assert.match(indexSource, /Create or sign into your account first/);
-  assert.match(indexSource, /Create your account\. If you have an invite code, you’ll join your workspace after signing in\./);
+  assert.match(indexSource, /Have an invite code\? Create or sign into your account first\. Then enter the code to join your workspace\./);
   assert.doesNotMatch(indexSource, /Bootstrap admin access is off by default/);
   assert.match(indexSource, /Join with invite/);
   assert.match(authControllerSource, /authInviteForm\?\.addEventListener\('submit', handleInviteCodeSubmit\)/);
@@ -3259,6 +3259,13 @@ test('data source preserves canonical firestore asset id metadata', () => {
   assert.match(source, /storedAssetId/);
 });
 
+test('data source keeps company invites durable with missing-index fallback query path', () => {
+  const source = loadDataSource();
+  assert.match(source, /\[people_invites\] Falling back to non-ordered Firestore query due to missing index/);
+  assert.match(source, /buildFallbackScopeQuery/);
+  assert.match(source, /\.sort\(\(a, b\) => \{/);
+});
+
 
 test('admin invite action stores worker profile metadata on invite creation', async () => {
   const { createAdminActions } = await loadAdminActions();
@@ -3320,11 +3327,19 @@ test('people rows keep pending invite entries visible even without linked member
   assert.match(source, /pendingInvites\.forEach\(\(invite\) => \{/);
   assert.match(source, /id: `pending-invite-\$\{inviteId\}`,/);
   assert.match(source, /if \(!inviteId \|\| rows\.some\(\(row\) => row\.invite\?\.id === inviteId\)\) return;/);
+  assert.match(source, /Pending invites \(\$\{pendingInviteRows\.length\}\)/);
+  assert.match(source, /pendingInviteRows\.map\(\(invite\) => \{/);
+  assert.match(source, /data-copy-invite-message/);
   assert.match(source, /Invites with failed attempts:/);
   assert.match(source, /data-disable-member-access/);
   assert.match(source, /data-reactivate-member-access/);
   assert.match(source, /data-remove-member-access/);
   assert.match(source, /failed attempts:/);
+});
+
+test('admin people section clarifies membership access controls and not Firebase Auth deletion', async () => {
+  const source = loadAdminSource();
+  assert.match(source, /workspace access controls and do not delete the user from Firebase Auth/);
 });
 
 test('admin actions block self-disable and self-remove for current owner/admin session', async () => {

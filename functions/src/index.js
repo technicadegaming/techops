@@ -228,9 +228,13 @@ exports.acceptCompanyInvite = onCall({}, async (request) => {
   if (!inviteCode) throw new HttpsError('invalid-argument', 'inviteCode is required');
 
   const inviteQuery = await db.collection('companyInvites')
-    .where('inviteCode', '==', inviteCode)
+    .where('inviteCodeNormalized', '==', inviteCode)
     .limit(2)
-    .get();
+    .get()
+    .catch(async () => db.collection('companyInvites')
+      .where('inviteCode', '==', inviteCode)
+      .limit(2)
+      .get());
   if (inviteQuery.empty) throw new HttpsError('not-found', 'Invite not found. Verify the code or ask your admin for a new invite.');
 
   const inviteSnap = inviteQuery.docs[0];
@@ -253,6 +257,7 @@ exports.acceptCompanyInvite = onCall({}, async (request) => {
   if (!companyId) throw new HttpsError('failed-precondition', 'Invite is missing company scope.');
   const membershipId = `${companyId}_${request.auth.uid}`;
 
+  let membershipRole = `${invite.role || 'staff'}`.trim().toLowerCase() || 'staff';
   try {
     await db.runTransaction(async (txn) => {
       const freshInviteSnap = await txn.get(inviteSnap.ref);
@@ -266,7 +271,7 @@ exports.acceptCompanyInvite = onCall({}, async (request) => {
         throw new HttpsError('permission-denied', 'This invite is for a different email address.');
       }
 
-      const membershipRole = `${freshInvite.role || 'staff'}`.trim().toLowerCase() || 'staff';
+      membershipRole = `${freshInvite.role || 'staff'}`.trim().toLowerCase() || 'staff';
       const companyMembershipRef = db.collection('companyMemberships').doc(membershipId);
       txn.set(companyMembershipRef, {
         id: membershipId,
@@ -324,6 +329,7 @@ exports.acceptCompanyInvite = onCall({}, async (request) => {
 
       txn.set(inviteSnap.ref, {
         status: 'accepted',
+        inviteCodeNormalized: inviteCode,
         acceptedAt: serverTimestamp(),
         acceptedBy: request.auth.uid,
         acceptedEmail: resolvedAuthEmail,
@@ -335,11 +341,13 @@ exports.acceptCompanyInvite = onCall({}, async (request) => {
       }, { merge: true });
     });
   } catch (error) {
-    if (`${error?.code || ''}` === 'permission-denied') {
+    const errorCode = `${error?.code || ''}`.toLowerCase();
+    const trackFailure = ['permission-denied', 'failed-precondition', 'already-exists', 'not-found', 'invalid-argument'].includes(errorCode);
+    if (trackFailure) {
       await inviteSnap.ref.set({
         failedAttempts: admin.firestore.FieldValue.increment(1),
         lastFailedAttemptAt: serverTimestamp(),
-        lastFailedAttemptReason: `${error?.message || 'permission-denied'}`.slice(0, 280),
+        lastFailedAttemptReason: `${error?.message || errorCode || 'invite-acceptance-failed'}`.slice(0, 280),
         updatedAt: serverTimestamp(),
       }, { merge: true });
     }
@@ -364,7 +372,7 @@ exports.acceptCompanyInvite = onCall({}, async (request) => {
     updatedAt: serverTimestamp(),
   });
 
-  return { ok: true, companyId, membershipId };
+  return { ok: true, companyId, membershipId, role: membershipRole };
 });
 
 exports.analyzeTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
