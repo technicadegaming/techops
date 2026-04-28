@@ -183,11 +183,14 @@
           <button type="button" id="googleRegisterBtn">Continue with Google</button>
         </form>
       </div>
-      <div class="item mt">
+      <form id="authInviteForm" class="item mt">
         <label class="tiny">Invite code (optional, improves company handoff)
           <input id="authInviteCode" placeholder="Paste invite code if you have one" />
         </label>
-      </div>
+        <div class="row mt">
+          <button id="applyInviteCodeBtn" class="btn btn-primary" type="submit">Join with invite</button>
+        </div>
+      </form>
       <p id="authMessage" class="tiny"></p>
     </section>
 
