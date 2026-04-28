@@ -291,7 +291,7 @@ export async function revokeInvite(inviteId, user) {
   });
 }
 
-export async function acceptInvite({ inviteCode, user }) {
+export async function acceptInvite({ inviteCode }) {
   const callable = httpsCallable(functions, 'acceptCompanyInvite');
   const result = await callable({
     inviteCode: `${inviteCode || ''}`.trim()
