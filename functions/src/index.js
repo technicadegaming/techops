@@ -253,83 +253,98 @@ exports.acceptCompanyInvite = onCall({}, async (request) => {
   if (!companyId) throw new HttpsError('failed-precondition', 'Invite is missing company scope.');
   const membershipId = `${companyId}_${request.auth.uid}`;
 
-  await db.runTransaction(async (txn) => {
-    const freshInviteSnap = await txn.get(inviteSnap.ref);
-    if (!freshInviteSnap.exists) throw new HttpsError('not-found', 'Invite not found.');
-    const freshInvite = freshInviteSnap.data() || {};
-    const freshStatusError = mapInviteStatusError(freshInvite);
-    if (freshStatusError) throw freshStatusError;
+  try {
+    await db.runTransaction(async (txn) => {
+      const freshInviteSnap = await txn.get(inviteSnap.ref);
+      if (!freshInviteSnap.exists) throw new HttpsError('not-found', 'Invite not found.');
+      const freshInvite = freshInviteSnap.data() || {};
+      const freshStatusError = mapInviteStatusError(freshInvite);
+      if (freshStatusError) throw freshStatusError;
 
-    const freshInviteEmail = `${freshInvite.email || ''}`.trim().toLowerCase();
-    if (freshInviteEmail && resolvedAuthEmail && freshInviteEmail !== resolvedAuthEmail) {
-      throw new HttpsError('permission-denied', 'This invite is for a different email address.');
-    }
+      const freshInviteEmail = `${freshInvite.email || ''}`.trim().toLowerCase();
+      if (freshInviteEmail && resolvedAuthEmail && freshInviteEmail !== resolvedAuthEmail) {
+        throw new HttpsError('permission-denied', 'This invite is for a different email address.');
+      }
 
-    const membershipRole = `${freshInvite.role || 'staff'}`.trim().toLowerCase() || 'staff';
-    const companyMembershipRef = db.collection('companyMemberships').doc(membershipId);
-    txn.set(companyMembershipRef, {
-      id: membershipId,
-      companyId,
-      userId: request.auth.uid,
-      role: membershipRole,
-      status: 'active',
-      inviteId: inviteSnap.id,
-      inviteCode,
-      acceptedAt: serverTimestamp(),
-      createdAt: serverTimestamp(),
-      createdBy: request.auth.uid,
-      updatedAt: serverTimestamp(),
-      updatedBy: request.auth.uid,
-    }, { merge: true });
-
-    const userRef = db.collection('users').doc(request.auth.uid);
-    txn.set(userRef, {
-      uid: request.auth.uid,
-      email: resolvedAuthEmail,
-      emailLower: resolvedAuthEmail,
-      displayName: `${request.auth.token?.name || freshInvite.displayName || ''}`.trim(),
-      fullName: `${request.auth.token?.name || freshInvite.displayName || ''}`.trim(),
-      role: membershipRole,
-      companyId,
-      onboardingState: 'active_member',
-      acceptedInviteAt: serverTimestamp(),
-      lastLoginAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      updatedBy: request.auth.uid,
-    }, { merge: true });
-
-    if (freshInvite.createWorkerProfile === true && (resolvedAuthEmail || freshInvite.displayName)) {
-      const workerId = `worker-${companyId}-${request.auth.uid}`.slice(0, 96);
-      txn.set(db.collection('workers').doc(workerId), {
-        id: workerId,
+      const membershipRole = `${freshInvite.role || 'staff'}`.trim().toLowerCase() || 'staff';
+      const companyMembershipRef = db.collection('companyMemberships').doc(membershipId);
+      txn.set(companyMembershipRef, {
+        id: membershipId,
         companyId,
         userId: request.auth.uid,
-        linkedUserId: request.auth.uid,
-        displayName: `${freshInvite.displayName || request.auth.token?.name || resolvedAuthEmail}`.trim(),
-        email: resolvedAuthEmail,
         role: membershipRole,
-        title: `${freshInvite.workerTitle || ''}`.trim(),
-        notes: `${freshInvite.workerNotes || ''}`.trim(),
-        enabled: true,
-        available: true,
-        accountStatus: 'linked_member',
+        status: 'active',
         inviteId: inviteSnap.id,
+        inviteCode,
+        acceptedAt: serverTimestamp(),
         createdAt: serverTimestamp(),
         createdBy: request.auth.uid,
         updatedAt: serverTimestamp(),
         updatedBy: request.auth.uid,
       }, { merge: true });
-    }
 
-    txn.set(inviteSnap.ref, {
-      status: 'accepted',
-      acceptedAt: serverTimestamp(),
-      acceptedBy: request.auth.uid,
-      acceptedEmail: resolvedAuthEmail,
-      updatedAt: serverTimestamp(),
-      updatedBy: request.auth.uid,
-    }, { merge: true });
-  });
+      const userRef = db.collection('users').doc(request.auth.uid);
+      txn.set(userRef, {
+        uid: request.auth.uid,
+        email: resolvedAuthEmail,
+        emailLower: resolvedAuthEmail,
+        displayName: `${request.auth.token?.name || freshInvite.displayName || ''}`.trim(),
+        fullName: `${request.auth.token?.name || freshInvite.displayName || ''}`.trim(),
+        role: membershipRole,
+        companyId,
+        onboardingState: 'active_member',
+        acceptedInviteAt: serverTimestamp(),
+        lastLoginAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        updatedBy: request.auth.uid,
+      }, { merge: true });
+
+      if (freshInvite.createWorkerProfile === true && (resolvedAuthEmail || freshInvite.displayName)) {
+        const workerId = `worker-${companyId}-${request.auth.uid}`.slice(0, 96);
+        txn.set(db.collection('workers').doc(workerId), {
+          id: workerId,
+          companyId,
+          userId: request.auth.uid,
+          linkedUserId: request.auth.uid,
+          displayName: `${freshInvite.displayName || request.auth.token?.name || resolvedAuthEmail}`.trim(),
+          email: resolvedAuthEmail,
+          role: membershipRole,
+          title: `${freshInvite.workerTitle || ''}`.trim(),
+          notes: `${freshInvite.workerNotes || ''}`.trim(),
+          enabled: true,
+          available: true,
+          accountStatus: 'linked_member',
+          inviteId: inviteSnap.id,
+          createdAt: serverTimestamp(),
+          createdBy: request.auth.uid,
+          updatedAt: serverTimestamp(),
+          updatedBy: request.auth.uid,
+        }, { merge: true });
+      }
+
+      txn.set(inviteSnap.ref, {
+        status: 'accepted',
+        acceptedAt: serverTimestamp(),
+        acceptedBy: request.auth.uid,
+        acceptedEmail: resolvedAuthEmail,
+        failedAttempts: 0,
+        lastFailedAttemptAt: null,
+        lastFailedAttemptReason: '',
+        updatedAt: serverTimestamp(),
+        updatedBy: request.auth.uid,
+      }, { merge: true });
+    });
+  } catch (error) {
+    if (`${error?.code || ''}` === 'permission-denied') {
+      await inviteSnap.ref.set({
+        failedAttempts: admin.firestore.FieldValue.increment(1),
+        lastFailedAttemptAt: serverTimestamp(),
+        lastFailedAttemptReason: `${error?.message || 'permission-denied'}`.slice(0, 280),
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+    }
+    throw error;
+  }
 
   await db.collection('auditLogs').add({
     action: 'update',

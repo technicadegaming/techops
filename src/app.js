@@ -86,7 +86,7 @@ import { buildBootstrapErrorMessage } from './app/bootstrapErrors.js';
 import { canFallbackToOnboarding, buildOnboardingFallbackState } from './app/authHandoff.js';
 import { createGlobalBusyHelpers, renderGlobalBusyOverlay } from './app/globalBusy.js';
 import { applyAppearancePreference, loadAppearancePreference } from './app/theme.js';
-import { setRootViewVisibility } from './app/viewVisibility.js';
+import { setAppChromeVisibility, setRootViewVisibility } from './app/viewVisibility.js';
 
 const {
   authView,
@@ -99,6 +99,10 @@ const {
   notificationBadge,
   notificationPanel
 } = resolveAppElements(document);
+const appHeader = document.querySelector('#appView > header');
+const appTabs = document.getElementById('tabs');
+const logoutBtn = document.getElementById('logoutBtn');
+const appCompanyLogo = document.getElementById('appCompanyLogo');
 const state = createInitialState();
 state.ui = { ...(state.ui || {}), appearance: loadAppearancePreference() };
 
@@ -267,6 +271,21 @@ function downloadJson(filename, payload) {
 }
 
 async function render() {
+  const hasActiveMembership = !!state.activeMembership?.id;
+  const showAppChrome = !state.onboardingRequired && !state.setupWizard?.active && hasActiveMembership;
+  setAppChromeVisibility({
+    headerEl: appHeader,
+    tabsEl: appTabs,
+    companySwitcherEl: activeCompanySwitcher,
+    locationSwitcherEl: activeLocationSwitcher,
+    locationScopeBadgeEl: locationScopeBadge,
+    notificationBellEl: notificationBell,
+    notificationPanelEl: notificationPanel,
+    logoutButtonEl: logoutBtn,
+    companyLogoEl: appCompanyLogo,
+    showChrome: showAppChrome
+  });
+
   if (state.onboardingRequired || state.setupWizard?.active) {
     const appView = document.getElementById('appView');
     appView?.querySelector('.global-busy-overlay')?.remove();
@@ -362,6 +381,7 @@ async function render() {
     runAction,
     withRequiredCompanyId: withActiveCompanyId,
     upsertEntity,
+    deleteEntity,
     clearEntitySet,
     saveAppSettings,
     exportBackupJson,
@@ -406,7 +426,7 @@ window.addEventListener('popstate', () => {
 });
 
 authController.bindAuthUi();
-document.getElementById('logoutBtn').addEventListener('click', () => logout());
+logoutBtn?.addEventListener('click', () => logout());
 
 notificationController.bindNotificationUi();
 
@@ -423,6 +443,18 @@ watchAuth(async (user) => {
     notificationController.resetNotifications();
     setOnboardingFeedback(state, '', 'info', { pendingAction: '', handoffStatus: 'idle' });
     setBootstrapLoading(false);
+    setAppChromeVisibility({
+      headerEl: appHeader,
+      tabsEl: appTabs,
+      companySwitcherEl: activeCompanySwitcher,
+      locationSwitcherEl: activeLocationSwitcher,
+      locationScopeBadgeEl: locationScopeBadge,
+      notificationBellEl: notificationBell,
+      notificationPanelEl: notificationPanel,
+      logoutButtonEl: logoutBtn,
+      companyLogoEl: appCompanyLogo,
+      showChrome: false
+    });
     setRootViewVisibility({ authView, appView, showAuth: true });
     return;
   }

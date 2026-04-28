@@ -37,10 +37,17 @@ export function createOnboardingController({
       });
     },
     acceptInvite: async (inviteCode) => {
+      const normalizedInviteCode = `${inviteCode || ''}`.trim();
       await runAction('accept_invite', async () => {
-        setOnboardingFeedback(state, 'Joining company…', 'info', { pendingAction: 'accept_invite', handoffStatus: 'working' });
+        setOnboardingFeedback(state, 'Joining company…', 'info', {
+          pendingAction: 'accept_invite',
+          handoffStatus: 'working',
+          inviteCodePrefill: normalizedInviteCode
+        });
         render();
-        await acceptInvite({ inviteCode, user: state.user });
+        if (!state.user?.uid) throw new Error('Sign in first, then retry joining with your invite code.');
+        await acceptInvite({ inviteCode: normalizedInviteCode, user: state.user });
+        state.onboardingUi = { ...(state.onboardingUi || {}), inviteCodePrefill: '' };
         await bootstrapCompanyContext();
         await refreshData();
         state.route = { ...(state.route || {}), tab: 'dashboard', section: '' };
@@ -48,7 +55,11 @@ export function createOnboardingController({
       }, {
         fallbackMessage: 'Unable to accept invite.',
         onError: (error) => {
-          setOnboardingFeedback(state, formatActionError(error, 'Unable to accept invite.'), 'error', { pendingAction: '', handoffStatus: 'error' });
+          setOnboardingFeedback(state, formatActionError(error, 'Unable to accept invite.'), 'error', {
+            pendingAction: '',
+            handoffStatus: 'error',
+            inviteCodePrefill: normalizedInviteCode
+          });
           render();
         }
       });
