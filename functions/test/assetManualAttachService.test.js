@@ -208,3 +208,85 @@ test('queueManualAttachJob supports storage path mode and validates path helper'
     false,
   );
 });
+
+test('processManualAttachJob completes with warnings when text extraction fails after storage succeeds', async () => {
+  const db = createMockDb([{ id: 'asset-5', companyId: 'company-1', name: 'Asset 5', firestoreDocId: 'asset-5', manualLinks: [] }]);
+  const storage = createMockStorage();
+  const queued = await queueManualAttachJob({
+    db,
+    asset: { id: 'asset-5', firestoreDocId: 'asset-5', companyId: 'company-1', name: 'Asset 5' },
+    userId: 'u1',
+    mode: 'url_attach',
+    manualUrl: 'https://docs.example.com/manual.pdf',
+    sourceTitle: 'Asset 5 Manual',
+  });
+
+  const job = { id: queued.jobId, ...db.state.manualAttachJobs[queued.jobId] };
+  const result = await processManualAttachJob({
+    db,
+    storage,
+    job,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      url: 'https://docs.example.com/manual.pdf',
+      headers: { get: () => 'application/pdf' },
+      arrayBuffer: async () => Buffer.from('%PDF-1.4\n...'),
+    }),
+    materializeStoredAssetManualImpl: async () => ({
+      ok: true,
+      manualId: 'manual-asset-5',
+      extractionStatus: 'failed',
+      extractionReason: 'text_extraction_failed',
+      extractionFailureCode: 'text_extraction_failed',
+      extractionError: 'Maximum call stack size exceeded',
+      chunkCount: 0,
+      codeDefinitionCount: 0,
+    }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.warning, true);
+  assert.equal(db.state.manualAttachJobs[queued.jobId].status, 'completed_with_warnings');
+  assert.equal(db.state.manualAttachJobs[queued.jobId].errorCode, 'text_extraction_failed');
+  assert.equal(db.state.assets['asset-5'].manualAttachStatus, 'completed');
+  assert.equal(db.state.assets['asset-5'].manualStatus, 'manual_attached');
+  assert.equal(db.state.assets['asset-5'].documentationTextAvailable, false);
+  assert.equal(db.state.assets['asset-5'].manualTextExtractionStatus, 'failed');
+  assert.equal(db.state.assets['asset-5'].manualChunkCount, 0);
+  assert.equal(db.state.assets['asset-5'].latestManualTextExtractionCode, 'text_extraction_failed');
+});
+
+test('processManualAttachJob classifies thrown range error as text_extraction_failed', async () => {
+  const db = createMockDb([{ id: 'asset-6', companyId: 'company-1', name: 'Asset 6', firestoreDocId: 'asset-6', manualLinks: [] }]);
+  const storage = createMockStorage();
+  const queued = await queueManualAttachJob({
+    db,
+    asset: { id: 'asset-6', firestoreDocId: 'asset-6', companyId: 'company-1', name: 'Asset 6' },
+    userId: 'u1',
+    mode: 'url_attach',
+    manualUrl: 'https://docs.example.com/manual.pdf',
+  });
+
+  const job = { id: queued.jobId, ...db.state.manualAttachJobs[queued.jobId] };
+  const result = await processManualAttachJob({
+    db,
+    storage,
+    job,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      url: 'https://docs.example.com/manual.pdf',
+      headers: { get: () => 'application/pdf' },
+      arrayBuffer: async () => Buffer.from('%PDF-1.4\n...'),
+    }),
+    materializeStoredAssetManualImpl: async () => {
+      throw new RangeError('Maximum call stack size exceeded');
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'text_extraction_failed');
+  assert.equal(db.state.manualAttachJobs[queued.jobId].status, 'failed');
+  assert.equal(db.state.manualAttachJobs[queued.jobId].errorCode, 'text_extraction_failed');
+});

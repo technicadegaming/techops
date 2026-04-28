@@ -1278,6 +1278,7 @@ exports.attachAssetManualFromStoragePath = onCall({}, async (request) => {
 
 exports.processManualAttachJob = onDocumentCreated({
   document: 'manualAttachJobs/{jobId}',
+  memory: '1GiB',
   timeoutSeconds: 540,
 }, async (event) => {
   const snapshot = event.data;
