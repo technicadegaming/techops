@@ -992,7 +992,9 @@ test('company invite acceptance uses callable handoff path for membership-safe j
   const path = require('node:path');
   const companySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'company.js'), 'utf8');
   assert.match(companySource, /httpsCallable\(functions, 'acceptCompanyInvite'\)/);
+  assert.match(companySource, /httpsCallable\(functions, 'createCompanyInvite'\)/);
   assert.doesNotMatch(companySource, /await updateDoc\(doc\(db, C\.companyInvites, invite\.id\), \{/);
+  assert.doesNotMatch(companySource, /await setDoc\(ref, \{/);
 });
 
 test('asset and admin enrichment surfaces share the same manual trigger request and approval helper', async () => {
@@ -3300,7 +3302,24 @@ test('admin invite action stores worker profile metadata on invite creation', as
     enrichAssetDocumentation: async () => {},
     createCompanyInvite: async (payload) => {
       inviteCalls.push(payload);
-      return { id: 'inv-1', inviteCode: 'ABC1234XYZ', token: 'token-1' };
+      return {
+        id: 'inv-1',
+        inviteCode: 'ABC1234XYZ',
+        token: 'token-1',
+        invite: {
+          id: 'inv-1',
+          companyId: 'co-1',
+          email: 'taylor@example.com',
+          role: 'staff',
+          displayName: 'Taylor Tech',
+          inviteCode: 'ABC1234XYZ',
+          inviteCodeNormalized: 'ABC1234XYZ',
+          status: 'pending',
+          createWorkerProfile: true,
+          workerTitle: 'Field Tech',
+          workerNotes: 'Night shift'
+        }
+      };
     },
     revokeInvite: async () => {}
   });
@@ -3319,6 +3338,57 @@ test('admin invite action stores worker profile metadata on invite creation', as
   assert.equal(inviteCalls[0].workerTitle, 'Field Tech');
   assert.equal(inviteCalls[0].workerNotes, 'Night shift');
   assert.equal(state.invites[0].inviteCode, 'ABC1234XYZ');
+  assert.equal(state.invites[0].inviteCodeNormalized, 'ABC1234XYZ');
+  assert.equal(state.invites[0].status, 'pending');
+});
+
+test('admin invite action surfaces permission diagnostics on denied callable response', async () => {
+  const { createAdminActions } = await loadAdminActions();
+  const state = {
+    company: { id: 'co-1' },
+    user: { uid: 'admin-1' },
+    companyMembers: [{ id: 'co-1_admin-1', userId: 'admin-1', role: 'manager', status: 'inactive' }],
+    permissions: { companyRole: 'manager' },
+    invites: [],
+    adminUi: {}
+  };
+  const actions = createAdminActions({
+    state,
+    render: () => {},
+    refreshData: async () => {},
+    runAction: async (_label, fn) => fn(),
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    clearEntitySet: async () => 0,
+    saveAppSettings: async () => {},
+    exportBackupJson: async () => ({}),
+    buildAssetsCsv: () => '',
+    buildTasksCsv: () => '',
+    buildAuditCsv: () => '',
+    buildWorkersCsv: () => '',
+    buildMembersCsv: () => '',
+    buildInvitesCsv: () => '',
+    buildLocationsCsv: () => '',
+    buildCompanyBackupBundle: () => ({}),
+    downloadFile: () => {},
+    downloadJson: () => {},
+    normalizeAssetId: (value) => value,
+    enrichAssetDocumentation: async () => {},
+    createCompanyInvite: async () => {
+      const error = new Error('permission denied');
+      error.code = 'permission-denied';
+      throw error;
+    },
+    revokeInvite: async () => {}
+  });
+
+  await assert.rejects(() => actions.createInvite({
+    name: 'Taylor Tech',
+    email: 'Taylor@example.com',
+    role: 'staff'
+  }));
+  assert.match(state.adminUi.message, /Invite could not be created\. Your current membership is missing, inactive, or does not have People management access\./);
+  assert.match(state.adminUi.message, /uid=admin-1, companyId=co-1, role=manager, status=inactive/);
 });
 
 test('people rows keep pending invite entries visible even without linked member, worker, or email', async () => {

@@ -110,6 +110,57 @@ function normalizeInviteCode(inviteCode) {
   return `${inviteCode || ''}`.trim().toUpperCase();
 }
 
+function randomInviteCode(size = 10) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let out = '';
+  const bytes = new Uint8Array(size);
+  if (typeof globalThis.crypto?.getRandomValues === 'function') {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < size; i += 1) bytes[i] = Math.floor(Math.random() * 255);
+  }
+  for (let i = 0; i < size; i += 1) out += chars[bytes[i] % chars.length];
+  return out;
+}
+
+async function getCompanyMembershipForUser({ companyId, uid }) {
+  const normalizedCompanyId = normalizeCompanyId(companyId);
+  const normalizedUid = `${uid || ''}`.trim();
+  if (!normalizedCompanyId || !normalizedUid) return null;
+
+  const canonicalId = `${normalizedCompanyId}_${normalizedUid}`;
+  const canonicalRef = db.collection('companyMemberships').doc(canonicalId);
+  const canonicalSnap = await canonicalRef.get();
+  if (canonicalSnap.exists) return { id: canonicalSnap.id, ...canonicalSnap.data() };
+
+  const querySnap = await db.collection('companyMemberships')
+    .where('companyId', '==', normalizedCompanyId)
+    .where('userId', '==', normalizedUid)
+    .limit(1)
+    .get();
+  if (!querySnap.empty) return { id: querySnap.docs[0].id, ...querySnap.docs[0].data() };
+  return null;
+}
+
+function canCreateInviteFromMembership(membership = {}) {
+  const status = `${membership?.status || ''}`.trim().toLowerCase();
+  const role = `${membership?.role || ''}`.trim().toLowerCase();
+  const allowedRoles = ['owner', 'admin', 'manager'];
+  return status === 'active' && allowedRoles.includes(role);
+}
+
+async function createUniqueInviteCode({ maxAttempts = 8, size = 10 } = {}) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const inviteCode = normalizeInviteCode(randomInviteCode(size));
+    const existingInvite = await db.collection('companyInvites')
+      .where('inviteCodeNormalized', '==', inviteCode)
+      .limit(1)
+      .get();
+    if (existingInvite.empty) return inviteCode;
+  }
+  throw new HttpsError('resource-exhausted', 'Unable to generate a unique invite code. Please retry.');
+}
+
 
 function normalizeTimestampMs(value) {
   if (!value) return null;
@@ -222,19 +273,79 @@ exports.finalizeOnboardingBootstrap = onCall({}, async (request) => {
   });
 });
 
+exports.createCompanyInvite = onCall({}, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+
+  const companyId = normalizeCompanyId(request.data?.companyId);
+  if (!companyId) throw new HttpsError('invalid-argument', 'companyId is required');
+
+  const membership = await getCompanyMembershipForUser({
+    companyId,
+    uid: request.auth.uid,
+  });
+  if (!canCreateInviteFromMembership(membership)) {
+    throw new HttpsError(
+      'permission-denied',
+      'Membership is missing, inactive, or does not have People management access.',
+    );
+  }
+
+  const email = `${request.data?.email || ''}`.trim().toLowerCase();
+  const displayName = `${request.data?.displayName || ''}`.trim();
+  const role = `${request.data?.role || 'staff'}`.trim().toLowerCase() || 'staff';
+  const createWorkerProfile = request.data?.createWorkerProfile === true;
+  const workerTitle = `${request.data?.workerTitle || ''}`.trim();
+  const workerNotes = `${request.data?.workerNotes || ''}`.trim();
+  const inviteCode = await createUniqueInviteCode({ size: 10 });
+  const inviteCodeNormalized = normalizeInviteCode(inviteCode);
+  const token = `${companyId}.${inviteCode}.${Math.random().toString(36).slice(2, 10)}`;
+  const inviteRef = db.collection('companyInvites').doc();
+  const expiresAt = request.data?.expiresAt || null;
+  const invitePayload = {
+    id: inviteRef.id,
+    companyId,
+    email,
+    displayName,
+    role,
+    status: 'pending',
+    inviteCode,
+    inviteCodeNormalized,
+    token,
+    createWorkerProfile,
+    workerTitle,
+    workerNotes,
+    expiresAt,
+    createdAt: serverTimestamp(),
+    createdBy: request.auth.uid,
+    updatedAt: serverTimestamp(),
+    updatedBy: request.auth.uid,
+  };
+
+  await inviteRef.set(invitePayload, { merge: true });
+
+  return {
+    ok: true,
+    id: inviteRef.id,
+    inviteCode,
+    invite: { ...invitePayload, createdAt: null, updatedAt: null },
+  };
+});
+
 exports.acceptCompanyInvite = onCall({}, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
   const inviteCode = normalizeInviteCode(request.data?.inviteCode);
   if (!inviteCode) throw new HttpsError('invalid-argument', 'inviteCode is required');
 
-  const inviteQuery = await db.collection('companyInvites')
+  const inviteQueryByNormalized = await db.collection('companyInvites')
     .where('inviteCodeNormalized', '==', inviteCode)
     .limit(2)
-    .get()
-    .catch(async () => db.collection('companyInvites')
+    .get();
+  const inviteQuery = inviteQueryByNormalized.empty
+    ? await db.collection('companyInvites')
       .where('inviteCode', '==', inviteCode)
       .limit(2)
-      .get());
+      .get()
+    : inviteQueryByNormalized;
   if (inviteQuery.empty) throw new HttpsError('not-found', 'Invite not found. Verify the code or ask your admin for a new invite.');
 
   const inviteSnap = inviteQuery.docs[0];

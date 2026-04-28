@@ -381,33 +381,62 @@ export function createAdminActions(deps) {
         const cleanEmail = `${email || ''}`.trim().toLowerCase();
         const cleanRole = `${role || 'staff'}`.trim() || 'staff';
         const shouldCreateWorkerProfile = createWorkerProfile === true || `${createWorkerProfile || ''}`.trim() === 'on';
-        const invite = await createCompanyInvite({
-          companyId: state.company.id,
-          email: cleanEmail,
-          role: cleanRole,
-          user: state.user,
-          displayName: `${name || ''}`.trim(),
-          createWorkerProfile: shouldCreateWorkerProfile,
-          workerTitle: `${workerTitle || ''}`.trim(),
-          workerNotes: `${workerNotes || ''}`.trim()
-        });
-        state.invites = [{
-          id: invite.id,
-          companyId: state.company.id,
-          email: cleanEmail,
-          role: cleanRole,
-          displayName: `${name || ''}`.trim(),
-          inviteCode: invite.inviteCode,
-          token: invite.token,
-          status: 'pending',
-          createWorkerProfile: shouldCreateWorkerProfile,
-          workerTitle: `${workerTitle || ''}`.trim(),
-          workerNotes: `${workerNotes || ''}`.trim()
-        }, ...(state.invites || []).filter((entry) => entry.id !== invite.id)];
-        setAdminFeedback({ tone: 'success', message: `Invite created for ${cleanEmail}. Share code ${invite.inviteCode}.` });
-        render();
-        await refreshData();
-        render();
+        try {
+          const invite = await createCompanyInvite({
+            companyId: state.company.id,
+            email: cleanEmail,
+            role: cleanRole,
+            user: state.user,
+            displayName: `${name || ''}`.trim(),
+            createWorkerProfile: shouldCreateWorkerProfile,
+            workerTitle: `${workerTitle || ''}`.trim(),
+            workerNotes: `${workerNotes || ''}`.trim()
+          });
+          const returnedInvite = invite?.invite && typeof invite.invite === 'object'
+            ? invite.invite
+            : {};
+          const mergedInvite = {
+            id: invite.id || returnedInvite.id,
+            companyId: returnedInvite.companyId || state.company.id,
+            email: returnedInvite.email || cleanEmail,
+            role: returnedInvite.role || cleanRole,
+            displayName: returnedInvite.displayName || `${name || ''}`.trim(),
+            inviteCode: invite.inviteCode || returnedInvite.inviteCode || '',
+            inviteCodeNormalized: returnedInvite.inviteCodeNormalized || '',
+            token: invite.token || returnedInvite.token || '',
+            status: returnedInvite.status || 'pending',
+            createWorkerProfile: returnedInvite.createWorkerProfile ?? shouldCreateWorkerProfile,
+            workerTitle: returnedInvite.workerTitle || `${workerTitle || ''}`.trim(),
+            workerNotes: returnedInvite.workerNotes || `${workerNotes || ''}`.trim(),
+            createdBy: returnedInvite.createdBy || `${state.user?.uid || ''}`.trim(),
+            updatedBy: returnedInvite.updatedBy || `${state.user?.uid || ''}`.trim(),
+            expiresAt: returnedInvite.expiresAt || null
+          };
+          state.invites = [mergedInvite, ...(state.invites || []).filter((entry) => entry.id !== mergedInvite.id)];
+          setAdminFeedback({ tone: 'success', message: `Invite created for ${cleanEmail}. Share code ${mergedInvite.inviteCode}.` });
+          render();
+          await refreshData();
+          render();
+        } catch (error) {
+          const errorCode = `${error?.code || ''}`.trim().toLowerCase();
+          const permissionDenied = errorCode.includes('permission-denied')
+            || `${error?.message || ''}`.toLowerCase().includes('permission-denied');
+          const activeMember = (state.companyMembers || []).find((member) => `${member?.userId || ''}`.trim() === `${state.user?.uid || ''}`.trim());
+          const diagnostics = {
+            uid: `${state.user?.uid || ''}`.trim() || 'unknown',
+            companyId: `${state.company?.id || ''}`.trim() || 'unknown',
+            membershipRole: `${activeMember?.role || state.permissions?.companyRole || 'unknown'}`.trim() || 'unknown',
+            membershipStatus: `${activeMember?.status || 'unknown'}`.trim() || 'unknown'
+          };
+          console.warn('[people_invites] create invite failed', diagnostics, error);
+          const diagnosticsText = `uid=${diagnostics.uid}, companyId=${diagnostics.companyId}, role=${diagnostics.membershipRole}, status=${diagnostics.membershipStatus}`;
+          const message = permissionDenied
+            ? 'Invite could not be created. Your current membership is missing, inactive, or does not have People management access.'
+            : `${error?.message || 'Unable to create invite.'}`;
+          setAdminFeedback({ tone: 'error', message: `${message} (${diagnosticsText})` });
+          render();
+          throw error;
+        }
       }, { fallbackMessage: 'Unable to create invite.' });
     },
     sendPersonPasswordReset: async (email) => {
