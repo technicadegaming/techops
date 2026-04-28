@@ -174,6 +174,7 @@ export function renderAdmin(el, state, actions) {
   ];
   const auditEntries = (state.auditLogs || []).filter((entry) => auditCategory === 'all' || entry.category === auditCategory).slice(0, 80);
   const onboarding = state.onboarding || getAuthoritativeOnboardingState(state);
+  const readinessDismissed = !!state.settings?.workspaceReadinessDismissedAt;
   const importProgress = adminUi.importProgress || null;
   const importConfig = adminUi.importConfig || {};
   const bootstrapModeActive = importProgress?.isRunning
@@ -201,7 +202,9 @@ export function renderAdmin(el, state, actions) {
       </div>
     </div>
     ${adminUi.message ? `<div class="inline-state ${adminUi.tone === 'error' ? 'error' : (adminUi.tone === 'success' ? 'success' : 'info')}" role="status" aria-live="polite">${adminUi.message}</div>` : ''}
-    ${renderWorkspaceReadinessCard(state, { compact: true })}
+    ${readinessDismissed
+      ? `<div class="item"><div class="row space"><b>Workspace readiness</b><button type="button" data-show-readiness="1">Show again</button></div><div class="tiny mt">This panel is currently dismissed.</div></div>`
+      : renderWorkspaceReadinessCard(state, { compact: true, dismissible: true })}
     ${renderSectionTabs(activeSection)}
 
     <section class="item ${activeSection === 'company' ? '' : 'hide'}" data-admin-section="company">
@@ -213,6 +216,8 @@ export function renderAdmin(el, state, actions) {
           <div class="grid grid-2">
             <label>Company name<input name="name" value="${state.company?.name || ''}" required /></label>
             <label>Logo URL (optional)<input name="logoUrl" value="${state.company?.logoUrl || ''}" placeholder="https://..." /></label>
+            <label>Upload logo file (optional)<input name="logoFile" type="file" accept="image/*" /></label>
+            <div class="tiny">Current logo source: ${state.company?.logoStoragePath || state.company?.logoUrl || 'none'}</div>
             <label>Business type
               <select name="businessType">${BUSINESS_TYPE_OPTIONS.map((option) => `<option value="${option}" ${option === (state.company?.businessType || '') ? 'selected' : ''}>${option}</option>`).join('')}</select>
             </label>
@@ -440,6 +445,8 @@ export function renderAdmin(el, state, actions) {
 
   el.querySelectorAll('[data-admin-tab]').forEach((button) => button.addEventListener('click', () => actions.setAdminSection(button.dataset.adminTab)));
   el.querySelectorAll('[data-audit-filter]').forEach((button) => button.addEventListener('click', () => actions.setAuditFilter(button.dataset.auditFilter)));
+  el.querySelector('[data-dismiss-readiness]')?.addEventListener('click', () => actions.dismissReadinessCard?.());
+  el.querySelector('[data-show-readiness]')?.addEventListener('click', () => actions.showReadinessCard?.());
   const requiredPhrase = state.company?.name || 'CONFIRM';
   const confirmDanger = () => {
     const phrase = `${el.querySelector('#dangerPhrase')?.value || ''}`.trim();
@@ -452,7 +459,11 @@ export function renderAdmin(el, state, actions) {
 
   el.querySelector('#companySettingsForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
-    await actions.updateCompanyProfile(Object.fromEntries(new FormData(event.currentTarget).entries()));
+    const formData = new FormData(event.currentTarget);
+    const payload = Object.fromEntries(formData.entries());
+    payload.logoFile = formData.get('logoFile');
+    if (!(payload.logoFile instanceof File) || !payload.logoFile.size) delete payload.logoFile;
+    await actions.updateCompanyProfile(payload);
   });
 
   el.querySelector('#billingSettingsForm')?.addEventListener('submit', async (event) => {

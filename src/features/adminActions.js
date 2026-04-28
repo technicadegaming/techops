@@ -1,6 +1,7 @@
 import { buildUsageSummary, normalizeBillingAddress } from '../billing.js';
 import { ASSET_CSV_TEMPLATE, buildAssetImportRow } from './assetIntake.js';
 import { isManager } from '../roles.js';
+import { getWorkspaceReadiness } from './workspaceReadiness.js';
 
 export function createAdminActions(deps) {
   const {
@@ -29,7 +30,12 @@ export function createAdminActions(deps) {
     bootstrapAttachAssetManualFromCsvHint,
     createCompanyInvite,
     revokeInvite,
-    withGlobalBusy
+    withGlobalBusy,
+    storage,
+    storageRef,
+    uploadBytes,
+    getDownloadURL,
+    buildCompanyBrandingLogoPath
   } = deps;
 
   const setAdminFeedback = ({ tone = 'info', message = '' } = {}) => {
@@ -39,6 +45,11 @@ export function createAdminActions(deps) {
   const safeWithGlobalBusy = typeof withGlobalBusy === 'function'
     ? withGlobalBusy
     : async (_title, _detail, fn) => fn();
+  const buildSafeLogoFileName = (name = 'logo') => `${name || 'logo'}`
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/(^[.-]+|[.-]+$)/g, '')
+    .slice(0, 96) || 'logo';
 
   const setImportFeedback = ({ tone = 'info', summary = '', preview = '', progress = null } = {}) => {
     state.adminUi = { ...(state.adminUi || {}), importTone: tone, importSummary: summary, importPreview: preview, importProgress: progress };
@@ -186,6 +197,28 @@ export function createAdminActions(deps) {
       state.adminUi = { ...(state.adminUi || {}), auditCategory: category || 'all' };
       render();
     },
+    dismissReadinessCard: async () => {
+      const readiness = getWorkspaceReadiness(state);
+      if (!readiness.requiredComplete) {
+        setAdminFeedback({ tone: 'error', message: 'Complete required readiness items before dismissing this panel.' });
+        render();
+        return;
+      }
+      await runAction('dismiss_workspace_readiness', async () => {
+        await saveAppSettings({ ...state.settings, workspaceReadinessDismissedAt: new Date().toISOString() }, state.user);
+        await refreshData();
+        setAdminFeedback({ tone: 'success', message: 'Workspace readiness panel dismissed. You can show it again anytime.' });
+        render();
+      }, { fallbackMessage: 'Unable to dismiss workspace readiness panel.' });
+    },
+    showReadinessCard: async () => {
+      await runAction('show_workspace_readiness', async () => {
+        await saveAppSettings({ ...state.settings, workspaceReadinessDismissedAt: null }, state.user);
+        await refreshData();
+        setAdminFeedback({ tone: 'success', message: 'Workspace readiness panel is visible again.' });
+        render();
+      }, { fallbackMessage: 'Unable to restore workspace readiness panel.' });
+    },
     saveWorker: async (id, payload) => {
       const existing = state.workers.find((worker) => worker.id === id) || {};
       const workerEmail = `${payload.email || existing.email || ''}`.trim().toLowerCase();
@@ -326,6 +359,21 @@ export function createAdminActions(deps) {
         return;
       }
       await runAction('update_company_profile', async () => {
+        let logoStoragePath = `${state.company?.logoStoragePath || ''}`.trim();
+        let logoUrl = `${payload.logoUrl || ''}`.trim();
+        const file = payload.logoFile;
+        if (file && state.company?.id) {
+          if (!storage || typeof storageRef !== 'function' || typeof uploadBytes !== 'function' || typeof getDownloadURL !== 'function' || typeof buildCompanyBrandingLogoPath !== 'function') {
+            throw new Error('Logo upload is unavailable because storage runtime is missing.');
+          }
+          const extension = `${file.name || ''}`.trim().split('.').pop();
+          const safeName = `${Date.now()}-${buildSafeLogoFileName(file.name || 'logo')}`;
+          const finalName = extension && !safeName.endsWith(`.${extension}`) ? `${safeName}.${extension.toLowerCase()}` : safeName;
+          logoStoragePath = buildCompanyBrandingLogoPath(state.company.id, finalName);
+          const logoRef = storageRef(storage, logoStoragePath);
+          await uploadBytes(logoRef, file, { contentType: file.type || 'application/octet-stream' });
+          logoUrl = await getDownloadURL(logoRef).catch(() => logoUrl);
+        }
         await upsertEntity('companies', state.company.id, withRequiredCompanyId({
           ...state.company,
           name: `${payload.name || state.company?.name || ''}`.trim(),
@@ -334,7 +382,8 @@ export function createAdminActions(deps) {
           timeZone: `${payload.timeZone || state.company?.timeZone || 'UTC'}`.trim(),
           businessType: `${payload.businessType || ''}`.trim(),
           industry: `${payload.industry || ''}`.trim(),
-          logoUrl: `${payload.logoUrl || ''}`.trim(),
+          logoUrl,
+          logoStoragePath,
           hqStreet: `${payload.hqStreet || ''}`.trim(),
           hqCity: `${payload.hqCity || ''}`.trim(),
           hqState: `${payload.hqState || ''}`.trim(),

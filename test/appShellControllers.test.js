@@ -65,6 +65,14 @@ async function loadOnboardingView() {
   return import('../src/onboarding.js');
 }
 
+async function loadThemeHelpers() {
+  return import('../src/app/theme.js');
+}
+
+async function loadStateHelpers() {
+  return import('../src/app/state.js');
+}
+
 async function loadAssetActions() {
   return import('../src/features/assetActions.js');
 }
@@ -1092,6 +1100,10 @@ function loadDataSource() {
   return require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'data.js'), 'utf8');
 }
 
+function loadAccountSource() {
+  return require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'account.js'), 'utf8');
+}
+
 test('authoritative onboarding state resolves stale bootstrap records as complete and repair is idempotent', async () => {
   const { buildOnboardingRepairPlan, getAuthoritativeOnboardingState } = await loadOnboardingStatusHelpers();
   const state = {
@@ -1152,6 +1164,123 @@ test('app shell routes stale bootstrap repairs through the callable flow instead
   assert.doesNotMatch(repairBody, /saveUserProfile\(/);
   assert.doesNotMatch(repairBody, /upsertEntity\('companyMemberships'/);
   assert.doesNotMatch(repairBody, /upsertEntity\('companies'/);
+});
+
+test('account appearance UI exposes expanded presets and reset to default control', () => {
+  const source = loadAccountSource();
+  assert.match(source, /option value="blue"/);
+  assert.match(source, /option value="dark_slate"/);
+  assert.match(source, /data-reset-appearance/);
+  assert.match(source, /Appearance reset to Scoot default/);
+});
+
+test('theme helpers apply presets, custom colors, readable text fallback, and default reset shape', async () => {
+  const { applyAppearancePreference, getDefaultAppearance } = await loadThemeHelpers();
+  const styleMap = new Map();
+  const originalDocument = global.document;
+  const originalWindow = global.window;
+  try {
+    global.document = {
+      documentElement: {
+        style: {
+          setProperty: (name, value) => styleMap.set(name, value)
+        },
+        dataset: {}
+      }
+    };
+    global.window = { matchMedia: () => ({ matches: false }) };
+    applyAppearancePreference({
+      mode: 'light',
+      preset: 'blue',
+      textSize: 'large',
+      contrast: 'high',
+      motion: 'reduced',
+      customColors: { primary: '#111111', accent: '#222222', background: '#000000', text: '#111111' }
+    });
+    assert.equal(styleMap.get('--color-primary'), '#111111');
+    assert.equal(styleMap.get('--accent'), '#222222');
+    assert.equal(styleMap.get('--color-text'), '#f8fafc');
+    assert.equal(global.document.documentElement.dataset.themeMode, 'light');
+    assert.equal(getDefaultAppearance().preset, 'scoot_default');
+  } finally {
+    global.document = originalDocument;
+    global.window = originalWindow;
+  }
+});
+
+test('admin readiness card dismiss/show actions persist and enforce required-only completion rules', async () => {
+  const { createAdminActions } = await loadAdminActions();
+  const saveCalls = [];
+  let refreshCount = 0;
+  const state = {
+    company: { id: 'co-1' },
+    companyLocations: [],
+    workers: [],
+    settings: { aiConfiguredExplicitly: false },
+    invites: [],
+    assets: [],
+    adminUi: {}
+  };
+  const actions = createAdminActions({
+    state,
+    render: () => {},
+    refreshData: async () => { refreshCount += 1; },
+    runAction: async (_label, fn) => fn(),
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    clearEntitySet: async () => {},
+    saveAppSettings: async (payload) => { saveCalls.push(payload); },
+    exportBackupJson: () => {},
+    buildAssetsCsv: () => '',
+    buildTasksCsv: () => '',
+    buildAuditCsv: () => '',
+    buildWorkersCsv: () => '',
+    buildMembersCsv: () => '',
+    buildInvitesCsv: () => '',
+    buildLocationsCsv: () => '',
+    buildCompanyBackupBundle: () => ({}),
+    downloadFile: () => {},
+    downloadJson: () => {},
+    normalizeAssetId: (value) => value,
+    enrichAssetDocumentation: async () => {},
+    repairAssetDocumentationState: async () => {},
+    bootstrapAttachAssetManualFromCsvHint: async () => {},
+    createCompanyInvite: async () => ({}),
+    revokeInvite: async () => {},
+  });
+
+  await actions.dismissReadinessCard();
+  assert.equal(saveCalls.length, 0);
+  assert.match(state.adminUi.message, /Complete required readiness items/i);
+
+  state.companyLocations = [{ id: 'loc-1' }];
+  state.workers = [{ id: 'worker-1' }];
+  state.settings.aiConfiguredExplicitly = true;
+  await actions.dismissReadinessCard();
+  assert.equal(saveCalls.length, 1);
+  assert.ok(saveCalls[0].workspaceReadinessDismissedAt);
+  assert.equal(state.invites.length, 0);
+  assert.equal(state.assets.length, 0);
+
+  await actions.showReadinessCard();
+  assert.equal(saveCalls.length, 2);
+  assert.equal(saveCalls[1].workspaceReadinessDismissedAt, null);
+  assert.equal(refreshCount >= 2, true);
+});
+
+test('setup wizard stays hidden after refresh when readiness dismissal setting is present', async () => {
+  const { syncSetupWizardState } = await loadStateHelpers();
+  const state = {
+    company: { id: 'co-1' },
+    onboardingRequired: false,
+    companyLocations: [],
+    workers: [],
+    settings: { aiConfiguredExplicitly: false, workspaceReadinessDismissedAt: new Date().toISOString() },
+    setupWizard: { active: true, step: 2, message: 'previous', tone: 'warn' }
+  };
+  syncSetupWizardState(state);
+  assert.equal(state.setupWizard.active, false);
+  assert.equal(state.setupWizard.message, '');
 });
 
 

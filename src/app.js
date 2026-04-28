@@ -55,7 +55,7 @@ import { buildNotificationCandidates, formatRelativeTime } from './features/noti
 import { createCompanyInvite, revokeInvite } from './company.js';
 import { logAudit } from './audit.js';
 import { storage } from './firebase.js';
-import { buildCompanyEvidencePath } from './storagePaths.js';
+import { buildCompanyBrandingLogoPath, buildCompanyEvidencePath } from './storagePaths.js';
 import { hydrateInviteCodeFromRoute, resolveAppElements } from './app/boot.js';
 import { reportActionError, withRequiredCompanyId } from './app/actions.js';
 import { applyActionCenterFocus as applyActionCenterFocusState, applyShellFocus } from './app/actionCenter.js';
@@ -106,6 +106,32 @@ const withActiveCompanyId = (payload = {}, actionLabel = 'continue') => withRequ
 const globalBusy = createGlobalBusyHelpers(state, () => render());
 
 let onboardingRepairInFlight = null;
+let lastResolvedCompanyLogoPath = '';
+
+async function resolveCompanyLogoUrl() {
+  const logoUrl = `${state.company?.logoUrl || ''}`.trim();
+  const logoStoragePath = `${state.company?.logoStoragePath || ''}`.trim();
+  if (logoUrl) return logoUrl;
+  if (!logoStoragePath) return '';
+  if (logoStoragePath === lastResolvedCompanyLogoPath && state.company?.resolvedLogoUrl) return `${state.company.resolvedLogoUrl || ''}`.trim();
+  const resolved = await getDownloadURL(storageRef(storage, logoStoragePath)).catch(() => '');
+  lastResolvedCompanyLogoPath = logoStoragePath;
+  state.company = { ...(state.company || {}), resolvedLogoUrl: resolved };
+  return resolved;
+}
+
+async function renderHeaderBranding() {
+  const logoEl = document.getElementById('appCompanyLogo');
+  if (!logoEl) return;
+  const logoUrl = await resolveCompanyLogoUrl();
+  if (!logoUrl) {
+    logoEl.classList.add('hide');
+    logoEl.removeAttribute('src');
+    return;
+  }
+  logoEl.src = logoUrl;
+  logoEl.classList.remove('hide');
+}
 
 async function repairOperationalOnboardingState() {
   if (!shouldFinalizeOnboardingBootstrap(state) || onboardingRepairInFlight) return;
@@ -217,6 +243,7 @@ function downloadJson(filename, payload) {
 
 async function render() {
   state.storageRuntime = { storage, storageRef, getDownloadURL };
+  await renderHeaderBranding();
   applyAppearancePreference(state.ui?.appearance || {});
   navigationController.renderTabs();
   contextSwitcherController.renderHeaderContext();
@@ -329,7 +356,12 @@ async function render() {
     bootstrapAttachAssetManualFromCsvHint,
     createCompanyInvite,
     revokeInvite,
-    withGlobalBusy: globalBusy.withGlobalBusy
+    withGlobalBusy: globalBusy.withGlobalBusy,
+    storage,
+    storageRef,
+    uploadBytes,
+    getDownloadURL,
+    buildCompanyBrandingLogoPath
   });
   adminController.renderAdminSection(document.getElementById('admin'));
   const appViewElement = document.getElementById('appView');
