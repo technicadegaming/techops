@@ -1,13 +1,11 @@
 import { defaultAiSettings } from './data.js';
 import { canChangeAISettings, canManageBackups, isAdmin, isManager } from './roles.js';
-import { buildLocationOptions } from './features/locationContext.js';
 import { renderWorkspaceReadinessCard } from './features/workspaceReadiness.js';
 import { formatRelativeTime } from './features/notifications.js';
 import { buildUsageSummary, getTrialDaysRemaining, isTrialExpired, normalizeBillingAddress } from './billing.js';
 import { parseAssetCsv } from './features/assetIntake.js';
 import { getAuthoritativeOnboardingState } from './features/onboardingStatus.js';
 
-const WORKER_ROLE_OPTIONS = ['staff', 'lead', 'assistant_manager', 'manager', 'admin'];
 const ACCESS_ROLE_OPTIONS = ['owner', 'admin', 'manager', 'lead', 'staff', 'viewer'];
 const BUSINESS_TYPE_OPTIONS = ['Service provider', 'Owner/operator', 'Franchise group', 'Manufacturer', 'Distributor', 'Facilities team', 'Multi-site enterprise', 'Other'];
 const INDUSTRY_OPTIONS = ['Family entertainment', 'Arcade and attractions', 'Hospitality', 'Foodservice', 'Retail', 'Healthcare', 'Education', 'Facilities management', 'Manufacturing', 'Transportation', 'Other'];
@@ -62,11 +60,6 @@ const ADMIN_SECTIONS = [
 
 function getReadablePersonName(person = {}) {
   return person.fullName || person.displayName || person.email || person.userId || person.id || 'Unknown person';
-}
-
-function getMemberDisplayLabel(member = {}) {
-  const person = member.person || {};
-  return person.fullName || person.displayName || member.displayName || member.fullName || member.email || member.userEmail || member.userIdentity || member.userId || member.id || 'Unknown member';
 }
 
 function renderCompanyAddress(company = {}) {
@@ -157,7 +150,6 @@ export function renderAdmin(el, state, actions) {
   const pendingInvites = companyInvites.filter((invite) => invite.status === 'pending');
   const members = (state.companyMembers || []).map((membership) => ({ ...membership, person: state.directoryUsers?.find((user) => user.id === membership.userId), isCurrentUser: membership.userId === state.user?.uid }));
   const locations = state.companyLocations || [];
-  const locationOptions = buildLocationOptions(state).filter((option) => option.id);
   const settings = { ...defaultAiSettings, ...(state.settings || {}) };
   const selectedNotificationPrefs = new Set((state.settings?.notificationPrefs?.enabledTypes || []));
   const adminUi = state.adminUi || {};
