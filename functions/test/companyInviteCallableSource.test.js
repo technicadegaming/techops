@@ -27,5 +27,6 @@ test('acceptCompanyInvite tracks failed attempts without accepting or removing t
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.js'), 'utf8');
   assert.match(source, /admin\.firestore\.FieldValue\.increment\(1\)/);
   assert.match(source, /lastFailedAttemptAt: serverTimestamp\(\)/);
-  assert.match(source, /if \(`\$\{error\?\.code \|\| ''\}` === 'permission-denied'\)/);
+  assert.match(source, /const trackFailure = \['permission-denied', 'failed-precondition', 'already-exists', 'not-found', 'invalid-argument'\]\.includes\(errorCode\)/);
+  assert.match(source, /inviteCodeNormalized/);
 });

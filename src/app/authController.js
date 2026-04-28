@@ -105,7 +105,7 @@ export function createAuthController({
     }
 
     if (!state.user?.uid) {
-      setAuthMessage('Invite code saved. Sign in or create an account, then we’ll finish joining your workspace.');
+      setAuthMessage('Create or sign in first. Invite code saved, and we’ll finish joining your workspace after sign-in.');
       return;
     }
 

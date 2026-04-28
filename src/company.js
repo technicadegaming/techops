@@ -50,6 +50,23 @@ function randomCode(size = 8) {
   return out;
 }
 
+function normalizeInviteCode(inviteCode = '') {
+  return `${inviteCode || ''}`.trim().toUpperCase();
+}
+
+async function createUniqueInviteCode(size = 10, maxAttempts = 6) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const inviteCode = normalizeInviteCode(randomCode(size));
+    const existing = await getDocs(query(
+      collection(db, C.companyInvites),
+      where('inviteCode', '==', inviteCode),
+      limit(1)
+    ));
+    if (existing.empty) return inviteCode;
+  }
+  throw new Error('Unable to generate a unique invite code right now. Please retry.');
+}
+
 function isPermissionDenied(error) {
   const code = `${error?.code || ''}`.trim().toLowerCase();
   const message = `${error?.message || ''}`.trim().toLowerCase();
@@ -93,9 +110,19 @@ export async function getCompany(companyId) {
 }
 
 export async function getCompanyByInviteCode(code) {
-  const clean = `${code || ''}`.trim().toUpperCase();
+  const clean = normalizeInviteCode(code);
   if (!clean) return null;
-  const invites = await getDocs(query(collection(db, C.companyInvites), where('inviteCode', '==', clean), where('status', '==', 'pending'), limit(1)));
+  const invites = await getDocs(query(
+    collection(db, C.companyInvites),
+    where('inviteCodeNormalized', '==', clean),
+    where('status', '==', 'pending'),
+    limit(1)
+  )).catch(async () => getDocs(query(
+    collection(db, C.companyInvites),
+    where('inviteCode', '==', clean),
+    where('status', '==', 'pending'),
+    limit(1)
+  )));
   const hit = invites.docs[0];
   return hit ? { id: hit.id, ...hit.data() } : null;
 }
@@ -247,7 +274,7 @@ export async function createCompanyInvite({
   workerTitle = '',
   workerNotes = ''
 }) {
-  const inviteCode = randomCode(10);
+  const inviteCode = await createUniqueInviteCode(10);
   const token = `${companyId}.${inviteCode}.${Math.random().toString(36).slice(2, 10)}`;
   const ref = doc(collection(db, C.companyInvites));
   await setDoc(ref, {
@@ -257,6 +284,7 @@ export async function createCompanyInvite({
     role,
     displayName: `${displayName || ''}`.trim(),
     inviteCode,
+    inviteCodeNormalized: normalizeInviteCode(inviteCode),
     token,
     createWorkerProfile: createWorkerProfile === true,
     workerTitle: `${workerTitle || ''}`.trim(),
@@ -314,7 +342,7 @@ export async function acceptInvite({ inviteCode }) {
   const callable = httpsCallable(functions, 'acceptCompanyInvite');
   try {
     const result = await callable({
-      inviteCode: `${inviteCode || ''}`.trim()
+      inviteCode: normalizeInviteCode(inviteCode)
     });
     return `${result?.data?.companyId || ''}`.trim();
   } catch (error) {
@@ -330,7 +358,7 @@ export function mapInviteAcceptanceError(error) {
   if (code.includes('failed-precondition') && /revoked/i.test(message)) return new Error('This invite was revoked. Ask your admin for a new invite.');
   if (code.includes('already-exists')) return new Error('This invite was already accepted. Ask your admin for a new invite code if needed.');
   if (code.includes('not-found')) return new Error('Invite code not found. Verify the code and try again.');
-  if (code.includes('unimplemented') || /function|deploy|not found/i.test(message)) return new Error('Invite acceptance service is unavailable. The Cloud Function may not be deployed yet.');
+  if (code.includes('unimplemented') || /function|deploy|not found/i.test(message)) return new Error('Invite service is unavailable. Deploy functions and try again.');
   return error instanceof Error ? error : new Error(message || 'Unable to accept invite right now.');
 }
 

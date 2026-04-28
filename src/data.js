@@ -51,18 +51,36 @@ const withMeta = (payload, user, isCreate) => ({
 export async function listEntities(name) {
   const scope = getActiveCompanyContext();
   const scopedQuery = isCompanyScopedCollection(name) && scope.companyId && !scope.allowLegacy;
+  const collectionRef = collection(db, C[name]);
+  const buildOrderedQuery = () => (scopedQuery
+    ? query(collectionRef, where('companyId', '==', scope.companyId), orderBy('updatedAt', 'desc'))
+    : query(collectionRef, orderBy('updatedAt', 'desc')));
+  const buildFallbackScopeQuery = () => (scopedQuery
+    ? query(collectionRef, where('companyId', '==', scope.companyId))
+    : query(collectionRef));
 
-  const baseQuery = scopedQuery
-    ? query(
-        collection(db, C[name]),
-        where('companyId', '==', scope.companyId),
-        orderBy('updatedAt', 'desc')
-      )
-    : query(collection(db, C[name]), orderBy('updatedAt', 'desc'));
+  let snap;
+  try {
+    snap = await getDocs(buildOrderedQuery());
+  } catch (error) {
+    const message = `${error?.message || ''}`.toLowerCase();
+    const code = `${error?.code || ''}`.toLowerCase();
+    const missingIndex = code.includes('failed-precondition') || message.includes('index');
+    if (!missingIndex) throw error;
+    console.info('[people_invites] Falling back to non-ordered Firestore query due to missing index.', {
+      collection: name,
+      companyId: scope.companyId || null
+    });
+    snap = await getDocs(buildFallbackScopeQuery());
+  }
 
-  const snap = await getDocs(baseQuery);
   return snap.docs
     .map((d) => mapSnapshotEntity(name, d))
+    .sort((a, b) => {
+      const aAt = new Date(a.updatedAt || a.createdAt || 0).getTime();
+      const bAt = new Date(b.updatedAt || b.createdAt || 0).getTime();
+      return bAt - aAt;
+    })
     .filter((entity) => includeRecordForActiveCompany(name, entity));
 }
 
