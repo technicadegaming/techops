@@ -37,34 +37,8 @@ function normalizeHeadquarters(payload = {}) {
   };
 }
 
-function randomCode(size = 8) {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let out = '';
-  const bytes = typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function'
-    ? crypto.getRandomValues(new Uint8Array(size))
-    : null;
-  for (let i = 0; i < size; i += 1) {
-    const index = bytes ? bytes[i] % chars.length : Math.floor(Math.random() * chars.length);
-    out += chars[index];
-  }
-  return out;
-}
-
 function normalizeInviteCode(inviteCode = '') {
   return `${inviteCode || ''}`.trim().toUpperCase();
-}
-
-async function createUniqueInviteCode(size = 10, maxAttempts = 6) {
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const inviteCode = normalizeInviteCode(randomCode(size));
-    const existing = await getDocs(query(
-      collection(db, C.companyInvites),
-      where('inviteCode', '==', inviteCode),
-      limit(1)
-    ));
-    if (existing.empty) return inviteCode;
-  }
-  throw new Error('Unable to generate a unique invite code right now. Please retry.');
 }
 
 function isPermissionDenied(error) {
@@ -268,48 +242,31 @@ export async function createCompanyInvite({
   companyId,
   email,
   role = 'staff',
-  user,
   displayName = '',
   createWorkerProfile = false,
   workerTitle = '',
-  workerNotes = ''
+  workerNotes = '',
+  expiresAt = null
 }) {
-  const inviteCode = await createUniqueInviteCode(10);
-  const token = `${companyId}.${inviteCode}.${Math.random().toString(36).slice(2, 10)}`;
-  const ref = doc(collection(db, C.companyInvites));
-  await setDoc(ref, {
-    id: ref.id,
-    companyId,
+  const callable = httpsCallable(functions, 'createCompanyInvite');
+  const payload = {
+    companyId: `${companyId || ''}`.trim(),
     email: `${email || ''}`.trim().toLowerCase(),
-    role,
+    role: `${role || 'staff'}`.trim() || 'staff',
     displayName: `${displayName || ''}`.trim(),
-    inviteCode,
-    inviteCodeNormalized: normalizeInviteCode(inviteCode),
-    token,
     createWorkerProfile: createWorkerProfile === true,
     workerTitle: `${workerTitle || ''}`.trim(),
     workerNotes: `${workerNotes || ''}`.trim(),
-    status: 'pending',
-    createdAt: serverTimestamp(),
-    createdBy: user.uid,
-    updatedAt: serverTimestamp(),
-    updatedBy: user.uid,
-    expiresAt: null
-  }, { merge: true });
-  await logAudit({
-    action: 'create',
-    actionType: 'invite_sent',
-    category: 'people_access',
-    entityType: 'companyInvites',
-    entityId: ref.id,
-    targetType: 'invite',
-    targetId: ref.id,
-    targetLabel: `${email || ''}`.trim().toLowerCase(),
-    summary: `Invite sent to ${`${email || ''}`.trim().toLowerCase()}`,
-    user,
-    metadata: { role, companyId }
-  });
-  return { id: ref.id, inviteCode, token };
+    expiresAt: expiresAt || null
+  };
+  const result = await callable(payload);
+  const data = result?.data || {};
+  return {
+    id: `${data.id || data.invite?.id || ''}`.trim(),
+    inviteCode: `${data.inviteCode || data.invite?.inviteCode || ''}`.trim(),
+    token: `${data.invite?.token || ''}`.trim(),
+    invite: data.invite || null
+  };
 }
 
 export async function revokeInvite(inviteId, user) {
