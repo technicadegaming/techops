@@ -13,6 +13,9 @@ export function renderAccount(el, state, actions) {
   const mfaEnabled = !!profile.securityMfaEnrolled;
   const displayName = profile.fullName || state.user?.displayName || state.user?.email?.split('@')[0] || '-';
   const appearance = state.ui?.appearance || {};
+  const accountUi = state.accountUi || {};
+  const resendBusy = accountUi.resendVerificationBusy === true;
+  const refreshBusy = accountUi.refreshVerificationBusy === true;
 
   el.innerHTML = `
     <div class="page-shell page-narrow"><div class="page-header">
@@ -42,8 +45,8 @@ export function renderAccount(el, state, actions) {
           ${chip(isAdminUser ? 'elevated access account' : 'standard access account', isAdminUser ? 'info' : 'muted')}
         </div>
         <div class="action-row mt">
-          <button type="button" class="btn btn-secondary" data-account-resend-verify ${profile.emailVerified ? 'disabled' : ''}>Resend verification email</button>
-          <button type="button" class="btn btn-secondary" data-account-refresh-verify>Refresh verification status</button>
+          <button type="button" class="btn btn-secondary" data-account-resend-verify ${(profile.emailVerified || resendBusy) ? 'disabled' : ''}>${resendBusy ? 'Sending verification…' : 'Resend verification email'}</button>
+          <button type="button" class="btn btn-secondary" data-account-refresh-verify ${refreshBusy ? 'disabled' : ''}>${refreshBusy ? 'Refreshing status…' : 'Refresh verification status'}</button>
           <button type="button" class="btn btn-secondary" data-account-reset-password>Password reset email</button>
         </div>
         <p class="tiny mt">MFA enrollment is currently managed in your Google/Firebase auth provider account settings.</p>
@@ -102,32 +105,46 @@ export function renderAccount(el, state, actions) {
         <div class="list mt">${loginHistory.map((entry) => `<div class="item tiny"><b>${(entry.method || 'password').toUpperCase()}</b> sign-in • ${formatRelativeTime(entry.at)}<div>Providers: ${(entry.providers || []).join(', ') || 'password'}</div></div>`).join('') || '<div class="inline-state info">No recent sign-in history yet.</div>'}</div>
       </section>
     </div>
-    <p id="accountSecurityMessage" class="tiny mt" role="status" aria-live="polite"></p>
+    <p id="accountSecurityMessage" class="tiny mt" role="status" aria-live="polite">${accountUi.securityMessage || ''}</p>
     </div>
   `;
 
   const messageEl = el.querySelector('#accountSecurityMessage');
   const writeMessage = (msg, tone = 'info') => {
+    state.accountUi = { ...(state.accountUi || {}), securityMessage: msg, securityTone: tone };
     if (!messageEl) return;
     messageEl.textContent = msg;
     messageEl.style.color = tone === 'error' ? '#991b1b' : (tone === 'success' ? '#166534' : '');
   };
+  if (messageEl && accountUi.securityTone) {
+    messageEl.style.color = accountUi.securityTone === 'error' ? '#991b1b' : (accountUi.securityTone === 'success' ? '#166534' : '');
+  }
 
   el.querySelector('[data-account-resend-verify]')?.addEventListener('click', async () => {
+    state.accountUi = { ...(state.accountUi || {}), resendVerificationBusy: true };
+    renderAccount(el, state, actions);
     try {
       await actions.resendVerification?.();
       writeMessage('Verification email sent. Please check your inbox.', 'success');
     } catch (error) {
       writeMessage(error?.message || 'Unable to send verification email.', 'error');
+    } finally {
+      state.accountUi = { ...(state.accountUi || {}), resendVerificationBusy: false };
+      renderAccount(el, state, actions);
     }
   });
 
   el.querySelector('[data-account-refresh-verify]')?.addEventListener('click', async () => {
+    state.accountUi = { ...(state.accountUi || {}), refreshVerificationBusy: true };
+    renderAccount(el, state, actions);
     try {
       await actions.refreshVerification?.();
       writeMessage('Verification status refreshed.', 'success');
     } catch (error) {
       writeMessage(error?.message || 'Unable to refresh verification status.', 'error');
+    } finally {
+      state.accountUi = { ...(state.accountUi || {}), refreshVerificationBusy: false };
+      renderAccount(el, state, actions);
     }
   });
 

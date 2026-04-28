@@ -85,6 +85,10 @@ async function loadAdminActions() {
   return import('../src/features/adminActions.js');
 }
 
+async function loadAccountController() {
+  return import('../src/app/accountController.js');
+}
+
 async function loadManufacturerNormalizationHelpers() {
   return import('../src/features/manufacturerNormalization.js');
 }
@@ -926,6 +930,14 @@ test('signed-in invite acceptance path refreshes membership state and routes int
   assert.match(appSource, /setRootViewVisibility\(\{ authView, appView, showAuth: false \}\)/);
 });
 
+test('company invite acceptance uses callable handoff path for membership-safe joins', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const companySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'company.js'), 'utf8');
+  assert.match(companySource, /httpsCallable\(functions, 'acceptCompanyInvite'\)/);
+  assert.doesNotMatch(companySource, /await updateDoc\(doc\(db, C\.companyInvites, invite\.id\), \{/);
+});
+
 test('asset and admin enrichment surfaces share the same manual trigger request and approval helper', async () => {
   const {
     approveSuggestedManualSources,
@@ -1228,6 +1240,8 @@ test('account appearance UI exposes expanded presets and reset to default contro
   assert.match(source, /option value="dark_slate"/);
   assert.match(source, /data-reset-appearance/);
   assert.match(source, /Appearance reset to Scoot default/);
+  assert.match(source, /Sending verification…/);
+  assert.match(source, /Refreshing status…/);
 });
 
 test('theme helpers apply presets, custom colors, readable text fallback, and default reset shape', async () => {
@@ -1256,6 +1270,9 @@ test('theme helpers apply presets, custom colors, readable text fallback, and de
     assert.equal(styleMap.get('--color-primary'), '#111111');
     assert.equal(styleMap.get('--accent'), '#222222');
     assert.equal(styleMap.get('--color-text'), '#f8fafc');
+    assert.equal(styleMap.get('--color-accent-text'), '#ffffff');
+    assert.equal(styleMap.get('--color-danger-text'), '#ffffff');
+    assert.equal(styleMap.get('--color-surface-text'), '#0b1220');
     assert.equal(global.document.documentElement.dataset.themeMode, 'light');
     assert.equal(getDefaultAppearance().preset, 'scoot_default');
   } finally {
@@ -1322,6 +1339,51 @@ test('admin readiness card dismiss/show actions persist and enforce required-onl
   assert.equal(saveCalls.length, 2);
   assert.equal(saveCalls[1].workspaceReadinessDismissedAt, null);
   assert.equal(refreshCount >= 2, true);
+});
+
+test('account security actions call verification helpers and refresh profile snapshot', async () => {
+  const { createAccountController } = await loadAccountController();
+  const calls = [];
+  const state = {
+    user: { uid: 'user-1', email: 'owner@example.com' },
+    profile: { emailVerified: false }
+  };
+  const controller = createAccountController({
+    state,
+    render: () => calls.push('render'),
+    resendVerificationEmail: async () => calls.push('resendVerificationEmail'),
+    refreshAuthUser: async () => {
+      calls.push('refreshAuthUser');
+      return { uid: 'user-1', email: 'owner@example.com', emailVerified: true };
+    },
+    syncSecuritySnapshot: async () => {
+      calls.push('syncSecuritySnapshot');
+      return { emailVerified: true };
+    },
+    sendForgotPasswordEmail: async () => {},
+    persistAppearancePreference: () => {},
+    withGlobalBusy: async (_title, _detail, fn) => fn()
+  });
+  const actions = controller.createActions();
+
+  await actions.resendVerification();
+  await actions.refreshVerification();
+
+  assert.deepEqual(calls, [
+    'resendVerificationEmail',
+    'refreshAuthUser',
+    'syncSecuritySnapshot',
+    'render',
+    'refreshAuthUser',
+    'syncSecuritySnapshot',
+    'render'
+  ]);
+});
+
+test('admin view collapses dismissed readiness card to a compact restore link', () => {
+  const adminSource = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'admin.js'), 'utf8');
+  assert.match(adminSource, /Show workspace readiness/);
+  assert.doesNotMatch(adminSource, /This panel is currently dismissed\./);
 });
 
 test('setup wizard stays hidden after refresh when readiness dismissal setting is present', async () => {

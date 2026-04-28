@@ -106,6 +106,10 @@ function normalizeCompanyId(companyId) {
   return `${companyId || ''}`.trim() || null;
 }
 
+function normalizeInviteCode(inviteCode) {
+  return `${inviteCode || ''}`.trim().toUpperCase();
+}
+
 
 async function resolveTaskCompanyContext({ task, requestedCompanyId, userId }) {
   const taskCompanyId = normalizeCompanyId(task.companyId);
@@ -193,6 +197,83 @@ exports.finalizeOnboardingBootstrap = onCall({}, async (request) => {
     companyId: request.data?.companyId,
     requireLocation: true,
   });
+});
+
+exports.acceptCompanyInvite = onCall({}, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+  const inviteCode = normalizeInviteCode(request.data?.inviteCode);
+  if (!inviteCode) throw new HttpsError('invalid-argument', 'inviteCode is required');
+
+  const inviteQuery = await db.collection('companyInvites')
+    .where('inviteCode', '==', inviteCode)
+    .where('status', '==', 'pending')
+    .limit(1)
+    .get();
+  if (inviteQuery.empty) throw new HttpsError('not-found', 'Invite not found or no longer valid.');
+
+  const inviteSnap = inviteQuery.docs[0];
+  const invite = inviteSnap.data() || {};
+  const inviteEmail = `${invite.email || ''}`.trim().toLowerCase();
+  const authEmail = `${request.auth.token?.email || ''}`.trim().toLowerCase();
+  if (inviteEmail && authEmail && inviteEmail !== authEmail) {
+    throw new HttpsError('permission-denied', 'Invite email does not match signed-in user.');
+  }
+
+  const companyId = `${invite.companyId || ''}`.trim();
+  if (!companyId) throw new HttpsError('failed-precondition', 'Invite is missing company scope.');
+  const membershipId = `${companyId}_${request.auth.uid}`;
+
+  await db.runTransaction(async (txn) => {
+    const freshInviteSnap = await txn.get(inviteSnap.ref);
+    const freshInvite = freshInviteSnap.data() || {};
+    if (!freshInviteSnap.exists || freshInvite.status !== 'pending') {
+      throw new HttpsError('failed-precondition', 'Invite not found or no longer pending.');
+    }
+    const freshInviteEmail = `${freshInvite.email || ''}`.trim().toLowerCase();
+    if (freshInviteEmail && authEmail && freshInviteEmail !== authEmail) {
+      throw new HttpsError('permission-denied', 'Invite email does not match signed-in user.');
+    }
+    const companyMembershipRef = db.collection('companyMemberships').doc(membershipId);
+    txn.set(companyMembershipRef, {
+      id: membershipId,
+      companyId,
+      userId: request.auth.uid,
+      role: `${freshInvite.role || 'staff'}`.trim() || 'staff',
+      status: 'active',
+      inviteId: inviteSnap.id,
+      createdAt: serverTimestamp(),
+      createdBy: request.auth.uid,
+      updatedAt: serverTimestamp(),
+      updatedBy: request.auth.uid,
+    }, { merge: true });
+    txn.set(inviteSnap.ref, {
+      status: 'accepted',
+      acceptedAt: serverTimestamp(),
+      acceptedBy: request.auth.uid,
+      updatedAt: serverTimestamp(),
+      updatedBy: request.auth.uid,
+    }, { merge: true });
+  });
+
+  await db.collection('auditLogs').add({
+    action: 'update',
+    actionType: 'invite_accepted',
+    category: 'people_access',
+    entityType: 'companyInvites',
+    entityId: inviteSnap.id,
+    targetType: 'invite',
+    targetId: inviteSnap.id,
+    targetLabel: invite.email || inviteSnap.id,
+    summary: `Invite accepted by ${request.auth.token?.name || request.auth.token?.email || request.auth.uid}`,
+    userId: request.auth.uid,
+    userIdentity: `${request.auth.token?.email || request.auth.uid}`,
+    companyId,
+    metadata: { role: invite.role || 'staff', companyId },
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  return { ok: true, companyId };
 });
 
 exports.analyzeTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
