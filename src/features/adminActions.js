@@ -11,6 +11,7 @@ export function createAdminActions(deps) {
     runAction,
     withRequiredCompanyId,
     upsertEntity,
+    deleteEntity,
     clearEntitySet,
     saveAppSettings,
     exportBackupJson,
@@ -83,6 +84,14 @@ export function createAdminActions(deps) {
     };
   };
   const canRunManualRepair = () => isManager(state.permissions) && typeof repairAssetDocumentationState === 'function';
+  const getMemberById = (id) => (state.companyMembers || []).find((member) => member.id === id);
+  const isCurrentUserMembership = (member) => `${member?.userId || ''}`.trim() === `${state.user?.uid || ''}`.trim();
+  const canManageMembershipAccess = (member) => {
+    if (!member) return { ok: false, reason: 'Member record not found.' };
+    if ((member.role || '') === 'owner') return { ok: false, reason: 'Owner access cannot be changed here.' };
+    if (isCurrentUserMembership(member)) return { ok: false, reason: 'You cannot disable or remove your own access.' };
+    return { ok: true, reason: '' };
+  };
   const MANUAL_REPAIRABLE_ACTIONS = new Set(['would_materialize', 'would_reextract']);
   const getRepairableAssetIds = (rows = []) => rows
     .filter((row) => MANUAL_REPAIRABLE_ACTIONS.has(`${row?.action || ''}`))
@@ -267,6 +276,77 @@ export function createAdminActions(deps) {
         status: payload.status || existing.status || 'active'
       }, state.user);
       setAdminFeedback({ tone: 'success', message: 'Member access updated.' });
+      await refreshData();
+      render();
+    },
+    disableMemberAccess: async (id) => {
+      const member = getMemberById(id);
+      const guard = canManageMembershipAccess(member);
+      if (!guard.ok) {
+        setAdminFeedback({ tone: 'error', message: guard.reason });
+        render();
+        return;
+      }
+      await upsertEntity('companyMemberships', id, { ...member, status: 'inactive' }, state.user);
+      const linkedWorker = (state.workers || []).find((worker) => `${worker.userId || worker.linkedUserId || ''}`.trim() === `${member.userId || ''}`.trim());
+      if (linkedWorker?.id) {
+        await upsertEntity('workers', linkedWorker.id, {
+          ...linkedWorker,
+          enabled: false,
+          available: false,
+          accountStatus: 'member_disabled'
+        }, state.user);
+      }
+      setAdminFeedback({ tone: 'success', message: 'Member account disabled.' });
+      await refreshData();
+      render();
+    },
+    reactivateMemberAccess: async (id) => {
+      const member = getMemberById(id);
+      const guard = canManageMembershipAccess(member);
+      if (!guard.ok) {
+        setAdminFeedback({ tone: 'error', message: guard.reason });
+        render();
+        return;
+      }
+      await upsertEntity('companyMemberships', id, { ...member, status: 'active' }, state.user);
+      const linkedWorker = (state.workers || []).find((worker) => `${worker.userId || worker.linkedUserId || ''}`.trim() === `${member.userId || ''}`.trim());
+      if (linkedWorker?.id) {
+        await upsertEntity('workers', linkedWorker.id, {
+          ...linkedWorker,
+          enabled: true,
+          available: true,
+          accountStatus: 'linked_member'
+        }, state.user);
+      }
+      setAdminFeedback({ tone: 'success', message: 'Member access reactivated.' });
+      await refreshData();
+      render();
+    },
+    removeMemberAccess: async (id) => {
+      const member = getMemberById(id);
+      const guard = canManageMembershipAccess(member);
+      if (!guard.ok) {
+        setAdminFeedback({ tone: 'error', message: guard.reason });
+        render();
+        return;
+      }
+      if (typeof deleteEntity !== 'function') {
+        setAdminFeedback({ tone: 'error', message: 'Remove access is unavailable in this environment.' });
+        render();
+        return;
+      }
+      await deleteEntity('companyMemberships', id, state.user);
+      const linkedWorker = (state.workers || []).find((worker) => `${worker.userId || worker.linkedUserId || ''}`.trim() === `${member.userId || ''}`.trim());
+      if (linkedWorker?.id) {
+        await upsertEntity('workers', linkedWorker.id, {
+          ...linkedWorker,
+          enabled: false,
+          available: false,
+          accountStatus: 'access_removed'
+        }, state.user);
+      }
+      setAdminFeedback({ tone: 'success', message: 'App access removed. Worker profile was deactivated.' });
       await refreshData();
       render();
     },

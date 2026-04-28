@@ -898,6 +898,8 @@ test('auth invite code UI wires explicit join button and Enter-key handling', as
   assert.match(indexSource, /id="authInviteForm"/);
   assert.match(indexSource, /id="applyInviteCodeBtn"/);
   assert.match(indexSource, /Create or sign into your account first/);
+  assert.match(indexSource, /Create your account\. If you have an invite code, you’ll join your workspace after signing in\./);
+  assert.doesNotMatch(indexSource, /Bootstrap admin access is off by default/);
   assert.match(indexSource, /Join with invite/);
   assert.match(authControllerSource, /authInviteForm\?\.addEventListener\('submit', handleInviteCodeSubmit\)/);
   assert.match(authControllerSource, /authInviteCodeInput\?\.addEventListener\('keydown'/);
@@ -917,7 +919,7 @@ test('auth handoff keeps pending invite code for onboarding and does not auto-ac
 });
 
 test('root visibility helper keeps auth and app shell mutually exclusive', async () => {
-  const { setRootViewVisibility } = await loadViewVisibilityHelpers();
+  const { setRootViewVisibility, setAppChromeVisibility } = await loadViewVisibilityHelpers();
   const authView = {
     classList: {
       calls: [],
@@ -938,6 +940,27 @@ test('root visibility helper keeps auth and app shell mutually exclusive', async
   setRootViewVisibility({ authView, appView, showAuth: false });
   assert.deepEqual(authView.classList.calls[1], { name: 'hide', active: true });
   assert.deepEqual(appView.classList.calls[1], { name: 'hide', active: false });
+
+  const toggled = [];
+  const makeEl = () => ({
+    classList: {
+      toggle(name, active) { toggled.push({ name, active }); },
+      add(name) { toggled.push({ name, active: true, via: 'add' }); }
+    }
+  });
+  setAppChromeVisibility({
+    headerEl: makeEl(),
+    tabsEl: makeEl(),
+    companySwitcherEl: makeEl(),
+    locationSwitcherEl: makeEl(),
+    locationScopeBadgeEl: makeEl(),
+    notificationBellEl: makeEl(),
+    notificationPanelEl: makeEl(),
+    logoutButtonEl: makeEl(),
+    companyLogoEl: makeEl(),
+    showChrome: false
+  });
+  assert.ok(toggled.some((entry) => entry.name === 'hide' && entry.active === true));
 });
 
 test('signed-in invite acceptance path refreshes membership state and routes into app shell', async () => {
@@ -951,6 +974,17 @@ test('signed-in invite acceptance path refreshes membership state and routes int
   assert.match(appSource, /await refreshData\(\)/);
   assert.match(appSource, /await render\(\)/);
   assert.match(appSource, /setRootViewVisibility\(\{ authView, appView, showAuth: false \}\)/);
+  assert.match(appSource, /setAppChromeVisibility\(\{/);
+  assert.match(appSource, /const showAppChrome = !state\.onboardingRequired && !state\.setupWizard\?\.active && hasActiveMembership;/);
+});
+
+test('join workspace onboarding keeps invite code on errors and does not continue to company creation flow', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const onboardingControllerSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'app', 'onboardingController.js'), 'utf8');
+  assert.match(onboardingControllerSource, /inviteCodePrefill: normalizedInviteCode/);
+  assert.match(onboardingControllerSource, /await acceptInvite\(\{ inviteCode: normalizedInviteCode, user: state\.user \}\)/);
+  assert.match(onboardingControllerSource, /state\.onboardingUi = \{ \.\.\.\(state\.onboardingUi \|\| \{\}\), inviteCodePrefill: '' \};/);
 });
 
 test('company invite acceptance uses callable handoff path for membership-safe joins', () => {
@@ -3286,6 +3320,19 @@ test('people rows keep pending invite entries visible even without linked member
   assert.match(source, /pendingInvites\.forEach\(\(invite\) => \{/);
   assert.match(source, /id: `pending-invite-\$\{inviteId\}`,/);
   assert.match(source, /if \(!inviteId \|\| rows\.some\(\(row\) => row\.invite\?\.id === inviteId\)\) return;/);
+  assert.match(source, /Invites with failed attempts:/);
+  assert.match(source, /data-disable-member-access/);
+  assert.match(source, /data-reactivate-member-access/);
+  assert.match(source, /data-remove-member-access/);
+  assert.match(source, /failed attempts:/);
+});
+
+test('admin actions block self-disable and self-remove for current owner/admin session', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'features', 'adminActions.js'), 'utf8');
+  assert.match(source, /You cannot disable or remove your own access\./);
+  assert.match(source, /Owner access cannot be changed here\./);
 });
 
 test('admin people password reset action uses auth reset helper and updates UI state', async () => {
