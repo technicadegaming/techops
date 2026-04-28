@@ -5,17 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Scoot Business Operations Portal</title>
   <style>
-    :root{--color-bg:#f4f6fb;--color-surface:#fff;--color-text:#14202b;--color-surface-text:#14202b;--color-muted:#5d6c7f;--color-primary:#0f172a;--color-primary-text:#fff;--color-border:#d8dee8;--color-danger:#b91c1c;--color-danger-text:#fff;--color-success:#166534;--color-success-text:#fff;--color-warning:#b45309;--color-warning-text:#fff;--color-accent-text:#fff;--bg:var(--color-bg);--card:var(--color-surface);--line:var(--color-border);--line-soft:#e6ebf2;--text:var(--color-text);--muted:var(--color-muted);--accent:var(--color-primary);--accent-2:#1d4ed8;--soft:#eef3fb;--good:var(--color-success);--warn:var(--color-warning);--bad:var(--color-danger)}
-    *{box-sizing:border-box} body{margin:0;font-family:Inter,Arial,sans-serif;background:linear-gradient(180deg,var(--color-bg),color-mix(in srgb, var(--color-bg) 80%, #dbeafe));color:var(--text);font-size:15px;line-height:1.45}
-    .wrap{max-width:1500px;margin:0 auto;padding:26px}.card{background:var(--card);border:1px solid var(--line-soft);border-radius:20px;box-shadow:0 10px 28px rgba(15,23,42,.05);padding:22px}
+    :root{--color-bg:#f4f6fb;--color-surface:#fff;--color-text:#14202b;--color-surface-text:#14202b;--color-muted:#5d6c7f;--color-primary:#0f172a;--color-primary-text:#fff;--color-border:#d8dee8;--color-border-strong:#b8c5d8;--color-danger:#b91c1c;--color-danger-text:#fff;--color-success:#166534;--color-success-text:#fff;--color-warning:#b45309;--color-warning-text:#fff;--color-accent-text:#fff;--bg:var(--color-bg);--card:var(--color-surface);--line:var(--color-border);--line-soft:color-mix(in srgb, var(--color-border) 72%, var(--color-surface));--line-strong:var(--color-border-strong);--text:var(--color-text);--muted:var(--color-muted);--accent:var(--color-primary);--accent-2:#1d4ed8;--soft:color-mix(in srgb, var(--color-surface) 72%, var(--color-bg));--good:var(--color-success);--warn:var(--color-warning);--bad:var(--color-danger)}
+    *{box-sizing:border-box} body{margin:0;font-family:Inter,Arial,sans-serif;background:linear-gradient(180deg,var(--color-bg),color-mix(in srgb, var(--color-bg) 88%, var(--color-surface)));color:var(--text);font-size:15px;line-height:1.45}
+    .wrap{max-width:1500px;margin:0 auto;padding:26px}.card{background:var(--card);border:1px solid var(--line-strong);border-radius:20px;box-shadow:0 10px 28px rgba(15,23,42,.08);padding:22px}
     .hide{display:none}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.space{justify-content:space-between}.grid{display:grid;gap:12px}.grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
     @media(max-width:900px){.grid-2{grid-template-columns:1fr}}
     .tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
-    .tab{padding:11px 12px;border-radius:12px;border:1px solid transparent;background:#f4f7fd;color:#324355;cursor:pointer;font-weight:600;transition:all .15s ease}
-    .tab:hover{background:#edf2fc;color:#112033}
+    .tab{padding:11px 12px;border-radius:12px;border:1px solid var(--line);background:color-mix(in srgb, var(--color-surface) 76%, var(--color-bg));color:var(--text);cursor:pointer;font-weight:600;transition:all .15s ease}
+    .tab:hover{background:color-mix(in srgb, var(--color-surface) 60%, var(--color-bg));color:var(--text)}
     .tab.active{background:var(--color-primary);color:var(--color-primary-text);border-color:var(--color-primary);box-shadow:0 8px 18px rgba(15,23,42,.16)}
     .section{display:none}.section.active{display:block}
-    input,select,textarea,button{font:inherit} input,select,textarea{width:100%;padding:11px 12px;border-radius:12px;border:1px solid #cfd8e7;background:#fff} textarea{min-height:96px}
+    input,select,textarea,button{font:inherit} input,select,textarea{width:100%;padding:11px 12px;border-radius:12px;border:1px solid var(--line-strong);background:var(--color-surface);color:var(--color-surface-text)} textarea{min-height:96px}
     button{padding:10px 14px;border-radius:12px;border:1px solid #cad5e6;background:#fff;cursor:pointer;font-weight:600}
     .btn,button{min-height:42px;padding:10px 16px;border:1px solid var(--line);border-radius:12px;background:var(--color-surface);color:var(--text);font-weight:650;transition:all .15s ease}
     .btn:hover,button:hover{filter:brightness(.98)}
@@ -33,10 +33,10 @@
     .app-context{display:grid;gap:8px;justify-items:end}
     .scope-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
     .notif-wrap{position:relative}
-    .notif-btn{position:relative;padding:8px 10px;font-size:16px;background:#f4f7fd}
+    .notif-btn{position:relative;padding:8px 10px;font-size:16px;background:color-mix(in srgb, var(--color-surface) 70%, var(--color-bg))}
     .notif-badge{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#b91c1c;color:#fff;font-size:11px;display:flex;align-items:center;justify-content:center;border:1px solid #fff}
-    .notif-panel{position:absolute;top:42px;right:0;width:min(420px,92vw);max-height:70vh;overflow:auto;z-index:20;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 26px rgba(15,23,42,.18);padding:8px}
-    .tiny{font-size:13px;color:var(--muted)} .list{display:grid;gap:12px} .item{background:#fff;border:1px solid var(--line-soft);border-radius:14px;padding:14px}
+    .notif-panel{position:absolute;top:42px;right:0;width:min(420px,92vw);max-height:70vh;overflow:auto;z-index:20;background:var(--color-surface);border:1px solid var(--line-strong);border-radius:12px;box-shadow:0 10px 26px rgba(15,23,42,.18);padding:8px}
+    .tiny{font-size:13px;color:var(--muted)} .list{display:grid;gap:12px} .item{background:color-mix(in srgb, var(--color-surface) 94%, var(--color-bg));border:1px solid var(--line-strong);border-radius:14px;padding:14px}
     .stats-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
     .stat-card{background:linear-gradient(180deg,#ffffff,#f8fbff);border:1px solid var(--line-soft);border-radius:16px;padding:16px;text-align:left}
     .stat-card strong{display:block;font-size:34px;line-height:1.05;margin-top:8px}
@@ -56,8 +56,8 @@
     .inline-state.warn{background:#fff7ed;border-color:#fed7aa;color:#9a3412}
     .inline-state.info{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
     .app-shell{display:grid;gap:18px}
-    .app-brand{display:grid;gap:6px}
-    .app-brand-logo{max-height:64px;max-width:220px;display:block;object-fit:contain;object-position:left center}
+    .app-brand{display:grid;gap:6px}.app-brand h1{margin:0}
+    .app-brand-logo{max-height:64px;max-width:220px;display:block;object-fit:contain;object-position:left center}.app-brand-logo:not(.hide){margin-top:4px}.app-brand-dismissed{display:flex;align-items:center;gap:8px}
     .page-shell{display:grid;gap:16px}
     .page-header{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap}
     .page-title{margin:0;font-size:1.85rem;line-height:1.2}
@@ -70,13 +70,13 @@
     .card-subtitle{margin:4px 0 0;color:var(--muted);font-size:13px}
     .card-actions{display:flex;gap:8px;flex-wrap:wrap}
     .btn-primary{background:var(--accent);color:var(--color-accent-text);border-color:var(--accent);font-weight:700}
-    .btn-secondary{background:#fff;color:var(--text);border-color:#c8d3e5}
-    .btn-tertiary{background:transparent;border-color:transparent;color:#1d4ed8}
+    .btn-secondary{background:var(--color-surface);color:var(--text);border-color:var(--line-strong)}
+    .btn-tertiary{background:transparent;border-color:transparent;color:var(--accent)}
     .btn-danger{background:var(--color-danger);color:var(--color-danger-text);border-color:var(--color-danger)}
     button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}
     [role="status"][aria-live]{min-height:20px}
     .kpi-line{display:flex;gap:10px;flex-wrap:wrap}
-    .kpi-line span{padding:6px 10px;border-radius:999px;background:#f8fafc;border:1px solid var(--line-soft);font-size:13px}
+    .kpi-line span{padding:6px 10px;border-radius:999px;background:color-mix(in srgb, var(--color-surface) 74%, var(--color-bg));border:1px solid var(--line-soft);font-size:13px}
     .table{width:100%;border-collapse:collapse}.table th,.table td{border-bottom:1px solid var(--line);padding:8px;text-align:left;font-size:13px}
     .danger{color:var(--bad)} .selected{border:2px solid var(--accent-2)} details{margin-top:10px} summary{cursor:pointer} .mt{margin-top:10px}
     .onboarding-form label{display:grid;gap:6px}
@@ -197,8 +197,8 @@
     <main id="appView" class="hide app-shell">
       <header class="card row space">
         <div class="app-brand">
-          <img id="appCompanyLogo" class="app-brand-logo hide" alt="Company logo" />
           <h1 id="appBrandTitle">Scoot Business</h1>
+          <img id="appCompanyLogo" class="app-brand-logo hide" alt="Company logo" />
           <p class="tiny">Keep everything moving.</p>
         </div>
         <div class="app-context">

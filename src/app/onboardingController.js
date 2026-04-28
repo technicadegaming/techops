@@ -43,6 +43,7 @@ export function createOnboardingController({
         await acceptInvite({ inviteCode, user: state.user });
         await bootstrapCompanyContext();
         await refreshData();
+        state.route = { ...(state.route || {}), tab: 'dashboard', section: '' };
         render();
       }, {
         fallbackMessage: 'Unable to accept invite.',

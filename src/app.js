@@ -226,7 +226,9 @@ const authController = createAuthController({
     state.onboardingUi = { ...(state.onboardingUi || {}), inviteCodePrefill: '' };
     await bootstrapCompanyContext();
     await refreshData();
+    state.route = { ...(state.route || {}), tab: 'dashboard' };
     await render();
+    navigationController.openTab('dashboard');
     setRootViewVisibility({ authView, appView, showAuth: false });
   }
 });

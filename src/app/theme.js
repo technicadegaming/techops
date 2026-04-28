@@ -12,6 +12,7 @@ const PRESETS = {
   soft_blue: { bg: '#eef4ff', surface: '#ffffff', text: '#0b1f3a', muted: '#47607e', primary: '#123b8f', accent: '#2f6ee5', border: '#bfd1ee' },
   warm_neutral: { bg: '#f7f2eb', surface: '#fffaf4', text: '#2b2620', muted: '#6b5f52', primary: '#4f3722', accent: '#b7791f', border: '#d9cfc4' },
   green_operations: { bg: '#eef8f2', surface: '#ffffff', text: '#133222', muted: '#3f6a54', primary: '#14532d', accent: '#16a34a', border: '#b8ddc8' },
+  wow_red_gray: { bg: '#e5e7eb', surface: '#f3f4f6', text: '#111827', muted: '#4b5563', primary: '#7f1d1d', accent: '#dc2626', border: '#9ca3af' },
   company_brand: { bg: '#f4f6fb', surface: '#ffffff', text: '#14202b', muted: '#5d6c7f', primary: '#0f172a', accent: '#1d4ed8', border: '#d8dee8' }
 };
 
@@ -84,6 +85,7 @@ export function applyAppearancePreference(pref = getDefaultAppearance()) {
   root.style.setProperty('--color-primary', primary);
   root.style.setProperty('--color-primary-text', primaryText);
   root.style.setProperty('--color-border', base.border);
+  root.style.setProperty('--color-border-strong', pickReadableText(base.border, base.border, effectiveDark ? '#475569' : '#94a3b8'));
   root.style.setProperty('--accent', accent);
   root.style.setProperty('--accent-2', accent);
   root.style.setProperty('--color-accent-text', accentText);
