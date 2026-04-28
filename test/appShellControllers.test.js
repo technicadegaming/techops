@@ -897,11 +897,23 @@ test('auth invite code UI wires explicit join button and Enter-key handling', as
 
   assert.match(indexSource, /id="authInviteForm"/);
   assert.match(indexSource, /id="applyInviteCodeBtn"/);
+  assert.match(indexSource, /Create or sign into your account first/);
   assert.match(indexSource, /Join with invite/);
   assert.match(authControllerSource, /authInviteForm\?\.addEventListener\('submit', handleInviteCodeSubmit\)/);
   assert.match(authControllerSource, /authInviteCodeInput\?\.addEventListener\('keydown'/);
   assert.match(authControllerSource, /if \(event\.key !== 'Enter'\) return;/);
   assert.match(authControllerSource, /await applyInviteCode\(inviteCode\)/);
+});
+
+test('auth handoff keeps pending invite code for onboarding and does not auto-accept before membership exists', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const appSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'app.js'), 'utf8');
+
+  assert.match(appSource, /setOnboardingFeedback\(state, '', 'info', \{ pendingAction: '', handoffStatus: 'working' \}\);/);
+  assert.match(appSource, /await bootstrapCompanyContext\(\);/);
+  assert.doesNotMatch(appSource, /\[watchAuth\] Pending invite acceptance failed during sign-in handoff\./);
+  assert.doesNotMatch(appSource, /await acceptCompanyInvite\(\{ inviteCode: pendingInviteCode, user: state\.user \}\)/);
 });
 
 test('root visibility helper keeps auth and app shell mutually exclusive', async () => {
@@ -3266,6 +3278,14 @@ test('admin invite action stores worker profile metadata on invite creation', as
   assert.equal(inviteCalls[0].workerTitle, 'Field Tech');
   assert.equal(inviteCalls[0].workerNotes, 'Night shift');
   assert.equal(state.invites[0].inviteCode, 'ABC1234XYZ');
+});
+
+test('people rows keep pending invite entries visible even without linked member, worker, or email', async () => {
+  const source = loadAdminSource();
+  assert.match(source, /const pendingInvites = invites\.filter\(\(invite\) => `\$\{invite\?\.status \|\| ''\}`\.trim\(\)\.toLowerCase\(\) === 'pending'\);/);
+  assert.match(source, /pendingInvites\.forEach\(\(invite\) => \{/);
+  assert.match(source, /id: `pending-invite-\$\{inviteId\}`,/);
+  assert.match(source, /if \(!inviteId \|\| rows\.some\(\(row\) => row\.invite\?\.id === inviteId\)\) return;/);
 });
 
 test('admin people password reset action uses auth reset helper and updates UI state', async () => {

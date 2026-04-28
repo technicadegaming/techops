@@ -13,15 +13,6 @@ const SUPPORTED_TIMEZONES = [
   'Europe/London'
 ];
 
-const US_STATES = [
-  'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
-  'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
-  'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
-  'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
-  'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY',
-  'DC'
-];
-
 function getDefaultTimeZone() {
   const resolved = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   return SUPPORTED_TIMEZONES.includes(resolved) ? resolved : 'UTC';
@@ -43,49 +34,7 @@ function renderTimeZoneOptions(selected) {
   return SUPPORTED_TIMEZONES.map((tz) => `<option value="${tz}" ${tz === selected ? 'selected' : ''}>${TIMEZONE_LABELS[tz] || tz}</option>`).join('');
 }
 
-function composeAddress({ street = '', city = '', state = '', zip = '' } = {}) {
-  const cleanStreet = `${street || ''}`.trim();
-  const cleanCity = `${city || ''}`.trim();
-  const cleanState = `${state || ''}`.trim();
-  const cleanZip = `${zip || ''}`.trim();
-  const locality = [cleanCity, cleanState].filter(Boolean).join(', ');
-  return [cleanStreet, locality, cleanZip].filter(Boolean).join(' ').trim();
-}
-
-function normalizeFirstLocationPayload(formData, companyName, companyTimeZone) {
-  const useDifferentLocation = `${formData.get('firstLocationName') || ''}`.trim() || `${formData.get('firstLocationAddress') || ''}`.trim();
-  const hqStreet = `${formData.get('hqStreet') || ''}`.trim();
-  const hqCity = `${formData.get('hqCity') || ''}`.trim();
-  const hqState = `${formData.get('hqState') || ''}`.trim();
-  const hqZip = `${formData.get('hqZip') || ''}`.trim();
-  const hqAddress = composeAddress({ street: hqStreet, city: hqCity, state: hqState, zip: hqZip });
-  const hqTz = `${companyTimeZone || ''}`.trim() || getDefaultTimeZone();
-  if (!useDifferentLocation) {
-    const fallbackName = `${companyName || ''}`.trim() ? `${companyName} HQ` : 'Company HQ';
-    return {
-      name: fallbackName,
-      address: hqAddress,
-      timeZone: hqTz,
-      notes: 'Auto-created from company HQ during onboarding.'
-    };
-  }
-
-  const nameInput = `${formData.get('firstLocationName') || ''}`.trim();
-  const addressInput = `${formData.get('firstLocationAddress') || ''}`.trim();
-  const timeZoneInput = `${formData.get('firstLocationTimeZone') || ''}`.trim();
-  const notesInput = `${formData.get('firstLocationNotes') || ''}`.trim();
-  const fallbackName = `${companyName || ''}`.trim() ? `${companyName} Main` : 'Main location';
-
-  return {
-    name: nameInput || fallbackName,
-    address: addressInput || hqAddress,
-    timeZone: timeZoneInput || hqTz,
-    notes: notesInput
-  };
-}
-
 function renderInitialOnboarding(el, state, actions) {
-  const selectedTimeZone = getDefaultTimeZone();
   const onboardingMessage = state.onboardingUi?.message || '';
   const onboardingTone = state.onboardingUi?.tone || 'info';
   const pendingAction = state.onboardingUi?.pendingAction || '';
@@ -95,100 +44,19 @@ function renderInitialOnboarding(el, state, actions) {
     <div class="page-header">
       <div>
         <h2 class="page-title">Welcome to Scoot Business</h2>
-        <p class="page-subtitle">Create your company workspace or join with an invite code.</p>
+        <p class="page-subtitle">Join your workspace with an invite code.</p>
       </div>
     </div>
     ${onboardingMessage ? `<div class="tiny" style="margin:0 0 12px; padding:8px 10px; border-radius:8px; border:1px solid ${onboardingTone === 'error' ? '#fca5a5' : (onboardingTone === 'success' ? '#86efac' : '#d1d5db')}; background:${onboardingTone === 'error' ? '#fef2f2' : (onboardingTone === 'success' ? '#f0fdf4' : '#f9fafb')}; color:${onboardingTone === 'error' ? '#991b1b' : (onboardingTone === 'success' ? '#166534' : '#374151')};">${onboardingMessage}</div>` : ''}
     ${handoffStatus === 'working' ? '<div class="inline-state info mt">Finishing account handoff…</div>' : ''}
-    <div class="grid grid-2">
-      <form id="createCompanyForm" class="item onboarding-form">
-        <h3>Create company</h3>
-        <label>Company name<input name="name" placeholder="Scoot" required /></label>
-        <label>Contact email<input name="primaryEmail" type="email" placeholder="name@company.com" value="${state.user?.email || ''}" /></label>
-        <label>Primary phone<input name="primaryPhone" placeholder="Example: (555) 555-5555" /></label>
-        <p class="tiny" style="margin:0;">Company profile</p>
-        <label>HQ street<input name="hqStreet" placeholder="123 Main St" /></label>
-        <label>HQ country
-          <select name="hqCountry" id="hqCountrySelect">
-            <option value="US" selected>United States</option>
-            <option value="CA">Canada</option>
-            <option value="GB">United Kingdom</option>
-            <option value="OTHER">Other</option>
-          </select>
-        </label>
-        <div class="row onboarding-row">
-          <label style="flex:1;">City<input name="hqCity" placeholder="Chicago" /></label>
-          <label style="flex:1;" id="hqStateSelectWrap">State
-            <select name="hqState">${US_STATES.map((stateCode) => `<option value="${stateCode}">${stateCode}</option>`).join('')}</select>
-          </label>
-          <label style="flex:1;" id="hqStateTextWrap" class="hide">State/Region
-            <input name="hqRegion" placeholder="Province / region" />
-          </label>
-          <label style="flex:1;">ZIP<input name="hqZip" placeholder="60601" inputmode="numeric" /></label>
-        </div>
-        <label>Company timezone
-          <select name="timeZone" required>${renderTimeZoneOptions(selectedTimeZone)}</select>
-        </label>
-        <div class="row onboarding-row">
-          <label style="flex:1;">Estimated users<input name="estimatedUsers" type="number" min="0" placeholder="Example: 25" /></label>
-          <label style="flex:1;">Estimated assets<input name="estimatedAssets" type="number" min="0" placeholder="Example: 150" /></label>
-        </div>
-        <fieldset class="onboarding-location-fieldset">
-          <div class="tiny">Your first location is created from HQ by default. If needed, customize it now.</div>
-          <details>
-            <summary class="tiny"><b>Customize first location (optional)</b></summary>
-          <div id="firstLocationFields">
-            <label>First location name<input name="firstLocationName" placeholder="Example: Main Plant" /></label>
-            <label>First location address<input name="firstLocationAddress" placeholder="Street, city, state" /></label>
-            <label>First location timezone
-              <select name="firstLocationTimeZone">${renderTimeZoneOptions(selectedTimeZone)}</select>
-            </label>
-            <label>First location notes (optional)<textarea name="firstLocationNotes" placeholder="Optional setup notes"></textarea></label>
-          </div>
-          </details>
-        </fieldset>
-        <button class="primary" ${pendingAction ? "disabled" : ""}>${pendingAction === "create_company" ? "Creating workspace..." : "Create company workspace"}</button>
-      </form>
+    <div class="grid">
       <form id="joinCompanyForm" class="item onboarding-form">
-        <h3>Join existing company</h3>
+        <h3>Join workspace</h3>
         <label>Invite code<input name="inviteCode" placeholder="Paste the code from your admin" value="${inviteCodePrefill}" required /></label>
-        <button class="primary" ${pendingAction ? "disabled" : ""}>${pendingAction === "accept_invite" ? "Joining..." : "Accept invite & join"}</button>
+        <button class="primary" ${pendingAction ? "disabled" : ""}>${pendingAction === "accept_invite" ? "Joining..." : "Join workspace"}</button>
         <p class="tiny">Use the same email as your invite, or Continue with Google from login. Ask your admin for an invite code from Admin → People.</p>
       </form>
     </div>`;
-
-  const countrySelect = el.querySelector('#hqCountrySelect');
-  const hqStateSelectWrap = el.querySelector('#hqStateSelectWrap');
-  const hqStateTextWrap = el.querySelector('#hqStateTextWrap');
-  const syncRegionInputs = () => {
-    const isUS = `${countrySelect?.value || 'US'}`.trim().toUpperCase() === 'US';
-    hqStateSelectWrap?.classList.toggle('hide', !isUS);
-    hqStateTextWrap?.classList.toggle('hide', isUS);
-  };
-  countrySelect?.addEventListener('change', syncRegionInputs);
-  syncRegionInputs();
-
-  el.querySelector('#createCompanyForm')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const fd = new FormData(e.currentTarget);
-    const companyName = `${fd.get('name') || ''}`.trim();
-    const companyTimeZone = `${fd.get('timeZone') || ''}`.trim();
-    const regionFallback = `${fd.get('hqRegion') || ''}`.trim();
-    await actions.createCompany({
-      name: companyName,
-      primaryEmail: fd.get('primaryEmail'),
-      primaryPhone: fd.get('primaryPhone'),
-      hqStreet: fd.get('hqStreet'),
-      hqCity: fd.get('hqCity'),
-      hqState: fd.get('hqState') || regionFallback,
-      hqCountry: fd.get('hqCountry') || 'US',
-      hqZip: fd.get('hqZip'),
-      timeZone: companyTimeZone,
-      estimatedUsers: fd.get('estimatedUsers'),
-      estimatedAssets: fd.get('estimatedAssets'),
-      firstLocation: normalizeFirstLocationPayload(fd, companyName, companyTimeZone)
-    });
-  });
 
   el.querySelector('#joinCompanyForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();

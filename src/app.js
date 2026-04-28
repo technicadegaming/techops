@@ -267,21 +267,21 @@ function downloadJson(filename, payload) {
 }
 
 async function render() {
+  if (state.onboardingRequired || state.setupWizard?.active) {
+    const appView = document.getElementById('appView');
+    appView?.querySelector('.global-busy-overlay')?.remove();
+    if (appView) appView.insertAdjacentHTML('beforeend', renderGlobalBusyOverlay(state));
+    renderOnboarding(document.getElementById('dashboard'), state, onboardingController);
+    navigationController.openTab('dashboard', null, null, { skipHistory: true });
+    return;
+  }
+
   state.storageRuntime = { storage, storageRef, getDownloadURL };
   await renderHeaderBranding();
   applyAppearancePreference(state.ui?.appearance || {});
   navigationController.renderTabs();
   contextSwitcherController.renderHeaderContext();
   notificationController.renderNotificationCenter();
-
-  if (state.onboardingRequired || state.setupWizard?.active) {
-    const appView = document.getElementById('appView');
-    appView?.querySelector('.global-busy-overlay')?.remove();
-    if (appView) appView.insertAdjacentHTML('beforeend', renderGlobalBusyOverlay(state));
-    renderOnboarding(document.getElementById('dashboard'), state, onboardingController);
-    navigationController.openTab('dashboard');
-    return;
-  }
 
   renderDashboard(document.getElementById('dashboard'), state, navigationController.openTab, (focus) => {
     navigationController.applyShellFocusAndPush(focus);
@@ -440,16 +440,6 @@ watchAuth(async (user) => {
       await logout();
       authController.setAuthMessage('This account is disabled.');
       return;
-    }
-    const pendingInviteCode = `${state.onboardingUi?.inviteCodePrefill || ''}`.trim();
-    if (pendingInviteCode) {
-      try {
-        await acceptCompanyInvite({ inviteCode: pendingInviteCode, user: state.user });
-        state.onboardingUi = { ...(state.onboardingUi || {}), inviteCodePrefill: '' };
-      } catch (error) {
-        console.warn('[watchAuth] Pending invite acceptance failed during sign-in handoff.', error);
-        authController.setAuthMessage(formatActionError(error, 'Signed in, but invite acceptance failed. You can retry from onboarding.'));
-      }
     }
     if (!authMessage.textContent) authController.setAuthMessage('');
     setRootViewVisibility({ authView, appView, showAuth: false });
