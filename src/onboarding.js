@@ -153,7 +153,7 @@ function renderInitialOnboarding(el, state, actions) {
         <h3>Join existing company</h3>
         <label>Invite code<input name="inviteCode" placeholder="Paste the code from your admin" value="${inviteCodePrefill}" required /></label>
         <button class="primary" ${pendingAction ? "disabled" : ""}>${pendingAction === "accept_invite" ? "Joining..." : "Accept invite & join"}</button>
-        <p class="tiny">Use the same email as your invite, or Continue with Google from login. Ask your admin for an invite code from Admin → Invites.</p>
+        <p class="tiny">Use the same email as your invite, or Continue with Google from login. Ask your admin for an invite code from Admin → People.</p>
       </form>
     </div>`;
 
@@ -238,7 +238,7 @@ function renderSetupWizard(el, state, actions) {
 
       <div data-step="3" class="${step === 3 ? '' : 'hide'}">
         <h3>Team setup</h3>
-        <div class="tiny">Members = signed-in users. Staff records = assignable technicians. Invites = optional next step.</div>
+        <div class="tiny">People combines app access + worker profiles + invites in one place.</div>
         <label>Your admin display name<input name="ownerWorkerDisplayName" value="${workerDefaultName}" /></label>
         <label>Add another staff member name (optional)<input name="newWorkerName" placeholder="Example: Alex Smith" /></label>
         <label>Add another staff member email (optional)<input name="newWorkerEmail" type="email" placeholder="alex@company.com" /></label>

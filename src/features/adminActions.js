@@ -30,6 +30,7 @@ export function createAdminActions(deps) {
     bootstrapAttachAssetManualFromCsvHint,
     createCompanyInvite,
     revokeInvite,
+    sendForgotPasswordEmail,
     withGlobalBusy,
     storage,
     storageRef,
@@ -191,7 +192,8 @@ export function createAdminActions(deps) {
       render();
     },
     setAdminSection: (section) => {
-      state.adminSection = section || 'company';
+      const normalized = section === 'members' || section === 'workers' || section === 'invites' ? 'people' : section;
+      state.adminSection = normalized || 'company';
       render();
     },    setAuditFilter: (category) => {
       state.adminUi = { ...(state.adminUi || {}), auditCategory: category || 'all' };
@@ -294,23 +296,58 @@ export function createAdminActions(deps) {
       await refreshData();
       render();
     },
-    createInvite: async ({ email, role }) => {
+    createInvite: async ({ name, email, role, createWorkerProfile, workerTitle, workerNotes }) => {
       await runAction('create_invite', async () => {
-        const invite = await createCompanyInvite({ companyId: state.company.id, email, role, user: state.user });
+        const cleanEmail = `${email || ''}`.trim().toLowerCase();
+        const cleanRole = `${role || 'staff'}`.trim() || 'staff';
+        const shouldCreateWorkerProfile = createWorkerProfile === true || `${createWorkerProfile || ''}`.trim() === 'on';
+        const invite = await createCompanyInvite({
+          companyId: state.company.id,
+          email: cleanEmail,
+          role: cleanRole,
+          user: state.user,
+          displayName: `${name || ''}`.trim(),
+          createWorkerProfile: shouldCreateWorkerProfile,
+          workerTitle: `${workerTitle || ''}`.trim(),
+          workerNotes: `${workerNotes || ''}`.trim()
+        });
         state.invites = [{
           id: invite.id,
           companyId: state.company.id,
-          email: `${email || ''}`.trim().toLowerCase(),
-          role,
+          email: cleanEmail,
+          role: cleanRole,
+          displayName: `${name || ''}`.trim(),
           inviteCode: invite.inviteCode,
           token: invite.token,
-          status: 'pending'
+          status: 'pending',
+          createWorkerProfile: shouldCreateWorkerProfile,
+          workerTitle: `${workerTitle || ''}`.trim(),
+          workerNotes: `${workerNotes || ''}`.trim()
         }, ...(state.invites || []).filter((entry) => entry.id !== invite.id)];
-        setAdminFeedback({ tone: 'success', message: `Invite created for ${`${email || ''}`.trim().toLowerCase()}. Share code ${invite.inviteCode}.` });
+        setAdminFeedback({ tone: 'success', message: `Invite created for ${cleanEmail}. Share code ${invite.inviteCode}.` });
         render();
         await refreshData();
         render();
       }, { fallbackMessage: 'Unable to create invite.' });
+    },
+    sendPersonPasswordReset: async (email) => {
+      const cleanEmail = `${email || ''}`.trim().toLowerCase();
+      if (!cleanEmail) {
+        setAdminFeedback({ tone: 'error', message: 'No email found for this person.' });
+        render();
+        return;
+      }
+      state.adminUi = { ...(state.adminUi || {}), passwordResetByEmail: { ...(state.adminUi?.passwordResetByEmail || {}), [cleanEmail]: 'loading' } };
+      render();
+      try {
+        await sendForgotPasswordEmail(cleanEmail);
+        state.adminUi = { ...(state.adminUi || {}), passwordResetByEmail: { ...(state.adminUi?.passwordResetByEmail || {}), [cleanEmail]: 'success' } };
+        setAdminFeedback({ tone: 'success', message: `Password reset email sent to ${cleanEmail}.` });
+      } catch (error) {
+        state.adminUi = { ...(state.adminUi || {}), passwordResetByEmail: { ...(state.adminUi?.passwordResetByEmail || {}), [cleanEmail]: 'error' } };
+        setAdminFeedback({ tone: 'error', message: `${error?.message || 'Unable to send password reset email.'}` });
+      }
+      render();
     },
     revokeInvite: async (inviteId) => {
       await revokeInvite(inviteId, state.user);

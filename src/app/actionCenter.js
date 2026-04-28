@@ -33,7 +33,7 @@ export function applyActionCenterFocus(state, focus) {
 export function applyShellFocus(state, focus, { setAdminSection } = {}) {
   const result = applyActionCenterFocus(state, focus);
   if (focus === 'pending_invites') {
-    setAdminSection?.('invites');
+    setAdminSection?.('people');
     return { routeChanged: false };
   }
   if (focus === 'missing_docs') {

@@ -111,6 +111,29 @@ function normalizeInviteCode(inviteCode) {
 }
 
 
+function normalizeTimestampMs(value) {
+  if (!value) return null;
+  if (typeof value?.toMillis === 'function') return value.toMillis();
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number') return value;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isInviteExpired(invite = {}) {
+  const expiresAtMs = normalizeTimestampMs(invite.expiresAt);
+  return Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now();
+}
+
+function mapInviteStatusError(invite = {}) {
+  const status = `${invite.status || ''}`.trim().toLowerCase();
+  if (status === 'revoked') return new HttpsError('failed-precondition', 'This invite has been revoked. Ask your admin to send a new invite.');
+  if (status === 'accepted') return new HttpsError('already-exists', 'This invite code was already used. Ask your admin for a new invite.');
+  if (isInviteExpired(invite)) return new HttpsError('failed-precondition', 'This invite has expired. Ask your admin for a new invite.');
+  if (status && status !== 'pending') return new HttpsError('failed-precondition', `Invite is ${status}.`);
+  return null;
+}
+
 async function resolveTaskCompanyContext({ task, requestedCompanyId, userId }) {
   const taskCompanyId = normalizeCompanyId(task.companyId);
   const normalizedRequestedCompanyId = normalizeCompanyId(requestedCompanyId);
@@ -206,17 +229,24 @@ exports.acceptCompanyInvite = onCall({}, async (request) => {
 
   const inviteQuery = await db.collection('companyInvites')
     .where('inviteCode', '==', inviteCode)
-    .where('status', '==', 'pending')
-    .limit(1)
+    .limit(2)
     .get();
-  if (inviteQuery.empty) throw new HttpsError('not-found', 'Invite not found or no longer valid.');
+  if (inviteQuery.empty) throw new HttpsError('not-found', 'Invite not found. Verify the code or ask your admin for a new invite.');
 
   const inviteSnap = inviteQuery.docs[0];
   const invite = inviteSnap.data() || {};
-  const inviteEmail = `${invite.email || ''}`.trim().toLowerCase();
+  const statusError = mapInviteStatusError(invite);
+  if (statusError) throw statusError;
+
   const authEmail = `${request.auth.token?.email || ''}`.trim().toLowerCase();
-  if (inviteEmail && authEmail && inviteEmail !== authEmail) {
-    throw new HttpsError('permission-denied', 'Invite email does not match signed-in user.');
+  const userRecord = !authEmail
+    ? await admin.auth().getUser(request.auth.uid).catch(() => null)
+    : null;
+  const resolvedAuthEmail = authEmail || `${userRecord?.email || ''}`.trim().toLowerCase();
+  const inviteEmail = `${invite.email || ''}`.trim().toLowerCase();
+
+  if (inviteEmail && resolvedAuthEmail && inviteEmail !== resolvedAuthEmail) {
+    throw new HttpsError('permission-denied', 'This invite is for a different email address. Sign in with the invited email.');
   }
 
   const companyId = `${invite.companyId || ''}`.trim();
@@ -225,31 +255,77 @@ exports.acceptCompanyInvite = onCall({}, async (request) => {
 
   await db.runTransaction(async (txn) => {
     const freshInviteSnap = await txn.get(inviteSnap.ref);
+    if (!freshInviteSnap.exists) throw new HttpsError('not-found', 'Invite not found.');
     const freshInvite = freshInviteSnap.data() || {};
-    if (!freshInviteSnap.exists || freshInvite.status !== 'pending') {
-      throw new HttpsError('failed-precondition', 'Invite not found or no longer pending.');
-    }
+    const freshStatusError = mapInviteStatusError(freshInvite);
+    if (freshStatusError) throw freshStatusError;
+
     const freshInviteEmail = `${freshInvite.email || ''}`.trim().toLowerCase();
-    if (freshInviteEmail && authEmail && freshInviteEmail !== authEmail) {
-      throw new HttpsError('permission-denied', 'Invite email does not match signed-in user.');
+    if (freshInviteEmail && resolvedAuthEmail && freshInviteEmail !== resolvedAuthEmail) {
+      throw new HttpsError('permission-denied', 'This invite is for a different email address.');
     }
+
+    const membershipRole = `${freshInvite.role || 'staff'}`.trim().toLowerCase() || 'staff';
     const companyMembershipRef = db.collection('companyMemberships').doc(membershipId);
     txn.set(companyMembershipRef, {
       id: membershipId,
       companyId,
       userId: request.auth.uid,
-      role: `${freshInvite.role || 'staff'}`.trim() || 'staff',
+      role: membershipRole,
       status: 'active',
       inviteId: inviteSnap.id,
+      inviteCode,
+      acceptedAt: serverTimestamp(),
       createdAt: serverTimestamp(),
       createdBy: request.auth.uid,
       updatedAt: serverTimestamp(),
       updatedBy: request.auth.uid,
     }, { merge: true });
+
+    const userRef = db.collection('users').doc(request.auth.uid);
+    txn.set(userRef, {
+      uid: request.auth.uid,
+      email: resolvedAuthEmail,
+      emailLower: resolvedAuthEmail,
+      displayName: `${request.auth.token?.name || freshInvite.displayName || ''}`.trim(),
+      fullName: `${request.auth.token?.name || freshInvite.displayName || ''}`.trim(),
+      role: membershipRole,
+      companyId,
+      onboardingState: 'active_member',
+      acceptedInviteAt: serverTimestamp(),
+      lastLoginAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      updatedBy: request.auth.uid,
+    }, { merge: true });
+
+    if (freshInvite.createWorkerProfile === true && (resolvedAuthEmail || freshInvite.displayName)) {
+      const workerId = `worker-${companyId}-${request.auth.uid}`.slice(0, 96);
+      txn.set(db.collection('workers').doc(workerId), {
+        id: workerId,
+        companyId,
+        userId: request.auth.uid,
+        linkedUserId: request.auth.uid,
+        displayName: `${freshInvite.displayName || request.auth.token?.name || resolvedAuthEmail}`.trim(),
+        email: resolvedAuthEmail,
+        role: membershipRole,
+        title: `${freshInvite.workerTitle || ''}`.trim(),
+        notes: `${freshInvite.workerNotes || ''}`.trim(),
+        enabled: true,
+        available: true,
+        accountStatus: 'linked_member',
+        inviteId: inviteSnap.id,
+        createdAt: serverTimestamp(),
+        createdBy: request.auth.uid,
+        updatedAt: serverTimestamp(),
+        updatedBy: request.auth.uid,
+      }, { merge: true });
+    }
+
     txn.set(inviteSnap.ref, {
       status: 'accepted',
       acceptedAt: serverTimestamp(),
       acceptedBy: request.auth.uid,
+      acceptedEmail: resolvedAuthEmail,
       updatedAt: serverTimestamp(),
       updatedBy: request.auth.uid,
     }, { merge: true });
@@ -268,12 +344,12 @@ exports.acceptCompanyInvite = onCall({}, async (request) => {
     userId: request.auth.uid,
     userIdentity: `${request.auth.token?.email || request.auth.uid}`,
     companyId,
-    metadata: { role: invite.role || 'staff', companyId },
+    metadata: { role: invite.role || 'staff', companyId, inviteCode },
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
 
-  return { ok: true, companyId };
+  return { ok: true, companyId, membershipId };
 });
 
 exports.analyzeTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {

@@ -8,7 +8,7 @@ import { parseAssetCsv } from './features/assetIntake.js';
 import { getAuthoritativeOnboardingState } from './features/onboardingStatus.js';
 
 const WORKER_ROLE_OPTIONS = ['staff', 'lead', 'assistant_manager', 'manager', 'admin'];
-const ACCESS_ROLE_OPTIONS = ['owner', 'admin', 'manager', 'staff', 'viewer'];
+const ACCESS_ROLE_OPTIONS = ['owner', 'admin', 'manager', 'lead', 'staff', 'viewer'];
 const BUSINESS_TYPE_OPTIONS = ['Service provider', 'Owner/operator', 'Franchise group', 'Manufacturer', 'Distributor', 'Facilities team', 'Multi-site enterprise', 'Other'];
 const INDUSTRY_OPTIONS = ['Family entertainment', 'Arcade and attractions', 'Hospitality', 'Foodservice', 'Retail', 'Healthcare', 'Education', 'Facilities management', 'Manufacturing', 'Transportation', 'Other'];
 
@@ -52,10 +52,8 @@ const NOTIFICATION_PREF_CATEGORIES = [
 const ADMIN_SECTIONS = [
   { id: 'company', label: 'Company' },
   { id: 'locations', label: 'Locations' },
-  { id: 'members', label: 'Members' },
+  { id: 'people', label: 'People' },
   { id: 'billing', label: 'Billing' },
-  { id: 'workers', label: 'Workers' },
-  { id: 'invites', label: 'Invites' },
   { id: 'audit', label: 'Audit' },
   { id: 'imports', label: 'Bulk import' },
   { id: 'tools', label: 'AI & Notifications' },
@@ -153,7 +151,7 @@ export function renderAdmin(el, state, actions) {
     return;
   }
 
-  const activeSection = state.adminSection || 'company';
+  const activeSection = ['members', 'workers', 'invites'].includes(state.adminSection) ? 'people' : (state.adminSection || 'company');
   const workers = state.workers || [];
   const companyInvites = (state.invites || []).filter((invite) => invite.companyId === state.company?.id);
   const pendingInvites = companyInvites.filter((invite) => invite.status === 'pending');
@@ -165,6 +163,53 @@ export function renderAdmin(el, state, actions) {
   const adminUi = state.adminUi || {};
   const workerEmailSet = new Set(workers.map((worker) => `${worker.email || ''}`.trim().toLowerCase()).filter(Boolean));
   const linkedCount = members.filter((member) => workerEmailSet.has(`${member.email || ''}`.trim().toLowerCase())).length;
+  const workerByEmail = new Map(workers.map((worker) => [`${worker.email || ''}`.trim().toLowerCase(), worker]).filter(([email]) => email));
+  const workerByUserId = new Map(workers.map((worker) => [`${worker.userId || worker.linkedUserId || ''}`.trim(), worker]).filter(([userId]) => userId));
+  const inviteByEmail = new Map(companyInvites.map((invite) => [`${invite.email || ''}`.trim().toLowerCase(), invite]).filter(([email]) => email));
+  const peopleRows = members.map((member) => {
+    const person = member.person || {};
+    const email = `${person.email || member.email || member.userEmail || member.userIdentity || ''}`.trim().toLowerCase();
+    const worker = workerByUserId.get(`${member.userId || ''}`.trim()) || workerByEmail.get(email) || null;
+    const pendingInvite = inviteByEmail.get(email) || null;
+    const displayName = person.fullName || person.displayName || member.displayName || member.fullName || email || member.userId || member.id;
+    return {
+      id: member.id,
+      membershipId: member.id,
+      userId: member.userId,
+      displayName,
+      email,
+      role: member.role || 'staff',
+      status: member.status || 'active',
+      createdAt: member.createdAt || person.createdAt || '',
+      acceptedAt: member.acceptedAt || pendingInvite?.acceptedAt || '',
+      lastLoginAt: person.lastLoginAt || '',
+      worker,
+      invite: pendingInvite
+    };
+  });
+  companyInvites.forEach((invite) => {
+    const email = `${invite.email || ''}`.trim().toLowerCase();
+    if (!email) return;
+    const existing = peopleRows.find((row) => row.email === email);
+    if (existing) {
+      if (!existing.invite || (existing.invite?.status !== 'pending' && invite.status === 'pending')) existing.invite = invite;
+      return;
+    }
+    peopleRows.push({
+      id: `invite-${invite.id}`,
+      membershipId: '',
+      userId: '',
+      displayName: invite.displayName || email,
+      email,
+      role: invite.role || 'staff',
+      status: 'invited',
+      createdAt: invite.createdAt || '',
+      acceptedAt: invite.acceptedAt || '',
+      lastLoginAt: '',
+      worker: workerByEmail.get(email) || null,
+      invite
+    });
+  });
   const auditCategory = adminUi.auditCategory || 'all';
   const categoryOptions = [
     { id: 'all', label: 'All activity' },
@@ -349,22 +394,17 @@ export function renderAdmin(el, state, actions) {
       </details>
     </section>
 
-    <section class="item ${activeSection === 'members' ? '' : 'hide'}" data-admin-section="members"><h3>Members</h3><p class="tiny">Members = app access, roles, and permissions for signed-in users.</p><div class="kpi-line"><span>Members: ${members.length}</span><span>Pending invites: ${pendingInvites.length}</span><span>Linked to worker records: ${linkedCount}</span></div><div class="list mt">${members.map((member) => {
-    const normalizedEmail = `${member.email || ''}`.trim().toLowerCase();
-    const chips = [renderStatusChip(formatRoleLabel(member.role || 'staff'), member.role === 'owner' ? 'bad' : 'muted')];
-    chips.push(renderStatusChip(member.enabled ? 'active' : 'inactive', member.enabled ? 'good' : 'warn'));
-    chips.push(renderStatusChip(workerEmailSet.has(normalizedEmail) ? 'linked worker' : 'unlinked worker', workerEmailSet.has(normalizedEmail) ? 'good' : 'warn'));
-    if (member.isCurrentUser) chips.push(renderStatusChip('you', 'info'));
-    return `<div class="item"><div class="row space"><b>${getMemberDisplayLabel(member)}</b><div class="state-chip-row">${chips.join('')}</div></div><div class="tiny">${member.email || member.person?.email || member.userEmail || '-'}</div><details class="mt"><summary>Edit role/access</summary><form data-member-form="${member.id}" class="grid grid-2 mt"><label>Role<select name="role" ${member.role === 'owner' ? 'disabled' : ''}>${ACCESS_ROLE_OPTIONS.map((role) => `<option value="${role}" ${role === (member.role || 'staff') ? 'selected' : ''}>${formatRoleLabel(role)}</option>`).join('')}</select></label><label>Status<select name="status"><option value="active" ${member.status !== 'inactive' ? 'selected' : ''}>active</option><option value="inactive" ${member.status === 'inactive' ? 'selected' : ''}>inactive</option></select></label><div class="tiny" style="grid-column:1/-1;">Use inactive for temporary access removal.</div><button type="submit" ${member.role === 'owner' ? 'disabled' : ''}>Save member access</button></form></details></div>`;
-  }).join('') || '<div class="inline-state info">No member records yet.</div>'}</div></section>
-
-    <section class="item ${activeSection === 'workers' ? '' : 'hide'}" data-admin-section="workers"><h3>Workers</h3><p class="tiny">Workers = operational staff assignable to tasks and schedules. They can exist without app access.</p><details><summary><b>Add worker record</b></summary><form id="workerForm" class="grid grid-2 mt"><label>Display name<input name="displayName" required /></label><label>Email (optional)<input name="email" type="email" /></label><label>Role<select name="role">${WORKER_ROLE_OPTIONS.map((role) => `<option value="${role}">${formatRoleLabel(role)}</option>`).join('')}</select></label><label>Default location<select name="defaultLocationId"><option value="">No default</option>${locationOptions.map((option) => `<option value="${option.id}">${option.label}</option>`).join('')}</select></label><label>Location label<input name="locationName" /></label><label>Skills (comma separated)<input name="skills" /></label><label>Send invite?<select name="sendInvite"><option value="no">No</option><option value="yes">Yes</option></select></label><button class="primary" type="submit">Create worker</button></form></details><div class="list mt">${workers.map((worker) => {
-    const workerEmail = `${worker.email || ''}`.trim().toLowerCase();
-    const matchingInvite = companyInvites.find((invite) => `${invite.email || ''}`.trim().toLowerCase() === workerEmail && invite.status === 'pending');
-    return `<div class="item"><div class="row space"><b>${worker.displayName || worker.id}</b><div class="state-chip-row">${renderStatusChip(formatRoleLabel(worker.role || 'staff'))}${renderStatusChip(worker.enabled ? 'enabled' : 'disabled', worker.enabled ? 'good' : 'warn')}</div></div><div class="tiny">${worker.email || 'No email'} ${worker.locationName ? `| ${worker.locationName}` : ''}</div>${matchingInvite?.inviteCode ? `<div class="tiny mt">Pending invite code: <code>${matchingInvite.inviteCode}</code> <button type="button" class="btn btn-ghost btn-small" data-copy-invite-code="${matchingInvite.inviteCode}">Copy</button></div>` : ''}<details class="mt"><summary>Edit worker</summary><form data-worker-form="${worker.id}" class="grid grid-2 mt"><label>Display name<input name="displayName" value="${worker.displayName || ''}" /></label><label>Email<input name="email" type="email" value="${worker.email || ''}" /></label><label>Role<select name="role">${WORKER_ROLE_OPTIONS.map((role) => `<option value="${role}" ${role === (worker.role || 'staff') ? 'selected' : ''}>${formatRoleLabel(role)}</option>`).join('')}</select></label><label>Location label<input name="locationName" value="${worker.locationName || ''}" /></label><button type="submit">Save worker updates</button></form></details></div>`;
-  }).join('') || '<div class="inline-state info">No workers yet.</div>'}</div></section>
-
-    <section class="item ${activeSection === 'invites' ? '' : 'hide'}" data-admin-section="invites"><h3>Invites</h3><p class="tiny">Invites = onboarding path for people who need app access. Codes stay visible here for sharing and troubleshooting.</p><details><summary><b>Invite member</b></summary><form id="inviteForm" class="row mt"><input name="email" type="email" placeholder="person@company.com" required /><select name="role"><option value="viewer">viewer</option><option value="staff">staff</option><option value="manager">manager</option><option value="admin">admin</option></select><button class="primary" type="submit">Create invite</button></form></details><div class="list mt">${companyInvites.map((invite) => `<div class="item"><div class="row space"><b>${invite.email}</b><div class="state-chip-row">${renderStatusChip((invite.status || 'pending').replace(/_/g, ' '), invite.status === 'pending' ? 'info' : 'muted')}${renderStatusChip(formatRoleLabel(invite.role || 'staff'), 'muted')}</div></div><div class="tiny">Invite code: <code>${invite.inviteCode || 'n/a'}</code>${invite.inviteCode ? ` <button type="button" class="btn btn-ghost btn-small" data-copy-invite-code="${invite.inviteCode}">Copy</button>` : ''}</div><div class="tiny">Expires: ${invite.expiresAt || 'No expiration set'} · Status: ${(invite.status || 'pending').replace(/_/g, ' ')}</div>${invite.status === 'pending' ? `<button data-revoke-invite="${invite.id}" class="mt">Revoke invite</button>` : ''}</div>`).join('') || '<div class="inline-state info">No invites yet.</div>'}</div></section>
+    <section class="item ${activeSection === 'people' ? '' : 'hide'}" data-admin-section="people"><h3>People</h3><p class="tiny">App access controls who can sign in. Worker profile controls who can be assigned to tasks. A person can be both.</p><div class="kpi-line"><span>People: ${peopleRows.length}</span><span>Pending invites: ${pendingInvites.length}</span><span>Linked worker profiles: ${linkedCount}</span></div><details><summary><b>Invite person</b></summary><form id="inviteForm" class="grid grid-2 mt"><label>Name<input name="name" placeholder="Full name" /></label><label>Email<input name="email" type="email" placeholder="person@company.com" required /></label><label>App role<select name="role">${ACCESS_ROLE_OPTIONS.map((role) => `<option value="${role}">${formatRoleLabel(role)}</option>`).join('')}</select></label><label><input name="createWorkerProfile" type="checkbox" /> Create worker profile</label><label>Worker title (optional)<input name="workerTitle" placeholder="Technician" /></label><label>Worker notes (optional)<input name="workerNotes" placeholder="Shift, certification, etc." /></label><button class="primary" type="submit">Create invite</button></form></details><div class="list mt">${peopleRows.map((person) => {
+    const invite = person.invite || null;
+    const inviteCode = `${invite?.inviteCode || ''}`.trim();
+    const roleChip = renderStatusChip(formatRoleLabel(person.role || 'staff'), 'muted');
+    const accessStatus = invite && invite.status === 'pending' ? 'invited' : (person.status || 'active');
+    const statusTone = accessStatus === 'active' ? 'good' : (accessStatus === 'invited' ? 'info' : 'warn');
+    const workerLabel = person.worker ? 'assignable worker' : 'not a worker';
+    const resetStatus = state.adminUi?.passwordResetByEmail?.[`${person.email || ''}`.trim().toLowerCase()] || '';
+    const resetLabel = resetStatus === 'loading' ? 'Sending reset…' : 'Send password reset email';
+    return `<div class="item"><div class="row space"><b>${person.displayName || person.email || person.userId || person.id}</b><div class="state-chip-row">${roleChip}${renderStatusChip(accessStatus, statusTone)}${renderStatusChip(workerLabel, person.worker ? 'good' : 'muted')}</div></div><div class="tiny">${person.email || 'No email on file'} ${person.userId ? `| UID: ${person.userId}` : ''}</div><div class="tiny">Created: ${person.createdAt || '—'} · Accepted: ${person.acceptedAt || '—'} · Last login: ${person.lastLoginAt || '—'}</div>${invite ? `<div class="tiny mt">Invite: ${(invite.status || 'pending').replace(/_/g, ' ')}${inviteCode ? ` · code <code>${inviteCode}</code> <button type="button" class="btn btn-ghost btn-small" data-copy-invite-code="${inviteCode}">Copy code</button>` : ''} <button type="button" class="btn btn-ghost btn-small" data-copy-invite-link="${inviteCode}">Copy invite text</button>${invite.status === 'pending' ? ` <button data-revoke-invite="${invite.id}" class="btn btn-ghost btn-small">Revoke</button>` : ''}</div>` : ''}<div class="row mt">${person.membershipId ? `<form data-member-form="${person.membershipId}" class="row"><select name="role">${ACCESS_ROLE_OPTIONS.map((role) => `<option value="${role}" ${role === (person.role || 'staff') ? 'selected' : ''}>${formatRoleLabel(role)}</option>`).join('')}</select><select name="status"><option value="active" ${(person.status || 'active') === 'active' ? 'selected' : ''}>active</option><option value="inactive" ${(person.status || 'active') === 'inactive' ? 'selected' : ''}>inactive</option></select><button type="submit">Save access</button></form>` : ''}${person.email ? `<button type="button" class="btn btn-ghost" data-send-password-reset="${person.email}" ${resetStatus === 'loading' ? 'disabled' : ''}>${resetLabel}</button>` : ''}</div></div>`;
+  }).join('') || '<div class="inline-state info">No people yet.</div>'}</div></section>
 
     <section class="item ${activeSection === 'audit' ? '' : 'hide'}" data-admin-section="audit"><h3>Audit log</h3><p class="tiny">Company activity history.</p><div class="row mt">${categoryOptions.map((option) => `<button type="button" data-audit-filter="${option.id}" class="filter-chip ${auditCategory === option.id ? 'active' : ''}">${option.label}</button>`).join('')}</div><div class="list mt">${auditEntries.map((entry) => `<div class="item tiny"><div class="row space"><b>${renderAuditLine(entry)}</b>${renderStatusChip(formatRelativeTime(entry.timestamp), 'muted')}</div><div>${entry.summary || ''}</div></div>`).join('') || '<div class="inline-state info">No audit entries in this view yet.</div>'}</div></section>
 
@@ -512,6 +552,16 @@ export function renderAdmin(el, state, actions) {
     const code = `${button.dataset.copyInviteCode || ''}`.trim();
     if (!code) return;
     await actions.copyInviteCode?.(code);
+  }));
+
+  el.querySelectorAll('[data-copy-invite-link]').forEach((button) => button.addEventListener('click', async () => {
+    const code = `${button.dataset.copyInviteLink || ''}`.trim();
+    if (!code) return;
+    const inviteText = `Invite code: ${code} | Open ${window.location.origin}/?invite=${encodeURIComponent(code)} and sign in with your invited email.`;
+    await actions.copyInviteCode?.(inviteText);
+  }));
+  el.querySelectorAll('[data-send-password-reset]').forEach((button) => button.addEventListener('click', async () => {
+    await actions.sendPersonPasswordReset?.(button.dataset.sendPasswordReset);
   }));
   el.querySelector('#downloadAssetsTemplate')?.addEventListener('click', () => actions.downloadAssetTemplate());
   el.querySelector('#downloadEmployeesTemplate')?.addEventListener('click', () => actions.downloadEmployeeTemplate());

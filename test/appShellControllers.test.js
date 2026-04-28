@@ -622,7 +622,7 @@ test('applyActionCenterFocus translates dashboard focus into operations filters 
     }
   });
   assert.deepEqual(shellResult, { routeChanged: false });
-  assert.equal(adminSection, 'invites');
+  assert.equal(adminSection, 'people');
 
   const assetRouteResult = applyShellFocus(state, 'missing_docs');
   assert.deepEqual(assetRouteResult, { routeChanged: true });
@@ -3200,4 +3200,98 @@ test('data source preserves canonical firestore asset id metadata', () => {
   assert.match(source, /toCanonicalAssetRecord/);
   assert.match(source, /firestoreDocId: snap\.id/);
   assert.match(source, /storedAssetId/);
+});
+
+
+test('admin invite action stores worker profile metadata on invite creation', async () => {
+  const { createAdminActions } = await loadAdminActions();
+  const inviteCalls = [];
+  const state = {
+    company: { id: 'co-1' },
+    user: { uid: 'admin-1' },
+    invites: [],
+    adminUi: {}
+  };
+  const actions = createAdminActions({
+    state,
+    render: () => {},
+    refreshData: async () => {},
+    runAction: async (_label, fn) => fn(),
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    clearEntitySet: async () => 0,
+    saveAppSettings: async () => {},
+    exportBackupJson: async () => ({}),
+    buildAssetsCsv: () => '',
+    buildTasksCsv: () => '',
+    buildAuditCsv: () => '',
+    buildWorkersCsv: () => '',
+    buildMembersCsv: () => '',
+    buildInvitesCsv: () => '',
+    buildLocationsCsv: () => '',
+    buildCompanyBackupBundle: () => ({}),
+    downloadFile: () => {},
+    downloadJson: () => {},
+    normalizeAssetId: (value) => value,
+    enrichAssetDocumentation: async () => {},
+    createCompanyInvite: async (payload) => {
+      inviteCalls.push(payload);
+      return { id: 'inv-1', inviteCode: 'ABC1234XYZ', token: 'token-1' };
+    },
+    revokeInvite: async () => {}
+  });
+
+  await actions.createInvite({
+    name: 'Taylor Tech',
+    email: 'Taylor@example.com',
+    role: 'staff',
+    createWorkerProfile: 'on',
+    workerTitle: 'Field Tech',
+    workerNotes: 'Night shift'
+  });
+
+  assert.equal(inviteCalls.length, 1);
+  assert.equal(inviteCalls[0].createWorkerProfile, true);
+  assert.equal(inviteCalls[0].workerTitle, 'Field Tech');
+  assert.equal(inviteCalls[0].workerNotes, 'Night shift');
+  assert.equal(state.invites[0].inviteCode, 'ABC1234XYZ');
+});
+
+test('admin people password reset action uses auth reset helper and updates UI state', async () => {
+  const { createAdminActions } = await loadAdminActions();
+  const calls = [];
+  const state = {
+    adminUi: {}
+  };
+  const actions = createAdminActions({
+    state,
+    render: () => {},
+    refreshData: async () => {},
+    runAction: async (_label, fn) => fn(),
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    clearEntitySet: async () => 0,
+    saveAppSettings: async () => {},
+    exportBackupJson: async () => ({}),
+    buildAssetsCsv: () => '',
+    buildTasksCsv: () => '',
+    buildAuditCsv: () => '',
+    buildWorkersCsv: () => '',
+    buildMembersCsv: () => '',
+    buildInvitesCsv: () => '',
+    buildLocationsCsv: () => '',
+    buildCompanyBackupBundle: () => ({}),
+    downloadFile: () => {},
+    downloadJson: () => {},
+    normalizeAssetId: (value) => value,
+    enrichAssetDocumentation: async () => {},
+    createCompanyInvite: async () => ({}),
+    revokeInvite: async () => {},
+    sendForgotPasswordEmail: async (email) => { calls.push(email); }
+  });
+
+  await actions.sendPersonPasswordReset('person@example.com');
+
+  assert.deepEqual(calls, ['person@example.com']);
+  assert.equal(state.adminUi.passwordResetByEmail['person@example.com'], 'success');
 });
