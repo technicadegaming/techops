@@ -134,6 +134,7 @@ export function renderSectionTabs(activeSection) {
 export function buildPeopleRows({ members = [], workers = [], invites = [] } = {}) {
   const workerByEmail = new Map(workers.map((worker) => [`${worker.email || ''}`.trim().toLowerCase(), worker]).filter(([email]) => email));
   const workerByUserId = new Map(workers.map((worker) => [`${worker.userId || worker.linkedUserId || ''}`.trim(), worker]).filter(([userId]) => userId));
+  const pendingInvites = invites.filter((invite) => `${invite?.status || ''}`.trim().toLowerCase() === 'pending');
   const rows = members.map((member) => {
     const person = member.person || {};
     const email = `${person.email || member.email || member.userEmail || member.userIdentity || ''}`.trim().toLowerCase();
@@ -169,6 +170,26 @@ export function buildPeopleRows({ members = [], workers = [], invites = [] } = {
       email,
       role: invite.role || 'staff',
       status: invite.status === 'pending' ? 'invited' : (invite.status || 'inactive'),
+      createdAt: invite.createdAt || '',
+      acceptedAt: invite.acceptedAt || '',
+      lastLoginAt: '',
+      worker: workerByEmail.get(email) || null,
+      invite
+    });
+  });
+
+  pendingInvites.forEach((invite) => {
+    const inviteId = `${invite.id || ''}`.trim();
+    if (!inviteId || rows.some((row) => row.invite?.id === inviteId)) return;
+    const email = `${invite.email || ''}`.trim().toLowerCase();
+    rows.push({
+      id: `pending-invite-${inviteId}`,
+      membershipId: '',
+      userId: '',
+      displayName: invite.displayName || workerByEmail.get(email)?.displayName || email || inviteId,
+      email,
+      role: invite.role || 'staff',
+      status: 'invited',
       createdAt: invite.createdAt || '',
       acceptedAt: invite.acceptedAt || '',
       lastLoginAt: '',
