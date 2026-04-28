@@ -1386,6 +1386,74 @@ test('assets view renders bulk visible doc re-search action and disables it whil
   assert.match(el.innerHTML, /Re-searching docs: 1 \/ 2 complete/);
 });
 
+test('assets tab renders create-task action on expanded asset cards for task-capable users', async () => {
+  const { renderAssets } = await loadAssetsHelpers();
+  const state = {
+    permissions: { companyRole: 'staff', role: 'staff' },
+    user: { uid: 'user-1', email: 'staff@example.com' },
+    tasks: [],
+    pmSchedules: [],
+    taskAiRuns: [],
+    manuals: [],
+    auditLogs: [],
+    troubleshootingLibrary: [],
+    companyLocations: [{ id: 'loc-1', name: 'Front Floor', companyId: 'company-a' }],
+    route: { tab: 'assets', locationKey: 'loc-1', assetFilter: 'all', assetId: 'asset-1' },
+    assetDraft: {},
+    assetUi: { searchQuery: '', statusFilter: 'all', reviewFilter: 'all', enrichmentFilter: 'all' },
+    assets: [{ id: 'asset-1', name: 'Hyper Shot', manufacturer: 'LAI', locationId: 'loc-1', locationName: 'Front Floor', enrichmentStatus: 'idle' }]
+  };
+  const el = { innerHTML: '', querySelector: () => null, querySelectorAll: () => [] };
+  const actions = { setLocationFilter: () => {}, runBulkAssetEnrichment: () => {}, createTaskForAsset: () => {} };
+  renderAssets(el, state, actions);
+
+  assert.match(el.innerHTML, /Create task for this asset/);
+  assert.match(el.innerHTML, /data-create-task-for-asset="asset-1"/);
+});
+
+test('assets create-task action click routes through createTaskForAsset handler', async () => {
+  const { renderAssets } = await loadAssetsHelpers();
+  const createTaskButton = {
+    dataset: {
+      createTaskForAsset: 'asset-1',
+      locationKey: encodeURIComponent('loc-1'),
+      locationLabel: encodeURIComponent('Front Floor')
+    },
+    addEventListener(_type, handler) {
+      this._handler = handler;
+    }
+  };
+  const el = {
+    innerHTML: '',
+    querySelector: () => null,
+    querySelectorAll: (selector) => (selector === '[data-create-task-for-asset]' ? [createTaskButton] : [])
+  };
+  const state = {
+    permissions: { companyRole: 'staff', role: 'staff' },
+    user: { uid: 'user-1', email: 'staff@example.com' },
+    tasks: [],
+    pmSchedules: [],
+    taskAiRuns: [],
+    manuals: [],
+    auditLogs: [],
+    troubleshootingLibrary: [],
+    companyLocations: [{ id: 'loc-1', name: 'Front Floor', companyId: 'company-a' }],
+    route: { tab: 'assets', locationKey: 'loc-1', assetFilter: 'all', assetId: 'asset-1' },
+    assetDraft: {},
+    assetUi: { searchQuery: '', statusFilter: 'all', reviewFilter: 'all', enrichmentFilter: 'all' },
+    assets: [{ id: 'asset-1', name: 'Hyper Shot', manufacturer: 'LAI', locationId: 'loc-1', locationName: 'Front Floor', enrichmentStatus: 'idle' }]
+  };
+  const calls = [];
+  const actions = {
+    setLocationFilter: () => {},
+    runBulkAssetEnrichment: () => {},
+    createTaskForAsset: (...args) => calls.push(args)
+  };
+  renderAssets(el, state, actions);
+  createTaskButton._handler();
+  assert.deepEqual(calls, [['asset-1', { locationKey: 'loc-1', locationScopeLabel: 'Front Floor' }]]);
+});
+
 test('assets view shows manual text extraction state chips and repair actions for manager role', async () => {
   const { renderAssets } = await loadAssetsHelpers();
   const state = {
@@ -1572,6 +1640,57 @@ test('asset actions bulk doc re-search uses visible ids, processes queued import
   assert.equal(state.assetUi.bulkDocRerunProgress.failed, 1);
   assert.equal(state.assetUi.bulkDocRerunProgress.skipped, 0);
   assert.match(state.assetUi.bulkDocRerunSummary, /Succeeded 2, failed 1, skipped 0/);
+});
+
+test('asset actions create-task helper prefills operations draft and navigates to operations tab', async () => {
+  const { createAssetActions } = await loadAssetActions();
+  const state = {
+    operationsUi: { draft: { reporter: 'staff@example.com' } },
+    assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
+    assetUi: {},
+    assets: [{ id: 'asset-1', name: 'Hyper Shot', locationName: 'Front Floor' }],
+    companyLocations: [],
+    permissions: { companyRole: 'staff', role: 'staff' },
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    user: { uid: 'user-1', email: 'staff@example.com' }
+  };
+  const navCalls = [];
+  const actions = createAssetActions({
+    state,
+    onLocationFilter: () => {},
+    onCreateTaskForAsset: (payload) => navCalls.push(payload),
+    render: () => {},
+    refreshData: async () => {},
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    deleteEntity: async () => {},
+    approveAssetManual: async () => {},
+    enrichAssetDocumentation: async () => {},
+    previewAssetDocumentationLookup: async () => ({}),
+    researchAssetTitles: async () => ({}),
+    markAssetEnrichmentFailure: async () => ({}),
+    normalizeAssetId: (name) => name,
+    pickUniqueAssetId: (id) => id,
+    createEmptyAssetDraft: () => ({ previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } }),
+    withTimeout: async (promise) => promise,
+    normalizeSupportEntries: (entries) => entries,
+    canDelete: () => false,
+    isAdmin: () => true,
+    isManager: () => true,
+    buildAssetSaveErrorMessage: () => 'error',
+    buildAssetSaveDebugContext: () => ({}),
+    isPermissionRelatedError: () => false,
+    buildPreviewQueryKey: () => ''
+  });
+
+  actions.createTaskForAsset('asset-1', { locationKey: 'loc-1', locationScopeLabel: 'Front Floor' });
+
+  assert.equal(state.operationsUi.draft.assetSearch, 'Hyper Shot');
+  assert.equal(state.operationsUi.draft.location, 'Front Floor');
+  assert.equal(state.operationsUi.draft.status, 'open');
+  assert.equal(state.operationsUi.draft.reporter, 'staff@example.com');
+  assert.deepEqual(navCalls, [{ locationKey: 'loc-1', locationScopeLabel: 'Front Floor' }]);
 });
 
 test('asset actions submit follow-up answer uses canonical asset id/company and followup trigger', async () => {
@@ -2789,6 +2908,7 @@ test('operations source includes explicit create-task loading and error states',
   assert.match(source, /createTaskMessage/);
   assert.match(source, /createTaskError/);
   assert.match(source, /Creating task & starting AI/);
+  assert.match(source, /await actions\.saveTask\(payload\.id \|\| `\$\{fd\.get\('id'\) \|\| ''\}`\.trim\(\), payload\)/);
 });
 
 
