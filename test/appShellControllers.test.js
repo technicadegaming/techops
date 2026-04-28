@@ -1918,6 +1918,65 @@ test('asset actions attach manual from URL queued response shows extracting stat
   assert.match(state.assetUi.manualAttachByAsset['asset-doc-queued'].message, /text extracted: 6 chunks, 2 codes/);
 });
 
+test('asset actions attach manual from URL shows warning message for completed_with_warnings extraction failures', async () => {
+  const { createAssetActions } = await loadAssetActions();
+  const state = {
+    assetDraft: { previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } },
+    assetUi: {},
+    assets: [{ id: 'asset-doc-warn', firestoreDocId: 'asset-doc-warn', name: 'Warn Asset', companyId: 'company-a', manualAttachStatus: 'queued' }],
+    companyLocations: [],
+    permissions: { companyRole: 'manager', role: 'manager' },
+    activeMembership: { companyId: 'company-a' },
+    company: { id: 'company-a' },
+    user: { uid: 'user-1' }
+  };
+  let refreshCalls = 0;
+  const actions = createAssetActions({
+    state,
+    onLocationFilter: () => {},
+    render: () => {},
+    refreshData: async () => {
+      refreshCalls += 1;
+      if (refreshCalls > 1) {
+        state.assets = [{
+          id: 'asset-doc-warn',
+          firestoreDocId: 'asset-doc-warn',
+          name: 'Warn Asset',
+          companyId: 'company-a',
+          manualAttachStatus: 'completed_with_warnings',
+          manualTextExtractionStatus: 'failed',
+          manualChunkCount: 0
+        }];
+      }
+    },
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    deleteEntity: async () => {},
+    approveAssetManual: async () => {},
+    attachAssetManualFromUrl: async () => ({ ok: true, queued: true, jobId: 'job-warn' }),
+    enrichAssetDocumentation: async () => ({}),
+    previewAssetDocumentationLookup: async () => ({}),
+    researchAssetTitles: async () => ({}),
+    markAssetEnrichmentFailure: async () => ({}),
+    normalizeAssetId: (name) => name,
+    pickUniqueAssetId: (id) => id,
+    createEmptyAssetDraft: () => ({ previewMeta: { inFlightQuery: '', lastCompletedQuery: '' } }),
+    withTimeout: async (promise) => promise,
+    normalizeSupportEntries: (entries) => entries,
+    canDelete: () => false,
+    isAdmin: () => true,
+    isManager: () => true,
+    buildAssetSaveErrorMessage: () => 'error',
+    buildAssetSaveDebugContext: () => ({}),
+    isPermissionRelatedError: () => false,
+    withGlobalBusy: async (_title, _detail, fn) => fn(),
+    buildPreviewQueryKey: () => ''
+  });
+
+  await actions.attachManualFromUrl('asset-doc-warn', { manualUrl: 'https://example.com/manual.pdf' });
+  assert.match(state.assetUi.manualAttachByAsset['asset-doc-warn'].message, /searchable text extraction failed/i);
+});
+
 test('asset actions attach manual from URL blocks blank and invalid URLs', async () => {
   const { createAssetActions } = await loadAssetActions();
   const attachCalls = [];

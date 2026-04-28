@@ -27,6 +27,7 @@ function getWarningForMaterialization(result = {}) {
   const status = `${result?.extractionStatus || ''}`.trim();
   if (status === 'unsupported_file_type') return 'Manual attached, but this file type is not text-extractable yet.';
   if (status === 'no_text_extracted') return 'Manual attached, but no readable text was extracted.';
+  if (status === 'failed') return 'Manual attached, but searchable text extraction failed. You can retry text extraction later.';
   if (status && status !== 'completed') return `Manual attached with extraction status: ${status}.`;
   return '';
 }
@@ -108,17 +109,22 @@ function validateStoragePathForAsset({ companyId = '', assetId = '', storagePath
 
 function normalizeManualAttachFailureCode(code = '') {
   const allowed = new Set([
-    'download_timeout',
     'download_failed',
     'unsupported_file_type',
-    'no_text_extracted',
-    'extraction_failed',
+    'storage_failed',
+    'text_extraction_failed',
+    'chunking_failed',
+    'internal',
+    'download_timeout',
     'storage_write_failed',
     'asset_not_found',
     'permission_company_mismatch',
+    'unsupported_file_type',
+    'no_text_extracted',
+    'extraction_failed',
   ]);
   const normalized = `${code || ''}`.trim().toLowerCase();
-  return allowed.has(normalized) ? normalized : 'extraction_failed';
+  return allowed.has(normalized) ? normalized : 'internal';
 }
 
 function classifyManualAttachError(error) {
@@ -127,11 +133,13 @@ function classifyManualAttachError(error) {
   if (message.includes('timeout') || code === 'deadline-exceeded') return 'download_timeout';
   if (message.includes('fetch') || message.includes('download') || message.includes('http')) return 'download_failed';
   if (message.includes('supported document type') || message.includes('supported file type')) return 'unsupported_file_type';
+  if (message.includes('chunk')) return 'chunking_failed';
+  if (message.includes('text extraction') || message.includes('extraction') || message.includes('maximum call stack')) return 'text_extraction_failed';
   if (message.includes('no text') || message.includes('no readable text')) return 'no_text_extracted';
   if (message.includes('outside the allowed company/asset manual scope')) return 'permission_company_mismatch';
   if (message.includes('not found')) return 'asset_not_found';
-  if (message.includes('storage') || message.includes('bucket') || message.includes('save')) return 'storage_write_failed';
-  return 'extraction_failed';
+  if (message.includes('storage') || message.includes('bucket') || message.includes('save')) return 'storage_failed';
+  return 'internal';
 }
 
 async function queueManualAttachJob({
@@ -209,6 +217,7 @@ async function processManualAttachJob({
   storage,
   job = {},
   fetchImpl = fetch,
+  materializeStoredAssetManualImpl = materializeStoredAssetManual,
 } = {}) {
   const jobId = normalizeString(job?.id, 180);
   const assetDocId = normalizeString(job?.assetDocId || job?.assetId, 180);
@@ -255,7 +264,7 @@ async function processManualAttachJob({
         throw new HttpsError('failed-precondition', 'Uploaded manual must be a supported document type.');
       }
 
-      const materialized = await materializeStoredAssetManual({
+      const materialized = await materializeStoredAssetManualImpl({
         db,
         storage,
         asset: { ...asset, id: assetDocId, firestoreDocId: assetDocId },
@@ -269,6 +278,13 @@ async function processManualAttachJob({
         attachmentMode: 'manual_file_attach',
         manualProvenance: 'user_manual_file_attach',
       });
+      if (!materialized?.ok) {
+        const materializationCode = `${materialized?.extractionFailureCode || materialized?.extractionStatus || materialized?.reason || ''}`.trim().toLowerCase();
+        if (materializationCode.includes('storage')) {
+          throw new Error(`storage_failed: ${materialized?.extractionError || materialized?.extractionReason || materializationCode}`);
+        }
+        throw new Error(`text_extraction_failed: ${materialized?.extractionError || materialized?.extractionReason || materializationCode}`);
+      }
 
       const patch = buildAssetManualPatch({
         asset,
@@ -288,6 +304,8 @@ async function processManualAttachJob({
         manualAttachCompletedAt: now,
         manualAttachUpdatedAt: now,
         extractedCodeCount: Number(materialized?.codeDefinitionCount || 0) || 0,
+        latestManualTextExtractionError: materialized?.extractionError || '',
+        latestManualTextExtractionCode: materialized?.extractionFailureCode || '',
       }, { merge: true });
     } else {
       const normalizedUrl = normalizeUrl(job.manualUrl);
@@ -315,7 +333,7 @@ async function processManualAttachJob({
         }
       });
 
-      const materialized = await materializeStoredAssetManual({
+      const materialized = await materializeStoredAssetManualImpl({
         db,
         storage,
         asset: { ...asset, id: assetDocId, firestoreDocId: assetDocId },
@@ -329,6 +347,13 @@ async function processManualAttachJob({
         attachmentMode: 'manual_url_attach',
         manualProvenance: 'user_manual_url_attach',
       });
+      if (!materialized?.ok) {
+        const materializationCode = `${materialized?.extractionFailureCode || materialized?.extractionStatus || materialized?.reason || ''}`.trim().toLowerCase();
+        if (materializationCode.includes('storage')) {
+          throw new Error(`storage_failed: ${materialized?.extractionError || materialized?.extractionReason || materializationCode}`);
+        }
+        throw new Error(`text_extraction_failed: ${materialized?.extractionError || materialized?.extractionReason || materializationCode}`);
+      }
 
       const patch = buildAssetManualPatch({
         asset,
@@ -349,20 +374,32 @@ async function processManualAttachJob({
         manualAttachCompletedAt: now,
         manualAttachUpdatedAt: now,
         extractedCodeCount: Number(materialized?.codeDefinitionCount || 0) || 0,
+        latestManualTextExtractionError: materialized?.extractionError || '',
+        latestManualTextExtractionCode: materialized?.extractionFailureCode || '',
       }, { merge: true });
     }
 
+    const extractionStatus = `${attachResult?.extractionStatus || ''}`.trim();
+    const extractionCode = `${attachResult?.extractionReason || ''}`.trim();
+    const hasWarnings = !!extractionStatus && extractionStatus !== 'completed';
     await jobRef.set({
-      status: 'completed',
+      status: hasWarnings ? 'completed_with_warnings' : 'completed',
+      errorCode: hasWarnings ? (
+        extractionStatus === 'failed'
+          ? (extractionCode === 'chunking_failed' ? 'chunking_failed' : 'text_extraction_failed')
+          : ''
+      ) : '',
+      errorMessage: hasWarnings ? (attachResult?.warning || `Manual attached with extraction status: ${extractionStatus}.`) : '',
       updatedAt: now,
       completedAt: now,
       result: {
         chunkCount: Number(attachResult?.chunkCount || 0) || 0,
         extractionStatus: attachResult?.extractionStatus || '',
         storagePath: attachResult?.storagePath || '',
+        extractionReason: attachResult?.extractionReason || '',
       }
     }, { merge: true });
-    return { ok: true, result: attachResult };
+    return { ok: true, result: attachResult, warning: hasWarnings };
   } catch (error) {
     const code = normalizeManualAttachFailureCode(classifyManualAttachError(error));
     console.error('processManualAttachJob:error', {

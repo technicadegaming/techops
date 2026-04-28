@@ -10,6 +10,7 @@ const {
   createAssetManualId,
   extractManualErrorCodeDefinitions,
   extractPdfText,
+  extractPdfTextRobust,
   extractTextFromBuffer,
   extractTextFromBufferAsync,
   ensureManualCodeDefinitionsIndexed,
@@ -119,6 +120,18 @@ test('extractTextFromBufferAsync uses robust PDF extraction path and preserves t
   assert.match(extracted.text, /E10:\s*Out of Balloons/i);
   assert.match(extracted.text, /ERROR CODES AND TROUBLESHOOTING GUIDE/i);
   assert.equal(['pdf-parse', 'legacy_pdf_operator_parser'].includes(extracted.extractionEngine), true);
+});
+
+test('extractPdfTextRobust classifies legacy RangeError as extraction warning instead of throwing', async () => {
+  const extracted = await extractPdfTextRobust(Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n'), {
+    legacyExtractImpl: () => {
+      throw new RangeError('Maximum call stack size exceeded');
+    },
+    pdfParseImpl: null,
+  });
+  assert.equal(extracted.text, '');
+  assert.equal(extracted.extractionEngine, 'none');
+  assert.match(extracted.extractionWarning, /pdf-parse unavailable/i);
 });
 
 test('approved manual metadata preserves type, variant, family, manufacturer, and confidence fields', async () => {

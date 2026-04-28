@@ -6,6 +6,8 @@ const { isoNow } = require('../lib/timestamps');
 const { cleanDocumentationSuggestions } = require('./assetEnrichmentService');
 const { acquireManualToLibrary } = require('./manualAcquisitionService');
 const requireFromHere = createRequire(__filename);
+const MAX_PDF_OPERATOR_STREAM_CHARS = 1_500_000;
+const MAX_PDF_OPERATOR_SEGMENTS = 20_000;
 
 function loadPdfParse() {
   try {
@@ -116,20 +118,31 @@ function decodePdfLiteralString(raw = '') {
 
 function decodePdfTextOperators(streamText = '') {
   const segments = [];
-  const literalMatches = streamText.match(/\((?:\\.|[^\\()])*\)\s*Tj/g) || [];
-  literalMatches.forEach((entry) => {
+  const normalizedStream = `${streamText || ''}`;
+  if (!normalizedStream) return '';
+  const boundedStream = normalizedStream.length > MAX_PDF_OPERATOR_STREAM_CHARS
+    ? normalizedStream.slice(0, MAX_PDF_OPERATOR_STREAM_CHARS)
+    : normalizedStream;
+
+  const literalRegex = /\((?:\\.|[^\\()])*\)\s*Tj/g;
+  let literalMatch;
+  while ((literalMatch = literalRegex.exec(boundedStream)) && segments.length < MAX_PDF_OPERATOR_SEGMENTS) {
+    const entry = literalMatch[0];
     const literal = entry.replace(/\)\s*Tj$/, '').replace(/^\(/, '');
     segments.push(decodePdfLiteralString(literal));
-  });
+  }
 
-  const arrayMatches = streamText.match(/\[(?:.|\n|\r)*?\]\s*TJ/g) || [];
-  arrayMatches.forEach((entry) => {
+  const arrayRegex = /\[(?:.|\n|\r)*?\]\s*TJ/g;
+  let arrayMatch;
+  while ((arrayMatch = arrayRegex.exec(boundedStream)) && segments.length < MAX_PDF_OPERATOR_SEGMENTS) {
+    const entry = arrayMatch[0];
     const body = entry.replace(/\]\s*TJ$/, '').replace(/^\[/, '');
-    const arrayLiterals = body.match(/\((?:\\.|[^\\()])*\)/g) || [];
-    arrayLiterals.forEach((literal) => {
-      segments.push(decodePdfLiteralString(literal.slice(1, -1)));
-    });
-  });
+    const arrayLiteralsRegex = /\((?:\\.|[^\\()])*\)/g;
+    let arrayLiteralMatch;
+    while ((arrayLiteralMatch = arrayLiteralsRegex.exec(body)) && segments.length < MAX_PDF_OPERATOR_SEGMENTS) {
+      segments.push(decodePdfLiteralString(arrayLiteralMatch[0].slice(1, -1)));
+    }
+  }
 
   return segments.join(' ');
 }
@@ -162,11 +175,17 @@ function normalizeExtractedText(value = '') {
   return `${value || ''}`.replace(/\r/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-async function extractPdfTextRobust(buffer) {
+async function extractPdfTextRobust(buffer, options = {}) {
   const source = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || '');
-  const legacyText = normalizeExtractedText(extractPdfText(source));
+  const legacyExtractImpl = typeof options.legacyExtractImpl === 'function' ? options.legacyExtractImpl : extractPdfText;
+  let legacyText = '';
+  try {
+    legacyText = normalizeExtractedText(legacyExtractImpl(source));
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+  }
   const minimumPreferredLength = 80;
-  const pdfParse = loadPdfParse();
+  const pdfParse = typeof options.pdfParseImpl === 'undefined' ? loadPdfParse() : options.pdfParseImpl;
   if (typeof pdfParse !== 'function') {
     return {
       text: legacyText,
@@ -277,6 +296,13 @@ function chunkManualText(text = '', options = {}) {
   });
   pushChunk(current);
   return chunks.map((chunk, index) => ({ ...chunk, chunkIndex: index }));
+}
+
+function classifyExtractionFailure(error, fallback = 'text_extraction_failed') {
+  const message = `${error?.message || String(error)}`.toLowerCase();
+  if (message.includes('maximum call stack size exceeded') || error instanceof RangeError) return 'text_extraction_failed';
+  if (message.includes('chunk')) return 'chunking_failed';
+  return fallback;
 }
 
 function normalizeManualErrorCode(value = '') {
@@ -863,12 +889,51 @@ async function materializeStoredAssetManual({
       extension,
     };
   }
-  const extracted = await extractTextFromBufferAsync(buffer, resolvedContentType, normalizedSourceUrl || normalizedStoragePath);
-  const extractedText = extracted.text;
-  const chunks = chunkManualText(extractedText);
-  const extractedCodeDefinitions = buildManualErrorCodeIndexFromChunks(chunks.length ? chunks : extractedText);
-  const extractionStatus = chunks.length ? 'completed' : 'no_text_extracted';
-  const extractionReason = chunks.length ? 'text_extracted' : 'no_readable_text_found';
+  let extracted = {
+    text: '',
+    extractionEngine: 'none',
+    extractedTextLength: 0,
+    extractionWarning: '',
+  };
+  let extractedText = '';
+  let chunks = [];
+  let extractedCodeDefinitions = [];
+  let extractionStatus = 'no_text_extracted';
+  let extractionReason = 'no_readable_text_found';
+  let extractionFailureCode = '';
+  let extractionError = '';
+  try {
+    extracted = await extractTextFromBufferAsync(buffer, resolvedContentType, normalizedSourceUrl || normalizedStoragePath);
+    extractedText = extracted.text;
+    try {
+      chunks = chunkManualText(extractedText);
+    } catch (error) {
+      extractionStatus = 'failed';
+      extractionReason = 'chunking_failed';
+      extractionFailureCode = 'chunking_failed';
+      extractionError = `${error?.message || String(error)}`.slice(0, 240);
+      chunks = [];
+    }
+    if (!extractionFailureCode) {
+      extractedCodeDefinitions = buildManualErrorCodeIndexFromChunks(chunks.length ? chunks : extractedText);
+      extractionStatus = chunks.length ? 'completed' : 'no_text_extracted';
+      extractionReason = chunks.length ? 'text_extracted' : 'no_readable_text_found';
+    }
+  } catch (error) {
+    extractionStatus = 'failed';
+    extractionFailureCode = classifyExtractionFailure(error);
+    extractionReason = extractionFailureCode;
+    extractionError = `${error?.message || String(error)}`.slice(0, 240);
+    extracted = {
+      text: '',
+      extractionEngine: 'none',
+      extractedTextLength: 0,
+      extractionWarning: '',
+    };
+    extractedText = '';
+    chunks = [];
+    extractedCodeDefinitions = [];
+  }
   const now = isoNow();
   await db.collection('manuals').doc(manualId).set({
     id: manualId,
@@ -889,12 +954,12 @@ async function materializeStoredAssetManual({
     approvedAt: now,
     extractionStatus,
     extractionReason,
-    extractionFailureCode: chunks.length ? '' : extractionReason,
+    extractionFailureCode: extractionFailureCode || (chunks.length ? '' : extractionReason),
     extractionRequestedAt: now,
     extractionStartedAt: now,
     extractionCompletedAt: now,
     extractionFailedAt: null,
-    extractionError: '',
+    extractionError,
     extractionEngine: extracted.extractionEngine || 'none',
     extractedTextLength: extracted.extractedTextLength || extractedText.length || 0,
     extractionWarning: extracted.extractionWarning || '',
@@ -938,8 +1003,8 @@ async function materializeStoredAssetManual({
     manualId,
     extractionStatus,
     extractionReason,
-    extractionFailureCode: chunks.length ? '' : extractionReason,
-    extractionError: '',
+    extractionFailureCode: extractionFailureCode || (chunks.length ? '' : extractionReason),
+    extractionError,
     chunkCount: chunks.length,
     extractionEngine: extracted.extractionEngine || 'none',
     storagePath: normalizedStoragePath,

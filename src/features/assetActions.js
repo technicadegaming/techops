@@ -221,6 +221,7 @@ export function createAssetActions(deps) {
     if (/unsupported_file_type/i.test(raw)) return 'Attachment failed: unsupported file type.';
     if (/download_timeout/i.test(raw)) return 'Attachment failed: download timed out.';
     if (/download_failed/i.test(raw)) return 'Attachment failed: could not download the manual URL.';
+    if (/text_extraction_failed|chunking_failed/i.test(raw)) return 'Manual attached, but searchable text extraction failed. You can retry text extraction later.';
     return `Attachment failed: ${raw.slice(0, 140)}`;
   };
   const pollManualAttachStatus = async (assetId, {
@@ -232,7 +233,7 @@ export function createAssetActions(deps) {
       await refreshData();
       const latest = findAssetByRecordId(state.assets, assetId) || {};
       const status = `${latest.manualAttachStatus || ''}`.trim().toLowerCase();
-      if (status === 'completed' || status === 'failed') return latest;
+      if (status === 'completed' || status === 'completed_with_warnings' || status === 'failed') return latest;
       await pause(intervalMs);
     }
     return findAssetByRecordId(state.assets, assetId) || {};
@@ -1337,11 +1338,27 @@ export function createAssetActions(deps) {
           if (latestStatus === 'completed') {
             const chunkCount = Number(latest?.manualChunkCount || 0) || 0;
             const codeCount = Number(latest?.extractedCodeCount || 0) || 0;
+            if (chunkCount > 0) {
+              setManualAttachUi(resolution.assetId, {
+                pending: false,
+                phase: 'idle',
+                tone: 'success',
+                message: `Manual attached and text extracted: ${chunkCount} chunks${codeCount ? `, ${codeCount} codes` : ''}.`,
+              });
+            } else {
+              setManualAttachUi(resolution.assetId, {
+                pending: false,
+                phase: 'idle',
+                tone: 'warn',
+                message: 'Manual attached, but searchable text extraction failed. You can retry text extraction later.',
+              });
+            }
+          } else if (latestStatus === 'completed_with_warnings') {
             setManualAttachUi(resolution.assetId, {
               pending: false,
               phase: 'idle',
-              tone: 'success',
-              message: `Manual attached and text extracted: ${chunkCount} chunks${codeCount ? `, ${codeCount} codes` : ''}.`,
+              tone: 'warn',
+              message: 'Manual attached, but searchable text extraction failed. You can retry text extraction later.',
             });
           } else if (latestStatus === 'failed') {
             setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: 'error', message: 'Manual attachment failed. Please verify the URL and try again.' });
@@ -1434,11 +1451,27 @@ export function createAssetActions(deps) {
           if (latestStatus === 'completed') {
             const chunkCount = Number(latest?.manualChunkCount || 0) || 0;
             const codeCount = Number(latest?.extractedCodeCount || 0) || 0;
+            if (chunkCount > 0) {
+              setManualAttachUi(resolution.assetId, {
+                pending: false,
+                phase: 'idle',
+                tone: 'success',
+                message: `Manual attached and text extracted: ${chunkCount} chunks${codeCount ? `, ${codeCount} codes` : ''}.`,
+              });
+            } else {
+              setManualAttachUi(resolution.assetId, {
+                pending: false,
+                phase: 'idle',
+                tone: 'warn',
+                message: 'Manual attached, but searchable text extraction failed. You can retry text extraction later.',
+              });
+            }
+          } else if (latestStatus === 'completed_with_warnings') {
             setManualAttachUi(resolution.assetId, {
               pending: false,
               phase: 'idle',
-              tone: 'success',
-              message: `Manual attached and text extracted: ${chunkCount} chunks${codeCount ? `, ${codeCount} codes` : ''}.`,
+              tone: 'warn',
+              message: 'Manual attached, but searchable text extraction failed. You can retry text extraction later.',
             });
           } else if (latestStatus === 'failed') {
             setManualAttachUi(resolution.assetId, { pending: false, phase: 'idle', tone: 'error', message: 'Manual attachment failed. Please verify the file and try again.' });
