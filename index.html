@@ -56,6 +56,8 @@
     .inline-state.warn{background:#fff7ed;border-color:#fed7aa;color:#9a3412}
     .inline-state.info{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
     .app-shell{display:grid;gap:18px}
+    .app-brand{display:grid;gap:6px}
+    .app-brand-logo{max-height:64px;max-width:220px;display:block;object-fit:contain;object-position:left center}
     .page-shell{display:grid;gap:16px}
     .page-header{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;flex-wrap:wrap}
     .page-title{margin:0;font-size:1.85rem;line-height:1.2}
@@ -191,8 +193,9 @@
 
     <main id="appView" class="hide app-shell">
       <header class="card row space">
-        <div>
-          <h1>Scoot Business</h1>
+        <div class="app-brand">
+          <img id="appCompanyLogo" class="app-brand-logo hide" alt="Company logo" />
+          <h1 id="appBrandTitle">Scoot Business</h1>
           <p class="tiny">Keep everything moving.</p>
         </div>
         <div class="app-context">

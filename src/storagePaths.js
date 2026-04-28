@@ -19,3 +19,10 @@ export function buildCompanyManualPath(companyId, assetId, manualId, fileName = 
   if (!safeManualId) throw new Error('manualId is required for manual storage paths');
   return ['companies', safeCompanyId, 'manuals', safeAssetId, safeManualId, `${fileName || 'source.pdf'}`.trim() || 'source.pdf'].join('/');
 }
+
+export function buildCompanyBrandingLogoPath(companyId, fileName = 'logo') {
+  const safeCompanyId = `${companyId || ''}`.trim();
+  const safeFileName = `${fileName || 'logo'}`.trim();
+  if (!safeCompanyId) throw new Error('companyId is required for branding logo storage paths');
+  return ['companies', safeCompanyId, 'branding', 'logo', safeFileName || 'logo'].join('/');
+}

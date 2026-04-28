@@ -27,7 +27,12 @@ export function createAdminController({
   bootstrapAttachAssetManualFromCsvHint,
   createCompanyInvite,
   revokeInvite,
-  withGlobalBusy
+  withGlobalBusy,
+  storage,
+  storageRef,
+  uploadBytes,
+  getDownloadURL,
+  buildCompanyBrandingLogoPath
 }) {
   const createActions = () => createAdminActions({
     state,
@@ -55,7 +60,12 @@ export function createAdminController({
     bootstrapAttachAssetManualFromCsvHint,
     createCompanyInvite,
     revokeInvite,
-    withGlobalBusy
+    withGlobalBusy,
+    storage,
+    storageRef,
+    uploadBytes,
+    getDownloadURL,
+    buildCompanyBrandingLogoPath
   });
 
   return {

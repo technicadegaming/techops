@@ -1,4 +1,5 @@
 import { formatRelativeTime } from './features/notifications.js';
+import { getDefaultAppearance } from './app/theme.js';
 
 function chip(label, tone = 'muted') {
   return `<span class="state-chip ${tone}">${label}</span>`;
@@ -69,6 +70,12 @@ export function renderAccount(el, state, actions) {
           <label>Theme preset <span class="state-chip info">Optional</span>
             <select data-appearance-preset>
               <option value="scoot_default" ${appearance.preset === 'scoot_default' || !appearance.preset ? 'selected' : ''}>Scoot default</option>
+              <option value="blue" ${appearance.preset === 'blue' ? 'selected' : ''}>Blue</option>
+              <option value="green" ${appearance.preset === 'green' ? 'selected' : ''}>Green</option>
+              <option value="purple" ${appearance.preset === 'purple' ? 'selected' : ''}>Purple</option>
+              <option value="red_burgundy" ${appearance.preset === 'red_burgundy' ? 'selected' : ''}>Red / burgundy</option>
+              <option value="orange" ${appearance.preset === 'orange' ? 'selected' : ''}>Orange</option>
+              <option value="dark_slate" ${appearance.preset === 'dark_slate' ? 'selected' : ''}>Dark slate</option>
               <option value="high_contrast" ${appearance.preset === 'high_contrast' ? 'selected' : ''}>High contrast</option>
               <option value="soft_blue" ${appearance.preset === 'soft_blue' ? 'selected' : ''}>Soft blue</option>
               <option value="warm_neutral" ${appearance.preset === 'warm_neutral' ? 'selected' : ''}>Warm neutral</option>
@@ -86,7 +93,7 @@ export function renderAccount(el, state, actions) {
           <label>Background color <input type="color" data-appearance-background value="${appearance.customColors?.background || '#f4f6fb'}" /></label>
           <label>Text color <input type="color" data-appearance-text value="${appearance.customColors?.text || '#14202b'}" /></label>
         </div>
-        <div class="action-row mt"><button type="button" class="btn btn-primary" data-save-appearance>Save appearance</button></div>
+        <div class="action-row mt"><button type="button" class="btn btn-primary" data-save-appearance>Save appearance</button><button type="button" class="btn btn-secondary" data-reset-appearance>Reset to default</button></div>
       </section>
 
       <section class="item">
@@ -141,6 +148,10 @@ export function renderAccount(el, state, actions) {
     };
     actions.updateAppearance?.(next);
     writeMessage('Appearance updated.', 'success');
+  });
+  el.querySelector('[data-reset-appearance]')?.addEventListener('click', () => {
+    actions.updateAppearance?.(getDefaultAppearance());
+    writeMessage('Appearance reset to Scoot default.', 'success');
   });
 
   el.querySelector('[data-account-reset-password]')?.addEventListener('click', async () => {
