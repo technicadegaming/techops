@@ -127,8 +127,56 @@ function parseCsv(text = '') {
   });
 }
 
-function renderSectionTabs(activeSection) {
-  return `<div class="tabs">${ADMIN_SECTIONS.map((section) => `<button type="button" class="tab ${section.id === 'danger' ? 'danger-tab' : ''} ${section.id === activeSection ? 'active' : ''}" data-admin-tab="${section.id}">${section.label}</button>`).join('')}</div>`;
+export function renderSectionTabs(activeSection) {
+  return `<div class="tabs">${ADMIN_SECTIONS.map((section) => `<button type="button" class="tab ${section.id === 'danger' ? 'danger-tab' : ''} ${section.id === activeSection ? 'active' : ''}" data-admin-tab="${section.id}" aria-current="${section.id === activeSection ? 'page' : 'false'}">${section.label}</button>`).join('')}</div>`;
+}
+
+export function buildPeopleRows({ members = [], workers = [], invites = [] } = {}) {
+  const workerByEmail = new Map(workers.map((worker) => [`${worker.email || ''}`.trim().toLowerCase(), worker]).filter(([email]) => email));
+  const workerByUserId = new Map(workers.map((worker) => [`${worker.userId || worker.linkedUserId || ''}`.trim(), worker]).filter(([userId]) => userId));
+  const rows = members.map((member) => {
+    const person = member.person || {};
+    const email = `${person.email || member.email || member.userEmail || member.userIdentity || ''}`.trim().toLowerCase();
+    const invite = invites.find((entry) => `${entry.email || ''}`.trim().toLowerCase() === email && `${entry.status || ''}`.trim().toLowerCase() === 'pending')
+      || invites.find((entry) => `${entry.email || ''}`.trim().toLowerCase() === email)
+      || null;
+    const worker = workerByUserId.get(`${member.userId || ''}`.trim()) || workerByEmail.get(email) || null;
+    const displayName = person.fullName || person.displayName || member.displayName || member.fullName || invite?.displayName || worker?.displayName || email || member.userId || member.id;
+    return {
+      id: member.id,
+      membershipId: member.id,
+      userId: member.userId,
+      displayName,
+      email,
+      role: member.role || invite?.role || 'staff',
+      status: member.status || 'active',
+      createdAt: member.createdAt || person.createdAt || invite?.createdAt || '',
+      acceptedAt: member.acceptedAt || invite?.acceptedAt || '',
+      lastLoginAt: person.lastLoginAt || '',
+      worker,
+      invite
+    };
+  });
+
+  invites.forEach((invite) => {
+    const email = `${invite.email || ''}`.trim().toLowerCase();
+    if (!email || rows.some((row) => row.email === email)) return;
+    rows.push({
+      id: `invite-${invite.id}`,
+      membershipId: '',
+      userId: '',
+      displayName: invite.displayName || workerByEmail.get(email)?.displayName || email,
+      email,
+      role: invite.role || 'staff',
+      status: invite.status === 'pending' ? 'invited' : (invite.status || 'inactive'),
+      createdAt: invite.createdAt || '',
+      acceptedAt: invite.acceptedAt || '',
+      lastLoginAt: '',
+      worker: workerByEmail.get(email) || null,
+      invite
+    });
+  });
+  return rows;
 }
 
 function renderAuditLine(entry = {}) {
@@ -153,55 +201,8 @@ export function renderAdmin(el, state, actions) {
   const settings = { ...defaultAiSettings, ...(state.settings || {}) };
   const selectedNotificationPrefs = new Set((state.settings?.notificationPrefs?.enabledTypes || []));
   const adminUi = state.adminUi || {};
-  const workerEmailSet = new Set(workers.map((worker) => `${worker.email || ''}`.trim().toLowerCase()).filter(Boolean));
-  const linkedCount = members.filter((member) => workerEmailSet.has(`${member.email || ''}`.trim().toLowerCase())).length;
-  const workerByEmail = new Map(workers.map((worker) => [`${worker.email || ''}`.trim().toLowerCase(), worker]).filter(([email]) => email));
-  const workerByUserId = new Map(workers.map((worker) => [`${worker.userId || worker.linkedUserId || ''}`.trim(), worker]).filter(([userId]) => userId));
-  const inviteByEmail = new Map(companyInvites.map((invite) => [`${invite.email || ''}`.trim().toLowerCase(), invite]).filter(([email]) => email));
-  const peopleRows = members.map((member) => {
-    const person = member.person || {};
-    const email = `${person.email || member.email || member.userEmail || member.userIdentity || ''}`.trim().toLowerCase();
-    const worker = workerByUserId.get(`${member.userId || ''}`.trim()) || workerByEmail.get(email) || null;
-    const pendingInvite = inviteByEmail.get(email) || null;
-    const displayName = person.fullName || person.displayName || member.displayName || member.fullName || email || member.userId || member.id;
-    return {
-      id: member.id,
-      membershipId: member.id,
-      userId: member.userId,
-      displayName,
-      email,
-      role: member.role || 'staff',
-      status: member.status || 'active',
-      createdAt: member.createdAt || person.createdAt || '',
-      acceptedAt: member.acceptedAt || pendingInvite?.acceptedAt || '',
-      lastLoginAt: person.lastLoginAt || '',
-      worker,
-      invite: pendingInvite
-    };
-  });
-  companyInvites.forEach((invite) => {
-    const email = `${invite.email || ''}`.trim().toLowerCase();
-    if (!email) return;
-    const existing = peopleRows.find((row) => row.email === email);
-    if (existing) {
-      if (!existing.invite || (existing.invite?.status !== 'pending' && invite.status === 'pending')) existing.invite = invite;
-      return;
-    }
-    peopleRows.push({
-      id: `invite-${invite.id}`,
-      membershipId: '',
-      userId: '',
-      displayName: invite.displayName || email,
-      email,
-      role: invite.role || 'staff',
-      status: 'invited',
-      createdAt: invite.createdAt || '',
-      acceptedAt: invite.acceptedAt || '',
-      lastLoginAt: '',
-      worker: workerByEmail.get(email) || null,
-      invite
-    });
-  });
+  const peopleRows = buildPeopleRows({ members, workers, invites: companyInvites });
+  const linkedCount = peopleRows.filter((row) => row.worker).length;
   const auditCategory = adminUi.auditCategory || 'all';
   const categoryOptions = [
     { id: 'all', label: 'All activity' },
@@ -395,7 +396,7 @@ export function renderAdmin(el, state, actions) {
     const workerLabel = person.worker ? 'assignable worker' : 'not a worker';
     const resetStatus = state.adminUi?.passwordResetByEmail?.[`${person.email || ''}`.trim().toLowerCase()] || '';
     const resetLabel = resetStatus === 'loading' ? 'Sending reset…' : 'Send password reset email';
-    return `<div class="item"><div class="row space"><b>${person.displayName || person.email || person.userId || person.id}</b><div class="state-chip-row">${roleChip}${renderStatusChip(accessStatus, statusTone)}${renderStatusChip(workerLabel, person.worker ? 'good' : 'muted')}</div></div><div class="tiny">${person.email || 'No email on file'} ${person.userId ? `| UID: ${person.userId}` : ''}</div><div class="tiny">Created: ${person.createdAt || '—'} · Accepted: ${person.acceptedAt || '—'} · Last login: ${person.lastLoginAt || '—'}</div>${invite ? `<div class="tiny mt">Invite: ${(invite.status || 'pending').replace(/_/g, ' ')}${inviteCode ? ` · code <code>${inviteCode}</code> <button type="button" class="btn btn-ghost btn-small" data-copy-invite-code="${inviteCode}">Copy code</button>` : ''} <button type="button" class="btn btn-ghost btn-small" data-copy-invite-link="${inviteCode}">Copy invite text</button>${invite.status === 'pending' ? ` <button data-revoke-invite="${invite.id}" class="btn btn-ghost btn-small">Revoke</button>` : ''}</div>` : ''}<div class="row mt">${person.membershipId ? `<form data-member-form="${person.membershipId}" class="row"><select name="role">${ACCESS_ROLE_OPTIONS.map((role) => `<option value="${role}" ${role === (person.role || 'staff') ? 'selected' : ''}>${formatRoleLabel(role)}</option>`).join('')}</select><select name="status"><option value="active" ${(person.status || 'active') === 'active' ? 'selected' : ''}>active</option><option value="inactive" ${(person.status || 'active') === 'inactive' ? 'selected' : ''}>inactive</option></select><button type="submit">Save access</button></form>` : ''}${person.email ? `<button type="button" class="btn btn-ghost" data-send-password-reset="${person.email}" ${resetStatus === 'loading' ? 'disabled' : ''}>${resetLabel}</button>` : ''}</div></div>`;
+    return `<div class="item"><div class="row space"><b>${person.displayName || person.email || person.userId || person.id}</b><div class="state-chip-row">${roleChip}${renderStatusChip(accessStatus, statusTone)}${renderStatusChip(workerLabel, person.worker ? 'good' : 'muted')}</div></div><div class="tiny">${person.email || 'No email on file'} ${person.userId ? `| UID: ${person.userId}` : ''}</div><div class="tiny">Created: ${person.createdAt || '—'} · Accepted: ${person.acceptedAt || '—'} · Last login: ${person.lastLoginAt || '—'}</div>${invite ? `<div class="tiny mt">Invite status: ${(invite.status || 'pending').replace(/_/g, ' ')}${inviteCode ? ` · code <code>${inviteCode}</code> <button type="button" class="btn btn-ghost btn-small" data-copy-invite-code="${inviteCode}">Copy code</button>` : ''} <button type="button" class="btn btn-ghost btn-small" data-copy-invite-link="${inviteCode}">Copy invite text</button>${invite.status === 'pending' ? ` <button data-revoke-invite="${invite.id}" class="btn btn-ghost btn-small">Revoke</button>` : ''}</div>` : ''}<div class="row mt">${person.membershipId ? `<form data-member-form="${person.membershipId}" class="row"><select name="role">${ACCESS_ROLE_OPTIONS.map((role) => `<option value="${role}" ${role === (person.role || 'staff') ? 'selected' : ''}>${formatRoleLabel(role)}</option>`).join('')}</select><select name="status"><option value="active" ${(person.status || 'active') === 'active' ? 'selected' : ''}>active</option><option value="inactive" ${(person.status || 'active') === 'inactive' ? 'selected' : ''}>inactive</option></select><button type="submit">Save access</button></form>` : ''}${person.email ? `<button type="button" class="btn btn-ghost" data-send-password-reset="${person.email}" ${resetStatus === 'loading' ? 'disabled' : ''}>${resetLabel}</button>` : ''}${person.email || person.userId ? `<button type="button" class="btn btn-ghost" data-toggle-worker-profile="${person.id}" data-person-email="${person.email || ''}" data-person-user-id="${person.userId || ''}" data-person-name="${person.displayName || ''}" data-worker-enabled="${person.worker ? 'yes' : 'no'}">${person.worker ? 'Remove worker profile' : 'Make assignable worker'}</button>` : ''}</div>${person.worker ? `<form class="grid mt" data-worker-profile-form="${person.worker.id}"><label>Worker title (optional)<input name="title" value="${person.worker.title || ''}" /></label><label>Worker notes (optional)<input name="notes" value="${person.worker.notes || ''}" /></label><button type="submit">Save worker profile</button></form>` : ''}</div>`;
   }).join('') || '<div class="inline-state info">No people yet.</div>'}</div></section>
 
     <section class="item ${activeSection === 'audit' ? '' : 'hide'}" data-admin-section="audit"><h3>Audit log</h3><p class="tiny">Company activity history.</p><div class="row mt">${categoryOptions.map((option) => `<button type="button" data-audit-filter="${option.id}" class="filter-chip ${auditCategory === option.id ? 'active' : ''}">${option.label}</button>`).join('')}</div><div class="list mt">${auditEntries.map((entry) => `<div class="item tiny"><div class="row space"><b>${renderAuditLine(entry)}</b>${renderStatusChip(formatRelativeTime(entry.timestamp), 'muted')}</div><div>${entry.summary || ''}</div></div>`).join('') || '<div class="inline-state info">No audit entries in this view yet.</div>'}</div></section>
@@ -554,6 +555,19 @@ export function renderAdmin(el, state, actions) {
   }));
   el.querySelectorAll('[data-send-password-reset]').forEach((button) => button.addEventListener('click', async () => {
     await actions.sendPersonPasswordReset?.(button.dataset.sendPasswordReset);
+  }));
+  el.querySelectorAll('[data-toggle-worker-profile]').forEach((button) => button.addEventListener('click', async () => {
+    await actions.toggleWorkerProfile?.({
+      rowId: button.dataset.toggleWorkerProfile,
+      email: button.dataset.personEmail,
+      userId: button.dataset.personUserId,
+      displayName: button.dataset.personName,
+      enabled: button.dataset.workerEnabled === 'yes'
+    });
+  }));
+  el.querySelectorAll('[data-worker-profile-form]').forEach((form) => form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    await actions.saveWorkerProfile?.(form.dataset.workerProfileForm, Object.fromEntries(new FormData(event.currentTarget).entries()));
   }));
   el.querySelector('#downloadAssetsTemplate')?.addEventListener('click', () => actions.downloadAssetTemplate());
   el.querySelector('#downloadEmployeesTemplate')?.addEventListener('click', () => actions.downloadEmployeeTemplate());

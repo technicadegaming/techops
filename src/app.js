@@ -108,6 +108,15 @@ const globalBusy = createGlobalBusyHelpers(state, () => render());
 
 let onboardingRepairInFlight = null;
 let lastResolvedCompanyLogoPath = '';
+let pendingLogoLoadToken = 0;
+
+function setBootstrapLoading(active = false, detail = '') {
+  const loadingEl = document.getElementById('appBootstrapLoading');
+  const detailEl = document.getElementById('appBootstrapLoadingDetail');
+  if (!loadingEl) return;
+  loadingEl.classList.toggle('hide', !active);
+  if (detailEl) detailEl.textContent = detail || 'Loading workspace…';
+}
 
 async function resolveCompanyLogoUrl() {
   const logoUrl = `${state.company?.logoUrl || ''}`.trim();
@@ -123,15 +132,20 @@ async function resolveCompanyLogoUrl() {
 
 async function renderHeaderBranding() {
   const logoEl = document.getElementById('appCompanyLogo');
+  const titleEl = document.getElementById('appBrandTitle');
   if (!logoEl) return;
-  const logoUrl = await resolveCompanyLogoUrl();
-  if (!logoUrl) {
+  const token = ++pendingLogoLoadToken;
+  logoEl.classList.add('hide');
+  logoEl.removeAttribute('src');
+  logoEl.onerror = () => {
     logoEl.classList.add('hide');
     logoEl.removeAttribute('src');
-    return;
-  }
+    if (titleEl) titleEl.textContent = `${state.company?.name || 'Scoot Business'}`;
+  };
+  const logoUrl = await resolveCompanyLogoUrl();
+  if (token !== pendingLogoLoadToken || !logoUrl) return;
+  logoEl.onload = () => logoEl.classList.remove('hide');
   logoEl.src = logoUrl;
-  logoEl.classList.remove('hide');
 }
 
 async function repairOperationalOnboardingState() {
@@ -408,12 +422,14 @@ watchAuth(async (user) => {
     state.activeMembership = null;
     notificationController.resetNotifications();
     setOnboardingFeedback(state, '', 'info', { pendingAction: '', handoffStatus: 'idle' });
+    setBootstrapLoading(false);
     setRootViewVisibility({ authView, appView, showAuth: true });
     return;
   }
   try {
     authController.setAuthMessage('Finishing workspace setup…');
-    setRootViewVisibility({ authView, appView, showAuth: true });
+    setRootViewVisibility({ authView, appView, showAuth: false });
+    setBootstrapLoading(true, 'Loading company, memberships, settings, and branding…');
     setActiveCompanyContext(null);
     setOnboardingFeedback(state, '', 'info', { pendingAction: '', handoffStatus: 'working' });
     state.user = { uid: user.uid, email: user.email, displayName: user.displayName };
@@ -438,8 +454,10 @@ watchAuth(async (user) => {
     if (!authMessage.textContent) authController.setAuthMessage('');
     setRootViewVisibility({ authView, appView, showAuth: false });
     await bootstrapCompanyContext();
+    setBootstrapLoading(true, 'Loading workspace data…');
     await refreshData();
     await render();
+    setBootstrapLoading(false);
   } catch (error) {
     if (canFallbackToOnboarding(error)) {
       console.warn('[watchAuth] Falling back to onboarding handoff without membership context.', error);
@@ -448,6 +466,7 @@ watchAuth(async (user) => {
       state.permissions = buildPermissionContext({ profile: state.profile, membership: null });
       authController.setAuthMessage('');
       setOnboardingFeedback(state, 'Signed in. Continue with workspace setup.', 'info', { pendingAction: '', handoffStatus: 'degraded' });
+      setBootstrapLoading(false);
       setRootViewVisibility({ authView, appView, showAuth: false });
       await render();
       return;
@@ -456,8 +475,8 @@ watchAuth(async (user) => {
     console.error('[watchAuth]', error);
     authController.setAuthMessage(buildBootstrapErrorMessage(error));
     setOnboardingFeedback(state, authMessage.textContent, 'error', { pendingAction: '', handoffStatus: 'error' });
+    setBootstrapLoading(false);
     setRootViewVisibility({ authView, appView, showAuth: true });
     setActiveCompanyContext(null);
   }
 });
-// redeploy

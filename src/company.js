@@ -312,10 +312,26 @@ export async function revokeInvite(inviteId, user) {
 
 export async function acceptInvite({ inviteCode }) {
   const callable = httpsCallable(functions, 'acceptCompanyInvite');
-  const result = await callable({
-    inviteCode: `${inviteCode || ''}`.trim()
-  });
-  return `${result?.data?.companyId || ''}`.trim();
+  try {
+    const result = await callable({
+      inviteCode: `${inviteCode || ''}`.trim()
+    });
+    return `${result?.data?.companyId || ''}`.trim();
+  } catch (error) {
+    throw mapInviteAcceptanceError(error);
+  }
+}
+
+export function mapInviteAcceptanceError(error) {
+  const code = `${error?.code || ''}`.trim().toLowerCase();
+  const message = `${error?.message || ''}`.trim();
+  if (code.includes('permission-denied')) return new Error('Wrong email for this invite. Sign in with the invited email and retry.');
+  if (code.includes('failed-precondition') && /expired/i.test(message)) return new Error('This invite has expired. Ask your admin for a new invite.');
+  if (code.includes('failed-precondition') && /revoked/i.test(message)) return new Error('This invite was revoked. Ask your admin for a new invite.');
+  if (code.includes('already-exists')) return new Error('This invite was already accepted. Ask your admin for a new invite code if needed.');
+  if (code.includes('not-found')) return new Error('Invite code not found. Verify the code and try again.');
+  if (code.includes('unimplemented') || /function|deploy|not found/i.test(message)) return new Error('Invite acceptance service is unavailable. The Cloud Function may not be deployed yet.');
+  return error instanceof Error ? error : new Error(message || 'Unable to accept invite right now.');
 }
 
 export async function deleteCompanyInvite(inviteId) {
