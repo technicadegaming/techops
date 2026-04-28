@@ -367,6 +367,7 @@ async function render() {
     bootstrapAttachAssetManualFromCsvHint,
     createCompanyInvite,
     revokeInvite,
+    sendForgotPasswordEmail,
     withGlobalBusy: globalBusy.withGlobalBusy,
     storage,
     storageRef,

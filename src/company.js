@@ -40,7 +40,13 @@ function normalizeHeadquarters(payload = {}) {
 function randomCode(size = 8) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let out = '';
-  for (let i = 0; i < size; i += 1) out += chars[Math.floor(Math.random() * chars.length)];
+  const bytes = typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function'
+    ? crypto.getRandomValues(new Uint8Array(size))
+    : null;
+  for (let i = 0; i < size; i += 1) {
+    const index = bytes ? bytes[i] % chars.length : Math.floor(Math.random() * chars.length);
+    out += chars[index];
+  }
   return out;
 }
 
@@ -231,7 +237,16 @@ export async function createCompanyFromOnboarding(user, payload = {}) {
   return { companyId };
 }
 
-export async function createCompanyInvite({ companyId, email, role = 'staff', user }) {
+export async function createCompanyInvite({
+  companyId,
+  email,
+  role = 'staff',
+  user,
+  displayName = '',
+  createWorkerProfile = false,
+  workerTitle = '',
+  workerNotes = ''
+}) {
   const inviteCode = randomCode(10);
   const token = `${companyId}.${inviteCode}.${Math.random().toString(36).slice(2, 10)}`;
   const ref = doc(collection(db, C.companyInvites));
@@ -240,8 +255,12 @@ export async function createCompanyInvite({ companyId, email, role = 'staff', us
     companyId,
     email: `${email || ''}`.trim().toLowerCase(),
     role,
+    displayName: `${displayName || ''}`.trim(),
     inviteCode,
     token,
+    createWorkerProfile: createWorkerProfile === true,
+    workerTitle: `${workerTitle || ''}`.trim(),
+    workerNotes: `${workerNotes || ''}`.trim(),
     status: 'pending',
     createdAt: serverTimestamp(),
     createdBy: user.uid,
