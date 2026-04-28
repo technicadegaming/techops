@@ -349,6 +349,56 @@ export function createAdminActions(deps) {
       }
       render();
     },
+    toggleWorkerProfile: async ({ email, userId, displayName, enabled }) => {
+      const cleanEmail = `${email || ''}`.trim().toLowerCase();
+      const cleanUserId = `${userId || ''}`.trim();
+      if (enabled) {
+        const existing = (state.workers || []).find((worker) => (
+          (cleanUserId && `${worker.userId || worker.linkedUserId || ''}`.trim() === cleanUserId)
+          || (cleanEmail && `${worker.email || ''}`.trim().toLowerCase() === cleanEmail)
+        ));
+        if (existing?.id) {
+          await upsertEntity('workers', existing.id, {
+            ...existing,
+            enabled: false,
+            available: false,
+            updatedAt: new Date().toISOString(),
+          }, state.user);
+        }
+        setAdminFeedback({ tone: 'success', message: `Worker profile removed for ${cleanEmail || displayName || 'person'}.` });
+      } else {
+        const id = `worker-${(cleanUserId || cleanEmail || Date.now().toString(36)).replace(/[^a-z0-9-]/gi, '-').slice(0, 64)}`;
+        await upsertEntity('workers', id, {
+          id,
+          displayName: `${displayName || cleanEmail || cleanUserId || 'Worker'}`.trim(),
+          email: cleanEmail,
+          userId: cleanUserId,
+          linkedUserId: cleanUserId,
+          enabled: true,
+          available: true,
+          role: 'staff',
+          accountStatus: cleanUserId ? 'linked_member' : 'pending_link',
+          notes: '',
+          title: '',
+          companyId: state.company?.id || ''
+        }, state.user);
+        setAdminFeedback({ tone: 'success', message: `Worker profile enabled for ${cleanEmail || displayName || 'person'}.` });
+      }
+      await refreshData();
+      render();
+    },
+    saveWorkerProfile: async (workerId, payload = {}) => {
+      const existing = (state.workers || []).find((worker) => worker.id === workerId);
+      if (!existing) return;
+      await upsertEntity('workers', workerId, {
+        ...existing,
+        title: `${payload.title || ''}`.trim(),
+        notes: `${payload.notes || ''}`.trim(),
+      }, state.user);
+      setAdminFeedback({ tone: 'success', message: 'Worker profile updated.' });
+      await refreshData();
+      render();
+    },
     revokeInvite: async (inviteId) => {
       await revokeInvite(inviteId, state.user);
       setAdminFeedback({ tone: 'success', message: 'Invite revoked.' });

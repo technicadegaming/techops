@@ -602,6 +602,17 @@ test('auth handoff fallback engages only for membership lookup permission denial
   assert.equal(fallback.activeMembership, null);
 });
 
+test('admin people source includes active tab affordance and unified worker/access controls', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'admin.js'), 'utf8');
+  assert.match(source, /aria-current="\$\{section\.id === activeSection \? 'page' : 'false'\}"/);
+  assert.match(source, /Invite status:/);
+  assert.match(source, /data-toggle-worker-profile/);
+  assert.match(source, /buildPeopleRows/);
+  assert.match(source, /App access controls who can sign in\. Worker profile controls who can be assigned to tasks\./);
+});
+
 test('applyActionCenterFocus translates dashboard focus into operations filters and route flags', async () => {
   const { applyActionCenterFocus, applyShellFocus } = await loadActionCenter();
 
