@@ -3510,3 +3510,42 @@ test('admin people password reset action uses auth reset helper and updates UI s
   assert.deepEqual(calls, ['person@example.com']);
   assert.equal(state.adminUi.passwordResetByEmail['person@example.com'], 'success');
 });
+
+test('admin people source includes worker PIN management controls for elevated users', () => {
+  const source = loadAdminSource();
+  assert.match(source, /data-worker-pin-form/);
+  assert.match(source, /PIN \(4–8 digits\)/);
+  assert.match(source, /canManagePins/);
+  assert.match(source, /Set PIN/);
+  assert.match(source, /Reset PIN/);
+});
+
+test('admin setWorkerPin validates format, invokes callable payload, and avoids raw error details', async () => {
+  const { createAdminActions } = await loadAdminActions();
+  const calls = [];
+  const state = { company: { id: 'co-1' }, adminUi: {}, permissions: { companyRole: 'admin' } };
+  const actions = createAdminActions({
+    state,
+    render: () => {},
+    refreshData: async () => {},
+    runAction: async (_label, fn) => fn(),
+    withRequiredCompanyId: (payload) => payload,
+    upsertEntity: async () => {},
+    clearEntitySet: async () => 0,
+    saveAppSettings: async () => {},
+    exportBackupJson: async () => ({}),
+    buildAssetsCsv: () => '', buildTasksCsv: () => '', buildAuditCsv: () => '', buildWorkersCsv: () => '',
+    buildMembersCsv: () => '', buildInvitesCsv: () => '', buildLocationsCsv: () => '', buildCompanyBackupBundle: () => ({}),
+    downloadFile: () => {}, downloadJson: () => {}, normalizeAssetId: (v) => v, enrichAssetDocumentation: async () => {},
+    createCompanyInvite: async () => ({}), revokeInvite: async () => {},
+    setWorkerLocationPin: async (payload) => { calls.push(payload); return { ok: true }; }
+  });
+
+  const bad = await actions.setWorkerPin({ workerId: 'w1', locationId: 'l1', pin: '12ab' });
+  assert.equal(bad.ok, false);
+  assert.equal(calls.length, 0);
+
+  const good = await actions.setWorkerPin({ workerId: 'w1', locationId: 'l1', pin: '1234' });
+  assert.equal(good.ok, true);
+  assert.deepEqual(calls[0], { companyId: 'co-1', workerId: 'w1', locationId: 'l1', pin: '1234' });
+});

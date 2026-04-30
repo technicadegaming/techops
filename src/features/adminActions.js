@@ -31,6 +31,7 @@ export function createAdminActions(deps) {
     bootstrapAttachAssetManualFromCsvHint,
     createCompanyInvite,
     revokeInvite,
+    setWorkerLocationPin,
     sendForgotPasswordEmail,
     withGlobalBusy,
     storage,
@@ -507,6 +508,33 @@ export function createAdminActions(deps) {
       setAdminFeedback({ tone: 'success', message: 'Worker profile updated.' });
       await refreshData();
       render();
+    },
+
+    setWorkerPin: async ({ workerId, locationId, pin } = {}) => {
+      const companyId = `${state.company?.id || ''}`.trim();
+      const cleanWorkerId = `${workerId || ''}`.trim();
+      const cleanLocationId = `${locationId || ''}`.trim();
+      const cleanPin = `${pin || ''}`.trim();
+      if (!companyId || !cleanWorkerId || !cleanLocationId) {
+        setAdminFeedback({ tone: 'error', message: 'Select a worker and location before setting a PIN.' });
+        render();
+        return { ok: false };
+      }
+      if (!/^\d{4,8}$/.test(cleanPin)) {
+        setAdminFeedback({ tone: 'error', message: 'PIN must be 4–8 digits.' });
+        render();
+        return { ok: false };
+      }
+      try {
+        await setWorkerLocationPin({ companyId, workerId: cleanWorkerId, locationId: cleanLocationId, pin: cleanPin });
+        setAdminFeedback({ tone: 'success', message: 'PIN set successfully.' });
+        render();
+        return { ok: true };
+      } catch {
+        setAdminFeedback({ tone: 'error', message: 'Unable to set PIN. Check your permissions and try again.' });
+        render();
+        return { ok: false };
+      }
     },
     revokeInvite: async (inviteId) => {
       await revokeInvite(inviteId, state.user);

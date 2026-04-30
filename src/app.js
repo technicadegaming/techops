@@ -52,7 +52,12 @@ import {
   saveTaskFixToTroubleshootingLibrary
 } from './aiAdapter.js';
 import { buildNotificationCandidates, formatRelativeTime } from './features/notifications.js';
-import { acceptInvite as acceptCompanyInvite, createCompanyInvite, revokeInvite } from './company.js';
+import {
+  acceptInvite as acceptCompanyInvite,
+  createCompanyInvite,
+  revokeInvite,
+  setWorkerLocationPin
+} from './company.js';
 import { logAudit } from './audit.js';
 import { storage } from './firebase.js';
 import { buildCompanyBrandingLogoPath, buildCompanyEvidencePath } from './storagePaths.js';
@@ -402,6 +407,7 @@ async function render() {
     bootstrapAttachAssetManualFromCsvHint,
     createCompanyInvite,
     revokeInvite,
+    setWorkerLocationPin,
     sendForgotPasswordEmail,
     withGlobalBusy: globalBusy.withGlobalBusy,
     storage,
