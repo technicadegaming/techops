@@ -410,6 +410,17 @@ export function renderAdmin(el, state, actions) {
           <button class="primary" type="submit">Save location</button>
         </form>
       </details>
+      <details class="mt"><summary><b>Checklist templates</b></summary>
+        <form id="checklistTemplateForm" class="grid grid-2 mt">
+          <label>Location<select name="locationId" required><option value="">Select location</option>${locations.map((location) => `<option value="${location.id}">${location.name || location.id}</option>`).join('')}</select></label>
+          <label>Template type<select name="templateType" required><option value="opening_checklist">Opening checklist</option><option value="closing_checklist">Closing checklist</option><option value="upkeep_checklist">Upkeep checklist</option></select></label>
+          <label>Template name<input name="name" placeholder="Opening standard" required /></label>
+          <label><input name="active" type="checkbox" checked /> Active</label>
+          <label style="grid-column:1/-1;">Checklist items (one per line)<textarea name="itemsInput" placeholder="Unlock doors&#10;Run opening safety walk&#10;Verify tills"></textarea></label>
+          <button class="primary" type="submit">Save template</button>
+        </form>
+        <div class="list mt">${(state.checklistTemplates || []).map((template) => `<div class="item tiny"><b>${template.name || template.templateType}</b> · ${(locations.find((location) => location.id === template.locationId)?.name || template.locationId || 'Unknown location')} · ${template.templateType} · ${template.active === false ? 'inactive' : 'active'} · ${Array.isArray(template.checklistItems) ? template.checklistItems.length : 0} items</div>`).join('') || '<div class="inline-state info">No checklist templates saved yet.</div>'}</div>
+      </details>
     </section>
 
     <section class="item ${activeSection === 'people' ? '' : 'hide'}" data-admin-section="people"><h3>People</h3><p class="tiny">App access controls who can sign in. Worker profile controls who can be assigned to tasks. A person can be both.</p><p class="tiny">Disable/reactivate/remove are workspace access controls and do not delete the user from Firebase Auth.</p><div class="kpi-line"><span>People: ${peopleRows.length}</span><span>Pending invites: ${pendingInviteRows.length}</span><span>Accepted invites: ${acceptedInvites.length}</span><span>Invites with failed attempts: ${invitesWithFailedAttempts.length}</span><span>Linked worker profiles: ${linkedCount}</span></div><details><summary><b>Invite person</b></summary><form id="inviteForm" class="grid grid-2 mt"><label>Name<input name="name" placeholder="Full name" /></label><label>Email<input name="email" type="email" placeholder="person@company.com" required /></label><label>App role<select name="role">${ACCESS_ROLE_OPTIONS.map((role) => `<option value="${role}">${formatRoleLabel(role)}</option>`).join('')}</select></label><label><input name="createWorkerProfile" type="checkbox" /> Create worker profile</label><label>Worker title (optional)<input name="workerTitle" placeholder="Technician" /></label><label>Worker notes (optional)<input name="workerNotes" placeholder="Shift, certification, etc." /></label><button class="primary" type="submit">Create invite</button></form></details><div class="item mt"><div class="row space"><b>Pending invites (${pendingInviteRows.length})</b><span class="tiny">Pending invites remain visible until accepted, revoked, or expired.</span></div>${pendingInviteRows.length ? `<table class="table mt"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Worker profile</th><th>Invite code</th><th>Created</th><th>Expires</th><th>Status</th><th>Failures</th><th>Actions</th></tr></thead><tbody>${pendingInviteRows.map((invite) => {
@@ -542,6 +553,18 @@ export function renderAdmin(el, state, actions) {
   el.querySelector('#addLocationForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     await actions.addLocation(Object.fromEntries(new FormData(event.currentTarget).entries()));
+  });
+  el.querySelector('#checklistTemplateForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const fd = new FormData(event.currentTarget);
+    const items = `${fd.get('itemsInput') || ''}`.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean);
+    await actions.saveChecklistTemplate?.({
+      locationId: `${fd.get('locationId') || ''}`.trim(),
+      templateType: `${fd.get('templateType') || ''}`.trim(),
+      name: `${fd.get('name') || ''}`.trim(),
+      active: fd.get('active') === 'on',
+      checklistItems: items.map((label, index) => ({ id: `item-${index + 1}`, label, sortOrder: index + 1 }))
+    });
   });
   el.querySelectorAll('[data-location-form]').forEach((form) => {
     form.addEventListener('submit', async (event) => {

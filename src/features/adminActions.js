@@ -536,6 +536,33 @@ export function createAdminActions(deps) {
         return { ok: false };
       }
     },
+    saveChecklistTemplate: async (payload = {}) => {
+      const companyId = `${state.company?.id || ''}`.trim();
+      const templateType = `${payload.templateType || ''}`.trim();
+      const locationId = `${payload.locationId || ''}`.trim();
+      const name = `${payload.name || ''}`.trim();
+      const checklistItems = Array.isArray(payload.checklistItems) ? payload.checklistItems : [];
+      if (!companyId || !templateType || !locationId || !name) {
+        setAdminFeedback({ tone: 'error', message: 'Select location, template type, and template name.' });
+        render();
+        return;
+      }
+      const existing = (state.checklistTemplates || []).find((entry) => entry.companyId === companyId && entry.locationId === locationId && entry.templateType === templateType);
+      const id = existing?.id || `template-${templateType}-${locationId}`.replace(/[^a-z0-9_-]/gi, '-');
+      await upsertEntity('checklistTemplates', id, {
+        ...(existing || {}),
+        id,
+        companyId,
+        locationId,
+        templateType,
+        name,
+        active: payload.active !== false,
+        checklistItems
+      }, state.user);
+      setAdminFeedback({ tone: 'success', message: 'Checklist template saved.' });
+      await refreshData();
+      render();
+    },
     revokeInvite: async (inviteId) => {
       await revokeInvite(inviteId, state.user);
       setAdminFeedback({ tone: 'success', message: 'Invite revoked.' });
