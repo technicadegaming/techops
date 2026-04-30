@@ -3798,7 +3798,7 @@ test('reports daily manager summary includes copy summary button marker', async 
 test('admin source includes quiz and training section markers', () => {
   const source = loadAdminSource();
   assert.match(source, /Quiz & Training/);
-  assert.match(source, /data-admin-section=\"quiz\"/);
+  assert.match(source, /data-admin-section="quiz"/);
 });
 
 test('dashboard and reports source include quiz mvp markers', () => {
