@@ -95,6 +95,12 @@ function getChecklistCompletedByLabel(user = {}) {
   return user.displayName || user.email || user.uid || '';
 }
 
+function renderChecklistItemCompletionMeta(item = {}) {
+  if (!item?.completed) return '';
+  const completedBy = `${item.completedBy || item.workerId || ''}`.trim();
+  return completedBy ? `<span class="tiny"> — by ${completedBy}</span>` : '';
+}
+
 function renderChecklist(task = {}, editable = false) {
   const items = Array.isArray(task.checklistItems) ? task.checklistItems : [];
   if (!items.length) return '';
@@ -102,9 +108,23 @@ function renderChecklist(task = {}, editable = false) {
   const allComplete = items.every((item) => item?.completed);
   return `<div class="mt"><b>Checklist</b>${allComplete ? '<span class="state-chip good">Checklist complete</span>' : ''}<div class="tiny">${items.map((item, index) => {
     const label = item.label || item.title || item.id || `Item ${index + 1}`;
-    if (!isInteractive) return `${item.completed ? '☑' : '☐'} ${label}`;
-    return `<label class="row"><input type="checkbox" data-checklist-toggle="${task.id}" data-checklist-item-id="${item.id || ''}" ${item.completed ? 'checked' : ''}/> <span>${label}</span></label>`;
+    if (!isInteractive) return `${item.completed ? '☑' : '☐'} ${label}${renderChecklistItemCompletionMeta(item)}`;
+    return `<div class="row space"><label class="row"><input type="checkbox" data-checklist-toggle="${task.id}" data-checklist-item-id="${item.id || ''}" ${item.completed ? 'checked' : ''}/> <span>${label}${renderChecklistItemCompletionMeta(item)}</span></label><button type="button" data-open-pin-signoff="${task.id}" data-checklist-item-id="${item.id || ''}">Sign off with PIN</button></div>`;
   }).join('<br/>')}</div></div>`;
+}
+
+function renderPinSignoffForm(task = {}, state = {}) {
+  const formState = state.operationsUi?.pinSignoffForms?.[task.id] || {};
+  if (!formState.open) return '';
+  if (!task.locationId) return '<div class="inline-state info mt">PIN sign-off requires this task to have a location.</div>';
+  const workers = Array.isArray(state.workers) ? state.workers : [];
+  return `<form class="grid mt" data-pin-signoff-form="${task.id}">
+    <input type="hidden" name="checklistItemId" value="${formState.checklistItemId || ''}" />
+    <label>Worker<select name="workerId"><option value="">Select worker</option>${workers.map((worker) => `<option value="${worker.id || ''}" ${formState.workerId === worker.id ? 'selected' : ''}>${getWorkerOptionLabel(worker)}</option>`).join('')}</select></label>
+    <label>PIN<input type="password" name="pin" value="" autocomplete="off" inputmode="numeric" /></label>
+    ${formState.error ? `<div class="inline-state error">${formState.error}</div>` : ''}
+    <div class="action-row"><button type="submit">Submit PIN sign-off</button><button type="button" data-cancel-pin-signoff="${task.id}">Cancel</button></div>
+  </form>`;
 }
 
 function buildAttachments(input = {}) {
@@ -930,7 +950,8 @@ function createDefaultOperationsUiState() {
     lastSavedTaskId: null,
     creatingTask: false,
     createTaskMessage: '',
-    createTaskError: ''
+    createTaskError: '',
+    pinSignoffForms: {}
   };
 }
 
@@ -1305,6 +1326,7 @@ export function renderOperations(el, state, actions) {
               </div>
               <div class="mt"><b>Issue:</b> ${task.description || ''}</div>
               ${renderChecklist(task, editable)}
+              ${renderPinSignoffForm(task, state)}
               ${task.notes ? `<div class="mt"><b>Current summary:</b> ${task.notes}</div>` : ''}
               <div class="mt"><b>Asset link:</b> ${task.assetId ? `<a href="?tab=assets&assetId=${encodeURIComponent(task.assetId)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open asset record</a>` : 'No linked asset'}</div>
               ${renderAssetOpsContext(taskAsset, state, scope)}
@@ -1646,6 +1668,43 @@ export function renderOperations(el, state, actions) {
       checklistItems,
       updatedAtClient: nowIso
     });
+  }));
+  el.querySelectorAll('[data-open-pin-signoff]').forEach((button) => button.addEventListener('click', () => {
+    const taskId = `${button.dataset.openPinSignoff || ''}`.trim();
+    const checklistItemId = `${button.dataset.checklistItemId || ''}`.trim();
+    state.operationsUi.pinSignoffForms = {
+      ...(state.operationsUi.pinSignoffForms || {}),
+      [taskId]: { open: true, checklistItemId, workerId: '', error: '' }
+    };
+    rerender();
+  }));
+  el.querySelectorAll('[data-cancel-pin-signoff]').forEach((button) => button.addEventListener('click', () => {
+    const taskId = `${button.dataset.cancelPinSignoff || ''}`.trim();
+    state.operationsUi.pinSignoffForms = { ...(state.operationsUi.pinSignoffForms || {}), [taskId]: { open: false } };
+    rerender();
+  }));
+  el.querySelectorAll('[data-pin-signoff-form]').forEach((pinForm) => pinForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const taskId = `${pinForm.dataset.pinSignoffForm || ''}`.trim();
+    const task = state.tasks.find((entry) => entry.id === taskId);
+    const fd = new FormData(pinForm);
+    const checklistItemId = `${fd.get('checklistItemId') || ''}`.trim();
+    const workerId = `${fd.get('workerId') || ''}`.trim();
+    const pin = `${fd.get('pin') || ''}`.trim();
+    if (!task || !checklistItemId || !task.locationId || !workerId || !pin) {
+      state.operationsUi.pinSignoffForms = { ...(state.operationsUi.pinSignoffForms || {}), [taskId]: { open: true, checklistItemId, workerId, error: 'Unable to sign off. Check the worker, PIN, and location.' } };
+      rerender();
+      return;
+    }
+    const companyId = `${task.companyId || state.company?.id || state.activeMembership?.companyId || ''}`.trim();
+    const ok = await actions.signOffChecklistItemWithPin({ companyId, taskId, checklistItemId, locationId: task.locationId, workerId, pin });
+    if (!ok) {
+      state.operationsUi.pinSignoffForms = { ...(state.operationsUi.pinSignoffForms || {}), [taskId]: { open: true, checklistItemId, workerId, error: 'Unable to sign off. Check the worker, PIN, and location.' } };
+      rerender();
+      return;
+    }
+    state.operationsUi.pinSignoffForms = { ...(state.operationsUi.pinSignoffForms || {}), [taskId]: { open: false } };
+    rerender();
   }));
   el.querySelectorAll('[data-open-closeout]').forEach((button) => button.addEventListener('click', () => {
     const panel = el.querySelector(`[data-closeout-panel="${button.dataset.openCloseout}"]`);
