@@ -66,6 +66,21 @@ function serverTimestamp() {
 const PIN_HASH_VERSION = 'scrypt_v1';
 const PIN_REGEX = /^\d{4,8}$/;
 
+const ROLE_RANK = Object.freeze({ owner: 100, admin: 90, manager: 80, lead: 60, staff: 40, viewer: 10 });
+const normalizeRole = (value = '', fallback = 'staff') => {
+  const role = `${value || ''}`.trim().toLowerCase();
+  return ROLE_RANK[role] ? role : fallback;
+};
+const roleRank = (value = '', fallback = 'staff') => ROLE_RANK[normalizeRole(value, fallback)] || ROLE_RANK[fallback];
+const canManageRole = ({ actorRole = '', targetRole = '', isSelf = false } = {}) => {
+  const cleanActorRole = normalizeRole(actorRole);
+  if (isSelf) return false;
+  if (cleanActorRole === 'owner') return true;
+  if (['staff', 'viewer'].includes(cleanActorRole)) return false;
+  return roleRank(cleanActorRole) > roleRank(targetRole);
+};
+
+
 function normalizePin(pin) {
   return `${pin || ''}`.trim();
 }
@@ -534,16 +549,23 @@ exports.setWorkerLocationPin = onCall({}, async (request) => {
   }
 
   const membership = await getActiveMembershipForCompany({ db, companyId, uid: request.auth.uid });
-  const role = `${membership?.role || ''}`.trim().toLowerCase();
-  if (!['owner', 'admin', 'manager'].includes(role)) {
-    throw new HttpsError('permission-denied', 'Insufficient access to manage staff PINs.');
-  }
+  const role = normalizeRole(membership?.role || 'staff');
 
   const workerSnap = await db.collection('workers').doc(workerId).get();
   if (!workerSnap.exists) throw new HttpsError('not-found', 'Worker not found.');
   const worker = workerSnap.data() || {};
   if (`${worker.companyId || ''}`.trim() !== companyId) {
     throw new HttpsError('permission-denied', 'Worker/company mismatch.');
+  }
+
+  const linkedUserId = `${worker.linkedUserId || worker.userId || ''}`.trim();
+  const linkedMembership = linkedUserId
+    ? await getActiveMembershipForCompany({ db, companyId, uid: linkedUserId })
+    : null;
+  const targetRole = normalizeRole(linkedMembership?.role || worker.role || 'staff');
+  const isSelfTarget = linkedUserId && linkedUserId === `${request.auth.uid || ''}`.trim();
+  if (!canManageRole({ actorRole: role, targetRole, isSelf: isSelfTarget })) {
+    throw new HttpsError('permission-denied', 'Insufficient access to manage this worker PIN.');
   }
 
   const locationSnap = await db.collection('companyLocations').doc(locationId).get();
