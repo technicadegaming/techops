@@ -1,4 +1,5 @@
 const admin = require('firebase-admin');
+const crypto = require('node:crypto');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
 
@@ -59,6 +60,36 @@ const db = admin.firestore();
 
 function serverTimestamp() {
   return admin.firestore.FieldValue.serverTimestamp();
+}
+
+
+const PIN_HASH_VERSION = 'scrypt_v1';
+const PIN_REGEX = /^\d{4,8}$/;
+
+function normalizePin(pin) {
+  return `${pin || ''}`.trim();
+}
+
+function createPinHash(pin) {
+  const normalizedPin = normalizePin(pin);
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derived = crypto.scryptSync(normalizedPin, salt, 64).toString('hex');
+  return `${PIN_HASH_VERSION}:${salt}:${derived}`;
+}
+
+function verifyPinHash(pin, storedHash) {
+  const normalizedPin = normalizePin(pin);
+  const [version, salt, storedDerived] = `${storedHash || ''}`.split(':');
+  if (version !== PIN_HASH_VERSION || !salt || !storedDerived) return false;
+  const actualDerived = crypto.scryptSync(normalizedPin, salt, 64).toString('hex');
+  const storedBuffer = Buffer.from(storedDerived, 'hex');
+  const actualBuffer = Buffer.from(actualDerived, 'hex');
+  if (storedBuffer.length !== actualBuffer.length) return false;
+  return crypto.timingSafeEqual(storedBuffer, actualBuffer);
+}
+
+function workerIsAssignable(worker = {}) {
+  return worker.enabled !== false && worker.available !== false && worker.assignable !== false;
 }
 
 async function getUserRole(uid) {
@@ -484,6 +515,135 @@ exports.acceptCompanyInvite = onCall({}, async (request) => {
   });
 
   return { ok: true, companyId, membershipId, role: membershipRole };
+});
+
+
+
+exports.setWorkerLocationPin = onCall({}, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign-in required.');
+  const companyId = normalizeCompanyId(request.data?.companyId);
+  const locationId = `${request.data?.locationId || ''}`.trim();
+  const workerId = `${request.data?.workerId || ''}`.trim();
+  const pin = normalizePin(request.data?.pin);
+
+  if (!companyId || !locationId || !workerId) {
+    throw new HttpsError('invalid-argument', 'companyId, locationId, and workerId are required.');
+  }
+  if (!PIN_REGEX.test(pin)) {
+    throw new HttpsError('invalid-argument', 'PIN must be 4-8 digits.');
+  }
+
+  const membership = await getActiveMembershipForCompany({ db, companyId, uid: request.auth.uid });
+  const role = `${membership?.role || ''}`.trim().toLowerCase();
+  if (!['owner', 'admin', 'manager'].includes(role)) {
+    throw new HttpsError('permission-denied', 'Insufficient access to manage staff PINs.');
+  }
+
+  const workerSnap = await db.collection('workers').doc(workerId).get();
+  if (!workerSnap.exists) throw new HttpsError('not-found', 'Worker not found.');
+  const worker = workerSnap.data() || {};
+  if (`${worker.companyId || ''}`.trim() !== companyId) {
+    throw new HttpsError('permission-denied', 'Worker/company mismatch.');
+  }
+
+  const locationSnap = await db.collection('companyLocations').doc(locationId).get();
+  if (!locationSnap.exists) throw new HttpsError('not-found', 'Location not found.');
+  const location = locationSnap.data() || {};
+  if (`${location.companyId || ''}`.trim() !== companyId) {
+    throw new HttpsError('permission-denied', 'Location/company mismatch.');
+  }
+
+  const pinRef = db.collection('workerLocationPins').doc(`${companyId}_${locationId}_${workerId}`);
+  await pinRef.set({
+    companyId,
+    locationId,
+    workerId,
+    pinHash: createPinHash(pin),
+    hashVersion: PIN_HASH_VERSION,
+    enabled: true,
+    createdAt: serverTimestamp(),
+    createdBy: request.auth.uid,
+    updatedAt: serverTimestamp(),
+    updatedBy: request.auth.uid,
+  }, { merge: true });
+
+  return { ok: true, companyId, locationId, workerId, enabled: true, hashVersion: PIN_HASH_VERSION };
+});
+
+exports.signOffChecklistItemWithPin = onCall({}, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign-in required.');
+  const companyId = normalizeCompanyId(request.data?.companyId);
+  const taskId = `${request.data?.taskId || ''}`.trim();
+  const checklistItemId = `${request.data?.checklistItemId || ''}`.trim();
+  const locationId = `${request.data?.locationId || ''}`.trim();
+  const workerId = `${request.data?.workerId || ''}`.trim();
+  const pin = normalizePin(request.data?.pin);
+  if (!companyId || !taskId || !checklistItemId || !locationId || !workerId || !pin) {
+    throw new HttpsError('invalid-argument', 'companyId, taskId, checklistItemId, locationId, workerId, and pin are required.');
+  }
+
+  const membership = await getActiveMembershipForCompany({ db, companyId, uid: request.auth.uid });
+  if (!membership) throw new HttpsError('permission-denied', 'Company access required.');
+
+  const [taskSnap, workerSnap, pinSnap] = await Promise.all([
+    db.collection('tasks').doc(taskId).get(),
+    db.collection('workers').doc(workerId).get(),
+    db.collection('workerLocationPins').doc(`${companyId}_${locationId}_${workerId}`).get(),
+  ]);
+
+  if (!taskSnap.exists) throw new HttpsError('not-found', 'Task not found.');
+  if (!workerSnap.exists) throw new HttpsError('not-found', 'Worker not found.');
+  if (!pinSnap.exists || pinSnap.data()?.enabled === false) {
+    throw new HttpsError('permission-denied', 'Invalid sign-off credentials.');
+  }
+
+  const task = taskSnap.data() || {};
+  const worker = workerSnap.data() || {};
+  const pinRecord = pinSnap.data() || {};
+
+  if (`${task.companyId || ''}`.trim() !== companyId || `${task.locationId || ''}`.trim() !== locationId) {
+    throw new HttpsError('permission-denied', 'Task scope mismatch.');
+  }
+  if (`${worker.companyId || ''}`.trim() !== companyId || !workerIsAssignable(worker)) {
+    throw new HttpsError('permission-denied', 'Worker is not eligible for sign-off.');
+  }
+  if (`${pinRecord.companyId || ''}`.trim() !== companyId || `${pinRecord.locationId || ''}`.trim() !== locationId || `${pinRecord.workerId || ''}`.trim() !== workerId) {
+    throw new HttpsError('permission-denied', 'Invalid sign-off credentials.');
+  }
+  if (!verifyPinHash(pin, pinRecord.pinHash)) {
+    throw new HttpsError('permission-denied', 'Invalid sign-off credentials.');
+  }
+
+  const checklistItems = Array.isArray(task.checklistItems) ? task.checklistItems : [];
+  let found = false;
+  const workerLabel = `${worker.displayName || worker.fullName || worker.email || worker.id || workerId}`.trim();
+  const updatedChecklistItems = checklistItems.map((item) => {
+    if (`${item.id || ''}`.trim() !== checklistItemId) return item;
+    found = true;
+    return {
+      ...item,
+      completed: true,
+      completedAt: new Date().toISOString(),
+      completedBy: workerLabel,
+      workerId,
+      signOffMethod: 'pin',
+    };
+  });
+  if (!found) throw new HttpsError('not-found', 'Checklist item not found.');
+
+  await db.collection('tasks').doc(taskId).set({
+    checklistItems: updatedChecklistItems,
+    updatedAt: serverTimestamp(),
+    updatedBy: request.auth.uid,
+  }, { merge: true });
+
+  await db.collection('workerLocationPins').doc(`${companyId}_${locationId}_${workerId}`).set({
+    lastUsedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    updatedBy: request.auth.uid,
+  }, { merge: true });
+
+  return { ok: true, taskId, checklistItemId, workerId, signOffMethod: 'pin' };
 });
 
 exports.analyzeTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
