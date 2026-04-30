@@ -3740,6 +3740,16 @@ test('reports renders daily manager summary section and filter markers', async (
   assert.match(el.innerHTML, /location/i);
 });
 
+test('reports renders incident summary markers', async () => {
+  const { renderReports } = await loadReportsView();
+  const el = createReportsRoot();
+  const state = { reportsUi: {}, users: [], tasks: [], checklistSignoffEvents: [], incidentReports: [{ id: 'i1', title: 'Slip hazard', status: 'open', incidentType: 'safety', incidentDate: '2026-04-29' }], companyLocations: [], route: {} };
+  renderReports(el, state, () => {}, () => {});
+  assert.match(el.innerHTML, /Incident Summary/);
+  assert.match(el.innerHTML, /data-incident-form/);
+  assert.match(el.innerHTML, /Open incidents: 1/);
+});
+
 test('reports daily manager summary no-data state renders without crash', async () => {
   const { renderReports } = await loadReportsView();
   const el = createReportsRoot();

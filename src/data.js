@@ -210,6 +210,14 @@ function classifyAuditEvent(name, action, id, before = null, after = null) {
     };
   }
 
+  if (name === 'incidentReports') {
+    return {
+      actionType: action === 'create' ? 'incident_report_created' : 'incident_report_updated',
+      category: 'operations_incidents',
+      summary: `${action === 'create' ? 'Incident reported' : 'Incident updated'}: ${label}`
+    };
+  }
+
   if (name === 'appSettings') {
     return {
       actionType: 'settings_updated',

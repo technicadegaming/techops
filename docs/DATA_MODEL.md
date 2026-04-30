@@ -135,6 +135,13 @@ If you are onboarding to the repo, read `README.md` first for the documentation 
 - **Relationships:** consumed by checklist reporting and accountability workflows.
 - **Rules/roles:** client access is read-only; owner/admin/manager/assistant_manager/lead (and global admins) can read own-company events. Client create/update/delete is denied; writes are expected from trusted server code (Cloud Functions/Admin SDK).
 
+### `incidentReports`
+- **Purpose:** incident intake and management for FEC operations (safety, customer, injury, machine damage, cash/ticket/prize, behavior/security, general operations).
+- **Key fields (confirmed/inferred):** `id`, `companyId`, `locationId`, `incidentDate`, `incidentType`, `severity`, `title`, `description`, `assetId`, `customerInvolved`, `injuryReported`, `prizeOrCashImpact`, `status`, `submittedByUid`, `submittedByWorkerId`, `reviewedBy`, `reviewedAt`, `managerNotes`, `createdAt`, `updatedAt`.
+- **Tenant scoping:** company-scoped.
+- **Relationships:** consumed by Reports incident summary/review flows and included in Daily Manager Summary incident counts; audit events are emitted on create/update through generic upsert logging.
+- **Rules/roles:** staff+ can create same-company incidents; lead+ can read/update same-company incidents; client delete is denied (use status transitions such as `archived`).
+
 ### `appSettings`
 - **Purpose:** application/company settings, currently centered on AI + notification preferences.
 - **Key fields (confirmed):** default AI setting keys such as `aiEnabled`, `aiAutoAttach`, `aiUseInternalKnowledge`, `aiUseWebSearch`, `aiAskFollowups`, `aiModel`, `aiMaxWebSources`, `aiConfidenceThreshold`, `aiAllowManualRerun`, `aiSaveSuccessfulFixesToLibraryDefault`, `aiShortResponseMode`, `aiVerboseManagerMode`, `defaultTaskSeverity`, `taskIntakeRequiredFields`, `aiFeedbackCollectionEnabled`, `mobileConciseModeDefault`, plus `notificationPrefs` in company settings flows.
