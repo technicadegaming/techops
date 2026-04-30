@@ -1,3 +1,4 @@
+import { normalizeBusinessHours, normalizeDailyOperationsSchedule } from './businessHours.js';
 import { buildUsageSummary, normalizeBillingAddress } from '../billing.js';
 import { ASSET_CSV_TEMPLATE, buildAssetImportRow } from './assetIntake.js';
 import { isManager } from '../roles.js';
@@ -504,6 +505,8 @@ export function createAdminActions(deps) {
         ...existing,
         title: `${payload.title || ''}`.trim(),
         notes: `${payload.notes || ''}`.trim(),
+          businessHours: normalizeBusinessHours(payload.businessHours || existing.businessHours || {}),
+          dailyOperationsSchedule: normalizeDailyOperationsSchedule(payload.dailyOperationsSchedule || existing.dailyOperationsSchedule || {}),
       }, state.user);
       setAdminFeedback({ tone: 'success', message: 'Worker profile updated.' });
       await refreshData();
@@ -710,7 +713,9 @@ export function createAdminActions(deps) {
           timeZone: `${payload.timeZone || existing.timeZone || state.company?.timeZone || 'UTC'}`.trim(),
           managerName: `${payload.managerName || ''}`.trim(),
           status: `${payload.status || 'active'}`.trim(),
-          notes: `${payload.notes || ''}`.trim()
+          notes: `${payload.notes || ''}`.trim(),
+          businessHours: normalizeBusinessHours(payload.businessHours || existing.businessHours || {}),
+          dailyOperationsSchedule: normalizeDailyOperationsSchedule(payload.dailyOperationsSchedule || existing.dailyOperationsSchedule || {})
         }, 'update company location'), state.user);
         setAdminFeedback({ tone: 'success', message: `Location updated: ${payload.name || existing.name || id}.` });
         await refreshData();

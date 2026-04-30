@@ -1,3 +1,4 @@
+import { computeChecklistTiming } from '../features/businessHours.js';
 import { createOperationsActions } from '../features/operationsActions.js';
 import { buildCloseoutEvent } from '../features/workflow.js';
 import { canDelete } from '../roles.js';
@@ -430,7 +431,10 @@ export function createOperationsController({
               createTaskMessage: isNewTask ? 'Creating task…' : '',
             };
             render();
-            await upsertEntity('tasks', taskId, withRequiredCompanyId(state, { ...payload, id: taskId }, 'save a task'), state.user);
+            const location = (state.companyLocations || []).find((entry) => entry.id === payload.locationId) || {};
+            const timing = ['opening_checklist','closing_checklist','upkeep_checklist'].includes(`${payload.taskType || ''}`) ? computeChecklistTiming({ taskType: payload.taskType, scheduledForDate: payload.scheduledForDate, location }) : null;
+            if (timing?.overdueStatus === 'closed_day') alert('This location is marked closed on this date.');
+            await upsertEntity('tasks', taskId, withRequiredCompanyId(state, { ...payload, id: taskId, ...(timing ? { businessDate: timing.businessDate, dueAt: timing.dueAt, overdueAfter: timing.overdueAfter, checklistTimingStatus: timing.overdueStatus, businessHoursSnapshot: timing.businessHoursSnapshot } : {}) }, 'save a task'), state.user);
             const startsAi = isNewTask && state.settings?.aiEnabled;
             setTaskAiUiState(taskId, buildPostSaveAiState({ isNewTask: !existing }));
             state.operationsUi = {

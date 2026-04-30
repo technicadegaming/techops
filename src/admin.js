@@ -415,6 +415,7 @@ export function renderAdmin(el, state, actions) {
               <label>Manager<input name="managerName" value="${location.managerName || ''}" list="locationManagerList" placeholder="Assign manager name" /></label>
               <label>Status<select name="status"><option value="active" ${(location.status || 'active') === 'active' ? 'selected' : ''}>active</option><option value="limited" ${(location.status || 'active') === 'limited' ? 'selected' : ''}>limited</option><option value="inactive" ${(location.status || 'active') === 'inactive' ? 'selected' : ''}>inactive</option></select></label>
               <label style="grid-column:1/-1;">Operating notes<textarea name="notes">${location.notes || ''}</textarea></label>
+              <details style="grid-column:1/-1;"><summary><b>Business hours</b></summary>${['monday','tuesday','wednesday','thursday','friday','saturday','sunday'].map((day)=>`<div class="grid grid-2 mt"><label><input type="checkbox" name="${day}_open" ${location.businessHours?.[day]?.open === false ? '' : 'checked'} /> ${day}</label><label>Open time<input name="${day}_openTime" value="${location.businessHours?.[day]?.openTime || '10:00'}" /></label><label>Close time<input name="${day}_closeTime" value="${location.businessHours?.[day]?.closeTime || '22:00'}" /></label></div>`).join('')}<div class="grid grid-2 mt"><label>Opening grace minutes<input name="openingGraceMinutes" type="number" value="${location.dailyOperationsSchedule?.openingGraceMinutes ?? 30}" /></label><label>Closing grace minutes<input name="closingGraceMinutes" type="number" value="${location.dailyOperationsSchedule?.closingGraceMinutes ?? 30}" /></label><label>Upkeep due time<input name="upkeepDueTime" value="${location.dailyOperationsSchedule?.upkeepDueTime || '16:00'}" /></label><label>Upkeep grace minutes<input name="upkeepGraceMinutes" type="number" value="${location.dailyOperationsSchedule?.upkeepGraceMinutes ?? 60}" /></label></div></details>
               <button type="submit">Save location settings</button>
             </form>
           </details>
@@ -589,7 +590,11 @@ export function renderAdmin(el, state, actions) {
   el.querySelectorAll('[data-location-form]').forEach((form) => {
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      await actions.updateLocation(form.dataset.locationForm, Object.fromEntries(new FormData(event.currentTarget).entries()));
+      const entries = Object.fromEntries(new FormData(event.currentTarget).entries());
+      const days = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+      entries.businessHours = days.reduce((acc, day) => ({ ...acc, [day]: { open: entries[`${day}_open`] === 'on', openTime: `${entries[`${day}_openTime`] || '10:00'}`.trim(), closeTime: `${entries[`${day}_closeTime`] || '22:00'}`.trim() } }), {});
+      entries.dailyOperationsSchedule = { openingGraceMinutes: Number(entries.openingGraceMinutes || 30), closingGraceMinutes: Number(entries.closingGraceMinutes || 30), upkeepDueTime: `${entries.upkeepDueTime || '16:00'}`.trim(), upkeepGraceMinutes: Number(entries.upkeepGraceMinutes || 60) };
+      await actions.updateLocation(form.dataset.locationForm, entries);
     });
   });
   el.querySelector('#workerForm')?.addEventListener('submit', async (event) => {

@@ -61,3 +61,13 @@ test('setWorkerLocationPin rejects duplicate PINs for other workers while allowi
   assert.match(source, /PIN is already in use at this location/);
   assert.match(source, /if \(`\$\{data\.workerId \|\| ''\}`\.trim\(\) === workerId\) return false/);
 });
+
+
+test('signoff event payload includes timing/reporting fields when present', () => {
+  const source = readSource();
+  assert.match(source, /businessDate:/);
+  assert.match(source, /dueAt:/);
+  assert.match(source, /overdueAfter:/);
+  assert.match(source, /completedLate/);
+  assert.match(source, /locationTimezone:/);
+});
