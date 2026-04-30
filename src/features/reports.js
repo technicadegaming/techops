@@ -40,8 +40,27 @@ function isTaskBlocked(task, state) {
 function createDefaultReportsUiState() {
   return {
     locationKey: '',
-    taskStatus: 'open'
+    taskStatus: 'open',
+    checklistDate: '',
+    checklistType: 'all',
+    checklistWorker: 'all'
   };
+}
+
+function toCsvCell(value) {
+  const text = `${value == null ? '' : value}`;
+  if (!/[",\n]/.test(text)) return text;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function downloadChecklistCsv(rows = []) {
+  const header = ['date', 'location', 'checklistType', 'totalItems', 'signedItems', 'lateSignedItems', 'missedUnsignedItems', 'completionPct'];
+  const lines = rows.map((row) => header.map((key) => toCsvCell(row[key])).join(','));
+  const csv = `${header.join(',')}\n${lines.join('\n')}`;
+  const link = document.createElement('a');
+  link.href = `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`;
+  link.download = `checklist-accountability-${Date.now()}.csv`;
+  link.click();
 }
 
 function getSelectionForReports(state) {
@@ -113,6 +132,60 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
     selection?.key && selection.key !== '__all_locations__' ? `location: ${selection.label}` : '',
     statusFilter !== 'open' ? `status: ${statusFilter.replace('_', ' ')}` : ''
   ].filter(Boolean);
+  const checklistTasks = scopedTasks.filter((task) => ['opening_checklist', 'closing_checklist', 'upkeep_checklist'].includes(task.taskType));
+  const checklistEvents = (state.checklistSignoffEvents || []).filter((event) => {
+    const locationMatch = !selection?.name || selection.key === '__all_locations__'
+      ? true
+      : selection.key === '__unassigned_location__'
+        ? !`${event.locationName || ''}`.trim()
+        : `${event.locationName || ''}`.trim().toLowerCase() === `${selection.name || ''}`.trim().toLowerCase();
+    return locationMatch;
+  });
+  const uniqueChecklistDates = Array.from(new Set([...(checklistTasks.map((task) => `${task.businessDate || task.scheduledForDate || ''}`.trim())), ...checklistEvents.map((event) => `${event.businessDate || event.scheduledForDate || ''}`.trim())].filter(Boolean))).sort().reverse();
+  const selectedChecklistDate = `${state.reportsUi.checklistDate || uniqueChecklistDates[0] || ''}`.trim();
+  const checklistTypeFilter = state.reportsUi.checklistType || 'all';
+  const checklistWorkerFilter = state.reportsUi.checklistWorker || 'all';
+  const filteredChecklistTasks = checklistTasks.filter((task) => {
+    const matchesDate = !selectedChecklistDate || `${task.businessDate || task.scheduledForDate || ''}`.trim() === selectedChecklistDate;
+    const matchesType = checklistTypeFilter === 'all' || task.taskType === checklistTypeFilter;
+    return matchesDate && matchesType;
+  });
+  const filteredChecklistEvents = checklistEvents.filter((event) => {
+    const matchesDate = !selectedChecklistDate || `${event.businessDate || event.scheduledForDate || ''}`.trim() === selectedChecklistDate;
+    const matchesType = checklistTypeFilter === 'all' || `${event.taskType || ''}`.trim() === checklistTypeFilter;
+    const workerValue = `${event.workerId || event.completedBy || ''}`.trim();
+    const matchesWorker = checklistWorkerFilter === 'all' || workerValue === checklistWorkerFilter;
+    return matchesDate && matchesType && matchesWorker;
+  });
+  const workerOptions = Array.from(new Set(checklistEvents.map((event) => `${event.workerId || event.completedBy || ''}`.trim()).filter(Boolean))).sort();
+  const checklistSummaryByType = ['opening_checklist', 'closing_checklist', 'upkeep_checklist'].map((type) => {
+    const typeTasks = filteredChecklistTasks.filter((task) => task.taskType === type);
+    const totalItems = typeTasks.reduce((sum, task) => sum + (Array.isArray(task.checklistItems) ? task.checklistItems.length : 0), 0);
+    const signedItems = typeTasks.reduce((sum, task) => sum + (Array.isArray(task.checklistItems) ? task.checklistItems.filter((item) => item.completed).length : 0), 0);
+    return { type, totalItems, signedItems, completionPct: totalItems ? Math.round((signedItems / totalItems) * 100) : 0 };
+  });
+  const totalSignedItems = filteredChecklistEvents.length;
+  const lateSignedItems = filteredChecklistEvents.filter((event) => event.completedLate === true).length;
+  const unsignedItems = filteredChecklistTasks.reduce((sum, task) => sum + (Array.isArray(task.checklistItems) ? task.checklistItems.filter((item) => !item.completed).length : 0), 0);
+  const staffSignoffs = Object.values(filteredChecklistEvents.reduce((acc, event) => {
+    const key = `${event.workerId || event.completedBy || 'unknown'}`.trim() || 'unknown';
+    const label = `${event.completedBy || event.workerId || 'Unknown worker'}`.trim();
+    const entry = acc[key] || { key, label, count: 0, late: 0 };
+    entry.count += 1;
+    if (event.completedLate === true) entry.late += 1;
+    acc[key] = entry;
+    return acc;
+  }, {})).sort((a, b) => b.count - a.count);
+  const checklistVisibleRows = checklistSummaryByType.map((row) => ({
+    date: selectedChecklistDate || 'all',
+    location: selection?.label || 'All locations',
+    checklistType: row.type,
+    totalItems: row.totalItems,
+    signedItems: row.signedItems,
+    lateSignedItems,
+    missedUnsignedItems: unsignedItems,
+    completionPct: row.completionPct
+  }));
 
   el.innerHTML = `
     <div class="page-shell page-narrow">
@@ -152,6 +225,38 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
       <span>Completion rate: ${completionRate}%</span>
       <span>Blocked share: ${blockedRate}% of unresolved</span>
       <span>AI follow-up backlog: ${followupTasks.length}</span>
+    </div>
+    <div class="item mt">
+      <div class="row space"><b>Checklist Accountability</b><button type="button" data-checklist-export class="filter-chip">Export CSV</button></div>
+      <div class="grid grid-4 mt">
+        <label class="tiny">Business date
+          <select data-checklist-date>
+            <option value="">All dates</option>
+            ${uniqueChecklistDates.map((date) => `<option value="${date}" ${date === selectedChecklistDate ? 'selected' : ''}>${date}</option>`).join('')}
+          </select>
+        </label>
+        <label class="tiny">Checklist type
+          <select data-checklist-type>
+            <option value="all" ${checklistTypeFilter === 'all' ? 'selected' : ''}>All checklist types</option>
+            <option value="opening_checklist" ${checklistTypeFilter === 'opening_checklist' ? 'selected' : ''}>Opening checklist</option>
+            <option value="closing_checklist" ${checklistTypeFilter === 'closing_checklist' ? 'selected' : ''}>Closing checklist</option>
+            <option value="upkeep_checklist" ${checklistTypeFilter === 'upkeep_checklist' ? 'selected' : ''}>Upkeep checklist</option>
+          </select>
+        </label>
+        <label class="tiny">Worker
+          <select data-checklist-worker>
+            <option value="all" ${checklistWorkerFilter === 'all' ? 'selected' : ''}>All workers</option>
+            ${workerOptions.map((worker) => `<option value="${worker}" ${worker === checklistWorkerFilter ? 'selected' : ''}>${worker}</option>`).join('')}
+          </select>
+        </label>
+      </div>
+      <div class="kpi-line mt">
+        ${checklistSummaryByType.map((row) => `<span>${row.type.replace('_checklist', '')}: ${row.completionPct}%</span>`).join('')}
+      </div>
+      <div class="kpi-line mt">
+        <span>Total signed items: ${totalSignedItems}</span><span>Late signed items: ${lateSignedItems}</span><span>Missed/unsigned items: ${unsignedItems}</span>
+      </div>
+      ${staffSignoffs.length ? `<div class="list mt">${staffSignoffs.map((row) => `<div class="item tiny"><b>${row.label}</b> | sign-offs ${row.count} | late ${row.late}</div>`).join('')}</div>` : '<div class="inline-state info mt">No checklist sign-off events available for the selected filters.</div>'}
     </div>
 
     <div class="stats-grid">
@@ -273,4 +378,17 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
     state.route = { ...(state.route || {}), locationKey: button.dataset.locationKey || null };
     navigate('dashboard');
   }));
+  el.querySelector('[data-checklist-date]')?.addEventListener('change', (event) => {
+    state.reportsUi.checklistDate = `${event.target.value || ''}`.trim();
+    rerender();
+  });
+  el.querySelector('[data-checklist-type]')?.addEventListener('change', (event) => {
+    state.reportsUi.checklistType = `${event.target.value || 'all'}`.trim() || 'all';
+    rerender();
+  });
+  el.querySelector('[data-checklist-worker]')?.addEventListener('change', (event) => {
+    state.reportsUi.checklistWorker = `${event.target.value || 'all'}`.trim() || 'all';
+    rerender();
+  });
+  el.querySelector('[data-checklist-export]')?.addEventListener('click', () => downloadChecklistCsv(checklistVisibleRows));
 }

@@ -90,6 +90,7 @@ export async function refreshData(state, options = {}) {
   state.troubleshootingLibrary = await listEntities('troubleshootingLibrary').catch(() => []);
   state.notifications = await listEntities('notifications').catch(() => []);
   state.checklistTemplates = await listEntities('checklistTemplates').catch(() => []);
+  state.checklistSignoffEvents = await listEntities('checklistSignoffEvents').catch(() => []);
   state.notificationPrefs = state.settings.notificationPrefs || { enabledTypes: [] };
   state.onboarding = getAuthoritativeOnboardingState(state);
   if (typeof options.syncNotifications === 'function') {
