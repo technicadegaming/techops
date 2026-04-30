@@ -67,13 +67,13 @@ const PIN_HASH_VERSION = 'scrypt_v1';
 const PIN_REGEX = /^\d{4,8}$/;
 
 const ROLE_RANK = Object.freeze({ owner: 100, admin: 90, manager: 80, lead: 60, staff: 40, viewer: 10 });
-const normalizeRole = (value = '', fallback = 'staff') => {
-  const role = `${value || ''}`.trim().toLowerCase();
+const normalizeCompanyRoleForPinManagement = (value = '', fallback = 'staff') => {
+  const role = normalizeRole(value, fallback);
   return ROLE_RANK[role] ? role : fallback;
 };
-const roleRank = (value = '', fallback = 'staff') => ROLE_RANK[normalizeRole(value, fallback)] || ROLE_RANK[fallback];
+const roleRank = (value = '', fallback = 'staff') => ROLE_RANK[normalizeCompanyRoleForPinManagement(value, fallback)] || ROLE_RANK[fallback];
 const canManageRole = ({ actorRole = '', targetRole = '', isSelf = false } = {}) => {
-  const cleanActorRole = normalizeRole(actorRole);
+  const cleanActorRole = normalizeCompanyRoleForPinManagement(actorRole);
   if (isSelf) return false;
   if (cleanActorRole === 'owner') return true;
   if (['staff', 'viewer'].includes(cleanActorRole)) return false;

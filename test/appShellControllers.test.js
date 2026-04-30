@@ -3295,7 +3295,7 @@ test('operations source includes task location controls and centralized save pat
 test('dashboard source includes daily operations shortcut', () => {
   const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'features', 'dashboard.js'), 'utf8');
   assert.match(source, /Today’s Operations/);
-  assert.match(source, /data-tab=\"dailyOperations\"/);
+  assert.match(source, /data-tab="dailyOperations"/);
 });
 
 test('admin source includes checklist template builder fields', () => {
