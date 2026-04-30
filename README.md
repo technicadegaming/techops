@@ -20,7 +20,7 @@ Scoot Business TechOps is a multi-tenant operations platform for FEC/arcade-styl
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 22+
 - Firebase CLI
 
 ### Setup
