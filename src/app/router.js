@@ -9,7 +9,7 @@ export function tabVisible(state, tab, canViewAdminTab) {
 export function buildTabs({ state, sections, canViewAdminTab, onOpenTab, documentRef = document }) {
   const labelMap = {
     dashboard: 'Dashboard',
-    operations: 'Operations',
+    operations: 'Repair',
     assets: 'Assets',
     calendar: 'Calendar & PM',
     reports: 'Reports',

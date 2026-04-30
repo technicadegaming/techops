@@ -1948,7 +1948,7 @@ test('asset actions bulk doc re-search uses visible ids, processes queued import
   assert.match(state.assetUi.bulkDocRerunSummary, /Succeeded 2, failed 1, skipped 0/);
 });
 
-test('asset actions create-task helper prefills operations draft and navigates to operations tab', async () => {
+test('asset actions create-task helper prefills repair draft flow and navigates to operations route alias', async () => {
   const { createAssetActions } = await loadAssetActions();
   const state = {
     operationsUi: { draft: { reporter: 'staff@example.com' } },
@@ -3219,10 +3219,13 @@ test('operations source includes explicit create-task loading and error states',
 
 test('operations source includes task type and checklist scaffolding with optional asset handling', () => {
   const source = loadOperationsSource();
-  assert.match(source, /name="taskType"/);
+  assert.match(source, /data-task-type-card/);
+  assert.match(source, /Repair Task/);
+  assert.match(source, /General Task/);
   assert.match(source, /opening_checklist/);
   assert.match(source, /closing_checklist/);
   assert.match(source, /upkeep_checklist/);
+  assert.match(source, /Checklist builder/);
   assert.match(source, /name="checklistItemsInput"/);
   assert.match(source, /const needsAsset = taskType === 'asset' \|\| taskType === 'preventive_maintenance'/);
   assert.match(source, /payload\.checklistItems = normalizeChecklistItems/);

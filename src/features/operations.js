@@ -27,13 +27,21 @@ const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1 };
 const PRIORITY_LABEL = { critical: 'P1 critical', high: 'P2 high', medium: 'P3 medium', low: 'P4 low' };
 const STATUS_LABEL = { open: 'Open', in_progress: 'In progress', completed: 'Completed' };
 const TASK_TYPE_LABEL = {
-  asset: 'Asset task',
+  asset: 'Repair task',
   general: 'General task',
   opening_checklist: 'Opening checklist',
   closing_checklist: 'Closing checklist',
   upkeep_checklist: 'Upkeep checklist',
   preventive_maintenance: 'Preventive maintenance'
 };
+const TASK_TYPE_CARD_OPTIONS = [
+  { type: 'asset', label: 'Repair Task', emoji: '🛠️', description: 'Asset-linked issue with repair + AI troubleshooting.' },
+  { type: 'general', label: 'General Task', emoji: '📝', description: 'Non-asset one-off operations task.' },
+  { type: 'opening_checklist', label: 'Opening Checklist', emoji: '🌅', description: 'Start-of-day checklist task.' },
+  { type: 'closing_checklist', label: 'Closing Checklist', emoji: '🌙', description: 'End-of-day checklist task.' },
+  { type: 'upkeep_checklist', label: 'Upkeep Checklist', emoji: '🧰', description: 'Routine upkeep checklist task.' },
+  { type: 'preventive_maintenance', label: 'Preventive Maintenance', emoji: '🛡️', description: 'Asset-related PM task with optional checklist.' }
+];
 const AI_STATUS_LABEL = {
   idle: 'AI idle',
   disabled_by_settings: 'AI disabled',
@@ -1001,6 +1009,8 @@ export function renderOperations(el, state, actions) {
   state.operationsUi = { ...createDefaultOperationsUiState(), ...(state.operationsUi || {}) };
   const editable = canEditTasks(state.permissions);
   const canCreate = canCreateTasks(state.permissions);
+  const draftType = `${state.operationsUi?.draft?.taskType || 'asset'}`.trim() || 'asset';
+  const checklistSelected = ['opening_checklist', 'closing_checklist', 'upkeep_checklist'].includes(draftType);
   const expanded = new Set(state.operationsUi.expandedTaskIds || []);
   const assetById = new Map((state.assets || []).map((asset) => [asset.id, asset]));
   const assetByName = new Map((state.assets || []).map((asset) => [`${asset.name || asset.id}`.toLowerCase(), asset]));
@@ -1161,18 +1171,13 @@ export function renderOperations(el, state, actions) {
         <label>Opened date/time<input name="openedAt" type="datetime-local" readonly /></label>
       </div>
       <section class="item ops-intake-step">
-        <h3>Step 1 · Task type and asset</h3>
-        <label>Task type
-          <select name="taskType" ${canCreate ? '' : 'disabled'}>
-            <option value="asset">Asset task</option>
-            <option value="general">General task</option>
-            <option value="opening_checklist">Opening checklist</option>
-            <option value="closing_checklist">Closing checklist</option>
-            <option value="upkeep_checklist">Upkeep checklist</option>
-            <option value="preventive_maintenance">Preventive maintenance</option>
-          </select>
-        </label>
-        <div class="tiny">Asset selection is optional for non-asset tasks.</div>
+        <h3>Step 1 · Choose task flow</h3>
+        <div class="tiny">Operations = day-to-day general/checklist work. Repair = asset-linked troubleshooting and AI workflow.</div>
+        <input type="hidden" name="taskType" value="${draftType}" />
+        <div class="grid grid-2 mt">
+          ${TASK_TYPE_CARD_OPTIONS.map((option) => `<button type="button" class="filter-chip ${draftType === option.type ? 'active' : ''}" data-task-type-card="${option.type}" ${canCreate ? '' : 'disabled'}>${option.emoji} <b>${option.label}</b><div class="tiny">${option.description}</div></button>`).join('')}
+        </div>
+        <div class="tiny mt">Repair Task and Preventive Maintenance require an asset. General and checklist tasks can be created without one.</div>
         <label class="mt">Asset / game
         <input name="assetSearch" list="assetOptions" placeholder="${scopedAssets.length ? 'Search by asset name (optional for non-asset tasks)' : 'No assets in the current location yet'}" ${canCreate ? '' : 'disabled'} />
         </label>
@@ -1180,8 +1185,8 @@ export function renderOperations(el, state, actions) {
       </section>
 
       <section class="item ops-intake-step">
-        <h3>Step 2 · Problem description <span class="field-badge required">Required</span></h3>
-        <div class="tiny">Describe what is wrong so the next technician can reproduce quickly.</div>
+        <h3>Step 2 · Task details <span class="field-badge required">Required</span></h3>
+        <div class="tiny">Describe the task clearly so the assignee can execute quickly.</div>
         <label class="mt">Issue details
           <textarea name="description" placeholder="Describe the issue / concern" required ${canCreate ? '' : 'disabled'}></textarea>
         </label>
@@ -1220,10 +1225,11 @@ export function renderOperations(el, state, actions) {
           <div id="assignmentStatusHint" class="tiny"></div>
           <textarea name="notes" placeholder="Current summary / handoff notes" ${canCreate ? '' : 'disabled'}></textarea>
           <textarea name="timelineEntry" placeholder="First service timeline entry" ${canCreate ? '' : 'disabled'}></textarea>
-          <label class="closeout-wide">Checklist items (for checklist tasks)
-            <div class="tiny">One item per line. Initial items save as incomplete.</div>
+          <label class="closeout-wide">Checklist builder
+            <div class="tiny">One item per row or line. Initial items save as incomplete.</div>
             <textarea name="checklistItemsInput" placeholder="Unlock doors&#10;Run opening safety walk&#10;Verify tills" ${canCreate ? '' : 'disabled'}></textarea>
           </label>
+          ${checklistSelected ? '<div class="closeout-wide tiny">Examples: Unlock front doors · Run opening safety walk · Verify tills are ready.</div>' : ''}
           <div class="closeout-wide evidence-group">
             <b>Evidence references</b>
             <div class="tiny">Optional. Keep references concise: URL, filename, or ticket number per line.</div>
@@ -1443,6 +1449,13 @@ export function renderOperations(el, state, actions) {
   moreDetails?.addEventListener('toggle', () => {
     state.operationsUi.moreDetailsOpen = !!moreDetails.open;
   });
+  form?.querySelectorAll('[data-task-type-card]').forEach((button) => button.addEventListener('click', () => {
+    const taskTypeInput = form?.querySelector('[name="taskType"]');
+    if (!taskTypeInput) return;
+    taskTypeInput.value = button.dataset.taskTypeCard || 'asset';
+    persistDraft();
+    rerender();
+  }));
 
   form?.addEventListener('submit', async (event) => {
     event.preventDefault();
