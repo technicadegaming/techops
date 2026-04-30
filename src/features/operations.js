@@ -117,6 +117,13 @@ function renderChecklistItemCompletionMeta(item = {}) {
   return '';
 }
 
+function renderChecklistCompletedState(item = {}) {
+  if (!item?.completed) return '';
+  const completedBy = `${item.completedBy || item.workerId || ''}`.trim();
+  const completedAt = item.completedAt ? formatDateTime(item.completedAt) : '';
+  return `<div class="inline-state success mt"><b>Signed off</b>${completedBy ? `<div>Completed by <b>${completedBy}</b></div>` : ''}${completedAt ? `<div><b>${completedAt}</b></div>` : ''}</div>`;
+}
+
 function renderChecklist(task = {}, state = {}, editable = false) {
   const items = Array.isArray(task.checklistItems) ? task.checklistItems : [];
   if (!items.length) return '';
@@ -126,7 +133,7 @@ function renderChecklist(task = {}, state = {}, editable = false) {
     const label = item.label || item.title || item.id || `Item ${index + 1}`;
     if (!isInteractive) return `${item.completed ? '☑' : '☐'} ${label}${renderChecklistItemCompletionMeta(item)}`;
     const signoffLabel = item.completed ? 'Signed off' : 'Enter your PIN to sign off.';
-    return `<div class="item"><div><span>${label}</span>${renderChecklistItemCompletionMeta(item)}</div><div class="tiny">${signoffLabel}</div>${renderPinSignoffForm(task, state, item)}</div>`;
+    return `<div class="item"><div><span>${label}</span></div>${item.completed ? renderChecklistCompletedState(item) : `<div class="tiny">${signoffLabel}</div>${renderPinSignoffForm(task, state, item)}`}</div>`;
   }).join('<br/>')}</div></div>`;
 }
 

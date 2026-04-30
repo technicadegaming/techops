@@ -3296,6 +3296,11 @@ test('dashboard source includes daily operations shortcut', () => {
   const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'features', 'dashboard.js'), 'utf8');
   assert.match(source, /Today’s Operations/);
   assert.match(source, /data-tab="dailyOperations"/);
+  assert.match(source, /Opening Checklist focus/);
+  assert.match(source, /Preventive maintenance focus/);
+  assert.match(source, /data-checklist-prev/);
+  assert.match(source, /data-checklist-next/);
+  assert.match(source, /openingChecklistTasks\.length/);
 });
 
 test('admin source includes checklist template builder fields', () => {
@@ -3313,6 +3318,7 @@ test('operations source checklist pin signoff uses pin-only payload and completi
   assert.match(source, /Set a location before PIN sign-off\./);
   assert.doesNotMatch(source, /name="workerId"/);
   assert.match(source, /Completed by/);
+  assert.match(source, /Signed off/);
 });
 
 test('operations source keeps checklist rendering optional and asset behavior intact', () => {

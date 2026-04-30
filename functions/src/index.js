@@ -687,6 +687,26 @@ exports.signOffChecklistItemWithPin = onCall({}, async (request) => {
     updatedBy: request.auth.uid,
   }, { merge: true });
 
+  await db.collection('checklistSignoffEvents').add({
+    companyId,
+    locationId,
+    locationName: `${task.locationName || task.location || ''}`.trim(),
+    taskId,
+    taskType: `${task.taskType || ''}`.trim(),
+    taskTitle: `${task.title || ''}`.trim(),
+    checklistItemId,
+    checklistItemLabel: `${(checklistItems.find((item) => `${item.id || ''}`.trim() === checklistItemId)?.label) || ''}`.trim(),
+    workerId,
+    completedBy: workerLabel,
+    completedAt: nowIso,
+    signOffMethod: 'pin',
+    sourceTemplateId: `${task.sourceTemplateId || ''}`.trim() || null,
+    sourceTemplateName: `${task.sourceTemplateName || ''}`.trim() || null,
+    scheduledForDate: `${task.scheduledForDate || ''}`.trim() || null,
+    recordedByUid: request.auth.uid,
+    createdAt: serverTimestamp(),
+  });
+
   return { ok: true, taskId, checklistItemId, workerId, signOffMethod: 'pin' };
 });
 
