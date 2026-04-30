@@ -275,7 +275,7 @@ export async function setWorkerLocationPin({ companyId, locationId, workerId, pi
   const result = await callable({
     companyId: `${companyId || ''}`.trim(),
     locationId: `${locationId || ''}`.trim(),
-    workerId: `${workerId || ''}`.trim(),
+    ...(workerId ? { workerId: `${workerId || ''}`.trim() } : {}),
     pin: `${pin || ''}`.trim()
   });
   return result?.data || { ok: false };
@@ -288,7 +288,7 @@ export async function signOffChecklistItemWithPin({ companyId, taskId, checklist
     taskId: `${taskId || ''}`.trim(),
     checklistItemId: `${checklistItemId || ''}`.trim(),
     locationId: `${locationId || ''}`.trim(),
-    workerId: `${workerId || ''}`.trim(),
+    ...(workerId ? { workerId: `${workerId || ''}`.trim() } : {}),
     pin: `${pin || ''}`.trim()
   });
   return result?.data || { ok: false };

@@ -28,12 +28,14 @@ test('raw PIN is never persisted and only pinHash field is written', () => {
   assert.doesNotMatch(source, /console\.(log|info|warn|error)\([^\n]*pin/i);
 });
 
-test('signOffChecklistItemWithPin validates scope and rejects bad pin without updating task', () => {
+test('signOffChecklistItemWithPin supports PIN-only lookup and handles ambiguous/bad credentials', () => {
   const source = readSource();
-  assert.match(source, /Task scope mismatch/);
-  assert.match(source, /Worker is not eligible for sign-off/);
+  assert.match(source, /companyId, taskId, checklistItemId, locationId, and pin are required/);
+  assert.match(source, /\.where\('companyId', '==', companyId\)/);
+  assert.match(source, /\.where\('locationId', '==', locationId\)/);
+  assert.match(source, /const matchingPins = pinsSnap\.docs\.filter/);
+  assert.match(source, /if \(matchingPins\.length !== 1\)/);
   assert.match(source, /Invalid sign-off credentials/);
-  assert.match(source, /if \(!verifyPinHash\(pin, pinRecord\.pinHash\)\)/);
 });
 
 test('signOffChecklistItemWithPin updates only matching checklist item and stamps pin sign-off metadata', () => {
@@ -43,4 +45,13 @@ test('signOffChecklistItemWithPin updates only matching checklist item and stamp
   assert.match(source, /completedBy: workerLabel/);
   assert.match(source, /signOffMethod: 'pin'/);
   assert.match(source, /lastUsedAt: serverTimestamp\(\)/);
+  assert.match(source, /const workerId = `\$\{pinRecord\.workerId \|\| ''\}`\.trim\(\)/);
+});
+
+test('setWorkerLocationPin rejects duplicate PINs for other workers while allowing same-worker reset', () => {
+  const source = readSource();
+  assert.match(source, /const duplicatePin = existingPinsSnap\.docs\.find/);
+  assert.match(source, /if \(duplicatePin\)/);
+  assert.match(source, /PIN is already in use at this location/);
+  assert.match(source, /if \(`\$\{data\.workerId \|\| ''\}`\.trim\(\) === workerId\) return false/);
 });
