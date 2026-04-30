@@ -335,6 +335,7 @@ async function render() {
   });
   const operationsActions = operationsController.createActions();
   renderOperations(document.getElementById('operations'), state, operationsActions);
+  renderOperations(document.getElementById('dailyOperations'), state, operationsActions);
 
   const assetsController = createAssetsController({
     state,

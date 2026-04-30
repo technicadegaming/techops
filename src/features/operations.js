@@ -42,6 +42,9 @@ const TASK_TYPE_CARD_OPTIONS = [
   { type: 'upkeep_checklist', label: 'Upkeep Checklist', emoji: '🧰', description: 'Routine upkeep checklist task.' },
   { type: 'preventive_maintenance', label: 'Preventive Maintenance', emoji: '🛡️', description: 'Asset-related PM task with optional checklist.' }
 ];
+
+const REPAIR_TASK_TYPES = new Set(['asset', 'preventive_maintenance']);
+const DAILY_OPERATIONS_TASK_TYPES = new Set(['general', 'opening_checklist', 'closing_checklist', 'upkeep_checklist']);
 const AI_STATUS_LABEL = {
   idle: 'AI idle',
   disabled_by_settings: 'AI disabled',
@@ -1009,7 +1012,13 @@ export function renderOperations(el, state, actions) {
   state.operationsUi = { ...createDefaultOperationsUiState(), ...(state.operationsUi || {}) };
   const editable = canEditTasks(state.permissions);
   const canCreate = canCreateTasks(state.permissions);
-  const draftType = `${state.operationsUi?.draft?.taskType || 'asset'}`.trim() || 'asset';
+  const isDailyOperationsView = state.route?.tab === 'dailyOperations' || el?.id === 'dailyOperations';
+  const boardLabel = isDailyOperationsView ? 'Operations' : 'Repair';
+  const preferredTypes = isDailyOperationsView ? DAILY_OPERATIONS_TASK_TYPES : REPAIR_TASK_TYPES;
+  const cardOptions = TASK_TYPE_CARD_OPTIONS.filter((option) => preferredTypes.has(option.type));
+  const fallbackType = isDailyOperationsView ? 'general' : 'asset';
+  const currentDraftType = `${state.operationsUi?.draft?.taskType || fallbackType}`.trim() || fallbackType;
+  const draftType = preferredTypes.has(currentDraftType) ? currentDraftType : fallbackType;
   const checklistSelected = ['opening_checklist', 'closing_checklist', 'upkeep_checklist'].includes(draftType);
   const expanded = new Set(state.operationsUi.expandedTaskIds || []);
   const assetById = new Map((state.assets || []).map((asset) => [asset.id, asset]));
@@ -1019,7 +1028,9 @@ export function renderOperations(el, state, actions) {
     .sort((a, b) => getWorkerOptionLabel(a).localeCompare(getWorkerOptionLabel(b)));
   const locationOptions = buildLocationOptions(state);
   const scope = buildLocationSummary(state);
-  const scopedTasks = [...scope.scopedTasks].sort((a, b) => {
+  const scopedTasks = [...scope.scopedTasks]
+    .filter((task) => preferredTypes.has(`${task.taskType || 'asset'}`.trim()))
+    .sort((a, b) => {
     const metaDiff = SEVERITY_ORDER[(b.severity || 'medium')] - SEVERITY_ORDER[(a.severity || 'medium')];
     if (metaDiff) return metaDiff;
     return `${b.openedAt || b.updatedAt || ''}`.localeCompare(`${a.openedAt || a.updatedAt || ''}`);
@@ -1055,8 +1066,8 @@ export function renderOperations(el, state, actions) {
     <div class="page-shell">
     <header class="page-header">
       <div>
-        <h2 class="page-title">Operations</h2>
-        <p class="page-subtitle">Create tasks, troubleshoot issues, assign work, and keep service history organized. ${getLocationScopeLabel(scope.selection)}</p>
+        <h2 class="page-title">${boardLabel}</h2>
+        <p class="page-subtitle">${isDailyOperationsView ? "Manage opening/closing/upkeep/general tasks and keep day-to-day execution on track." : "Create repair and preventive-maintenance tasks, troubleshoot issues, and keep service history organized."} ${getLocationScopeLabel(scope.selection)}</p>
       </div>
       <div class="page-actions">
         <button type="button" class="btn-primary" data-jump-intake>Create task</button>
@@ -1112,7 +1123,7 @@ export function renderOperations(el, state, actions) {
       <div class="row space">
         <div>
           <b>Location and quick filters</b>
-          <div class="tiny">Use this view to isolate open-work exceptions, owner gaps, and closeout-ready tasks.</div>
+          <div class="tiny">${isDailyOperationsView ? "Use this view for daily checklist execution, open/close routines, and one-off operations work." : "Use this view to isolate repair exceptions, owner gaps, and closeout-ready tasks."}</div>
         </div>
         <label class="tiny ops-location-field">Location
           <select data-location-filter>
@@ -1172,10 +1183,10 @@ export function renderOperations(el, state, actions) {
       </div>
       <section class="item ops-intake-step">
         <h3>Step 1 · Choose task flow</h3>
-        <div class="tiny">Operations = day-to-day general/checklist work. Repair = asset-linked troubleshooting and AI workflow.</div>
+        <div class="tiny">${isDailyOperationsView ? "Operations intake focuses on opening/closing/upkeep/general work." : "Repair intake focuses on asset repair, preventive maintenance, and AI troubleshooting."}</div>
         <input type="hidden" name="taskType" value="${draftType}" />
         <div class="grid grid-2 mt">
-          ${TASK_TYPE_CARD_OPTIONS.map((option) => `<button type="button" class="filter-chip ${draftType === option.type ? 'active' : ''}" data-task-type-card="${option.type}" ${canCreate ? '' : 'disabled'}>${option.emoji} <b>${option.label}</b><div class="tiny">${option.description}</div></button>`).join('')}
+          ${cardOptions.map((option) => `<button type="button" class="filter-chip ${draftType === option.type ? 'active' : ''}" data-task-type-card="${option.type}" ${canCreate ? '' : 'disabled'}>${option.emoji} <b>${option.label}</b><div class="tiny">${option.description}</div></button>`).join('')}
         </div>
         <div class="tiny mt">Repair Task and Preventive Maintenance require an asset. General and checklist tasks can be created without one.</div>
         <label class="mt">Asset / game
@@ -1326,12 +1337,12 @@ export function renderOperations(el, state, actions) {
               ${(meta.awaitingAssignment || meta.unavailable.length) ? `<div class="row mt"><select data-reassign-select="${task.id}"><option value="">Select worker</option>${workerOptions.map((worker) => `<option value="${worker.id || worker.email || ''}">${getWorkerOptionLabel(worker)}</option>`).join('')}</select><div class="tiny">Required before moving this task into progress.</div></div>` : ''}
               ${renderCloseoutSummary(task, meta)}
               ${renderCloseout(task, state)}
-              ${renderAiPanel(task, state, meta)}
+              ${isDailyOperationsView ? "" : renderAiPanel(task, state, meta)}
             </div>
           </details>`;
         }).join('')}
       </div>`
-      : `<div class="inline-state ${scopedTasks.length ? 'info' : 'success'} mt">${scopedTasks.length ? 'No tasks match the current quick filters.' : 'No open operations tasks yet. Create a task to start troubleshooting an asset issue.'}</div>`}
+      : `<div class="inline-state ${scopedTasks.length ? 'info' : 'success'} mt">${scopedTasks.length ? 'No tasks match the current quick filters.' : (isDailyOperationsView ? 'No daily operations tasks yet. Create an opening, closing, upkeep, or general task to get started.' : 'No repair tasks yet. Create a repair or preventive-maintenance task to get started.')}</div>`}
     </div>
   `;
 

@@ -10,6 +10,7 @@ export function buildTabs({ state, sections, canViewAdminTab, onOpenTab, documen
   const labelMap = {
     dashboard: 'Dashboard',
     operations: 'Repair',
+    dailyOperations: 'Operations',
     assets: 'Assets',
     calendar: 'Calendar & PM',
     reports: 'Reports',
