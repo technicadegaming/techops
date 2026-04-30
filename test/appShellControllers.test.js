@@ -3214,7 +3214,7 @@ test('operations source includes explicit create-task loading and error states',
   assert.match(source, /createTaskMessage/);
   assert.match(source, /createTaskError/);
   assert.match(source, /Creating task & starting AI/);
-  assert.match(source, /await actions\.saveTask\(payload\.id \|\| `\$\{fd\.get\('id'\) \|\| ''\}`\.trim\(\), payload\)/);
+  assert.match(source, /await actions\.saveTask\(payload\.id \|\| `\$\{fd\.get\('id'\) \|\| ''\}`\.trim\(\), payload, \{ busyTitle: 'Creating operation task…' \}\)/);
 });
 
 test('operations source includes split operations vs repair intake copy and card scaffolding', () => {
@@ -3283,6 +3283,21 @@ test('operations source exposes create-from-template affordance only for daily o
   assert.match(source, /Create today’s checklist/);
 });
 
+test('operations source includes task location controls and centralized save path', () => {
+  const source = loadOperationsSource();
+  assert.match(source, /data-task-location-form="\$\{task\.id\}"/);
+  assert.match(source, /Set location/);
+  assert.match(source, /Change location/);
+  assert.match(source, /locationId/);
+  assert.match(source, /busyTitle: 'Saving task location…'/);
+});
+
+test('dashboard source includes daily operations shortcut', () => {
+  const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'features', 'dashboard.js'), 'utf8');
+  assert.match(source, /Today’s Operations/);
+  assert.match(source, /data-tab=\"dailyOperations\"/);
+});
+
 test('admin source includes checklist template builder fields', () => {
   const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'admin.js'), 'utf8');
   assert.match(source, /Checklist templates/);
@@ -3296,6 +3311,8 @@ test('operations source checklist toggle sets and clears completion metadata', (
   assert.match(source, /completedBy: completed \? completedBy : null/);
   assert.match(source, /workerId: completed \? \(item\.workerId \|\| state\.user\?\.uid \|\| null\) : null/);
   assert.match(source, /await actions\.saveTask\(task\.id, \{/);
+  assert.match(source, /busyTitle: 'Updating checklist…'/);
+  assert.doesNotMatch(source, /Updating checklist\.\.\..*Creating operation task/s);
   assert.match(source, /await actions\.signOffChecklistItemWithPin\(\{ companyId, taskId, checklistItemId, locationId: task\.locationId, workerId, pin \}\)/);
   assert.match(source, /if \(!task \|\| !checklistItemId \|\| !task\.locationId \|\| !workerId \|\| !pin\)/);
   assert.match(source, /\[taskId\]: \{ open: false \}/);
@@ -3354,7 +3371,7 @@ test('data source preserves canonical firestore asset id metadata', () => {
 
 test('data source keeps company invites durable with missing-index fallback query path', () => {
   const source = loadDataSource();
-  assert.match(source, /\[people_invites\] Falling back to non-ordered Firestore query due to missing index/);
+  assert.match(source, /\[scoped_query_fallback\] Falling back to non-ordered Firestore query due to missing index/);
   assert.match(source, /buildFallbackScopeQuery/);
   assert.match(source, /\.sort\(\(a, b\) => \{/);
 });

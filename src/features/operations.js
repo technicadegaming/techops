@@ -90,6 +90,22 @@ function isChecklistStyleTask(task = {}) {
   if (['preventive_maintenance', 'general'].includes(type)) return Array.isArray(task.checklistItems) && task.checklistItems.length > 0;
   return false;
 }
+function resolveDefaultLocation(state, explicitLocationName = '') {
+  const named = `${explicitLocationName || ''}`.trim();
+  const locations = Array.isArray(state.companyLocations) ? state.companyLocations : [];
+  const activeLocationId = `${state.route?.locationId || ''}`.trim();
+  if (activeLocationId) {
+    const active = locations.find((entry) => `${entry.id || ''}`.trim() === activeLocationId);
+    if (active) return { id: active.id, name: active.name || active.location || '' };
+  }
+  if (locations.length === 1) return { id: locations[0].id || '', name: locations[0].name || locations[0].location || '' };
+  if (named) {
+    const matched = locations.find((entry) => `${entry.name || entry.location || ''}`.trim().toLowerCase() === named.toLowerCase());
+    if (matched) return { id: matched.id, name: matched.name || matched.location || named };
+    return { id: '', name: named };
+  }
+  return { id: '', name: '' };
+}
 
 function getChecklistCompletedByLabel(user = {}) {
   return user.displayName || user.email || user.uid || '';
@@ -1242,6 +1258,7 @@ export function renderOperations(el, state, actions) {
         <label class="mt">${checklistSelected ? 'Checklist notes' : (repairSelected ? 'Issue details' : 'Task details')}
           <textarea name="description" placeholder="${checklistSelected ? 'Add context for this checklist' : (repairSelected ? 'Describe the issue / concern' : 'Describe the task details')}" required ${canCreate ? '' : 'disabled'}></textarea>
         </label>
+        ${!repairSelected ? '<div class="tiny inline-state info">Location is recommended for operations tasks and required for PIN sign-off.</div>' : ''}
         <label>Reported by <span class="field-badge required">Required</span><input name="reporter" placeholder="Reported by" required ${canCreate ? '' : 'disabled'} /></label>
       </section>
 
@@ -1344,6 +1361,10 @@ export function renderOperations(el, state, actions) {
                 <div><b>Task type</b><div class="tiny">${TASK_TYPE_LABEL[task.taskType || 'asset'] || (task.taskType || 'asset')}</div></div>
               </div>
               <div class="mt"><b>Issue:</b> ${task.description || ''}</div>
+              ${editable && DAILY_OPERATIONS_TASK_TYPES.has(task.taskType || 'asset') ? `<form class="row mt" data-task-location-form="${task.id}">
+                <select name="locationId"><option value="">Select location</option>${(state.companyLocations || []).map((loc) => `<option value="${loc.id || ''}" ${(task.locationId || '') === (loc.id || '') ? 'selected' : ''}>${loc.name || loc.location || loc.id}</option>`).join('')}</select>
+                <button type="submit">${task.locationId ? 'Change location' : 'Set location'}</button>
+              </form>` : ''}
               ${renderChecklist(task, editable)}
               ${renderPinSignoffForm(task, state)}
               ${task.notes ? `<div class="mt"><b>Current summary:</b> ${task.notes}</div>` : ''}
@@ -1535,6 +1556,7 @@ export function renderOperations(el, state, actions) {
       rerender();
       return;
     }
+    const defaultLocation = resolveDefaultLocation(state, `${fd.get('location') || ''}`.trim() || assetLocation?.name || '');
     const payload = normalizeTaskIntake({
       ...Object.fromEntries(fd.entries()),
       id: `${fd.get('id') || ''}`.trim(),
@@ -1543,8 +1565,8 @@ export function renderOperations(el, state, actions) {
       openedAt: openedAtRaw ? new Date(openedAtRaw).toISOString() : new Date().toISOString(),
       createdAtClient: new Date().toISOString(),
       assetName: selectedAsset?.name || `${fd.get('assetSearch') || ''}`,
-      locationId: assetLocation?.id || '',
-      location: `${fd.get('location') || ''}`.trim() || assetLocation?.name || '',
+      locationId: assetLocation?.id || defaultLocation.id || '',
+      location: defaultLocation.name || `${fd.get('location') || ''}`.trim() || assetLocation?.name || '',
       assetKeySnapshot: buildAssetKey(selectedAsset?.id, selectedAsset?.name),
       assignedWorker,
       reportedByUserId: state.user?.uid || '',
@@ -1581,7 +1603,7 @@ export function renderOperations(el, state, actions) {
       return;
     }
 
-    const saved = await actions.saveTask(payload.id || `${fd.get('id') || ''}`.trim(), payload);
+    const saved = await actions.saveTask(payload.id || `${fd.get('id') || ''}`.trim(), payload, { busyTitle: 'Creating operation task…' });
     if (!saved) return;
     state.operationsUi.validationSummary = "";
     resetTaskForm();
@@ -1686,7 +1708,24 @@ export function renderOperations(el, state, actions) {
       ...task,
       checklistItems,
       updatedAtClient: nowIso
-    });
+    }, { busyTitle: 'Updating checklist…', busyDetail: 'Saving checklist item changes. Please wait.' });
+  }));
+  el.querySelectorAll('[data-task-location-form]').forEach((locationForm) => locationForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const taskId = `${locationForm.dataset.taskLocationForm || ''}`.trim();
+    const task = state.tasks.find((entry) => entry.id === taskId);
+    if (!task) return;
+    const fd = new FormData(locationForm);
+    const locationId = `${fd.get('locationId') || ''}`.trim();
+    const location = (state.companyLocations || []).find((entry) => `${entry.id || ''}`.trim() === locationId);
+    if (!locationId || !location) return;
+    await actions.saveTask(task.id, {
+      ...task,
+      locationId,
+      locationName: location.name || location.location || '',
+      location: location.name || location.location || '',
+      updatedAtClient: new Date().toISOString()
+    }, { busyTitle: 'Saving task location…', busyDetail: 'Updating task location for checklist and PIN sign-off.' });
   }));
   el.querySelectorAll('[data-open-pin-signoff]').forEach((button) => button.addEventListener('click', () => {
     const taskId = `${button.dataset.openPinSignoff || ''}`.trim();

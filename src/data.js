@@ -67,7 +67,7 @@ export async function listEntities(name) {
     const code = `${error?.code || ''}`.toLowerCase();
     const missingIndex = code.includes('failed-precondition') || message.includes('index');
     if (!missingIndex) throw error;
-    console.info('[people_invites] Falling back to non-ordered Firestore query due to missing index.', {
+    console.info('[scoped_query_fallback] Falling back to non-ordered Firestore query due to missing index.', {
       collection: name,
       companyId: scope.companyId || null
     });
