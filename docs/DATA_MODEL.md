@@ -121,6 +121,20 @@ If you are onboarding to the repo, read `README.md` first for the documentation 
 - **Tenant scoping:** company-scoped.
 - **Relationships:** loaded by the task AI orchestrator to build internal documentation context.
 
+### `checklistTemplates`
+- **Purpose:** reusable daily operations checklist blueprints (for example opening/closing/upkeep) used to generate task/checklist work.
+- **Key fields (confirmed/inferred):** `id`, `companyId`, `locationId`, `templateType`, `name`, `checklistItems[]`, `active`, plus audit timestamps.
+- **Tenant scoping:** company-scoped.
+- **Relationships:** read by operations/task creation flows and admin tooling that build day-specific checklists from saved templates.
+- **Rules/roles:** company staff can read own-company templates; owner/admin/manager (and global admins) can create/update/delete. Updates must keep `companyId` stable.
+
+### `checklistSignoffEvents`
+- **Purpose:** accountability/audit event stream for checklist signoff actions after PIN verification.
+- **Key fields (inferred):** `id`, `companyId`, task/checklist linkage fields, signer metadata, and event timestamps.
+- **Tenant scoping:** company-scoped.
+- **Relationships:** consumed by checklist reporting and accountability workflows.
+- **Rules/roles:** client access is read-only; owner/admin/manager/assistant_manager/lead (and global admins) can read own-company events. Client create/update/delete is denied; writes are expected from trusted server code (Cloud Functions/Admin SDK).
+
 ### `appSettings`
 - **Purpose:** application/company settings, currently centered on AI + notification preferences.
 - **Key fields (confirmed):** default AI setting keys such as `aiEnabled`, `aiAutoAttach`, `aiUseInternalKnowledge`, `aiUseWebSearch`, `aiAskFollowups`, `aiModel`, `aiMaxWebSources`, `aiConfidenceThreshold`, `aiAllowManualRerun`, `aiSaveSuccessfulFixesToLibraryDefault`, `aiShortResponseMode`, `aiVerboseManagerMode`, `defaultTaskSeverity`, `taskIntakeRequiredFields`, `aiFeedbackCollectionEnabled`, `mobileConciseModeDefault`, plus `notificationPrefs` in company settings flows.

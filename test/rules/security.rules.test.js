@@ -349,6 +349,83 @@ test('firestore: user cannot normalize an explicitly empty legacy role during se
   );
 });
 
+
+
+test('firestore: checklist templates allow elevated writes and staff reads only within own company', async () => {
+  await seedMembership({ uid: 'manager-a', companyId: 'company-a', role: 'manager' });
+  await seedMembership({ uid: 'staff-a', companyId: 'company-a', role: 'staff' });
+  await seedMembership({ uid: 'manager-b', companyId: 'company-b', role: 'manager' });
+  const testEnv = await rulesTestEnvPromise;
+
+  const managerDb = testEnv.authenticatedContext('manager-a').firestore();
+  const staffDb = testEnv.authenticatedContext('staff-a').firestore();
+
+  await assertSucceeds(setDoc(doc(managerDb, 'checklistTemplates', 'template-a'), {
+    id: 'template-a',
+    companyId: 'company-a',
+    templateType: 'opening',
+    name: 'Opening checklist',
+  }));
+
+  await assertSucceeds(getDoc(doc(staffDb, 'checklistTemplates', 'template-a')));
+  await assertSucceeds(setDoc(doc(managerDb, 'checklistTemplates', 'template-a'), { name: 'Opening checklist v2' }, { merge: true }));
+  await assertSucceeds(deleteDoc(doc(managerDb, 'checklistTemplates', 'template-a')));
+});
+
+test('firestore: checklist templates deny cross-company reads and writes', async () => {
+  await seedMembership({ uid: 'manager-a', companyId: 'company-a', role: 'manager' });
+  await seedMembership({ uid: 'manager-b', companyId: 'company-b', role: 'manager' });
+  const testEnv = await rulesTestEnvPromise;
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'checklistTemplates', 'template-b'), {
+      id: 'template-b',
+      companyId: 'company-b',
+      templateType: 'closing',
+      name: 'Company B close',
+    });
+  });
+
+  const managerDb = testEnv.authenticatedContext('manager-a').firestore();
+  await assertFails(getDoc(doc(managerDb, 'checklistTemplates', 'template-b')));
+  await assertFails(setDoc(doc(managerDb, 'checklistTemplates', 'template-cross-write'), {
+    id: 'template-cross-write',
+    companyId: 'company-b',
+    templateType: 'upkeep',
+    name: 'Cross-company write',
+  }));
+});
+
+test('firestore: checklist signoff events are read-only for elevated lead+ roles and deny client writes', async () => {
+  await seedMembership({ uid: 'lead-a', companyId: 'company-a', role: 'lead' });
+  await seedMembership({ uid: 'manager-a', companyId: 'company-a', role: 'manager' });
+  await seedMembership({ uid: 'manager-b', companyId: 'company-b', role: 'manager' });
+  const testEnv = await rulesTestEnvPromise;
+
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'checklistSignoffEvents', 'event-a'), {
+      id: 'event-a',
+      companyId: 'company-a',
+      taskId: 'task-1',
+      signedOffBy: 'worker-1',
+    });
+  });
+
+  const managerDb = testEnv.authenticatedContext('manager-a').firestore();
+  const leadDb = testEnv.authenticatedContext('lead-a').firestore();
+  const crossDb = testEnv.authenticatedContext('manager-b').firestore();
+
+  await assertSucceeds(getDoc(doc(managerDb, 'checklistSignoffEvents', 'event-a')));
+  await assertSucceeds(getDoc(doc(leadDb, 'checklistSignoffEvents', 'event-a')));
+  await assertFails(getDoc(doc(crossDb, 'checklistSignoffEvents', 'event-a')));
+
+  await assertFails(setDoc(doc(managerDb, 'checklistSignoffEvents', 'event-client-create'), {
+    id: 'event-client-create',
+    companyId: 'company-a',
+    taskId: 'task-2',
+  }));
+});
+
 test('storage: company evidence path allows active member and blocks cross-company access', async () => {
   await seedMembership({ uid: 'staff-a', companyId: 'company-a', role: 'staff' });
   await seedMembership({ uid: 'staff-b', companyId: 'company-b', role: 'staff' });
