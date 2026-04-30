@@ -79,7 +79,7 @@ test('signOffChecklistItemWithPin tracks failed and locked pin attempts without 
   assert.match(source, /result: 'failed'/);
   assert.match(source, /result: 'locked'/);
   assert.match(source, /reasonCode: 'locked'/);
-  assert.match(source, /reasonCode,\n\s+}\);/);
+  assert.match(source, /reasonCode,\s*}\);/);
   assert.doesNotMatch(source, /pinAttemptEvents[\s\S]*pin:\s*pin/);
   assert.match(source, /Too many attempts\. Try again later or ask a manager\./);
 });
