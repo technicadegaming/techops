@@ -795,6 +795,46 @@ export function createOperationsController({
           await refreshData();
           render();
           return true;
+        },
+        saveChecklistAsTemplate: async ({ taskId } = {}) => {
+          const task = (state.tasks || []).find((entry) => entry.id === taskId);
+          if (!task) return false;
+          if (!task.locationId) {
+            state.operationsUi = { ...(state.operationsUi || {}), createTaskError: 'Set a location before saving this checklist as a template.', createTaskMessage: '' };
+            render();
+            return false;
+          }
+          const templateType = ['opening_checklist', 'closing_checklist', 'upkeep_checklist'].includes(task.taskType) ? task.taskType : '';
+          if (!templateType) {
+            state.operationsUi = { ...(state.operationsUi || {}), createTaskError: 'Only opening, closing, or upkeep checklists can be saved as templates right now.', createTaskMessage: '' };
+            render();
+            return false;
+          }
+          const location = (state.companyLocations || []).find((entry) => entry.id === task.locationId);
+          const locationName = location?.name || task.locationName || task.locationId;
+          const label = templateType === 'opening_checklist' ? 'Opening Checklist' : (templateType === 'closing_checklist' ? 'Closing Checklist' : 'Upkeep Checklist');
+          const name = `${task.title || `${label} - ${locationName}`}`.trim();
+          const checklistItems = (Array.isArray(task.checklistItems) ? task.checklistItems : [])
+            .map((item, index) => ({ id: item?.id || `item-${index + 1}`, label: `${item?.label || item?.title || ''}`.trim(), sortOrder: index + 1 }))
+            .filter((item) => item.label);
+          if (!checklistItems.length) return false;
+          const existing = (state.checklistTemplates || []).find((entry) => entry.companyId === state.company.id && entry.locationId === task.locationId && entry.templateType === templateType && `${entry.name || ''}`.trim().toLowerCase() === name.toLowerCase());
+          const templateId = existing?.id || `template-${templateType}-${task.locationId}-${name.toLowerCase()}`.replace(/[^a-z0-9_-]/gi, '-');
+          await upsertEntity('checklistTemplates', templateId, withRequiredCompanyId(state, {
+            ...(existing || {}),
+            id: templateId,
+            companyId: state.company.id,
+            locationId: task.locationId,
+            locationName,
+            templateType,
+            name,
+            active: true,
+            checklistItems
+          }, 'save checklist template'), state.user);
+          state.operationsUi = { ...(state.operationsUi || {}), createTaskError: '', createTaskMessage: 'Checklist template saved.' };
+          await refreshData();
+          render();
+          return true;
         }
       });
     }

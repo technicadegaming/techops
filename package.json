@@ -8,6 +8,12 @@
     "test:rules": "node scripts/run-rules-tests.js",
     "lint": "eslint src/**/*.js functions/src/**/*.js functions/test/**/*.js test/**/*.js",
     "test:app-shell": "node --test test/appShellControllers.test.js",
+    "test:quick": "npm run lint && npm run test:app-shell",
+    "test:app-shell:operations": "node --test test/appShellControllers.test.js --test-name-pattern \"Operations|checklist|PIN|dailyOperations|template\"",
+    "test:app-shell:admin": "node --test test/appShellControllers.test.js --test-name-pattern \"Admin|People|PIN|invite|worker\"",
+    "test:functions:pin": "npm run test --prefix functions -- --test-name-pattern \"PIN|workerLocationPins|signOffChecklistItemWithPin|setWorkerLocationPin\"",
+    "test:functions:manuals": "npm run test --prefix functions -- --test-name-pattern \"manual|enrichment|asset documentation\"",
+    "test:full": "npm run lint && npm run test:app-shell && npm run test --prefix functions",
     "manual-catalog:import-trusted": "npm run manual-catalog:import-trusted --prefix functions",
     "manual-catalog:extract-reference": "npm run manual-catalog:extract-reference --prefix functions"
   },

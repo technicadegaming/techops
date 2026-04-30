@@ -16,7 +16,8 @@ export function createOperationsActions({
   setAiFixState,
   openAiSettings,
   signOffChecklistItemWithPin,
-  createTaskFromTemplate
+  createTaskFromTemplate,
+  saveChecklistAsTemplate
 }) {
   return {
     saveTask,
@@ -35,6 +36,7 @@ export function createOperationsActions({
     openAiSettings,
     signOffChecklistItemWithPin,
     createTaskFromTemplate,
+    saveChecklistAsTemplate,
     setLocationFilter: (locationKey) => {
       state.route = { ...state.route, locationKey: locationKey || null };
       if (typeof onLocationFilter === 'function') onLocationFilter(locationKey || null);

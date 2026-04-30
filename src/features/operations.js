@@ -1382,6 +1382,7 @@ export function renderOperations(el, state, actions) {
                 ${meta.needsFollowup ? `<button type="button" data-open-followup="${task.id}">Answer follow-up</button>` : ''}
                 </div>
                 <div class="action-row mt">
+                ${(editable && ['opening_checklist', 'closing_checklist', 'upkeep_checklist'].includes(task.taskType || '') && Array.isArray(task.checklistItems) && task.checklistItems.length) ? `<button type="button" data-save-template="${task.id}">Save as template</button>` : ''}
                 ${(meta.awaitingAssignment || meta.unavailable.length) ? `<button type="button" data-reassign="${task.id}">Quick reassign</button>` : ''}
                 ${canDelete(state.permissions) ? `<button type="button" data-del="${task.id}" class="btn btn-danger">Delete</button>` : ''}
                 </div>
@@ -1866,4 +1867,8 @@ export function renderOperations(el, state, actions) {
     state.operationsUi.scrollY = window.scrollY;
     await actions.createTaskFromTemplate?.({ templateId, scheduledForDate: `${fd.get('scheduledForDate') || ''}`.trim() });
   });
+  el.querySelectorAll('[data-save-template]').forEach((button) => button.addEventListener('click', async () => {
+    state.operationsUi.scrollY = window.scrollY;
+    await actions.saveChecklistAsTemplate?.({ taskId: button.dataset.saveTemplate });
+  }));
 }
