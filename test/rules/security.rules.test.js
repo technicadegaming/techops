@@ -572,3 +572,41 @@ test('storage: task-scoped evidence path shape supports own company and blocks c
   await assertSucceeds(getBytes(ref(leadAStorage, ownPath)));
   await assertFails(uploadString(ref(leadBStorage, crossPath), 'nope'));
 });
+
+test('firestore: staff can read active quiz question in own company', async () => {
+  await seedMembership({ uid: 'staff-quiz', companyId: 'company-quiz', role: 'staff' });
+  const testEnv = await rulesTestEnvPromise;
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'quizQuestions', 'q1'), { companyId: 'company-quiz', prompt: 'Q', active: true });
+  });
+  const db = testEnv.authenticatedContext('staff-quiz').firestore();
+  await assertSucceeds(getDoc(doc(db, 'quizQuestions', 'q1')));
+});
+
+test('firestore: manager can create update and archive quiz question; staff cannot write', async () => {
+  await seedMembership({ uid: 'manager-quiz', companyId: 'company-quiz', role: 'manager' });
+  await seedMembership({ uid: 'staff-quiz', companyId: 'company-quiz', role: 'staff' });
+  const testEnv = await rulesTestEnvPromise;
+  const managerDb = testEnv.authenticatedContext('manager-quiz').firestore();
+  const staffDb = testEnv.authenticatedContext('staff-quiz').firestore();
+  await assertSucceeds(setDoc(doc(managerDb, 'quizQuestions', 'q2'), { companyId: 'company-quiz', prompt: 'Q2', active: true }));
+  await assertSucceeds(setDoc(doc(managerDb, 'quizQuestions', 'q2'), { companyId: 'company-quiz', active: false }, { merge: true }));
+  await assertFails(setDoc(doc(staffDb, 'quizQuestions', 'q3'), { companyId: 'company-quiz', prompt: 'no' }));
+  await assertFails(setDoc(doc(staffDb, 'quizQuestions', 'q2'), { companyId: 'company-quiz', prompt: 'edit' }, { merge: true }));
+});
+
+test('firestore: client cannot create quiz submissions and lead can read own-company submissions only', async () => {
+  await seedMembership({ uid: 'lead-quiz', companyId: 'company-quiz', role: 'lead' });
+  await seedMembership({ uid: 'staff-quiz', companyId: 'company-quiz', role: 'staff' });
+  await seedMembership({ uid: 'lead-other', companyId: 'company-other', role: 'lead' });
+  const testEnv = await rulesTestEnvPromise;
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'quizSubmissions', 's1'), { companyId: 'company-quiz', workerId: 'w1' });
+  });
+  const staffDb = testEnv.authenticatedContext('staff-quiz').firestore();
+  const leadDb = testEnv.authenticatedContext('lead-quiz').firestore();
+  const otherLeadDb = testEnv.authenticatedContext('lead-other').firestore();
+  await assertFails(setDoc(doc(staffDb, 'quizSubmissions', 's2'), { companyId: 'company-quiz' }));
+  await assertSucceeds(getDoc(doc(leadDb, 'quizSubmissions', 's1')));
+  await assertFails(getDoc(doc(otherLeadDb, 'quizSubmissions', 's1')));
+});

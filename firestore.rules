@@ -318,6 +318,21 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+
+    match /quizQuestions/{questionId} {
+      allow read: if hasCompanyField(resource.data) && isCompanyStaff(resource.data.companyId);
+      allow create: if hasCompanyField(request.resource.data) && isCompanyElevated(request.resource.data.companyId);
+      allow update: if hasCompanyField(request.resource.data)
+        && isCompanyElevated(request.resource.data.companyId)
+        && (!hasCompanyField(resource.data) || resource.data.companyId == request.resource.data.companyId);
+      allow delete: if canDeleteScopedResource();
+    }
+
+    match /quizSubmissions/{submissionId} {
+      allow read: if hasCompanyField(resource.data) && isCompanyLead(resource.data.companyId);
+      allow create, update, delete: if false;
+    }
+
     match /notifications/{docId} {
       allow read: if canReadScopedResource(resource.data);
       allow create: if canCreateScopedResource();

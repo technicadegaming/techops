@@ -3784,3 +3784,16 @@ test('reports daily manager summary includes copy summary button marker', async 
   renderReports(el, state, () => {}, () => {});
   assert.match(el.innerHTML, /data-copy-daily-summary/);
 });
+
+test('admin source includes quiz and training section markers', () => {
+  const source = loadAdminSource();
+  assert.match(source, /Quiz & Training/);
+  assert.match(source, /data-admin-section=\"quiz\"/);
+});
+
+test('dashboard and reports source include quiz mvp markers', () => {
+  const dashboardSource = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'features', 'dashboard.js'), 'utf8');
+  const reportsSource = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'features', 'reports.js'), 'utf8');
+  assert.match(dashboardSource, /data-daily-quiz-widget/);
+  assert.match(reportsSource, /data-quiz-training-reports/);
+});
