@@ -67,6 +67,7 @@ export function createOperationsController({
   regenerateTaskTroubleshooting,
   answerTaskFollowup,
   saveTaskFixToTroubleshootingLibrary,
+  signOffChecklistItemWithPin,
   logAudit,
   reportActionError,
   createEmptyAssetDraft,
@@ -741,7 +742,15 @@ export function createOperationsController({
         openAiSettings: () => {
           navigationController.openAdminTools();
           render();
-        }
+        },
+        signOffChecklistItemWithPin: async (payload = {}) => runAction('signoff_checklist_pin', async () => {
+          await signOffChecklistItemWithPin(payload);
+          await refreshData();
+          render();
+          return true;
+        }, {
+          fallbackMessage: 'Unable to sign off. Check the worker, PIN, and location.'
+        })
       });
     }
   };

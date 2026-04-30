@@ -281,6 +281,19 @@ export async function setWorkerLocationPin({ companyId, locationId, workerId, pi
   return result?.data || { ok: false };
 }
 
+export async function signOffChecklistItemWithPin({ companyId, taskId, checklistItemId, locationId, workerId, pin }) {
+  const callable = httpsCallable(functions, 'signOffChecklistItemWithPin');
+  const result = await callable({
+    companyId: `${companyId || ''}`.trim(),
+    taskId: `${taskId || ''}`.trim(),
+    checklistItemId: `${checklistItemId || ''}`.trim(),
+    locationId: `${locationId || ''}`.trim(),
+    workerId: `${workerId || ''}`.trim(),
+    pin: `${pin || ''}`.trim()
+  });
+  return result?.data || { ok: false };
+}
+
 export async function revokeInvite(inviteId, user) {
   const ref = doc(db, C.companyInvites, inviteId);
   const before = await getDoc(ref);

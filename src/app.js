@@ -56,6 +56,7 @@ import {
   acceptInvite as acceptCompanyInvite,
   createCompanyInvite,
   revokeInvite,
+  signOffChecklistItemWithPin,
   setWorkerLocationPin
 } from './company.js';
 import { logAudit } from './audit.js';
@@ -332,6 +333,7 @@ async function render() {
     regenerateTaskTroubleshooting,
     answerTaskFollowup,
     saveTaskFixToTroubleshootingLibrary,
+    signOffChecklistItemWithPin,
     logAudit,
     reportActionError,
     createEmptyAssetDraft,
