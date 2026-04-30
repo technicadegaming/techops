@@ -3653,3 +3653,21 @@ test('admin setWorkerPin maps duplicate and permission errors to friendly copy',
   await denyActions.setWorkerPin({ workerId: 'w1', locationId: 'l1', pin: '1234' });
   assert.equal(state.adminUi.message, "You do not have permission to set this worker’s PIN.");
 });
+
+
+test('admin source includes business hours and daily operations schedule location controls', () => {
+  const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'admin.js'), 'utf8');
+  assert.match(source, /Business hours/);
+  assert.match(source, /openingGraceMinutes/);
+  assert.match(source, /upkeepDueTime/);
+  assert.match(source, /entries\.businessHours/);
+  assert.match(source, /entries\.dailyOperationsSchedule/);
+});
+
+test('dashboard source includes checklist timing labels and operations workflow area', () => {
+  const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'features', 'dashboard.js'), 'utf8');
+  assert.match(source, /computeChecklistTiming/);
+  assert.match(source, /timing\.timingLabel/);
+  assert.match(source, /overdueStatus === 'overdue'/);
+  assert.match(source, /Today.?s Operations Workflow/);
+});

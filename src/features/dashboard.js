@@ -2,6 +2,7 @@ import { detectRepeatIssues } from './workflow.js';
 import { buildLocationSummary, getLocationEmptyState, getLocationScopeLabel } from './locationContext.js';
 import { formatRelativeTime } from './notifications.js';
 import { buildPmHealthSummary, summarizePmByField } from './reportingSummary.js';
+import { computeChecklistTiming } from './businessHours.js';
 
 function statusChip(label, tone = 'muted') {
   return `<span class="state-chip ${tone}">${label}</span>`;
@@ -103,6 +104,8 @@ export function renderDashboard(el, state, navigate, applyFocus = () => {}, opti
     .sort((a, b) => b.count - a.count)
     .slice(0, 6);
   const allChecklistTasks = openTasks.filter((task) => CHECKLIST_TYPES.includes(task.taskType));
+  const locationById = new Map((state.companyLocations || []).map((loc) => [loc.id, loc]));
+  const todaysOperationsWorkflow = openTasks.filter((task) => task.taskType === 'general' && !task.assetId && (!task.scheduledForDate || `${task.scheduledForDate}` === now.toISOString().slice(0,10)));
   const checklistUi = state.dashboardUi?.checklistFocus || {};
   const defaultChecklistType = allChecklistTasks.some((task) => task.taskType === 'opening_checklist')
     ? 'opening_checklist'
@@ -208,7 +211,7 @@ export function renderDashboard(el, state, navigate, applyFocus = () => {}, opti
            <div class="tiny">${activeChecklistTask ? `${(activeChecklistTask.checklistItems || []).filter((item) => item.completed).length} of ${(activeChecklistTask.checklistItems || []).length} signed off` : 'No active checklist selected.'}</div>`
         : activeChecklistTask
         ? `<div class="tiny mt"><b>${activeChecklistTask.title || activeChecklistTask.id}</b> · ${(activeChecklistTask.locationName || activeChecklistTask.location || activeChecklistTask.locationId || 'No location')}</div>
-           <div class="tiny">${(activeChecklistTask.checklistItems || []).filter((item) => item.completed).length} of ${(activeChecklistTask.checklistItems || []).length} signed off</div>
+           <div class="tiny">${(activeChecklistTask.checklistItems || []).filter((item) => item.completed).length} of ${(activeChecklistTask.checklistItems || []).length} signed off</div>${(() => { const timing = computeChecklistTiming({ taskType: activeChecklistTask.taskType, scheduledForDate: activeChecklistTask.scheduledForDate, location: locationById.get(activeChecklistTask.locationId) || {} }); return `<div class="tiny ${timing.overdueStatus === 'overdue' ? 'warn' : ''}">${timing.timingLabel}</div>`; })()}
            ${filteredChecklistTasks.length > 1 ? `<div class="row mt"><button type="button" data-checklist-prev>Previous</button><div class="tiny">${activeChecklistIndex + 1} of ${filteredChecklistTasks.length}</div><button type="button" data-checklist-next>Next</button></div>` : ''}
            <div class="list mt">${(activeChecklistTask.checklistItems || []).map((item) => {
     const itemId = `${item.id || ''}`.trim();
@@ -218,6 +221,12 @@ export function renderDashboard(el, state, navigate, applyFocus = () => {}, opti
     </div>`;
   }).join('')}</div>`
         : `<div class="inline-state info mt">${CHECKLIST_TAB_META[selectedChecklistType]?.empty || CHECKLIST_TAB_META.all.empty}</div>`}
+    </div>
+
+    
+    <div class="item mt">
+      <div class="row space"><b>Today's Operations Workflow</b><button class="filter-chip jump" data-tab="dailyOperations" type="button">Open daily operations</button></div>
+      ${todaysOperationsWorkflow.length ? `<div class="list mt">${todaysOperationsWorkflow.slice(0,6).map((task) => `<button class="item jump" data-tab="dailyOperations" data-id="${task.id}"><b>${task.title || task.id}</b><div class="tiny">${task.locationName || task.location || 'No location'} · ${task.status || 'open'} · owner ${(task.assignedWorkers || []).join(', ') || 'unassigned'} · ${(task.scheduledForDate || task.createdAtClient || '').toString().slice(0,16)}</div></button>`).join('')}</div>` : '<div class="inline-state info mt">No one-off daily operations tasks are open for today.</div>'}
     </div>
 
     <div class="grid grid-2 mt">

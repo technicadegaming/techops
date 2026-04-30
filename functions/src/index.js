@@ -661,8 +661,9 @@ exports.signOffChecklistItemWithPin = onCall({}, async (request) => {
     throw new HttpsError('permission-denied', 'Worker is not eligible for sign-off.');
   }
 
-  const workerLabel = `${worker.displayName || worker.fullName || worker.email || worker.id || workerId}`.trim();
   const nowIso = new Date().toISOString();
+  const completedLate = task.overdueAfter ? (new Date(nowIso).getTime() > new Date(task.overdueAfter).getTime()) : null;
+  const workerLabel = `${worker.displayName || worker.fullName || worker.email || worker.id || workerId}`.trim();
   const updatedChecklistItems = checklistItems.map((item) => {
     if (`${item.id || ''}`.trim() !== checklistItemId) return item;
     return {
@@ -703,6 +704,11 @@ exports.signOffChecklistItemWithPin = onCall({}, async (request) => {
     sourceTemplateId: `${task.sourceTemplateId || ''}`.trim() || null,
     sourceTemplateName: `${task.sourceTemplateName || ''}`.trim() || null,
     scheduledForDate: `${task.scheduledForDate || ''}`.trim() || null,
+    businessDate: `${task.businessDate || task.scheduledForDate || ''}`.trim() || null,
+    dueAt: `${task.dueAt || ''}`.trim() || null,
+    overdueAfter: `${task.overdueAfter || ''}`.trim() || null,
+    completedLate,
+    locationTimezone: `${task.locationTimeZone || task.timeZone || ''}`.trim() || null,
     recordedByUid: request.auth.uid,
     createdAt: serverTimestamp(),
   });
