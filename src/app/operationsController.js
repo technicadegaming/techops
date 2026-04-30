@@ -67,6 +67,7 @@ export function createOperationsController({
   analyzeTaskTroubleshooting,
   regenerateTaskTroubleshooting,
   answerTaskFollowup,
+  recordMachineStatusEvent,
   saveTaskFixToTroubleshootingLibrary,
   signOffChecklistItemWithPin,
   logAudit,
@@ -588,6 +589,18 @@ export function createOperationsController({
               const asset = state.assets.find((entry) => entry.id === task.assetId) || { id: task.assetId };
               const event = buildCloseoutEvent(taskId, closeout, state.user);
               await upsertEntity('assets', task.assetId, { ...asset, history: [...(asset.history || []), event] }, state.user);
+              if (closeout.markReturnedToService === 'yes' && typeof recordMachineStatusEvent === 'function') {
+                await recordMachineStatusEvent({
+                  companyId: state.company?.id,
+                  locationId: task.locationId || asset.locationId || '',
+                  assetId: task.assetId,
+                  assetName: asset.name || task.assetName || '',
+                  previousStatus: asset.status || '',
+                  nextStatus: 'returned_to_service',
+                  reason: closeout.verification || closeout.bestFixSummary || closeout.fixPerformed || 'Task closeout returned to service',
+                  sourceTaskId: taskId,
+                });
+              }
             }
             if (saveToLibrary && closeout.fixPerformed) {
               const asset = state.assets.find((entry) => entry.id === task.assetId) || null;

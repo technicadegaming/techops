@@ -361,6 +361,12 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /machineStatusEvents/{eventId} {
+      allow read: if hasCompanyField(resource.data) && isCompanyStaff(resource.data.companyId);
+      allow create: if hasCompanyField(request.resource.data) && isCompanyLead(request.resource.data.companyId);
+      allow update, delete: if false;
+    }
+
     match /backups/{docId} {
       allow read, write: if isAdmin();
     }

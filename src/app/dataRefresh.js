@@ -85,6 +85,7 @@ export async function refreshData(state, options = {}) {
   state.importHistory = await listEntities('importHistory').catch(() => []);
   state.settings = await getAppSettings().catch(() => ({}));
   state.auditLogs = await listAudit().catch(() => []);
+  state.machineStatusEvents = await listEntities('machineStatusEvents').catch(() => []);
   state.taskAiRuns = await listEntities('taskAiRuns').catch(() => []);
   state.taskAiFollowups = await listEntities('taskAiFollowups').catch(() => []);
   state.troubleshootingLibrary = await listEntities('troubleshootingLibrary').catch(() => []);

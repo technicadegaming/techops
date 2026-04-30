@@ -65,3 +65,7 @@ export function attachAssetManualFromUrl(payload) {
 export function attachAssetManualFromStoragePath(payload) {
   return call('attachAssetManualFromStoragePath', payload);
 }
+
+export function recordMachineStatusEvent(payload) {
+  return call('recordMachineStatusEvent', payload);
+}

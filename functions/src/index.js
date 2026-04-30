@@ -2089,6 +2089,63 @@ exports.saveTaskFixToTroubleshootingLibrary = onCall({}, async (request) => {
   return { ok: true, id: libRef.id };
 });
 
+exports.recordMachineStatusEvent = onCall({}, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in required');
+  const clean = (value, max = 240) => `${value || ''}`.trim().slice(0, max);
+  const companyId = clean(request.data?.companyId, 120);
+  const locationId = clean(request.data?.locationId, 160);
+  const assetId = clean(request.data?.assetId, 160);
+  const nextStatus = clean(request.data?.nextStatus, 80).toLowerCase();
+  if (!companyId || !locationId || !assetId || !nextStatus) throw new HttpsError('invalid-argument', 'Missing required status event fields');
+  const allowedStatuses = ['working', 'down', 'limited_operation', 'waiting_on_part', 'returned_to_service'];
+  if (!allowedStatuses.includes(nextStatus)) throw new HttpsError('invalid-argument', 'Unsupported status');
+
+  const membership = await getActiveMembershipForCompany({ db, companyId, uid: request.auth.uid });
+  if (!membership) throw new HttpsError('permission-denied', 'Membership required');
+  const role = `${membership.role || ''}`.trim().toLowerCase();
+  if (!['owner', 'admin', 'manager', 'assistant_manager', 'lead', 'staff'].includes(role)) {
+    throw new HttpsError('permission-denied', 'Insufficient role');
+  }
+
+  const assetRef = db.collection('assets').doc(assetId);
+  const assetSnap = await assetRef.get();
+  if (!assetSnap.exists) throw new HttpsError('not-found', 'Asset not found');
+  const asset = assetSnap.data() || {};
+  if (`${asset.companyId || ''}`.trim() !== companyId) throw new HttpsError('permission-denied', 'Asset company mismatch');
+
+  const eventRef = db.collection('machineStatusEvents').doc();
+  const previousStatus = clean(request.data?.previousStatus || asset.status || '', 80).toLowerCase() || null;
+  const eventPayload = {
+    id: eventRef.id,
+    companyId,
+    locationId,
+    assetId,
+    assetName: clean(request.data?.assetName || asset.name || '', 260) || null,
+    previousStatus,
+    nextStatus,
+    reason: clean(request.data?.reason || '', 1000) || null,
+    sourceTaskId: clean(request.data?.sourceTaskId || '', 160) || null,
+    submittedByUid: request.auth.uid,
+    submittedByWorkerId: clean(request.data?.submittedByWorkerId || '', 160) || null,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    updatedBy: request.auth.uid,
+  };
+  await eventRef.set(eventPayload);
+  await assetRef.set({ status: nextStatus, updatedAt: serverTimestamp(), updatedBy: request.auth.uid }, { merge: true });
+  await db.collection('auditLogs').add({
+    action: 'machine_status_event_recorded',
+    entityType: 'machineStatusEvents',
+    entityId: eventRef.id,
+    companyId,
+    summary: `Machine status changed to ${nextStatus} for ${eventPayload.assetName || assetId}`,
+    userUid: request.auth.uid,
+    timestamp: serverTimestamp(),
+    metadata: { assetId, locationId, previousStatus, nextStatus, sourceTaskId: eventPayload.sourceTaskId || null },
+  });
+  return { ok: true, id: eventRef.id, status: nextStatus };
+});
+
 exports.onTaskCreatedQueueAi = onDocumentCreated(
   {
     document: 'tasks/{taskId}',
