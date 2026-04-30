@@ -3671,3 +3671,60 @@ test('dashboard source includes checklist timing labels and operations workflow 
   assert.match(source, /overdueStatus === 'overdue'/);
   assert.match(source, /Today.?s Operations Workflow/);
 });
+
+async function loadReportsView() {
+  return import('../src/features/reports.js');
+}
+
+function createReportsRoot() {
+  const listeners = new Map();
+  return {
+    innerHTML: '',
+    querySelector(selector) {
+      return {
+        addEventListener(type, handler) { listeners.set(`${selector}:${type}`, handler); }
+      };
+    },
+    querySelectorAll() { return []; },
+  };
+}
+
+test('reports renders checklist accountability section and filters without signoff events', async () => {
+  const { renderReports } = await loadReportsView();
+  const el = createReportsRoot();
+  const state = {
+    reportsUi: {},
+    users: [],
+    tasks: [{ id: 't1', taskType: 'opening_checklist', businessDate: '2026-04-29', checklistItems: [{ id: 'i1', completed: false }] }],
+    checklistSignoffEvents: [],
+    companyLocations: [],
+    route: {}
+  };
+  renderReports(el, state, () => {}, () => {});
+  assert.match(el.innerHTML, /Checklist Accountability/);
+  assert.match(el.innerHTML, /data-checklist-date/);
+  assert.match(el.innerHTML, /data-checklist-type/);
+  assert.match(el.innerHTML, /data-checklist-worker/);
+  assert.match(el.innerHTML, /No checklist sign-off events available/);
+});
+
+test('reports checklist accountability uses signoff events and late counts', async () => {
+  const { renderReports } = await loadReportsView();
+  const el = createReportsRoot();
+  const state = {
+    reportsUi: {},
+    users: [],
+    tasks: [{ id: 't1', taskType: 'opening_checklist', businessDate: '2026-04-29', checklistItems: [{ id: 'i1', completed: true }, { id: 'i2', completed: false }] }],
+    checklistSignoffEvents: [
+      { workerId: 'w1', completedBy: 'Alex', taskType: 'opening_checklist', businessDate: '2026-04-29', completedLate: true },
+      { workerId: 'w1', completedBy: 'Alex', taskType: 'opening_checklist', businessDate: '2026-04-29', completedLate: false }
+    ],
+    companyLocations: [],
+    route: {}
+  };
+  renderReports(el, state, () => {}, () => {});
+  assert.match(el.innerHTML, /Total signed items: 2/);
+  assert.match(el.innerHTML, /Late signed items: 1/);
+  assert.match(el.innerHTML, /Missed\/unsigned items: 1/);
+  assert.match(el.innerHTML, /Alex/);
+});
