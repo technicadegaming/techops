@@ -47,7 +47,7 @@ export function createInitialState() {
   return {
     user: null, profile: null, company: null, memberships: [], membershipCompanies: {}, activeMembership: null,
     permissions: buildPermissionContext(), onboardingRequired: false, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], companyMembers: [], workers: [], invites: [], checklistTemplates: [],
-    companyLocations: [], importHistory: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], notifications: [], incidentReports: [], notificationPrefs: { enabledTypes: [] }, settings: {},
+    companyLocations: [], importHistory: [], auditLogs: [], machineStatusEvents: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], notifications: [], incidentReports: [], notificationPrefs: { enabledTypes: [] }, settings: {},
     restorePayload: null, route: parseRouteState(), assetDraft: createEmptyAssetDraft(), assetUi: { lastActionByAsset: {}, onboardingReviewQueue: [], onboardingValidationErrors: [], bulkIntakeText: '', bulkIntakeRows: [], bulkIntakeErrors: [], bulkIntakeStatus: 'idle', recentIntakeRows: [], searchQuery: '', statusFilter: 'all', reviewFilter: 'all', enrichmentFilter: 'all', bulkDocRerunStatus: 'idle', bulkDocRerunProgress: null, bulkDocRerunSummary: '' },
     adminUi: {
       tone: 'info',

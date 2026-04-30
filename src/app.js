@@ -48,6 +48,7 @@ import {
   enrichAssetDocumentation,
   previewAssetDocumentationLookup,
   researchAssetTitles,
+  recordMachineStatusEvent,
   regenerateTaskTroubleshooting,
   saveTaskFixToTroubleshootingLibrary
 } from './aiAdapter.js';
@@ -328,6 +329,7 @@ async function render() {
     analyzeTaskTroubleshooting,
     regenerateTaskTroubleshooting,
     answerTaskFollowup,
+    recordMachineStatusEvent,
     saveTaskFixToTroubleshootingLibrary,
     signOffChecklistItemWithPin,
     logAudit,

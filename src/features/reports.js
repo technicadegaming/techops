@@ -207,6 +207,9 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
   const assetsDown = (scope.scopedAssets || []).filter((asset) => ['down', 'broken', 'out_of_service'].includes(`${asset.status || ''}`.trim().toLowerCase())).length;
   const aiFollowupBacklog = ((state.taskAiRuns || []).filter((run) => run.status === 'followup_required')).length;
   const pendingDocsCount = (scope.scopedAssets || []).filter((asset) => asset.documentationStatus === 'manual_review' || asset.manualReviewRequired === true || asset.pendingDocumentation === true).length;
+  const dailyStatusEvents = (state.machineStatusEvents || []).filter((entry) => toIsoDate(entry.createdAt || entry.updatedAt) === selectedBusinessDate);
+  const assetsReturnedToday = dailyStatusEvents.filter((entry) => `${entry.nextStatus || ''}`.trim().toLowerCase() === 'returned_to_service').length;
+  const assetsDownToday = dailyStatusEvents.filter((entry) => ['down', 'limited_operation', 'waiting_on_part'].includes(`${entry.nextStatus || ''}`.trim().toLowerCase())).length;
   const dailySummaryText = [
     `Daily Manager Summary — ${selection?.label || 'All locations'} — ${selectedBusinessDate || 'All dates'}`,
     `Opening checklist: ${checklistSummaryByType.find((row) => row.type === 'opening_checklist')?.completionPct || 0}%`,
@@ -220,6 +223,8 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
     `Critical open: ${openCriticalTasks}`,
     `Overdue open: ${overdueOpenTasks}`,
     `Assets down: ${assetsDown}`,
+    `Assets down today: ${assetsDownToday}`,
+    `Returned to service today: ${assetsReturnedToday}`,
     `AI follow-ups: ${aiFollowupBacklog}`,
     `Pending doc/manual review: ${pendingDocsCount}`,
     `Open incidents: ${openIncidents.length}`,

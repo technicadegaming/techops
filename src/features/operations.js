@@ -935,6 +935,7 @@ function renderCloseout(task, state) {
       <label>Verification / tested outcome<input name="verification" placeholder="What did you test before closeout?" /></label>
       <label>Resolution status<select name="fullyResolved"><option value="yes">Fully resolved</option><option value="no">Partially resolved / monitor</option></select></label>
       <label>Save to library<select name="saveToLibrary"><option value="">Use default</option><option value="yes">Save to troubleshooting library</option><option value="no">Do not save</option></select></label>
+      <label>Asset status<select name="markReturnedToService"><option value="">No status update</option><option value="yes">Mark returned to service</option></select></label>
       <label>AI helpfulness<select name="aiHelpfulness"><option value="">Optional</option><option value="helpful">AI was helpful</option><option value="partial">AI partially helpful</option><option value="not_helpful">AI not helpful</option></select></label>
       <label class="closeout-wide">Notes for future reference<input name="bestFixSummary" placeholder="One-line closeout summary for future reuse" /></label>
       <div class="closeout-wide evidence-group">
