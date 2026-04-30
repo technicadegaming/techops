@@ -5,7 +5,7 @@ This guide covers release-safe deploy practices for Scoot Business TechOps.
 ## Prerequisites
 
 - Firebase CLI authenticated to the correct project.
-- Node.js 20+.
+- Node.js 22+.
 - Dependencies installed in both root and functions package.
 
 ```bash

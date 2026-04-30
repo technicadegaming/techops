@@ -2,7 +2,7 @@
   "name": "scoot-business-functions",
   "private": true,
   "engines": {
-    "node": "20"
+    "node": "22"
   },
   "main": "src/index.js",
   "type": "commonjs",
