@@ -129,6 +129,7 @@ export function renderDashboard(el, state, navigate, applyFocus = () => {}, opti
         <button class="btn-primary jump" data-tab="operations">New operations task</button>
         <button class="btn-secondary jump" data-tab="dailyOperations">Today’s Operations</button>
         <button class="btn-secondary jump" data-tab="assets">Add asset</button>
+        <button class="btn-secondary jump" data-tab="reports">Report Incident</button>
         <button class="btn-secondary jump" data-tab="assets" data-focus="missing_docs">Review documentation</button>
         <button class="btn-secondary jump" data-tab="admin" data-focus="pending_invites">Invite member</button>
       </div>

@@ -1,4 +1,5 @@
 import { renderReports } from '../features/reports.js';
+import { upsertEntity } from '../data.js';
 
 export function createReportsController({
   state,
@@ -15,7 +16,8 @@ export function createReportsController({
   function createDependencies() {
     return {
       applyFocus: applyReportFocus,
-      navigate: navigateToReportTarget
+      navigate: navigateToReportTarget,
+      upsertIncidentReport: (id, payload, user) => upsertEntity('incidentReports', id, payload, user)
     };
   }
 
@@ -23,7 +25,7 @@ export function createReportsController({
     createDependencies,
     renderReportsSection(element) {
       const { navigate, applyFocus } = createDependencies();
-      renderReports(element, state, navigate, applyFocus);
+      renderReports(element, state, navigate, applyFocus, createDependencies());
     }
   };
 }

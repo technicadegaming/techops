@@ -75,7 +75,7 @@ function getSelectionForReports(state) {
   return buildLocationOptions(state).find((option) => option.key === locationKey) || getLocationSelection(state);
 }
 
-export function renderReports(el, state, navigate = () => {}, applyFocus = () => {}) {
+export function renderReports(el, state, navigate = () => {}, applyFocus = () => {}, options = {}) {
   state.reportsUi = { ...createDefaultReportsUiState(), ...(state.reportsUi || {}) };
   const now = new Date();
   const selection = getSelectionForReports(state);
@@ -193,6 +193,12 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
     completionPct: row.completionPct
   }));
   const selectedBusinessDate = selectedChecklistDate;
+  const incidents = (state.incidentReports || []).filter((incident) => {
+    if (!selection?.name || selection.key === '__all_locations__') return true;
+    if (selection.key === '__unassigned_location__') return !incident.locationId;
+    return `${incident.locationId || ''}`.trim() === `${selection.key || ''}`.trim();
+  });
+  const openIncidents = incidents.filter((incident) => `${incident.status || 'open'}` !== 'closed' && `${incident.status || ''}` !== 'archived');
   const dailyTasks = (scope.scopedTasks || []).filter((task) => `${task.businessDate || task.scheduledForDate || ''}`.trim() === selectedBusinessDate);
   const taskOpenedForDate = dailyTasks.filter((task) => toIsoDate(task.openedAt || task.createdAtClient || task.createdAt || task.updatedAtClient || task.updatedAt) === selectedBusinessDate).length;
   const taskClosedForDate = dailyTasks.filter((task) => task.status === 'completed' && toIsoDate(task.closedAt || task.completedAt || task.updatedAt || task.updatedAtClient) === selectedBusinessDate).length;
@@ -216,6 +222,7 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
     `Assets down: ${assetsDown}`,
     `AI follow-ups: ${aiFollowupBacklog}`,
     `Pending doc/manual review: ${pendingDocsCount}`,
+    `Open incidents: ${openIncidents.length}`,
     'Notes: '
   ].join('\n');
 
@@ -257,6 +264,21 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
       <span>Completion rate: ${completionRate}%</span>
       <span>Blocked share: ${blockedRate}% of unresolved</span>
       <span>AI follow-up backlog: ${followupTasks.length}</span>
+      <span>Open incidents: ${openIncidents.length}</span>
+    </div>
+    <div class="item mt">
+      <div class="row space"><b>Incident Summary</b></div>
+      <div class="kpi-line mt"><span>Total: ${incidents.length}</span><span>Open: ${openIncidents.length}</span></div>
+      <form class="grid grid-2 mt" data-incident-form>
+        <label>Incident date<input name="incidentDate" type="date" value="${new Date().toISOString().slice(0, 10)}" required /></label>
+        <label>Type<select name="incidentType"><option value="safety">Safety</option><option value="customer_complaint">Customer complaint</option><option value="injury">Injury</option><option value="machine_damage">Machine damage</option><option value="cash_ticket_prize_issue">Cash/ticket/prize issue</option><option value="behavior_security_issue">Behavior/security issue</option><option value="general_operations">General operations</option></select></label>
+        <label>Severity<select name="severity"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="critical">Critical</option></select></label>
+        <label>Location<select name="locationId"><option value="">No location</option>${(state.companyLocations || []).map((location) => `<option value="${location.id}">${location.name || location.id}</option>`).join('')}</select></label>
+        <label class="closeout-wide">Title<input name="title" required /></label>
+        <label class="closeout-wide">Description<textarea name="description" required></textarea></label>
+        <button type="submit">Submit incident</button>
+      </form>
+      <div class="list mt">${incidents.slice(0, 20).map((incident) => `<div class="item tiny"><b>${incident.title || incident.id}</b> · ${incident.status || 'open'} · ${incident.incidentType || 'general_operations'} · ${incident.incidentDate || ''}<form data-incident-update="${incident.id}" class="row mt"><select name="status"><option value="open">Open</option><option value="reviewed">Reviewed</option><option value="resolved">Resolved</option><option value="archived">Archived</option></select><input name="managerNotes" value="${incident.managerNotes || ''}" placeholder="Manager notes" /><button type="submit">Update</button></form></div>`).join('')}</div>
     </div>
     <div class="item mt">
       <div class="row space"><b>Checklist Accountability</b><button type="button" data-checklist-export class="filter-chip">Export CSV</button></div>
@@ -463,4 +485,44 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
     }
     window.prompt('Copy daily summary:', payload);
   });
+  el.querySelector('[data-incident-form]')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const fd = new FormData(event.currentTarget);
+    const id = `incident_${Date.now()}`;
+    await options.upsertIncidentReport?.(id, {
+      companyId: state.company?.id || '',
+      locationId: `${fd.get('locationId') || ''}`.trim(),
+      incidentDate: `${fd.get('incidentDate') || ''}`.trim(),
+      incidentType: `${fd.get('incidentType') || ''}`.trim(),
+      severity: `${fd.get('severity') || 'medium'}`.trim(),
+      title: `${fd.get('title') || ''}`.trim(),
+      description: `${fd.get('description') || ''}`.trim(),
+      assetId: '',
+      customerInvolved: false,
+      injuryReported: false,
+      prizeOrCashImpact: '',
+      status: 'open',
+      submittedByUid: state.user?.uid || '',
+      submittedByWorkerId: '',
+      reviewedBy: '',
+      reviewedAt: '',
+      managerNotes: ''
+    }, state.user);
+    rerender();
+  });
+  el.querySelectorAll('[data-incident-update]').forEach((form) => form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const id = event.currentTarget.dataset.incidentUpdate;
+    const current = incidents.find((entry) => entry.id === id);
+    if (!current) return;
+    const fd = new FormData(event.currentTarget);
+    await options.upsertIncidentReport?.(id, {
+      ...current,
+      status: `${fd.get('status') || current.status || 'open'}`.trim(),
+      managerNotes: `${fd.get('managerNotes') || ''}`.trim(),
+      reviewedBy: state.user?.uid || '',
+      reviewedAt: new Date().toISOString()
+    }, state.user);
+    rerender();
+  }));
 }

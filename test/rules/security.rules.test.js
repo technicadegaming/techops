@@ -426,6 +426,24 @@ test('firestore: checklist signoff events are read-only for elevated lead+ roles
   }));
 });
 
+test('firestore: incident reports allow staff create, lead review/update, and deny delete', async () => {
+  await seedMembership({ uid: 'staff-a', companyId: 'company-a', role: 'staff' });
+  await seedMembership({ uid: 'lead-a', companyId: 'company-a', role: 'lead' });
+  await seedMembership({ uid: 'cross-a', companyId: 'company-b', role: 'manager' });
+  const testEnv = await rulesTestEnvPromise;
+  const staffDb = testEnv.authenticatedContext('staff-a').firestore();
+  const leadDb = testEnv.authenticatedContext('lead-a').firestore();
+  const crossDb = testEnv.authenticatedContext('cross-a').firestore();
+
+  await assertSucceeds(setDoc(doc(staffDb, 'incidentReports', 'incident-a'), {
+    id: 'incident-a', companyId: 'company-a', locationId: 'loc-1', incidentDate: '2026-04-29', incidentType: 'safety', severity: 'high', title: 'Slip', description: 'Wet floor', status: 'open'
+  }));
+  await assertSucceeds(getDoc(doc(leadDb, 'incidentReports', 'incident-a')));
+  await assertFails(getDoc(doc(crossDb, 'incidentReports', 'incident-a')));
+  await assertSucceeds(setDoc(doc(leadDb, 'incidentReports', 'incident-a'), { status: 'reviewed', managerNotes: 'Reviewed' }, { merge: true }));
+  await assertFails(deleteDoc(doc(leadDb, 'incidentReports', 'incident-a')));
+});
+
 test('storage: company evidence path allows active member and blocks cross-company access', async () => {
   await seedMembership({ uid: 'staff-a', companyId: 'company-a', role: 'staff' });
   await seedMembership({ uid: 'staff-b', companyId: 'company-b', role: 'staff' });

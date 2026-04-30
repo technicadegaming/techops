@@ -333,6 +333,16 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    match /incidentReports/{incidentId} {
+      allow read: if hasCompanyField(resource.data) && isCompanyLead(resource.data.companyId);
+      allow create: if hasCompanyField(request.resource.data) && isCompanyStaff(request.resource.data.companyId);
+      allow update: if hasCompanyField(resource.data)
+        && hasCompanyField(request.resource.data)
+        && resource.data.companyId == request.resource.data.companyId
+        && isCompanyLead(resource.data.companyId);
+      allow delete: if false;
+    }
+
     match /notifications/{docId} {
       allow read: if canReadScopedResource(resource.data);
       allow create: if canCreateScopedResource();
