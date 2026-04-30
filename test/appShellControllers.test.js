@@ -3228,6 +3228,31 @@ test('operations source includes task type and checklist scaffolding with option
   assert.match(source, /payload\.checklistItems = normalizeChecklistItems/);
 });
 
+test('operations source includes interactive checklist controls for checklist-style tasks', () => {
+  const source = loadOperationsSource();
+  assert.match(source, /function isChecklistStyleTask/);
+  assert.match(source, /opening_checklist/);
+  assert.match(source, /closing_checklist/);
+  assert.match(source, /upkeep_checklist/);
+  assert.match(source, /\['preventive_maintenance', 'general'\]/);
+  assert.match(source, /data-checklist-toggle="\$\{task\.id\}"/);
+});
+
+test('operations source checklist toggle sets and clears completion metadata', () => {
+  const source = loadOperationsSource();
+  assert.match(source, /completedAt: completed \? nowIso : null/);
+  assert.match(source, /completedBy: completed \? completedBy : null/);
+  assert.match(source, /workerId: completed \? \(item\.workerId \|\| state\.user\?\.uid \|\| null\) : null/);
+  assert.match(source, /await actions\.saveTask\(task\.id, \{/);
+});
+
+test('operations source keeps checklist rendering optional and asset behavior intact', () => {
+  const source = loadOperationsSource();
+  assert.match(source, /renderChecklist\(task, editable\)/);
+  assert.match(source, /if \(!items\.length\) return '';/);
+  assert.match(source, /const needsAsset = taskType === 'asset' \|\| taskType === 'preventive_maintenance'/);
+});
+
 
 test('assets source renders technical identity details and mismatch note', () => {
   const source = loadAssetsSource();

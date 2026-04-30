@@ -73,6 +73,29 @@ function splitChecklist(value = '') {
     .filter(Boolean);
 }
 
+function isChecklistStyleTask(task = {}) {
+  const type = `${task.taskType || 'asset'}`.trim();
+  if (['opening_checklist', 'closing_checklist', 'upkeep_checklist'].includes(type)) return true;
+  if (['preventive_maintenance', 'general'].includes(type)) return Array.isArray(task.checklistItems) && task.checklistItems.length > 0;
+  return false;
+}
+
+function getChecklistCompletedByLabel(user = {}) {
+  return user.displayName || user.email || user.uid || '';
+}
+
+function renderChecklist(task = {}, editable = false) {
+  const items = Array.isArray(task.checklistItems) ? task.checklistItems : [];
+  if (!items.length) return '';
+  const isInteractive = editable && isChecklistStyleTask(task);
+  const allComplete = items.every((item) => item?.completed);
+  return `<div class="mt"><b>Checklist</b>${allComplete ? '<span class="state-chip good">Checklist complete</span>' : ''}<div class="tiny">${items.map((item, index) => {
+    const label = item.label || item.title || item.id || `Item ${index + 1}`;
+    if (!isInteractive) return `${item.completed ? '☑' : '☐'} ${label}`;
+    return `<label class="row"><input type="checkbox" data-checklist-toggle="${task.id}" data-checklist-item-id="${item.id || ''}" ${item.completed ? 'checked' : ''}/> <span>${label}</span></label>`;
+  }).join('<br/>')}</div></div>`;
+}
+
 function buildAttachments(input = {}) {
   return {
     images: parseReferenceList(input.imageRefs || input.images || ''),
@@ -1264,7 +1287,7 @@ export function renderOperations(el, state, actions) {
                 <div><b>Task type</b><div class="tiny">${TASK_TYPE_LABEL[task.taskType || 'asset'] || (task.taskType || 'asset')}</div></div>
               </div>
               <div class="mt"><b>Issue:</b> ${task.description || ''}</div>
-              ${Array.isArray(task.checklistItems) && task.checklistItems.length ? `<div class="mt"><b>Checklist</b><div class="tiny">${task.checklistItems.map((item) => `${item.completed ? '☑' : '☐'} ${item.label || item.title || item.id}`).join('<br/>')}</div></div>` : ''}
+              ${renderChecklist(task, editable)}
               ${task.notes ? `<div class="mt"><b>Current summary:</b> ${task.notes}</div>` : ''}
               <div class="mt"><b>Asset link:</b> ${task.assetId ? `<a href="?tab=assets&assetId=${encodeURIComponent(task.assetId)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open asset record</a>` : 'No linked asset'}</div>
               ${renderAssetOpsContext(taskAsset, state, scope)}
@@ -1574,6 +1597,30 @@ export function renderOperations(el, state, actions) {
       status: nextStatus,
       timeline: [...(task.timeline || []), timelineEntry],
       updatedAtClient: new Date().toISOString()
+    });
+  }));
+  el.querySelectorAll('[data-checklist-toggle]').forEach((input) => input.addEventListener('change', async () => {
+    state.operationsUi.scrollY = window.scrollY;
+    const task = state.tasks.find((entry) => entry.id === input.dataset.checklistToggle);
+    const checklistItemId = `${input.dataset.checklistItemId || ''}`.trim();
+    if (!task || !checklistItemId) return;
+    const completed = !!input.checked;
+    const nowIso = new Date().toISOString();
+    const completedBy = getChecklistCompletedByLabel(state.user);
+    const checklistItems = (Array.isArray(task.checklistItems) ? task.checklistItems : []).map((item) => {
+      if (`${item.id || ''}`.trim() !== checklistItemId) return item;
+      return {
+        ...item,
+        completed,
+        completedAt: completed ? nowIso : null,
+        completedBy: completed ? completedBy : null,
+        workerId: completed ? (item.workerId || state.user?.uid || null) : null
+      };
+    });
+    await actions.saveTask(task.id, {
+      ...task,
+      checklistItems,
+      updatedAtClient: nowIso
     });
   }));
   el.querySelectorAll('[data-open-closeout]').forEach((button) => button.addEventListener('click', () => {
