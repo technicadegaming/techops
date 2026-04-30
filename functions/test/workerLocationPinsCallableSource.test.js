@@ -13,10 +13,11 @@ test('worker pin callables are exported', () => {
   assert.match(source, /exports\.signOffChecklistItemWithPin = onCall\(/);
 });
 
-test('setWorkerLocationPin enforces auth elevated role and pin format', () => {
+test('setWorkerLocationPin enforces role hierarchy and pin format', () => {
   const source = readSource();
   assert.match(source, /if \(!request\.auth\) throw new HttpsError\('unauthenticated'/);
-  assert.match(source, /\['owner', 'admin', 'manager'\]\.includes\(role\)/);
+  assert.match(source, /const targetRole = normalizeRole\(linkedMembership\?\.role \|\| worker\.role \|\| 'staff'\)/);
+  assert.match(source, /if \(!canManageRole\(\{ actorRole: role, targetRole, isSelf: isSelfTarget \}\)\)/);
   assert.match(source, /PIN must be 4-8 digits/);
   assert.match(source, /const PIN_REGEX = \/\^\\d\{4,8\}\$\//);
 });

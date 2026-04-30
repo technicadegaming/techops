@@ -530,8 +530,21 @@ export function createAdminActions(deps) {
         setAdminFeedback({ tone: 'success', message: 'PIN set successfully.' });
         render();
         return { ok: true };
-      } catch {
-        setAdminFeedback({ tone: 'error', message: 'Unable to set PIN. Check your permissions and try again.' });
+      } catch (error) {
+        const code = `${error?.code || error?.details?.code || ''}`.toLowerCase();
+        const message = `${error?.message || ''}`.toLowerCase();
+        const isDuplicate = code.includes('already-exists') || code.includes('conflict') || message.includes('already in use');
+        const isPermission = code.includes('permission-denied');
+        const isInvalidPin = code.includes('invalid-argument') || message.includes('4-8 digits') || message.includes('4–8 digits');
+        if (isDuplicate) {
+          setAdminFeedback({ tone: 'error', message: 'That PIN is already assigned at this location. Choose a different PIN.' });
+        } else if (isPermission) {
+          setAdminFeedback({ tone: 'error', message: "You do not have permission to set this worker’s PIN." });
+        } else if (isInvalidPin) {
+          setAdminFeedback({ tone: 'error', message: 'PIN must be 4–8 digits.' });
+        } else {
+          setAdminFeedback({ tone: 'error', message: 'Unable to set PIN. Check your permissions and try again.' });
+        }
         render();
         return { ok: false };
       }

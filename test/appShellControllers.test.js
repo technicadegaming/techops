@@ -3568,7 +3568,7 @@ test('admin people source includes worker PIN management controls for elevated u
   const source = loadAdminSource();
   assert.match(source, /data-worker-pin-form/);
   assert.match(source, /PIN \(4–8 digits\)/);
-  assert.match(source, /canManagePins/);
+  assert.match(source, /canManagePersonPin/);
   assert.match(source, /Set PIN/);
   assert.match(source, /Reset PIN/);
 });
@@ -3601,4 +3601,49 @@ test('admin setWorkerPin validates format, invokes callable payload, and avoids 
   const good = await actions.setWorkerPin({ workerId: 'w1', locationId: 'l1', pin: '1234' });
   assert.equal(good.ok, true);
   assert.deepEqual(calls[0], { companyId: 'co-1', workerId: 'w1', locationId: 'l1', pin: '1234' });
+});
+
+
+test('admin setWorkerPin maps duplicate and permission errors to friendly copy', async () => {
+  const { createAdminActions } = await loadAdminActions();
+  const state = { company: { id: 'co-1' }, adminUi: {}, permissions: { companyRole: 'admin' } };
+  const baseDeps = {
+    state,
+    render: () => {},
+    refreshData: async () => {},
+    runAction: async (_l, fn) => fn(),
+    withRequiredCompanyId: (p) => p,
+    upsertEntity: async () => {},
+    clearEntitySet: async () => 0,
+    saveAppSettings: async () => {},
+    exportBackupJson: async () => ({}),
+    buildAssetsCsv: () => '',
+    buildTasksCsv: () => '',
+    buildAuditCsv: () => '',
+    buildWorkersCsv: () => '',
+    buildMembersCsv: () => '',
+    buildInvitesCsv: () => '',
+    buildLocationsCsv: () => '',
+    buildCompanyBackupBundle: () => ({}),
+    downloadFile: () => {},
+    downloadJson: () => {},
+    normalizeAssetId: (v) => v,
+    enrichAssetDocumentation: async () => {},
+    createCompanyInvite: async () => ({}),
+    revokeInvite: async () => {}
+  };
+
+  const duplicateActions = createAdminActions({
+    ...baseDeps,
+    setWorkerLocationPin: async () => { const err = new Error('PIN is already in use at this location.'); err.code = 'already-exists'; throw err; }
+  });
+  await duplicateActions.setWorkerPin({ workerId: 'w1', locationId: 'l1', pin: '1234' });
+  assert.equal(state.adminUi.message, 'That PIN is already assigned at this location. Choose a different PIN.');
+
+  const denyActions = createAdminActions({
+    ...baseDeps,
+    setWorkerLocationPin: async () => { const err = new Error('denied'); err.code = 'permission-denied'; throw err; }
+  });
+  await denyActions.setWorkerPin({ workerId: 'w1', locationId: 'l1', pin: '1234' });
+  assert.equal(state.adminUi.message, "You do not have permission to set this worker’s PIN.");
 });
