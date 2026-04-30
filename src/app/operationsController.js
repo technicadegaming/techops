@@ -405,7 +405,10 @@ export function createOperationsController({
           navigationController.showOperationsForLocation(locationKey);
           render();
         },
-        saveTask: async (_id, payload) => safeWithGlobalBusy('Creating operation task…', 'This can take a few seconds. Please do not refresh.', async () => {
+        saveTask: async (_id, payload, options = {}) => {
+          const busyTitle = `${options?.busyTitle || 'Creating operation task…'}`.trim() || 'Creating operation task…';
+          const busyDetail = `${options?.busyDetail || 'This can take a few seconds. Please do not refresh.'}`.trim() || 'This can take a few seconds. Please do not refresh.';
+          return safeWithGlobalBusy(busyTitle, busyDetail, async () => {
           const taskId = `${payload?.id || ''}`.trim() || `${_id || ''}`.trim();
           if (!taskId) return alert('Unable to save task: missing generated task ID.');
           const existing = state.tasks.find((entry) => entry.id === taskId);
@@ -473,7 +476,8 @@ export function createOperationsController({
             state.operationsUi = { ...(state.operationsUi || {}), isSavingTask: false, creatingTask: false };
           }));
           return !!saved;
-        }),
+        });
+        },
         appendTaskTimeline: async (taskId, entry = {}) => {
           const task = state.tasks.find((row) => row.id === taskId);
           if (!task) return;
@@ -754,6 +758,11 @@ export function createOperationsController({
         createTaskFromTemplate: async ({ templateId, scheduledForDate } = {}) => {
           const template = (state.checklistTemplates || []).find((entry) => entry.id === templateId && entry.active !== false);
           if (!template) return false;
+          if (!template.locationId || !template.locationName) {
+            state.operationsUi = { ...(state.operationsUi || {}), createTaskError: 'Template must have a location before creating daily checklist tasks.', createTaskMessage: '' };
+            render();
+            return false;
+          }
           const dateKey = `${scheduledForDate || new Date().toISOString().slice(0, 10)}`.trim();
           const duplicate = (state.tasks || []).find((task) => task.companyId === template.companyId
             && task.locationId === template.locationId
@@ -769,6 +778,8 @@ export function createOperationsController({
             id: `daily-${template.templateType}-${template.locationId}-${dateKey}`.replace(/[^a-z0-9_-]/gi, '-'),
             companyId: template.companyId,
             locationId: template.locationId,
+            locationName: template.locationName,
+            location: template.locationName,
             taskType: template.templateType,
             title: `${template.name || 'Checklist'} (${dateKey})`,
             description: `Generated from template: ${template.name || template.templateType}`,
