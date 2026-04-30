@@ -564,7 +564,8 @@ exports.setWorkerLocationPin = onCall({}, async (request) => {
     : null;
   const targetRole = normalizeRole(linkedMembership?.role || worker.role || 'staff');
   const isSelfTarget = linkedUserId && linkedUserId === `${request.auth.uid || ''}`.trim();
-  if (!canManageRole({ actorRole: role, targetRole, isSelf: isSelfTarget })) {
+  const canSelfManagePin = isSelfTarget && ['owner', 'admin', 'manager', 'lead'].includes(role);
+  if (!canSelfManagePin && !canManageRole({ actorRole: role, targetRole, isSelf: isSelfTarget })) {
     throw new HttpsError('permission-denied', 'Insufficient access to manage this worker PIN.');
   }
 

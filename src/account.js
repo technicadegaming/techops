@@ -50,7 +50,9 @@ export function renderAccount(el, state, actions) {
           <button type="button" class="btn btn-secondary" data-account-reset-password>Password reset email</button>
         </div>
         ${profile.emailVerified ? '<p class="tiny mt">Email is already verified.</p>' : ''}
-        <p class="tiny mt">MFA enrollment is currently managed in your Google/Firebase auth provider account settings.</p>
+        ${mfaEnabled
+    ? '<p class="tiny mt">MFA is enrolled for this account.</p>'
+    : '<p class="tiny mt">MFA enrollment is not wired yet. Enable Firebase MFA/Identity Platform and add an enrollment flow before this can be completed in-app.</p><p class="tiny">Firebase MFA requires verified email and an enrolled second factor such as SMS or authenticator app.</p><button type="button" class="btn btn-secondary" disabled aria-disabled="true">MFA setup coming soon</button>'}
         ${isAdminUser ? '<div class="inline-state warn mt">Elevated access account: owner/admin users should use verified email + MFA before keeping admin or owner permissions.</div>' : ''}
       </section>
 

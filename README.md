@@ -47,6 +47,13 @@ npm run test:rules
 ```
 
 - Run `npm run test:app-shell` when you touch `src/app.js`, `src/app/*`, or frontend shell/controller seams that feed the signed-in app shell.
+- Use focused iteration checks when working in narrow areas:
+  - `npm run test:quick` for lint + app-shell fast confidence.
+  - `npm run test:app-shell:operations` for Operations/checklist/PIN/template controller coverage.
+  - `npm run test:app-shell:admin` for Admin/People/PIN/invite flows.
+  - `npm run test:functions:pin` for worker PIN + checklist PIN sign-off callables.
+  - `npm run test:functions:manuals` for manual/enrichment coverage only.
+- Run `npm run test:full` before PR/merge/deploy to execute lint + app-shell + full functions tests.
 - Run `npm run test:rules` when you touch `firestore.rules`, `storage.rules`, tenant-scoped data access, storage path enforcement, or other security-sensitive access boundaries.
 - GitHub CI enforces the baseline lint/functions suites plus the emulator-backed rules suite; app-shell coverage is still a conditional reviewer/local expectation rather than a blanket CI gate.
 - Use `.github/pull_request_template.md` to record which conditional checks applied and which implementation docs you consulted.

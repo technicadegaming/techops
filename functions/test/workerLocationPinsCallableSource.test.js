@@ -17,7 +17,8 @@ test('setWorkerLocationPin enforces role hierarchy and pin format', () => {
   const source = readSource();
   assert.match(source, /if \(!request\.auth\) throw new HttpsError\('unauthenticated'/);
   assert.match(source, /const targetRole = normalizeRole\(linkedMembership\?\.role \|\| worker\.role \|\| 'staff'\)/);
-  assert.match(source, /if \(!canManageRole\(\{ actorRole: role, targetRole, isSelf: isSelfTarget \}\)\)/);
+  assert.match(source, /const canSelfManagePin = isSelfTarget && \['owner', 'admin', 'manager', 'lead'\]\.includes\(role\)/);
+  assert.match(source, /if \(!canSelfManagePin && !canManageRole\(\{ actorRole: role, targetRole, isSelf: isSelfTarget \}\)\)/);
   assert.match(source, /PIN must be 4-8 digits/);
   assert.match(source, /const PIN_REGEX = \/\^\\d\{4,8\}\$\//);
 });
