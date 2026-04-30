@@ -269,6 +269,18 @@ export async function createCompanyInvite({
   };
 }
 
+
+export async function setWorkerLocationPin({ companyId, locationId, workerId, pin }) {
+  const callable = httpsCallable(functions, 'setWorkerLocationPin');
+  const result = await callable({
+    companyId: `${companyId || ''}`.trim(),
+    locationId: `${locationId || ''}`.trim(),
+    workerId: `${workerId || ''}`.trim(),
+    pin: `${pin || ''}`.trim()
+  });
+  return result?.data || { ok: false };
+}
+
 export async function revokeInvite(inviteId, user) {
   const ref = doc(db, C.companyInvites, inviteId);
   const before = await getDoc(ref);
