@@ -553,6 +553,20 @@ exports.setWorkerLocationPin = onCall({}, async (request) => {
     throw new HttpsError('permission-denied', 'Location/company mismatch.');
   }
 
+  const existingPinsSnap = await db.collection('workerLocationPins')
+    .where('companyId', '==', companyId)
+    .where('locationId', '==', locationId)
+    .where('enabled', '==', true)
+    .get();
+  const duplicatePin = existingPinsSnap.docs.find((docSnap) => {
+    const data = docSnap.data() || {};
+    if (`${data.workerId || ''}`.trim() === workerId) return false;
+    return verifyPinHash(pin, data.pinHash);
+  });
+  if (duplicatePin) {
+    throw new HttpsError('already-exists', 'PIN is already in use at this location.');
+  }
+
   const pinRef = db.collection('workerLocationPins').doc(`${companyId}_${locationId}_${workerId}`);
   await pinRef.set({
     companyId,
@@ -576,60 +590,67 @@ exports.signOffChecklistItemWithPin = onCall({}, async (request) => {
   const taskId = `${request.data?.taskId || ''}`.trim();
   const checklistItemId = `${request.data?.checklistItemId || ''}`.trim();
   const locationId = `${request.data?.locationId || ''}`.trim();
-  const workerId = `${request.data?.workerId || ''}`.trim();
+  const requestedWorkerId = `${request.data?.workerId || ''}`.trim();
   const pin = normalizePin(request.data?.pin);
-  if (!companyId || !taskId || !checklistItemId || !locationId || !workerId || !pin) {
-    throw new HttpsError('invalid-argument', 'companyId, taskId, checklistItemId, locationId, workerId, and pin are required.');
+  if (!companyId || !taskId || !checklistItemId || !locationId || !pin) {
+    throw new HttpsError('invalid-argument', 'companyId, taskId, checklistItemId, locationId, and pin are required.');
   }
 
   const membership = await getActiveMembershipForCompany({ db, companyId, uid: request.auth.uid });
   if (!membership) throw new HttpsError('permission-denied', 'Company access required.');
 
-  const [taskSnap, workerSnap, pinSnap] = await Promise.all([
-    db.collection('tasks').doc(taskId).get(),
-    db.collection('workers').doc(workerId).get(),
-    db.collection('workerLocationPins').doc(`${companyId}_${locationId}_${workerId}`).get(),
-  ]);
-
+  const taskSnap = await db.collection('tasks').doc(taskId).get();
   if (!taskSnap.exists) throw new HttpsError('not-found', 'Task not found.');
-  if (!workerSnap.exists) throw new HttpsError('not-found', 'Worker not found.');
-  if (!pinSnap.exists || pinSnap.data()?.enabled === false) {
-    throw new HttpsError('permission-denied', 'Invalid sign-off credentials.');
-  }
-
   const task = taskSnap.data() || {};
-  const worker = workerSnap.data() || {};
-  const pinRecord = pinSnap.data() || {};
-
   if (`${task.companyId || ''}`.trim() !== companyId || `${task.locationId || ''}`.trim() !== locationId) {
     throw new HttpsError('permission-denied', 'Task scope mismatch.');
   }
-  if (`${worker.companyId || ''}`.trim() !== companyId || !workerIsAssignable(worker)) {
-    throw new HttpsError('permission-denied', 'Worker is not eligible for sign-off.');
-  }
-  if (`${pinRecord.companyId || ''}`.trim() !== companyId || `${pinRecord.locationId || ''}`.trim() !== locationId || `${pinRecord.workerId || ''}`.trim() !== workerId) {
-    throw new HttpsError('permission-denied', 'Invalid sign-off credentials.');
-  }
-  if (!verifyPinHash(pin, pinRecord.pinHash)) {
+
+  const checklistItems = Array.isArray(task.checklistItems) ? task.checklistItems : [];
+  const hasChecklistItem = checklistItems.some((item) => `${item.id || ''}`.trim() === checklistItemId);
+  if (!hasChecklistItem) throw new HttpsError('not-found', 'Checklist item not found.');
+
+  const pinsSnap = await db.collection('workerLocationPins')
+    .where('companyId', '==', companyId)
+    .where('locationId', '==', locationId)
+    .where('enabled', '==', true)
+    .get();
+
+  const matchingPins = pinsSnap.docs.filter((docSnap) => {
+    const pinRecord = docSnap.data() || {};
+    if (requestedWorkerId && `${pinRecord.workerId || ''}`.trim() !== requestedWorkerId) return false;
+    return verifyPinHash(pin, pinRecord.pinHash);
+  });
+
+  if (matchingPins.length !== 1) {
     throw new HttpsError('permission-denied', 'Invalid sign-off credentials.');
   }
 
-  const checklistItems = Array.isArray(task.checklistItems) ? task.checklistItems : [];
-  let found = false;
+  const matchedPinDoc = matchingPins[0];
+  const pinRecord = matchedPinDoc.data() || {};
+  const workerId = `${pinRecord.workerId || ''}`.trim();
+  if (!workerId) throw new HttpsError('permission-denied', 'Invalid sign-off credentials.');
+
+  const workerSnap = await db.collection('workers').doc(workerId).get();
+  if (!workerSnap.exists) throw new HttpsError('permission-denied', 'Invalid sign-off credentials.');
+  const worker = workerSnap.data() || {};
+  if (`${worker.companyId || ''}`.trim() !== companyId || !workerIsAssignable(worker)) {
+    throw new HttpsError('permission-denied', 'Worker is not eligible for sign-off.');
+  }
+
   const workerLabel = `${worker.displayName || worker.fullName || worker.email || worker.id || workerId}`.trim();
+  const nowIso = new Date().toISOString();
   const updatedChecklistItems = checklistItems.map((item) => {
     if (`${item.id || ''}`.trim() !== checklistItemId) return item;
-    found = true;
     return {
       ...item,
       completed: true,
-      completedAt: new Date().toISOString(),
+      completedAt: nowIso,
       completedBy: workerLabel,
       workerId,
       signOffMethod: 'pin',
     };
   });
-  if (!found) throw new HttpsError('not-found', 'Checklist item not found.');
 
   await db.collection('tasks').doc(taskId).set({
     checklistItems: updatedChecklistItems,
@@ -637,7 +658,7 @@ exports.signOffChecklistItemWithPin = onCall({}, async (request) => {
     updatedBy: request.auth.uid,
   }, { merge: true });
 
-  await db.collection('workerLocationPins').doc(`${companyId}_${locationId}_${workerId}`).set({
+  await matchedPinDoc.ref.set({
     lastUsedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     updatedBy: request.auth.uid,

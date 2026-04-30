@@ -3251,13 +3251,13 @@ test('operations source includes interactive checklist controls for checklist-st
   assert.match(source, /closing_checklist/);
   assert.match(source, /upkeep_checklist/);
   assert.match(source, /\['preventive_maintenance', 'general'\]/);
-  assert.match(source, /data-checklist-toggle="\$\{task\.id\}"/);
-  assert.match(source, /data-open-pin-signoff="\$\{task\.id\}"/);
-  assert.match(source, /Sign off with PIN/);
+  assert.doesNotMatch(source, /data-checklist-toggle="\$\{task\.id\}"/);
   assert.match(source, /data-pin-signoff-form="\$\{task\.id\}"/);
-  assert.match(source, /name="workerId"/);
+  assert.match(source, /Enter your PIN to sign off\./);
+  assert.doesNotMatch(source, /name="workerId"/);
+  assert.match(source, /Completed by/);
   assert.match(source, /name="pin"/);
-  assert.match(source, /Unable to sign off\. Check the worker, PIN, and location\./);
+  assert.match(source, /Unable to sign off\. Check the PIN and location\./);
 });
 
 test('navigation tabs include separate Repair and Operations labels', async () => {
@@ -3305,22 +3305,19 @@ test('admin source includes checklist template builder fields', () => {
   assert.match(source, /opening_checklist/);
 });
 
-test('operations source checklist toggle sets and clears completion metadata', () => {
+test('operations source checklist pin signoff uses pin-only payload and completion metadata rendering', () => {
   const source = loadOperationsSource();
-  assert.match(source, /completedAt: completed \? nowIso : null/);
-  assert.match(source, /completedBy: completed \? completedBy : null/);
-  assert.match(source, /workerId: completed \? \(item\.workerId \|\| state\.user\?\.uid \|\| null\) : null/);
-  assert.match(source, /await actions\.saveTask\(task\.id, \{/);
-  assert.match(source, /busyTitle: 'Updating checklist…'/);
-  assert.doesNotMatch(source, /Updating checklist\.\.\..*Creating operation task/s);
-  assert.match(source, /await actions\.signOffChecklistItemWithPin\(\{ companyId, taskId, checklistItemId, locationId: task\.locationId, workerId, pin \}\)/);
-  assert.match(source, /if \(!task \|\| !checklistItemId \|\| !task\.locationId \|\| !workerId \|\| !pin\)/);
-  assert.match(source, /\[taskId\]: \{ open: false \}/);
+  assert.match(source, /await actions\.signOffChecklistItemWithPin\(\{ companyId, taskId, checklistItemId, locationId: task\.locationId, pin \}\)/);
+  assert.match(source, /if \(!task \|\| !checklistItemId \|\| !task\.locationId \|\| !pin\)/);
+  assert.match(source, /Enter your PIN to sign off\./);
+  assert.match(source, /Set a location before PIN sign-off\./);
+  assert.doesNotMatch(source, /name="workerId"/);
+  assert.match(source, /Completed by/);
 });
 
 test('operations source keeps checklist rendering optional and asset behavior intact', () => {
   const source = loadOperationsSource();
-  assert.match(source, /renderChecklist\(task, editable\)/);
+  assert.match(source, /renderChecklist\(task, state, editable\)/);
   assert.match(source, /if \(!items\.length\) return '';/);
   assert.match(source, /const needsAsset = taskType === 'asset' \|\| taskType === 'preventive_maintenance'/);
 });

@@ -107,17 +107,17 @@ function resolveDefaultLocation(state, explicitLocationName = '') {
   return { id: '', name: '' };
 }
 
-function getChecklistCompletedByLabel(user = {}) {
-  return user.displayName || user.email || user.uid || '';
-}
-
 function renderChecklistItemCompletionMeta(item = {}) {
   if (!item?.completed) return '';
   const completedBy = `${item.completedBy || item.workerId || ''}`.trim();
-  return completedBy ? `<span class="tiny"> — by ${completedBy}</span>` : '';
+  const completedAt = item.completedAt ? formatDateTime(item.completedAt) : '';
+  if (completedBy && completedAt) return `<span class="tiny"> — Completed by ${completedBy} · ${completedAt}</span>`;
+  if (completedBy) return `<span class="tiny"> — Completed by ${completedBy}</span>`;
+  if (completedAt) return `<span class="tiny"> — ${completedAt}</span>`;
+  return '';
 }
 
-function renderChecklist(task = {}, editable = false) {
+function renderChecklist(task = {}, state = {}, editable = false) {
   const items = Array.isArray(task.checklistItems) ? task.checklistItems : [];
   if (!items.length) return '';
   const isInteractive = editable && isChecklistStyleTask(task);
@@ -125,21 +125,20 @@ function renderChecklist(task = {}, editable = false) {
   return `<div class="mt"><b>Checklist</b>${allComplete ? '<span class="state-chip good">Checklist complete</span>' : ''}<div class="tiny">${items.map((item, index) => {
     const label = item.label || item.title || item.id || `Item ${index + 1}`;
     if (!isInteractive) return `${item.completed ? '☑' : '☐'} ${label}${renderChecklistItemCompletionMeta(item)}`;
-    return `<div class="row space"><label class="row"><input type="checkbox" data-checklist-toggle="${task.id}" data-checklist-item-id="${item.id || ''}" ${item.completed ? 'checked' : ''}/> <span>${label}${renderChecklistItemCompletionMeta(item)}</span></label><button type="button" data-open-pin-signoff="${task.id}" data-checklist-item-id="${item.id || ''}">Sign off with PIN</button></div>`;
+    const signoffLabel = item.completed ? 'Signed off' : 'Enter your PIN to sign off.';
+    return `<div class="item"><div><span>${label}</span>${renderChecklistItemCompletionMeta(item)}</div><div class="tiny">${signoffLabel}</div>${renderPinSignoffForm(task, state, item)}</div>`;
   }).join('<br/>')}</div></div>`;
 }
 
-function renderPinSignoffForm(task = {}, state = {}) {
-  const formState = state.operationsUi?.pinSignoffForms?.[task.id] || {};
-  if (!formState.open) return '';
-  if (!task.locationId) return '<div class="inline-state info mt">PIN sign-off requires this task to have a location.</div>';
-  const workers = Array.isArray(state.workers) ? state.workers : [];
+function renderPinSignoffForm(task = {}, state = {}, item = {}) {
+  const itemId = `${item.id || ''}`.trim();
+  const formState = state.operationsUi?.pinSignoffForms?.[task.id]?.[itemId] || {};
+  if (!task.locationId) return '<div class="inline-state info mt">Set a location before PIN sign-off.</div>';
   return `<form class="grid mt" data-pin-signoff-form="${task.id}">
-    <input type="hidden" name="checklistItemId" value="${formState.checklistItemId || ''}" />
-    <label>Worker<select name="workerId"><option value="">Select worker</option>${workers.map((worker) => `<option value="${worker.id || ''}" ${formState.workerId === worker.id ? 'selected' : ''}>${getWorkerOptionLabel(worker)}</option>`).join('')}</select></label>
+    <input type="hidden" name="checklistItemId" value="${itemId}" />
     <label>PIN<input type="password" name="pin" value="" autocomplete="off" inputmode="numeric" /></label>
     ${formState.error ? `<div class="inline-state error">${formState.error}</div>` : ''}
-    <div class="action-row"><button type="submit">Submit PIN sign-off</button><button type="button" data-cancel-pin-signoff="${task.id}">Cancel</button></div>
+    <div class="action-row"><button type="submit" ${item.completed ? 'disabled' : ''}>Sign off</button></div>
   </form>`;
 }
 
@@ -1365,7 +1364,7 @@ export function renderOperations(el, state, actions) {
                 <select name="locationId"><option value="">Select location</option>${(state.companyLocations || []).map((loc) => `<option value="${loc.id || ''}" ${(task.locationId || '') === (loc.id || '') ? 'selected' : ''}>${loc.name || loc.location || loc.id}</option>`).join('')}</select>
                 <button type="submit">${task.locationId ? 'Change location' : 'Set location'}</button>
               </form>` : ''}
-              ${renderChecklist(task, editable)}
+              ${renderChecklist(task, state, editable)}
               ${renderPinSignoffForm(task, state)}
               ${task.notes ? `<div class="mt"><b>Current summary:</b> ${task.notes}</div>` : ''}
               <div class="mt"><b>Asset link:</b> ${task.assetId ? `<a href="?tab=assets&assetId=${encodeURIComponent(task.assetId)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open asset record</a>` : 'No linked asset'}</div>
@@ -1686,30 +1685,6 @@ export function renderOperations(el, state, actions) {
       updatedAtClient: new Date().toISOString()
     });
   }));
-  el.querySelectorAll('[data-checklist-toggle]').forEach((input) => input.addEventListener('change', async () => {
-    state.operationsUi.scrollY = window.scrollY;
-    const task = state.tasks.find((entry) => entry.id === input.dataset.checklistToggle);
-    const checklistItemId = `${input.dataset.checklistItemId || ''}`.trim();
-    if (!task || !checklistItemId) return;
-    const completed = !!input.checked;
-    const nowIso = new Date().toISOString();
-    const completedBy = getChecklistCompletedByLabel(state.user);
-    const checklistItems = (Array.isArray(task.checklistItems) ? task.checklistItems : []).map((item) => {
-      if (`${item.id || ''}`.trim() !== checklistItemId) return item;
-      return {
-        ...item,
-        completed,
-        completedAt: completed ? nowIso : null,
-        completedBy: completed ? completedBy : null,
-        workerId: completed ? (item.workerId || state.user?.uid || null) : null
-      };
-    });
-    await actions.saveTask(task.id, {
-      ...task,
-      checklistItems,
-      updatedAtClient: nowIso
-    }, { busyTitle: 'Updating checklist…', busyDetail: 'Saving checklist item changes. Please wait.' });
-  }));
   el.querySelectorAll('[data-task-location-form]').forEach((locationForm) => locationForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const taskId = `${locationForm.dataset.taskLocationForm || ''}`.trim();
@@ -1727,41 +1702,29 @@ export function renderOperations(el, state, actions) {
       updatedAtClient: new Date().toISOString()
     }, { busyTitle: 'Saving task location…', busyDetail: 'Updating task location for checklist and PIN sign-off.' });
   }));
-  el.querySelectorAll('[data-open-pin-signoff]').forEach((button) => button.addEventListener('click', () => {
-    const taskId = `${button.dataset.openPinSignoff || ''}`.trim();
-    const checklistItemId = `${button.dataset.checklistItemId || ''}`.trim();
-    state.operationsUi.pinSignoffForms = {
-      ...(state.operationsUi.pinSignoffForms || {}),
-      [taskId]: { open: true, checklistItemId, workerId: '', error: '' }
-    };
-    rerender();
-  }));
-  el.querySelectorAll('[data-cancel-pin-signoff]').forEach((button) => button.addEventListener('click', () => {
-    const taskId = `${button.dataset.cancelPinSignoff || ''}`.trim();
-    state.operationsUi.pinSignoffForms = { ...(state.operationsUi.pinSignoffForms || {}), [taskId]: { open: false } };
-    rerender();
-  }));
   el.querySelectorAll('[data-pin-signoff-form]').forEach((pinForm) => pinForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const taskId = `${pinForm.dataset.pinSignoffForm || ''}`.trim();
     const task = state.tasks.find((entry) => entry.id === taskId);
     const fd = new FormData(pinForm);
     const checklistItemId = `${fd.get('checklistItemId') || ''}`.trim();
-    const workerId = `${fd.get('workerId') || ''}`.trim();
     const pin = `${fd.get('pin') || ''}`.trim();
-    if (!task || !checklistItemId || !task.locationId || !workerId || !pin) {
-      state.operationsUi.pinSignoffForms = { ...(state.operationsUi.pinSignoffForms || {}), [taskId]: { open: true, checklistItemId, workerId, error: 'Unable to sign off. Check the worker, PIN, and location.' } };
+    if (!task || !checklistItemId || !task.locationId || !pin) {
+      const current = state.operationsUi.pinSignoffForms || {};
+      state.operationsUi.pinSignoffForms = { ...current, [taskId]: { ...(current[taskId] || {}), [checklistItemId]: { error: 'Unable to sign off. Check the PIN and location.' } } };
       rerender();
       return;
     }
     const companyId = `${task.companyId || state.company?.id || state.activeMembership?.companyId || ''}`.trim();
-    const ok = await actions.signOffChecklistItemWithPin({ companyId, taskId, checklistItemId, locationId: task.locationId, workerId, pin });
+    const ok = await actions.signOffChecklistItemWithPin({ companyId, taskId, checklistItemId, locationId: task.locationId, pin });
     if (!ok) {
-      state.operationsUi.pinSignoffForms = { ...(state.operationsUi.pinSignoffForms || {}), [taskId]: { open: true, checklistItemId, workerId, error: 'Unable to sign off. Check the worker, PIN, and location.' } };
+      const current = state.operationsUi.pinSignoffForms || {};
+      state.operationsUi.pinSignoffForms = { ...current, [taskId]: { ...(current[taskId] || {}), [checklistItemId]: { error: 'Unable to sign off. Check the PIN and location.' } } };
       rerender();
       return;
     }
-    state.operationsUi.pinSignoffForms = { ...(state.operationsUi.pinSignoffForms || {}), [taskId]: { open: false } };
+    const current = state.operationsUi.pinSignoffForms || {};
+    state.operationsUi.pinSignoffForms = { ...current, [taskId]: { ...(current[taskId] || {}), [checklistItemId]: { error: '' } } };
     rerender();
   }));
   el.querySelectorAll('[data-open-closeout]').forEach((button) => button.addEventListener('click', () => {
