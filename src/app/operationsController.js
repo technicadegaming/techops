@@ -442,9 +442,20 @@ export function createOperationsController({
               createTaskMessage: startsAi ? 'Task created. Starting AI troubleshooting…' : (isNewTask ? 'Task created.' : ''),
               createTaskError: ''
             };
-            state.route = { ...state.route, tab: 'operations', taskId };
+            const createdDailyChecklist = isNewTask && ['opening_checklist', 'closing_checklist', 'upkeep_checklist'].includes(`${payload.taskType || ''}`.trim());
+            state.route = createdDailyChecklist
+              ? { ...state.route, tab: 'dashboard', taskId: null }
+              : { ...state.route, tab: 'operations', taskId };
             await refreshData();
             render();
+            if (createdDailyChecklist) {
+              state.operationsUi = {
+                ...(state.operationsUi || {}),
+                createTaskMessage: 'Checklist created. Continue sign-off from the Dashboard.',
+                createTaskError: ''
+              };
+              navigationController.openTab('dashboard', null, null);
+            }
             if (!existing && state.settings?.aiEnabled) {
               setTaskAiUiState(taskId, { status: 'queued', message: 'AI is thinking…' });
               render();
@@ -791,9 +802,10 @@ export function createOperationsController({
             checklistItems: (Array.isArray(template.checklistItems) ? template.checklistItems : []).map((item, index) => ({ id: item.id || `item-${index + 1}`, label: item.label || `Item ${index + 1}`, completed: false, completedAt: null, completedBy: null, workerId: null }))
           };
           await upsertEntity('tasks', payload.id, withRequiredCompanyId(state, payload, 'create a checklist from template'), state.user);
-          state.operationsUi = { ...(state.operationsUi || {}), createTaskError: '', createTaskMessage: 'Checklist created from template.', lastSavedTaskId: payload.id };
+          state.operationsUi = { ...(state.operationsUi || {}), createTaskError: '', createTaskMessage: 'Checklist created. Continue sign-off from the Dashboard.', lastSavedTaskId: payload.id };
           await refreshData();
           render();
+          navigationController.openTab('dashboard', null, null);
           return true;
         },
         saveChecklistAsTemplate: async ({ taskId } = {}) => {

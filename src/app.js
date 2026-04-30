@@ -308,10 +308,6 @@ async function render() {
   contextSwitcherController.renderHeaderContext();
   notificationController.renderNotificationCenter();
 
-  renderDashboard(document.getElementById('dashboard'), state, navigationController.openTab, (focus) => {
-    navigationController.applyShellFocusAndPush(focus);
-  });
-
   const operationsController = createOperationsController({
     state,
     navigationController,
@@ -341,6 +337,12 @@ async function render() {
     withGlobalBusy: globalBusy.withGlobalBusy
   });
   const operationsActions = operationsController.createActions();
+  renderDashboard(document.getElementById('dashboard'), state, navigationController.openTab, (focus) => {
+    navigationController.applyShellFocusAndPush(focus);
+  }, {
+    onChecklistSignoff: async (payload) => operationsActions.signOffChecklistItemWithPin(payload),
+    onAfterChecklistSignoff: () => render()
+  });
   renderOperations(document.getElementById('operations'), state, operationsActions);
   renderOperations(document.getElementById('dailyOperations'), state, operationsActions);
 

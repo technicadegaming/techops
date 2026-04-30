@@ -93,7 +93,7 @@ function isChecklistStyleTask(task = {}) {
 function resolveDefaultLocation(state, explicitLocationName = '') {
   const named = `${explicitLocationName || ''}`.trim();
   const locations = Array.isArray(state.companyLocations) ? state.companyLocations : [];
-  const activeLocationId = `${state.route?.locationId || ''}`.trim();
+  const activeLocationId = `${state.route?.locationId || state.route?.locationKey || ''}`.trim();
   if (activeLocationId) {
     const active = locations.find((entry) => `${entry.id || ''}`.trim() === activeLocationId);
     if (active) return { id: active.id, name: active.name || active.location || '' };
@@ -1573,7 +1573,8 @@ export function renderOperations(el, state, actions) {
       createdAtClient: new Date().toISOString(),
       assetName: selectedAsset?.name || `${fd.get('assetSearch') || ''}`,
       locationId: assetLocation?.id || defaultLocation.id || '',
-      location: defaultLocation.name || `${fd.get('location') || ''}`.trim() || assetLocation?.name || '',
+      locationName: (assetLocation?.name || defaultLocation.name || `${fd.get('location') || ''}`.trim() || ''),
+      location: (assetLocation?.name || defaultLocation.name || `${fd.get('location') || ''}`.trim() || ''),
       assetKeySnapshot: buildAssetKey(selectedAsset?.id, selectedAsset?.name),
       assignedWorker,
       reportedByUserId: state.user?.uid || '',

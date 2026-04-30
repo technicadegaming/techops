@@ -2,7 +2,6 @@ import { detectRepeatIssues } from './workflow.js';
 import { buildLocationSummary, getLocationEmptyState, getLocationScopeLabel } from './locationContext.js';
 import { formatRelativeTime } from './notifications.js';
 import { buildPmHealthSummary, summarizePmByField } from './reportingSummary.js';
-import { signOffChecklistItemWithPin } from '../company.js';
 
 function statusChip(label, tone = 'muted') {
   return `<span class="state-chip ${tone}">${label}</span>`;
@@ -15,7 +14,15 @@ function formatChecklistTime(value) {
   return parsed.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-export function renderDashboard(el, state, navigate, applyFocus = () => {}) {
+const CHECKLIST_TYPES = ['opening_checklist', 'closing_checklist', 'upkeep_checklist'];
+const CHECKLIST_TAB_META = {
+  opening_checklist: { label: 'Opening', empty: 'No opening checklist in this scope yet.' },
+  closing_checklist: { label: 'Closing', empty: 'No closing checklist in this scope yet.' },
+  upkeep_checklist: { label: 'Upkeep', empty: 'No upkeep checklist in this scope yet.' },
+  all: { label: 'All', empty: 'No daily checklists in this scope yet.' }
+};
+
+export function renderDashboard(el, state, navigate, applyFocus = () => {}, options = {}) {
   const now = new Date();
   const scope = buildLocationSummary(state);
   const openTasks = scope.openTasks;
@@ -95,12 +102,18 @@ export function renderDashboard(el, state, navigate, applyFocus = () => {}) {
     }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 6);
-  const allChecklistTasks = openTasks.filter((task) => ['opening_checklist', 'closing_checklist', 'upkeep_checklist'].includes(task.taskType));
-  const preferredChecklist = allChecklistTasks.filter((task) => task.taskType === 'opening_checklist');
-  const openingChecklistTasks = preferredChecklist.length ? preferredChecklist : allChecklistTasks;
-  const checklistUi = state.dashboardUi?.openingChecklist || {};
-  const activeChecklistIndex = Math.max(0, Math.min(Number(checklistUi.index || 0), Math.max(openingChecklistTasks.length - 1, 0)));
-  const activeChecklistTask = openingChecklistTasks[activeChecklistIndex] || null;
+  const allChecklistTasks = openTasks.filter((task) => CHECKLIST_TYPES.includes(task.taskType));
+  const checklistUi = state.dashboardUi?.checklistFocus || {};
+  const defaultChecklistType = allChecklistTasks.some((task) => task.taskType === 'opening_checklist')
+    ? 'opening_checklist'
+    : (allChecklistTasks[0]?.taskType || 'all');
+  const selectedChecklistType = CHECKLIST_TAB_META[checklistUi.type] ? checklistUi.type : defaultChecklistType;
+  const filteredChecklistTasks = selectedChecklistType === 'all'
+    ? allChecklistTasks
+    : allChecklistTasks.filter((task) => task.taskType === selectedChecklistType);
+  const activeChecklistIndex = Math.max(0, Math.min(Number(checklistUi.index || 0), Math.max(filteredChecklistTasks.length - 1, 0)));
+  const activeChecklistTask = filteredChecklistTasks[activeChecklistIndex] || null;
+  const checklistFocusMinimized = checklistUi.minimized === true;
 
   el.innerHTML = `
     <div class="page-shell page-narrow">
@@ -182,21 +195,29 @@ export function renderDashboard(el, state, navigate, applyFocus = () => {}) {
 
     <div class="item mt">
       <div class="row space">
-        <b>Opening Checklist focus</b>
+        <b>Daily Checklist focus</b>
+        <button type="button" class="filter-chip" data-checklist-minimize-toggle>${checklistFocusMinimized ? 'Expand' : 'Minimize'}</button>
+      </div>
+      <div class="row mt">
+        ${Object.entries(CHECKLIST_TAB_META).map(([type, meta]) => `<button type="button" class="filter-chip ${selectedChecklistType === type ? 'active' : ''}" data-checklist-type="${type}">${meta.label}</button>`).join('')}
         <button class="filter-chip jump" data-tab="dailyOperations" type="button">Open daily operations</button>
       </div>
-      ${activeChecklistTask
+      ${checklistUi.message ? `<div class="inline-state ${checklistUi.tone || 'info'} mt">${checklistUi.message}</div>` : ''}
+      ${checklistFocusMinimized
+        ? `<div class="tiny mt"><b>${CHECKLIST_TAB_META[selectedChecklistType]?.label || 'All'}</b> · ${filteredChecklistTasks.length} checklist task${filteredChecklistTasks.length === 1 ? '' : 's'} in view</div>
+           <div class="tiny">${activeChecklistTask ? `${(activeChecklistTask.checklistItems || []).filter((item) => item.completed).length} of ${(activeChecklistTask.checklistItems || []).length} signed off` : 'No active checklist selected.'}</div>`
+        : activeChecklistTask
         ? `<div class="tiny mt"><b>${activeChecklistTask.title || activeChecklistTask.id}</b> · ${(activeChecklistTask.locationName || activeChecklistTask.location || activeChecklistTask.locationId || 'No location')}</div>
            <div class="tiny">${(activeChecklistTask.checklistItems || []).filter((item) => item.completed).length} of ${(activeChecklistTask.checklistItems || []).length} signed off</div>
-           ${openingChecklistTasks.length > 1 ? `<div class="row mt"><button type="button" data-checklist-prev>Previous</button><div class="tiny">${activeChecklistIndex + 1} of ${openingChecklistTasks.length}</div><button type="button" data-checklist-next>Next</button></div>` : ''}
+           ${filteredChecklistTasks.length > 1 ? `<div class="row mt"><button type="button" data-checklist-prev>Previous</button><div class="tiny">${activeChecklistIndex + 1} of ${filteredChecklistTasks.length}</div><button type="button" data-checklist-next>Next</button></div>` : ''}
            <div class="list mt">${(activeChecklistTask.checklistItems || []).map((item) => {
     const itemId = `${item.id || ''}`.trim();
-    return `<div class="item tiny"><div><b>${item.label || itemId || 'Checklist item'}</b></div>${item.completed
+    return `<div class="item tiny ${item.completed ? '' : 'warn'}"><div class="row space"><b>${item.label || itemId || 'Checklist item'}</b>${item.completed ? '' : '<span class="state-chip bad">Needs sign-off</span>'}</div>${item.completed
       ? `<div class="inline-state success mt"><b>Signed off</b>${item.completedBy ? `<div>Completed by <b>${item.completedBy}</b></div>` : ''}${item.completedAt ? `<div><b>${formatChecklistTime(item.completedAt)}</b></div>` : ''}</div>`
       : `<form class="grid mt" data-dashboard-checklist-signoff="${activeChecklistTask.id}"><input type="hidden" name="checklistItemId" value="${itemId}" /><label>PIN<input type="password" name="pin" autocomplete="off" inputmode="numeric" /></label><div class="action-row"><button type="submit">Sign off</button></div></form>`}
     </div>`;
   }).join('')}</div>`
-        : '<div class="inline-state info mt">No active opening checklist tasks in this scope.</div>'}
+        : `<div class="inline-state info mt">${CHECKLIST_TAB_META[selectedChecklistType]?.empty || CHECKLIST_TAB_META.all.empty}</div>`}
     </div>
 
     <div class="grid grid-2 mt">
@@ -248,19 +269,32 @@ export function renderDashboard(el, state, navigate, applyFocus = () => {}) {
     navigate(button.dataset.tab, button.dataset.id || null, button.dataset.asset || null);
   }));
   el.querySelector('[data-checklist-prev]')?.addEventListener('click', () => {
-    state.dashboardUi = { ...(state.dashboardUi || {}), openingChecklist: { index: Math.max(0, activeChecklistIndex - 1) } };
-    renderDashboard(el, state, navigate, applyFocus);
+    state.dashboardUi = { ...(state.dashboardUi || {}), checklistFocus: { ...(state.dashboardUi?.checklistFocus || {}), index: Math.max(0, activeChecklistIndex - 1) } };
+    renderDashboard(el, state, navigate, applyFocus, options);
   });
   el.querySelector('[data-checklist-next]')?.addEventListener('click', () => {
-    state.dashboardUi = { ...(state.dashboardUi || {}), openingChecklist: { index: Math.min(openingChecklistTasks.length - 1, activeChecklistIndex + 1) } };
-    renderDashboard(el, state, navigate, applyFocus);
+    state.dashboardUi = { ...(state.dashboardUi || {}), checklistFocus: { ...(state.dashboardUi?.checklistFocus || {}), index: Math.min(filteredChecklistTasks.length - 1, activeChecklistIndex + 1) } };
+    renderDashboard(el, state, navigate, applyFocus, options);
+  });
+  el.querySelectorAll('[data-checklist-type]').forEach((button) => button.addEventListener('click', () => {
+    state.dashboardUi = { ...(state.dashboardUi || {}), checklistFocus: { ...(state.dashboardUi?.checklistFocus || {}), type: button.dataset.checklistType || 'all', index: 0 } };
+    renderDashboard(el, state, navigate, applyFocus, options);
+  }));
+  el.querySelector('[data-checklist-minimize-toggle]')?.addEventListener('click', () => {
+    state.dashboardUi = { ...(state.dashboardUi || {}), checklistFocus: { ...(state.dashboardUi?.checklistFocus || {}), minimized: !checklistFocusMinimized } };
+    renderDashboard(el, state, navigate, applyFocus, options);
   });
   el.querySelectorAll('[data-dashboard-checklist-signoff]').forEach((form) => form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const taskId = form.dataset.dashboardChecklistSignoff;
     const fd = new FormData(form);
-    const task = openingChecklistTasks.find((entry) => entry.id === taskId);
+    const task = filteredChecklistTasks.find((entry) => entry.id === taskId);
     if (!task || !task.locationId) return;
-    await signOffChecklistItemWithPin({ companyId: state.company?.id, taskId, checklistItemId: `${fd.get('checklistItemId') || ''}`.trim(), locationId: task.locationId, pin: `${fd.get('pin') || ''}`.trim() });
+    const success = await options.onChecklistSignoff?.({ companyId: state.company?.id, taskId, checklistItemId: `${fd.get('checklistItemId') || ''}`.trim(), locationId: task.locationId, pin: `${fd.get('pin') || ''}`.trim() });
+    if (success) {
+      form.reset();
+      state.dashboardUi = { ...(state.dashboardUi || {}), checklistFocus: { ...(state.dashboardUi?.checklistFocus || {}), message: 'Checklist item signed off.', tone: 'success' } };
+      options.onAfterChecklistSignoff?.();
+    }
   }));
 }
