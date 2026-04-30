@@ -3217,6 +3217,17 @@ test('operations source includes explicit create-task loading and error states',
   assert.match(source, /await actions\.saveTask\(payload\.id \|\| `\$\{fd\.get\('id'\) \|\| ''\}`\.trim\(\), payload\)/);
 });
 
+test('operations source includes task type and checklist scaffolding with optional asset handling', () => {
+  const source = loadOperationsSource();
+  assert.match(source, /name="taskType"/);
+  assert.match(source, /opening_checklist/);
+  assert.match(source, /closing_checklist/);
+  assert.match(source, /upkeep_checklist/);
+  assert.match(source, /name="checklistItemsInput"/);
+  assert.match(source, /const needsAsset = taskType === 'asset' \|\| taskType === 'preventive_maintenance'/);
+  assert.match(source, /payload\.checklistItems = normalizeChecklistItems/);
+});
+
 
 test('assets source renders technical identity details and mismatch note', () => {
   const source = loadAssetsSource();

@@ -22,9 +22,9 @@ export function buildAssetKey(rawAssetId = '', rawAssetName = '') {
   return (clean.slice(0, 10) || 'ASSET');
 }
 
-export function generateTaskId({ assetId = '', assetName = '', existingIds = [] } = {}) {
+export function generateTaskId({ assetId = '', assetName = '', taskType = 'asset', existingIds = [] } = {}) {
   const { yyyymmdd, hhmm } = formatDateParts(new Date());
-  const assetKey = buildAssetKey(assetId, assetName);
+  const assetKey = buildAssetKey(assetId, assetName || taskType || 'task');
   const used = new Set((existingIds || []).map((id) => `${id}`));
   let candidate = '';
   let attempts = 0;
@@ -46,9 +46,9 @@ function summarizeIssue(description = '', maxLength = 48) {
   return clean.length <= maxLength ? clean : `${clean.slice(0, maxLength).trimEnd()}…`;
 }
 
-export function generateTaskTitle(assetName = '', description = '') {
-  const friendlyAsset = `${assetName || ''}`.trim() || 'Unknown asset';
-  return `${friendlyAsset} — ${summarizeIssue(description)}`;
+export function generateTaskTitle(assetName = '', description = '', taskType = 'asset') {
+  const friendlyTarget = `${assetName || ''}`.trim() || (taskType === 'asset' ? 'Unknown asset' : 'General task');
+  return `${friendlyTarget} — ${summarizeIssue(description)}`;
 }
 
 export function normalizeTaskIntake(raw, settings = {}) {
@@ -73,13 +73,15 @@ export function normalizeTaskIntake(raw, settings = {}) {
     assignedWorkers,
     reporter: (raw.reporter || '').trim(),
     notes: (raw.notes || '').trim(),
-    title: generateTaskTitle(raw.assetName || raw.assetId, raw.description || ''),
+    taskType: (raw.taskType || 'asset').trim(),
+    title: generateTaskTitle(raw.assetName || raw.assetId, raw.description || '', raw.taskType || 'asset'),
     status: raw.status || 'open',
     openedAt,
     createdAtClient: (raw.createdAtClient || '').trim() || nowIso,
-    assetKeySnapshot: buildAssetKey(raw.assetId, raw.assetName),
+    assetKeySnapshot: buildAssetKey(raw.assetId, raw.assetName || raw.taskType || 'task'),
     reportedByUserId: (raw.reportedByUserId || '').trim(),
-    reportedByEmail: (raw.reportedByEmail || '').trim()
+    reportedByEmail: (raw.reportedByEmail || '').trim(),
+    checklistItems: Array.isArray(raw.checklistItems) ? raw.checklistItems : []
   };
 
   const generatedDescription = buildStructuredDescription(fields);
@@ -94,6 +96,7 @@ export function normalizeTaskIntake(raw, settings = {}) {
 export function buildStructuredDescription(task) {
   const lines = [
     task.description ? `Issue description: ${task.description}` : '',
+    `Task type: ${task.taskType || 'asset'}`,
     `Asset: ${task.assetId || 'n/a'}`,
     `Location: ${task.location || 'n/a'}`,
     `Category: ${task.issueCategory || 'n/a'} · Severity: ${task.severity || 'n/a'}`,

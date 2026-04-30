@@ -26,6 +26,14 @@ import {
 const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1 };
 const PRIORITY_LABEL = { critical: 'P1 critical', high: 'P2 high', medium: 'P3 medium', low: 'P4 low' };
 const STATUS_LABEL = { open: 'Open', in_progress: 'In progress', completed: 'Completed' };
+const TASK_TYPE_LABEL = {
+  asset: 'Asset task',
+  general: 'General task',
+  opening_checklist: 'Opening checklist',
+  closing_checklist: 'Closing checklist',
+  upkeep_checklist: 'Upkeep checklist',
+  preventive_maintenance: 'Preventive maintenance'
+};
 const AI_STATUS_LABEL = {
   idle: 'AI idle',
   disabled_by_settings: 'AI disabled',
@@ -211,6 +219,18 @@ function renderMissingAssetPrompt(assetName = '') {
   const clean = `${assetName || ''}`.trim();
   if (!clean) return '';
   return `No existing asset matches "${clean}". Create the asset first, then save the task. <button type="button" data-create-missing-asset="${clean}">Create asset</button>`;
+}
+
+function normalizeChecklistItems(raw = '', actor = '') {
+  const nowIso = new Date().toISOString();
+  return splitChecklist(raw).map((label, index) => ({
+    id: `item-${index + 1}`,
+    label,
+    completed: false,
+    completedAt: null,
+    completedBy: actor || '',
+    workerId: ''
+  })).map((item) => ({ ...item, createdAt: nowIso }));
 }
 
 
@@ -1109,7 +1129,7 @@ export function renderOperations(el, state, actions) {
 
     ${state.operationsUi.lastSaveFeedback ? `<div class="inline-state ${state.operationsUi.lastSaveTone || 'info'}">${state.operationsUi.lastSaveFeedback}</div>` : ''}
     ${renderPostSaveActions(state)}
-    ${!scopedAssets.length ? '<div class="inline-state warn">No assets exist in this location scope yet. Create or import an asset in Assets/Admin before opening Operations intake.</div>' : ''}
+      ${!scopedAssets.length ? '<div class="inline-state warn">No assets exist in this location scope yet. You can still create non-asset general/checklist tasks.</div>' : ''}
 
     <form id="taskForm" class="grid mt ops-intake-form">
       ${state.operationsUi?.validationSummary ? `<div class="inline-state error">${state.operationsUi.validationSummary}</div>` : ""}
@@ -1118,10 +1138,20 @@ export function renderOperations(el, state, actions) {
         <label>Opened date/time<input name="openedAt" type="datetime-local" readonly /></label>
       </div>
       <section class="item ops-intake-step">
-        <h3>Step 1 · Asset / game <span class="field-badge required">Required</span></h3>
-        <div class="tiny">Choose the affected asset in this location scope.</div>
+        <h3>Step 1 · Task type and asset</h3>
+        <label>Task type
+          <select name="taskType" ${canCreate ? '' : 'disabled'}>
+            <option value="asset">Asset task</option>
+            <option value="general">General task</option>
+            <option value="opening_checklist">Opening checklist</option>
+            <option value="closing_checklist">Closing checklist</option>
+            <option value="upkeep_checklist">Upkeep checklist</option>
+            <option value="preventive_maintenance">Preventive maintenance</option>
+          </select>
+        </label>
+        <div class="tiny">Asset selection is optional for non-asset tasks.</div>
         <label class="mt">Asset / game
-        <input name="assetSearch" list="assetOptions" placeholder="${scopedAssets.length ? 'Search by asset name' : 'No assets in the current location yet'}" required ${canCreate ? '' : 'disabled'} />
+        <input name="assetSearch" list="assetOptions" placeholder="${scopedAssets.length ? 'Search by asset name (optional for non-asset tasks)' : 'No assets in the current location yet'}" ${canCreate ? '' : 'disabled'} />
         </label>
         <div id="missingAssetPrompt" class="inline-state error mt ${missingAssetPrompt ? '' : 'hide'}">${missingAssetPrompt ? renderMissingAssetPrompt(typedAssetName) : ''}</div>
       </section>
@@ -1167,6 +1197,10 @@ export function renderOperations(el, state, actions) {
           <div id="assignmentStatusHint" class="tiny"></div>
           <textarea name="notes" placeholder="Current summary / handoff notes" ${canCreate ? '' : 'disabled'}></textarea>
           <textarea name="timelineEntry" placeholder="First service timeline entry" ${canCreate ? '' : 'disabled'}></textarea>
+          <label class="closeout-wide">Checklist items (for checklist tasks)
+            <div class="tiny">One item per line. Initial items save as incomplete.</div>
+            <textarea name="checklistItemsInput" placeholder="Unlock doors&#10;Run opening safety walk&#10;Verify tills" ${canCreate ? '' : 'disabled'}></textarea>
+          </label>
           <div class="closeout-wide evidence-group">
             <b>Evidence references</b>
             <div class="tiny">Optional. Keep references concise: URL, filename, or ticket number per line.</div>
@@ -1227,8 +1261,10 @@ export function renderOperations(el, state, actions) {
                 <div><b>Reported by</b><div class="tiny">${resolveReporterLabel(task, state)} | ${formatDateTime(task.openedAt || task.createdAtClient)}</div></div>
                 <div><b>Asset location</b><div class="tiny">${assetLocation?.label || taskLocation.label}${assetLocation && assetLocation.label !== taskLocation.label ? ` | task reported at ${taskLocation.label}` : ''}</div></div>
                 <div><b>Category</b><div class="tiny">${task.issueCategory || 'uncategorized'} | tags: ${(task.symptomTags || []).join(', ') || 'none'}</div></div>
+                <div><b>Task type</b><div class="tiny">${TASK_TYPE_LABEL[task.taskType || 'asset'] || (task.taskType || 'asset')}</div></div>
               </div>
               <div class="mt"><b>Issue:</b> ${task.description || ''}</div>
+              ${Array.isArray(task.checklistItems) && task.checklistItems.length ? `<div class="mt"><b>Checklist</b><div class="tiny">${task.checklistItems.map((item) => `${item.completed ? '☑' : '☐'} ${item.label || item.title || item.id}`).join('<br/>')}</div></div>` : ''}
               ${task.notes ? `<div class="mt"><b>Current summary:</b> ${task.notes}</div>` : ''}
               <div class="mt"><b>Asset link:</b> ${task.assetId ? `<a href="?tab=assets&assetId=${encodeURIComponent(task.assetId)}&location=${encodeURIComponent(scope.selection?.key || '')}">Open asset record</a>` : 'No linked asset'}</div>
               ${renderAssetOpsContext(taskAsset, state, scope)}
@@ -1395,7 +1431,9 @@ export function renderOperations(el, state, actions) {
     const requestedStatus = `${fd.get('status') || 'open'}`.trim();
     const openedAtRaw = `${fd.get('openedAt') || ''}`.trim();
     const assetLocation = selectedAsset ? getAssetLocationRecord(state, selectedAsset) : null;
-    if (!selectedAsset) {
+    const taskType = `${fd.get('taskType') || 'asset'}`.trim();
+    const needsAsset = taskType === 'asset' || taskType === 'preventive_maintenance';
+    if (needsAsset && !selectedAsset) {
       state.operationsUi.lastSaveFeedback = `Asset "${`${fd.get('assetSearch') || ''}`.trim()}" does not exist yet. Create the asset first, then save the task.`;
       state.operationsUi.validationSummary = 'Select a valid asset before creating the task.';
       state.operationsUi.lastSaveTone = 'error';
@@ -1412,6 +1450,7 @@ export function renderOperations(el, state, actions) {
     const payload = normalizeTaskIntake({
       ...Object.fromEntries(fd.entries()),
       id: `${fd.get('id') || ''}`.trim(),
+      taskType,
       assetId: selectedAsset?.id || '',
       openedAt: openedAtRaw ? new Date(openedAtRaw).toISOString() : new Date().toISOString(),
       createdAtClient: new Date().toISOString(),
@@ -1423,6 +1462,7 @@ export function renderOperations(el, state, actions) {
       reportedByUserId: state.user?.uid || '',
       reportedByEmail: state.user?.email || ''
     }, state.settings || {});
+    payload.checklistItems = normalizeChecklistItems(`${fd.get('checklistItemsInput') || ''}`.trim(), state.user?.email || state.user?.uid || '');
     const attachments = buildAttachments(Object.fromEntries(fd.entries()));
     const initialTimelineNote = `${fd.get('timelineEntry') || ''}`.trim();
     payload.attachments = attachments;
@@ -1438,10 +1478,13 @@ export function renderOperations(el, state, actions) {
     }
     if (state.tasks.some((task) => task.id === payload.id)) payload.id = generateTaskId({
       assetId: payload.assetId,
-      assetName: payload.assetName,
+      assetName: payload.assetName || payload.taskType,
+      taskType: payload.taskType,
       existingIds: state.tasks.map((task) => task.id)
     });
-    const validation = validateTaskIntake(payload, ['assetId', 'description', 'reporter']);
+    const requiredFields = ['description', 'reporter'];
+    if (needsAsset) requiredFields.unshift('assetId');
+    const validation = validateTaskIntake(payload, requiredFields);
     if (!validation.ok) {
       state.operationsUi.lastSaveFeedback = `Missing required fields: ${validation.missing.join(', ')}`;
       state.operationsUi.validationSummary = `Please complete required fields: ${validation.missing.join(', ')}`;
