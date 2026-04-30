@@ -3,7 +3,7 @@ import { parseRouteState } from '../features/workflow.js';
 import { getWorkspaceReadiness } from '../features/workspaceReadiness.js';
 
 export const ACTIVE_MEMBERSHIP_STORAGE_KEY = 'techops.activeMembership';
-export const sections = ['dashboard', 'operations', 'assets', 'calendar', 'reports', 'account', 'admin'];
+export const sections = ['dashboard', 'operations', 'dailyOperations', 'assets', 'calendar', 'reports', 'account', 'admin'];
 
 export function createEmptyAssetDraft() {
   return {

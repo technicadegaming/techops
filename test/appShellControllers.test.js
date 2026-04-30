@@ -3241,6 +3241,19 @@ test('operations source includes interactive checklist controls for checklist-st
   assert.match(source, /data-checklist-toggle="\$\{task\.id\}"/);
 });
 
+test('navigation tabs include separate Repair and Operations labels', async () => {
+  const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'app', 'router.js'), 'utf8');
+  assert.match(source, /operations: 'Repair'/);
+  assert.match(source, /dailyOperations: 'Operations'/);
+});
+
+test('operations source constrains repair and daily operations task types by view', () => {
+  const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'features', 'operations.js'), 'utf8');
+  assert.match(source, /REPAIR_TASK_TYPES = new Set\(\['asset', 'preventive_maintenance'\]\)/);
+  assert.match(source, /DAILY_OPERATIONS_TASK_TYPES = new Set\(\['general', 'opening_checklist', 'closing_checklist', 'upkeep_checklist'\]\)/);
+  assert.match(source, /isDailyOperationsView = state\.route\?\.tab === 'dailyOperations'/);
+});
+
 test('operations source checklist toggle sets and clears completion metadata', () => {
   const source = loadOperationsSource();
   assert.match(source, /completedAt: completed \? nowIso : null/);
