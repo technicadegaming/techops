@@ -3217,8 +3217,12 @@ test('operations source includes explicit create-task loading and error states',
   assert.match(source, /await actions\.saveTask\(payload\.id \|\| `\$\{fd\.get\('id'\) \|\| ''\}`\.trim\(\), payload\)/);
 });
 
-test('operations source includes task type and checklist scaffolding with optional asset handling', () => {
+test('operations source includes split operations vs repair intake copy and card scaffolding', () => {
   const source = loadOperationsSource();
+  assert.match(source, /What daily work are you creating\?/);
+  assert.match(source, /What repair work are you creating\?/);
+  assert.match(source, /Opening, closing, upkeep, and general daily tasks\./);
+  assert.match(source, /Asset issues, troubleshooting, preventive maintenance, and AI repair guidance\./);
   assert.match(source, /data-task-type-card/);
   assert.match(source, /Repair Task/);
   assert.match(source, /General Task/);
@@ -3226,7 +3230,16 @@ test('operations source includes task type and checklist scaffolding with option
   assert.match(source, /closing_checklist/);
   assert.match(source, /upkeep_checklist/);
   assert.match(source, /Checklist builder/);
+  assert.match(source, /Add one checklist item per line\. These become sign-off rows for staff\./);
+  assert.match(source, /Unlock doors&#10;Turn on games&#10;Check restrooms/);
+  assert.match(source, /Count drawers&#10;Lock doors&#10;Set alarm/);
+  assert.match(source, /Wipe games&#10;Empty trash&#10;Restock supplies/);
   assert.match(source, /name="checklistItemsInput"/);
+  assert.match(source, /Checklist notes/);
+  assert.match(source, /Task details/);
+  assert.match(source, /Create opening checklist/);
+  assert.match(source, /Create closing checklist/);
+  assert.match(source, /Create upkeep checklist/);
   assert.match(source, /const needsAsset = taskType === 'asset' \|\| taskType === 'preventive_maintenance'/);
   assert.match(source, /payload\.checklistItems = normalizeChecklistItems/);
 });
@@ -3258,6 +3271,9 @@ test('operations source constrains repair and daily operations task types by vie
   assert.match(source, /REPAIR_TASK_TYPES = new Set\(\['asset', 'preventive_maintenance'\]\)/);
   assert.match(source, /DAILY_OPERATIONS_TASK_TYPES = new Set\(\['general', 'opening_checklist', 'closing_checklist', 'upkeep_checklist'\]\)/);
   assert.match(source, /isDailyOperationsView = state\.route\?\.tab === 'dailyOperations'/);
+  assert.match(source, /TASK_TYPE_CARD_OPTIONS\.filter\(\(option\) => preferredTypes\.has\(option\.type\)\)/);
+  assert.match(source, /const repairSelected = draftType === 'asset' \|\| draftType === 'preventive_maintenance'/);
+  assert.match(source, /Create task & run AI/);
 });
 
 test('operations source exposes create-from-template affordance only for daily operations view', () => {

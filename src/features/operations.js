@@ -1041,6 +1041,20 @@ export function renderOperations(el, state, actions) {
   const currentDraftType = `${state.operationsUi?.draft?.taskType || fallbackType}`.trim() || fallbackType;
   const draftType = preferredTypes.has(currentDraftType) ? currentDraftType : fallbackType;
   const checklistSelected = ['opening_checklist', 'closing_checklist', 'upkeep_checklist'].includes(draftType);
+  const repairSelected = draftType === 'asset' || draftType === 'preventive_maintenance';
+  const taskTypePrompts = {
+    opening_checklist: 'Unlock doors&#10;Turn on games&#10;Check restrooms',
+    closing_checklist: 'Count drawers&#10;Lock doors&#10;Set alarm',
+    upkeep_checklist: 'Wipe games&#10;Empty trash&#10;Restock supplies'
+  };
+  const checklistPlaceholder = taskTypePrompts[draftType] || taskTypePrompts.opening_checklist;
+  const createButtonLabel = (() => {
+    if (repairSelected) return state.settings?.aiEnabled ? 'Create task & run AI' : 'Create task';
+    if (draftType === 'opening_checklist') return 'Create opening checklist';
+    if (draftType === 'closing_checklist') return 'Create closing checklist';
+    if (draftType === 'upkeep_checklist') return 'Create upkeep checklist';
+    return 'Create task';
+  })();
   const expanded = new Set(state.operationsUi.expandedTaskIds || []);
   const assetById = new Map((state.assets || []).map((asset) => [asset.id, asset]));
   const assetByName = new Map((state.assets || []).map((asset) => [`${asset.name || asset.id}`.toLowerCase(), asset]));
@@ -1088,7 +1102,7 @@ export function renderOperations(el, state, actions) {
     <header class="page-header">
       <div>
         <h2 class="page-title">${boardLabel}</h2>
-        <p class="page-subtitle">${isDailyOperationsView ? "Manage opening/closing/upkeep/general tasks and keep day-to-day execution on track." : "Create repair and preventive-maintenance tasks, troubleshoot issues, and keep service history organized."} ${getLocationScopeLabel(scope.selection)}</p>
+        <p class="page-subtitle">${isDailyOperationsView ? "Opening, closing, upkeep, and general daily tasks." : "Asset issues, troubleshooting, preventive maintenance, and AI repair guidance."} ${getLocationScopeLabel(scope.selection)}</p>
       </div>
       <div class="page-actions">
         <button type="button" class="btn-primary" data-jump-intake>Create task</button>
@@ -1204,14 +1218,14 @@ export function renderOperations(el, state, actions) {
         <label>Opened date/time<input name="openedAt" type="datetime-local" readonly /></label>
       </div>
       <section class="item ops-intake-step">
-        <h3>Step 1 · Choose task flow</h3>
+        <h3>Step 1 · ${isDailyOperationsView ? 'What daily work are you creating?' : 'What repair work are you creating?'}</h3>
         <div class="tiny">${isDailyOperationsView ? "Operations intake focuses on opening/closing/upkeep/general work." : "Repair intake focuses on asset repair, preventive maintenance, and AI troubleshooting."}</div>
         <input type="hidden" name="taskType" value="${draftType}" />
         <div class="grid grid-2 mt">
           ${cardOptions.map((option) => `<button type="button" class="filter-chip ${draftType === option.type ? 'active' : ''}" data-task-type-card="${option.type}" ${canCreate ? '' : 'disabled'}>${option.emoji} <b>${option.label}</b><div class="tiny">${option.description}</div></button>`).join('')}
         </div>
-        <div class="tiny mt">Repair Task and Preventive Maintenance require an asset. General and checklist tasks can be created without one.</div>
-        <label class="mt">Asset / game
+        ${repairSelected ? '<div class="tiny mt">Repair Task and Preventive Maintenance require an asset.</div>' : ''}
+        <label class="mt ${repairSelected ? '' : 'hide'}">Asset / game
         <input name="assetSearch" list="assetOptions" placeholder="${scopedAssets.length ? 'Search by asset name (optional for non-asset tasks)' : 'No assets in the current location yet'}" ${canCreate ? '' : 'disabled'} />
         </label>
         <div id="missingAssetPrompt" class="inline-state error mt ${missingAssetPrompt ? '' : 'hide'}">${missingAssetPrompt ? renderMissingAssetPrompt(typedAssetName) : ''}</div>
@@ -1220,19 +1234,24 @@ export function renderOperations(el, state, actions) {
       <section class="item ops-intake-step">
         <h3>Step 2 · Task details <span class="field-badge required">Required</span></h3>
         <div class="tiny">Describe the task clearly so the assignee can execute quickly.</div>
-        <label class="mt">Issue details
-          <textarea name="description" placeholder="Describe the issue / concern" required ${canCreate ? '' : 'disabled'}></textarea>
+        ${checklistSelected ? `<label class="closeout-wide mt">Checklist builder
+          <div class="tiny">Add one checklist item per line. These become sign-off rows for staff.</div>
+          <textarea name="checklistItemsInput" placeholder="${checklistPlaceholder}" ${canCreate ? '' : 'disabled'}></textarea>
+        </label>
+        <div class="closeout-wide tiny">Examples: ${checklistPlaceholder.replaceAll('&#10;', ' · ')}.</div>` : ''}
+        <label class="mt">${checklistSelected ? 'Checklist notes' : (repairSelected ? 'Issue details' : 'Task details')}
+          <textarea name="description" placeholder="${checklistSelected ? 'Add context for this checklist' : (repairSelected ? 'Describe the issue / concern' : 'Describe the task details')}" required ${canCreate ? '' : 'disabled'}></textarea>
         </label>
         <label>Reported by <span class="field-badge required">Required</span><input name="reporter" placeholder="Reported by" required ${canCreate ? '' : 'disabled'} /></label>
       </section>
 
-      <section class="item ops-intake-step">
+      ${repairSelected ? `<section class="item ops-intake-step">
         <h3>Step 3 · What has been tried <span class="field-badge recommended">Recommended</span></h3>
         <div class="tiny">Capture prior troubleshooting so work is not repeated. This is included directly in AI troubleshooting context.</div>
         <label class="mt">What did you already try / perform?
           <input name="alreadyTried" placeholder="What did you already try / perform?" ${canCreate ? '' : 'disabled'} />
         </label>
-      </section>
+      </section>` : ''}
 
       <details data-more-details ${state.operationsUi.moreDetailsOpen ? 'open' : ''} class="item ops-intake-step">
         <summary><b>Step 4 · Optional details</b> <span class="field-badge optional">Optional</span> <span class="tiny">Expand for severity, assignment, timeline seed, and evidence refs.</span></summary>
@@ -1258,11 +1277,10 @@ export function renderOperations(el, state, actions) {
           <div id="assignmentStatusHint" class="tiny"></div>
           <textarea name="notes" placeholder="Current summary / handoff notes" ${canCreate ? '' : 'disabled'}></textarea>
           <textarea name="timelineEntry" placeholder="First service timeline entry" ${canCreate ? '' : 'disabled'}></textarea>
-          <label class="closeout-wide">Checklist builder
+          ${checklistSelected ? '' : `<label class="closeout-wide">Checklist builder
             <div class="tiny">One item per row or line. Initial items save as incomplete.</div>
             <textarea name="checklistItemsInput" placeholder="Unlock doors&#10;Run opening safety walk&#10;Verify tills" ${canCreate ? '' : 'disabled'}></textarea>
-          </label>
-          ${checklistSelected ? '<div class="closeout-wide tiny">Examples: Unlock front doors · Run opening safety walk · Verify tills are ready.</div>' : ''}
+          </label>`}
           <div class="closeout-wide evidence-group">
             <b>Evidence references</b>
             <div class="tiny">Optional. Keep references concise: URL, filename, or ticket number per line.</div>
@@ -1275,12 +1293,12 @@ export function renderOperations(el, state, actions) {
       </details>
 
       <section class="item ops-intake-step">
-        <h3>Step 5 · Create task</h3>
-        <div class="tiny">Save now, then use the task card actions to assign/start work, run AI, update timeline, and close out.</div>
-        <button class="btn btn-primary mt" ${canCreate && !state.operationsUi?.creatingTask ? '' : 'disabled'}>${state.operationsUi?.creatingTask ? (state.settings?.aiEnabled ? 'Creating task & starting AI…' : 'Creating task…') : (state.settings?.aiEnabled ? 'Create task & run AI' : 'Create task')}</button>
+        <h3>Step ${repairSelected ? '5' : '4'} · Create task</h3>
+        <div class="tiny">Save now, then use the task card actions to assign/start work${repairSelected ? ', run AI' : ''}, update timeline, and close out.</div>
+        <button class="btn btn-primary mt" ${canCreate && !state.operationsUi?.creatingTask ? '' : 'disabled'}>${state.operationsUi?.creatingTask ? (repairSelected && state.settings?.aiEnabled ? 'Creating task & starting AI…' : 'Creating task…') : createButtonLabel}</button>
         ${state.operationsUi?.createTaskMessage ? `<div class="inline-state info mt">${state.operationsUi.createTaskMessage}</div>` : ''}
         ${state.operationsUi?.createTaskError ? `<div class="inline-state error mt">${state.operationsUi.createTaskError}</div>` : ''}
-        ${state.settings?.aiEnabled ? '' : '<div class="inline-state info mt">Operations AI is disabled in Admin settings. You can still create and manage tasks.</div>'}
+        ${repairSelected && !state.settings?.aiEnabled ? '<div class="inline-state info mt">Operations AI is disabled in Admin settings. You can still create and manage tasks.</div>' : ''}
       </section>
       <datalist id="assetOptions">${scopedAssets.map((asset) => `<option value="${asset.name || asset.id}"></option>`).join('')}</datalist>
       <datalist id="locationOptions">${locationOptions.filter((option) => option.name && !option.name.includes('Company-wide')).map((option) => `<option value="${option.name}"></option>`).join('')}</datalist>
