@@ -63,6 +63,12 @@ function downloadChecklistCsv(rows = []) {
   link.click();
 }
 
+function toIsoDate(value) {
+  const parsed = new Date(value || 0);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toISOString().slice(0, 10);
+}
+
 function getSelectionForReports(state) {
   const locationKey = `${state.reportsUi?.locationKey || ''}`.trim();
   if (!locationKey) return getLocationSelection(state);
@@ -186,6 +192,32 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
     missedUnsignedItems: unsignedItems,
     completionPct: row.completionPct
   }));
+  const selectedBusinessDate = selectedChecklistDate;
+  const dailyTasks = (scope.scopedTasks || []).filter((task) => `${task.businessDate || task.scheduledForDate || ''}`.trim() === selectedBusinessDate);
+  const taskOpenedForDate = dailyTasks.filter((task) => toIsoDate(task.openedAt || task.createdAtClient || task.createdAt || task.updatedAtClient || task.updatedAt) === selectedBusinessDate).length;
+  const taskClosedForDate = dailyTasks.filter((task) => task.status === 'completed' && toIsoDate(task.closedAt || task.completedAt || task.updatedAt || task.updatedAtClient) === selectedBusinessDate).length;
+  const openCriticalTasks = (scope.scopedTasks || []).filter((task) => task.status !== 'completed' && (task.severity || 'medium') === 'critical').length;
+  const overdueOpenTasks = (scope.scopedTasks || []).filter((task) => task.status !== 'completed' && isTaskOverdue(task)).length;
+  const assetsDown = (scope.scopedAssets || []).filter((asset) => ['down', 'broken', 'out_of_service'].includes(`${asset.status || ''}`.trim().toLowerCase())).length;
+  const aiFollowupBacklog = ((state.taskAiRuns || []).filter((run) => run.status === 'followup_required')).length;
+  const pendingDocsCount = (scope.scopedAssets || []).filter((asset) => asset.documentationStatus === 'manual_review' || asset.manualReviewRequired === true || asset.pendingDocumentation === true).length;
+  const dailySummaryText = [
+    `Daily Manager Summary — ${selection?.label || 'All locations'} — ${selectedBusinessDate || 'All dates'}`,
+    `Opening checklist: ${checklistSummaryByType.find((row) => row.type === 'opening_checklist')?.completionPct || 0}%`,
+    `Closing checklist: ${checklistSummaryByType.find((row) => row.type === 'closing_checklist')?.completionPct || 0}%`,
+    `Upkeep checklist: ${checklistSummaryByType.find((row) => row.type === 'upkeep_checklist')?.completionPct || 0}%`,
+    `Signed items: ${totalSignedItems}`,
+    `Late items: ${lateSignedItems}`,
+    `Missed/unsigned: ${unsignedItems}`,
+    `Tasks opened: ${taskOpenedForDate}`,
+    `Tasks closed: ${taskClosedForDate}`,
+    `Critical open: ${openCriticalTasks}`,
+    `Overdue open: ${overdueOpenTasks}`,
+    `Assets down: ${assetsDown}`,
+    `AI follow-ups: ${aiFollowupBacklog}`,
+    `Pending doc/manual review: ${pendingDocsCount}`,
+    'Notes: '
+  ].join('\n');
 
   el.innerHTML = `
     <div class="page-shell page-narrow">
@@ -257,6 +289,30 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
         <span>Total signed items: ${totalSignedItems}</span><span>Late signed items: ${lateSignedItems}</span><span>Missed/unsigned items: ${unsignedItems}</span>
       </div>
       ${staffSignoffs.length ? `<div class="list mt">${staffSignoffs.map((row) => `<div class="item tiny"><b>${row.label}</b> | sign-offs ${row.count} | late ${row.late}</div>`).join('')}</div>` : '<div class="inline-state info mt">No checklist sign-off events available for the selected filters.</div>'}
+    </div>
+    <div class="item mt" data-daily-manager-summary>
+      <div class="row space">
+        <b>Daily Manager Summary</b>
+        <button type="button" data-copy-daily-summary class="filter-chip">Copy summary</button>
+      </div>
+      <div class="tiny mt" data-daily-summary-filters>Filters: location ${selection?.label || 'All locations'} · business date ${selectedBusinessDate || 'All dates'}</div>
+      <div class="kpi-line mt">
+        <span>Opening checklist: ${checklistSummaryByType.find((row) => row.type === 'opening_checklist')?.completionPct || 0}%</span>
+        <span>Closing checklist: ${checklistSummaryByType.find((row) => row.type === 'closing_checklist')?.completionPct || 0}%</span>
+        <span>Upkeep checklist: ${checklistSummaryByType.find((row) => row.type === 'upkeep_checklist')?.completionPct || 0}%</span>
+      </div>
+      <div class="kpi-line mt">
+        <span>Signed items: ${totalSignedItems}</span><span>Late items: ${lateSignedItems}</span><span>Missed/unsigned: ${unsignedItems}</span>
+      </div>
+      <div class="kpi-line mt">
+        <span>Tasks opened: ${taskOpenedForDate}</span><span>Tasks closed: ${taskClosedForDate}</span><span>Critical open: ${openCriticalTasks}</span><span>Overdue open: ${overdueOpenTasks}</span>
+      </div>
+      <div class="kpi-line mt">
+        <span>Assets down: ${assetsDown}</span><span>AI follow-ups: ${aiFollowupBacklog}</span><span>Pending doc/manual review: ${pendingDocsCount}</span>
+      </div>
+      <label class="tiny mt">Manager notes (client-only placeholder)
+        <textarea data-daily-summary-notes rows="3" placeholder="Notes for handoff..."></textarea>
+      </label>
     </div>
 
     <div class="stats-grid">
@@ -391,4 +447,13 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
     rerender();
   });
   el.querySelector('[data-checklist-export]')?.addEventListener('click', () => downloadChecklistCsv(checklistVisibleRows));
+  el.querySelector('[data-copy-daily-summary]')?.addEventListener('click', async () => {
+    const notes = `${el.querySelector('[data-daily-summary-notes]')?.value || ''}`.trim();
+    const payload = notes ? `${dailySummaryText}${notes}` : dailySummaryText;
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(payload);
+      return;
+    }
+    window.prompt('Copy daily summary:', payload);
+  });
 }

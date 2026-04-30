@@ -3728,3 +3728,59 @@ test('reports checklist accountability uses signoff events and late counts', asy
   assert.match(el.innerHTML, /Missed\/unsigned items: 1/);
   assert.match(el.innerHTML, /Alex/);
 });
+
+test('reports renders daily manager summary section and filter markers', async () => {
+  const { renderReports } = await loadReportsView();
+  const el = createReportsRoot();
+  const state = { reportsUi: {}, users: [], tasks: [], checklistSignoffEvents: [], companyLocations: [], route: {} };
+  renderReports(el, state, () => {}, () => {});
+  assert.match(el.innerHTML, /Daily Manager Summary/);
+  assert.match(el.innerHTML, /data-daily-summary-filters/);
+  assert.match(el.innerHTML, /business date/i);
+  assert.match(el.innerHTML, /location/i);
+});
+
+test('reports daily manager summary no-data state renders without crash', async () => {
+  const { renderReports } = await loadReportsView();
+  const el = createReportsRoot();
+  const state = { reportsUi: { checklistDate: '' }, users: [], tasks: [], checklistSignoffEvents: [], assets: [], companyLocations: [], route: {} };
+  renderReports(el, state, () => {}, () => {});
+  assert.match(el.innerHTML, /Opening checklist: 0%/);
+  assert.match(el.innerHTML, /Tasks opened: 0/);
+  assert.match(el.innerHTML, /Assets down: 0/);
+});
+
+test('reports daily manager summary renders populated task checklist and asset counts', async () => {
+  const { renderReports } = await loadReportsView();
+  const el = createReportsRoot();
+  const state = {
+    reportsUi: { checklistDate: '2026-04-29' },
+    users: [],
+    tasks: [
+      { id: 't1', taskType: 'opening_checklist', businessDate: '2026-04-29', openedAt: '2026-04-29T09:00:00Z', severity: 'critical', checklistItems: [{ completed: true }, { completed: false }] },
+      { id: 't2', taskType: 'closing_checklist', businessDate: '2026-04-29', status: 'completed', closedAt: '2026-04-29T20:00:00Z', checklistItems: [{ completed: false }] }
+    ],
+    checklistSignoffEvents: [{ taskType: 'opening_checklist', businessDate: '2026-04-29', completedLate: true }],
+    assets: [{ id: 'a1', status: 'down', locationName: '' }],
+    taskAiRuns: [{ taskId: 't1', status: 'followup_required' }],
+    companyLocations: [],
+    route: {}
+  };
+  renderReports(el, state, () => {}, () => {});
+  assert.match(el.innerHTML, /Signed items: 1/);
+  assert.match(el.innerHTML, /Late items: 1/);
+  assert.match(el.innerHTML, /Missed\/unsigned: 1/);
+  assert.match(el.innerHTML, /Tasks opened: 1/);
+  assert.match(el.innerHTML, /Tasks closed: 1/);
+  assert.match(el.innerHTML, /Critical open: 1/);
+  assert.match(el.innerHTML, /Assets down: 1/);
+  assert.match(el.innerHTML, /AI follow-ups: 1/);
+});
+
+test('reports daily manager summary includes copy summary button marker', async () => {
+  const { renderReports } = await loadReportsView();
+  const el = createReportsRoot();
+  const state = { reportsUi: {}, users: [], tasks: [], checklistSignoffEvents: [], companyLocations: [], route: {} };
+  renderReports(el, state, () => {}, () => {});
+  assert.match(el.innerHTML, /data-copy-daily-summary/);
+});
