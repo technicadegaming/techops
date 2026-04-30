@@ -48,6 +48,10 @@ test('signOffChecklistItemWithPin updates only matching checklist item and stamp
   assert.match(source, /signOffMethod: 'pin'/);
   assert.match(source, /lastUsedAt: serverTimestamp\(\)/);
   assert.match(source, /const workerId = `\$\{pinRecord\.workerId \|\| ''\}`\.trim\(\)/);
+  assert.match(source, /db\.collection\('checklistSignoffEvents'\)\.add\(/);
+  assert.match(source, /checklistItemLabel:/);
+  assert.match(source, /recordedByUid: request\.auth\.uid/);
+  assert.match(source, /createdAt: serverTimestamp\(\)/);
 });
 
 test('setWorkerLocationPin rejects duplicate PINs for other workers while allowing same-worker reset', () => {

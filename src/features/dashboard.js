@@ -2,9 +2,17 @@ import { detectRepeatIssues } from './workflow.js';
 import { buildLocationSummary, getLocationEmptyState, getLocationScopeLabel } from './locationContext.js';
 import { formatRelativeTime } from './notifications.js';
 import { buildPmHealthSummary, summarizePmByField } from './reportingSummary.js';
+import { signOffChecklistItemWithPin } from '../company.js';
 
 function statusChip(label, tone = 'muted') {
   return `<span class="state-chip ${tone}">${label}</span>`;
+}
+
+function formatChecklistTime(value) {
+  if (!value) return '';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 export function renderDashboard(el, state, navigate, applyFocus = () => {}) {
@@ -87,6 +95,12 @@ export function renderDashboard(el, state, navigate, applyFocus = () => {}) {
     }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 6);
+  const allChecklistTasks = openTasks.filter((task) => ['opening_checklist', 'closing_checklist', 'upkeep_checklist'].includes(task.taskType));
+  const preferredChecklist = allChecklistTasks.filter((task) => task.taskType === 'opening_checklist');
+  const openingChecklistTasks = preferredChecklist.length ? preferredChecklist : allChecklistTasks;
+  const checklistUi = state.dashboardUi?.openingChecklist || {};
+  const activeChecklistIndex = Math.max(0, Math.min(Number(checklistUi.index || 0), Math.max(openingChecklistTasks.length - 1, 0)));
+  const activeChecklistTask = openingChecklistTasks[activeChecklistIndex] || null;
 
   el.innerHTML = `
     <div class="page-shell page-narrow">
@@ -166,6 +180,25 @@ export function renderDashboard(el, state, navigate, applyFocus = () => {}) {
       </button>
     </div>
 
+    <div class="item mt">
+      <div class="row space">
+        <b>Opening Checklist focus</b>
+        <button class="filter-chip jump" data-tab="dailyOperations" type="button">Open daily operations</button>
+      </div>
+      ${activeChecklistTask
+        ? `<div class="tiny mt"><b>${activeChecklistTask.title || activeChecklistTask.id}</b> · ${(activeChecklistTask.locationName || activeChecklistTask.location || activeChecklistTask.locationId || 'No location')}</div>
+           <div class="tiny">${(activeChecklistTask.checklistItems || []).filter((item) => item.completed).length} of ${(activeChecklistTask.checklistItems || []).length} signed off</div>
+           ${openingChecklistTasks.length > 1 ? `<div class="row mt"><button type="button" data-checklist-prev>Previous</button><div class="tiny">${activeChecklistIndex + 1} of ${openingChecklistTasks.length}</div><button type="button" data-checklist-next>Next</button></div>` : ''}
+           <div class="list mt">${(activeChecklistTask.checklistItems || []).map((item) => {
+    const itemId = `${item.id || ''}`.trim();
+    return `<div class="item tiny"><div><b>${item.label || itemId || 'Checklist item'}</b></div>${item.completed
+      ? `<div class="inline-state success mt"><b>Signed off</b>${item.completedBy ? `<div>Completed by <b>${item.completedBy}</b></div>` : ''}${item.completedAt ? `<div><b>${formatChecklistTime(item.completedAt)}</b></div>` : ''}</div>`
+      : `<form class="grid mt" data-dashboard-checklist-signoff="${activeChecklistTask.id}"><input type="hidden" name="checklistItemId" value="${itemId}" /><label>PIN<input type="password" name="pin" autocomplete="off" inputmode="numeric" /></label><div class="action-row"><button type="submit">Sign off</button></div></form>`}
+    </div>`;
+  }).join('')}</div>`
+        : '<div class="inline-state info mt">No active opening checklist tasks in this scope.</div>'}
+    </div>
+
     <div class="grid grid-2 mt">
       <div class="item">
         <div class="row space">
@@ -213,5 +246,21 @@ export function renderDashboard(el, state, navigate, applyFocus = () => {}) {
     const focus = button.dataset.focus || null;
     if (focus) applyFocus(focus);
     navigate(button.dataset.tab, button.dataset.id || null, button.dataset.asset || null);
+  }));
+  el.querySelector('[data-checklist-prev]')?.addEventListener('click', () => {
+    state.dashboardUi = { ...(state.dashboardUi || {}), openingChecklist: { index: Math.max(0, activeChecklistIndex - 1) } };
+    renderDashboard(el, state, navigate, applyFocus);
+  });
+  el.querySelector('[data-checklist-next]')?.addEventListener('click', () => {
+    state.dashboardUi = { ...(state.dashboardUi || {}), openingChecklist: { index: Math.min(openingChecklistTasks.length - 1, activeChecklistIndex + 1) } };
+    renderDashboard(el, state, navigate, applyFocus);
+  });
+  el.querySelectorAll('[data-dashboard-checklist-signoff]').forEach((form) => form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const taskId = form.dataset.dashboardChecklistSignoff;
+    const fd = new FormData(form);
+    const task = openingChecklistTasks.find((entry) => entry.id === taskId);
+    if (!task || !task.locationId) return;
+    await signOffChecklistItemWithPin({ companyId: state.company?.id, taskId, checklistItemId: `${fd.get('checklistItemId') || ''}`.trim(), locationId: task.locationId, pin: `${fd.get('pin') || ''}`.trim() });
   }));
 }

@@ -1,6 +1,6 @@
 const companyScopedCollections = new Set([
   'assets', 'tasks', 'operations', 'manuals', 'pmSchedules', 'notes', 'auditLogs',
-  'taskAiRuns', 'taskAiFollowups', 'troubleshootingLibrary', 'appSettings', 'workers', 'importHistory', 'companyLocations', 'companyInvites', 'notifications', 'checklistTemplates'
+  'taskAiRuns', 'taskAiFollowups', 'troubleshootingLibrary', 'appSettings', 'workers', 'importHistory', 'companyLocations', 'companyInvites', 'notifications', 'checklistTemplates', 'checklistSignoffEvents'
 ]);
 
 const companyScopeState = {
