@@ -65,6 +65,9 @@ function serverTimestamp() {
 
 const PIN_HASH_VERSION = 'scrypt_v1';
 const PIN_REGEX = /^\d{4,8}$/;
+const PIN_ATTEMPT_WINDOW_MS = 10 * 60 * 1000;
+const PIN_LOCKOUT_MS = 10 * 60 * 1000;
+const PIN_MAX_FAILED_ATTEMPTS = 5;
 
 const ROLE_RANK = Object.freeze({ owner: 100, admin: 90, manager: 80, lead: 60, staff: 40, viewer: 10 });
 const normalizeCompanyRoleForPinManagement = (value = '', fallback = 'staff') => {
@@ -105,6 +108,38 @@ function verifyPinHash(pin, storedHash) {
 
 function workerIsAssignable(worker = {}) {
   return worker.enabled !== false && worker.available !== false && worker.assignable !== false;
+}
+
+async function getPinAttemptLockoutState({ companyId, locationId, actorUid }) {
+  const nowMs = Date.now();
+  const windowStart = admin.firestore.Timestamp.fromMillis(nowMs - PIN_ATTEMPT_WINDOW_MS);
+  const failedAttemptsSnap = await db.collection('pinAttemptEvents')
+    .where('companyId', '==', companyId)
+    .where('locationId', '==', locationId)
+    .where('actorUid', '==', actorUid)
+    .where('result', '==', 'failed')
+    .where('attemptedAt', '>=', windowStart)
+    .get();
+
+  const failedAttemptCount = failedAttemptsSnap.size;
+  const shouldLock = failedAttemptCount >= PIN_MAX_FAILED_ATTEMPTS;
+  return {
+    nowMs,
+    failedAttemptCount,
+    lockedUntilMs: shouldLock ? nowMs + PIN_LOCKOUT_MS : null,
+  };
+}
+
+async function recordPinAttemptEvent({ companyId, locationId, taskId = null, actorUid, result, reasonCode }) {
+  await db.collection('pinAttemptEvents').add({
+    companyId,
+    locationId,
+    taskId: `${taskId || ''}`.trim() || null,
+    attemptedAt: serverTimestamp(),
+    result,
+    actorUid,
+    reasonCode,
+  });
 }
 
 async function getUserRole(uid) {
@@ -622,6 +657,23 @@ exports.signOffChecklistItemWithPin = onCall({}, async (request) => {
   const membership = await getActiveMembershipForCompany({ db, companyId, uid: request.auth.uid });
   if (!membership) throw new HttpsError('permission-denied', 'Company access required.');
 
+  const lockoutState = await getPinAttemptLockoutState({
+    companyId,
+    locationId,
+    actorUid: request.auth.uid,
+  });
+  if (lockoutState.lockedUntilMs) {
+    await recordPinAttemptEvent({
+      companyId,
+      locationId,
+      taskId,
+      actorUid: request.auth.uid,
+      result: 'locked',
+      reasonCode: 'locked',
+    });
+    throw new HttpsError('permission-denied', 'Too many attempts. Try again later or ask a manager.');
+  }
+
   const taskSnap = await db.collection('tasks').doc(taskId).get();
   if (!taskSnap.exists) throw new HttpsError('not-found', 'Task not found.');
   const task = taskSnap.data() || {};
@@ -646,7 +698,21 @@ exports.signOffChecklistItemWithPin = onCall({}, async (request) => {
   });
 
   if (matchingPins.length !== 1) {
-    throw new HttpsError('permission-denied', 'Invalid sign-off credentials.');
+    const reasonCode = matchingPins.length > 1 ? 'ambiguous_match' : 'no_match';
+    await recordPinAttemptEvent({
+      companyId,
+      locationId,
+      taskId,
+      actorUid: request.auth.uid,
+      result: 'failed',
+      reasonCode,
+    });
+
+    const failedAttemptCount = lockoutState.failedAttemptCount + 1;
+    if (failedAttemptCount >= PIN_MAX_FAILED_ATTEMPTS) {
+      throw new HttpsError('permission-denied', 'Too many attempts. Try again later or ask a manager.');
+    }
+    throw new HttpsError('permission-denied', 'PIN could not be verified.');
   }
 
   const matchedPinDoc = matchingPins[0];
@@ -711,6 +777,15 @@ exports.signOffChecklistItemWithPin = onCall({}, async (request) => {
     locationTimezone: `${task.locationTimeZone || task.timeZone || ''}`.trim() || null,
     recordedByUid: request.auth.uid,
     createdAt: serverTimestamp(),
+  });
+
+  await recordPinAttemptEvent({
+    companyId,
+    locationId,
+    taskId,
+    actorUid: request.auth.uid,
+    result: 'success',
+    reasonCode: 'verified',
   });
 
   return { ok: true, taskId, checklistItemId, workerId, signOffMethod: 'pin' };

@@ -37,7 +37,8 @@ test('signOffChecklistItemWithPin supports PIN-only lookup and handles ambiguous
   assert.match(source, /\.where\('locationId', '==', locationId\)/);
   assert.match(source, /const matchingPins = pinsSnap\.docs\.filter/);
   assert.match(source, /if \(matchingPins\.length !== 1\)/);
-  assert.match(source, /Invalid sign-off credentials/);
+  assert.match(source, /const reasonCode = matchingPins\.length > 1 \? 'ambiguous_match' : 'no_match'/);
+  assert.match(source, /PIN could not be verified\./);
 });
 
 test('signOffChecklistItemWithPin updates only matching checklist item and stamps pin sign-off metadata', () => {
@@ -70,4 +71,22 @@ test('signoff event payload includes timing/reporting fields when present', () =
   assert.match(source, /overdueAfter:/);
   assert.match(source, /completedLate/);
   assert.match(source, /locationTimezone:/);
+});
+
+test('signOffChecklistItemWithPin tracks failed and locked pin attempts without persisting raw pin', () => {
+  const source = readSource();
+  assert.match(source, /db\.collection\('pinAttemptEvents'\)\.add\(\{/);
+  assert.match(source, /result: 'failed'/);
+  assert.match(source, /result: 'locked'/);
+  assert.match(source, /reasonCode: 'locked'/);
+  assert.match(source, /reasonCode,\n\s+}\);/);
+  assert.doesNotMatch(source, /pinAttemptEvents[\s\S]*pin:\s*pin/);
+  assert.match(source, /Too many attempts\. Try again later or ask a manager\./);
+});
+
+test('signOffChecklistItemWithPin writes success attempt audit event and preserves checklist signoff event', () => {
+  const source = readSource();
+  assert.match(source, /db\.collection\('checklistSignoffEvents'\)\.add\(\{/);
+  assert.match(source, /result: 'success'/);
+  assert.match(source, /reasonCode: 'verified'/);
 });
