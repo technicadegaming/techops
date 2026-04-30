@@ -750,7 +750,41 @@ export function createOperationsController({
           return true;
         }, {
           fallbackMessage: 'Unable to sign off. Check the worker, PIN, and location.'
-        })
+        }),
+        createTaskFromTemplate: async ({ templateId, scheduledForDate } = {}) => {
+          const template = (state.checklistTemplates || []).find((entry) => entry.id === templateId && entry.active !== false);
+          if (!template) return false;
+          const dateKey = `${scheduledForDate || new Date().toISOString().slice(0, 10)}`.trim();
+          const duplicate = (state.tasks || []).find((task) => task.companyId === template.companyId
+            && task.locationId === template.locationId
+            && task.taskType === template.templateType
+            && `${task.scheduledForDate || ''}` === dateKey
+            && `${task.sourceTemplateId || ''}` === template.id);
+          if (duplicate) {
+            state.operationsUi = { ...(state.operationsUi || {}), createTaskError: 'A checklist from this template already exists for that date.', createTaskMessage: '' };
+            render();
+            return false;
+          }
+          const payload = {
+            id: `daily-${template.templateType}-${template.locationId}-${dateKey}`.replace(/[^a-z0-9_-]/gi, '-'),
+            companyId: template.companyId,
+            locationId: template.locationId,
+            taskType: template.templateType,
+            title: `${template.name || 'Checklist'} (${dateKey})`,
+            description: `Generated from template: ${template.name || template.templateType}`,
+            status: 'open',
+            severity: state.settings?.defaultTaskSeverity || 'medium',
+            scheduledForDate: dateKey,
+            sourceTemplateId: template.id,
+            sourceTemplateName: template.name || '',
+            checklistItems: (Array.isArray(template.checklistItems) ? template.checklistItems : []).map((item, index) => ({ id: item.id || `item-${index + 1}`, label: item.label || `Item ${index + 1}`, completed: false, completedAt: null, completedBy: null, workerId: null }))
+          };
+          await upsertEntity('tasks', payload.id, withRequiredCompanyId(state, payload, 'create a checklist from template'), state.user);
+          state.operationsUi = { ...(state.operationsUi || {}), createTaskError: '', createTaskMessage: 'Checklist created from template.', lastSavedTaskId: payload.id };
+          await refreshData();
+          render();
+          return true;
+        }
       });
     }
   };

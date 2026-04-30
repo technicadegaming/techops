@@ -21,7 +21,7 @@ const defaults = {
     users: 'users', assets: 'assets', tasks: 'tasks', operations: 'operations', manuals: 'manuals',
     pmSchedules: 'pmSchedules', notes: 'notes', auditLogs: 'auditLogs', appSettings: 'appSettings',
     backups: 'backups', taskAiRuns: 'taskAiRuns', taskAiFollowups: 'taskAiFollowups', troubleshootingLibrary: 'troubleshootingLibrary', aiWebContextCache: 'aiWebContextCache',
-    companies: 'companies', companyMemberships: 'companyMemberships', companyInvites: 'companyInvites', companyLocations: 'companyLocations', workers: 'workers', importHistory: 'importHistory', notifications: 'notifications'
+    companies: 'companies', companyMemberships: 'companyMemberships', companyInvites: 'companyInvites', companyLocations: 'companyLocations', workers: 'workers', importHistory: 'importHistory', notifications: 'notifications', checklistTemplates: 'checklistTemplates'
   }
 };
 

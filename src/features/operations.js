@@ -1195,6 +1195,7 @@ export function renderOperations(el, state, actions) {
     ${state.operationsUi.lastSaveFeedback ? `<div class="inline-state ${state.operationsUi.lastSaveTone || 'info'}">${state.operationsUi.lastSaveFeedback}</div>` : ''}
     ${renderPostSaveActions(state)}
       ${!scopedAssets.length ? '<div class="inline-state warn">No assets exist in this location scope yet. You can still create non-asset general/checklist tasks.</div>' : ''}
+    ${isDailyOperationsView ? `<section class="item mt"><h3>Create from template</h3><div class="tiny">Generate today's opening, closing, or upkeep checklist from a saved template.</div><form id="createTemplateTaskForm" class="grid grid-2 mt"><label>Template<select name="templateId"><option value="">Select template</option>${(state.checklistTemplates || []).filter((template) => template.active !== false).map((template) => `<option value="${template.id}">${template.name || template.templateType} · ${TASK_TYPE_LABEL[template.templateType] || template.templateType}</option>`).join('')}</select></label><label>Date<input name="scheduledForDate" type="date" value="${new Date().toISOString().slice(0, 10)}" /></label><button type="submit" ${canCreate ? '' : 'disabled'}>Create today’s checklist</button></form></section>` : ''}
 
     <form id="taskForm" class="grid mt ops-intake-form">
       ${state.operationsUi?.validationSummary ? `<div class="inline-state error">${state.operationsUi.validationSummary}</div>` : ""}
@@ -1837,4 +1838,12 @@ export function renderOperations(el, state, actions) {
     }));
     actions.submitFollowup(taskId, runId, answers);
   }));
+  el.querySelector('#createTemplateTaskForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const fd = new FormData(event.currentTarget);
+    const templateId = `${fd.get('templateId') || ''}`.trim();
+    if (!templateId) return;
+    state.operationsUi.scrollY = window.scrollY;
+    await actions.createTaskFromTemplate?.({ templateId, scheduledForDate: `${fd.get('scheduledForDate') || ''}`.trim() });
+  });
 }

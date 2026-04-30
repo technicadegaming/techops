@@ -46,7 +46,7 @@ export function syncSetupWizardState(state) {
 export function createInitialState() {
   return {
     user: null, profile: null, company: null, memberships: [], membershipCompanies: {}, activeMembership: null,
-    permissions: buildPermissionContext(), onboardingRequired: false, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], companyMembers: [], workers: [], invites: [],
+    permissions: buildPermissionContext(), onboardingRequired: false, tasks: [], operations: [], assets: [], pmSchedules: [], manuals: [], notes: [], users: [], companyMembers: [], workers: [], invites: [], checklistTemplates: [],
     companyLocations: [], importHistory: [], auditLogs: [], taskAiRuns: [], taskAiFollowups: [], troubleshootingLibrary: [], notifications: [], notificationPrefs: { enabledTypes: [] }, settings: {},
     restorePayload: null, route: parseRouteState(), assetDraft: createEmptyAssetDraft(), assetUi: { lastActionByAsset: {}, onboardingReviewQueue: [], onboardingValidationErrors: [], bulkIntakeText: '', bulkIntakeRows: [], bulkIntakeErrors: [], bulkIntakeStatus: 'idle', recentIntakeRows: [], searchQuery: '', statusFilter: 'all', reviewFilter: 'all', enrichmentFilter: 'all', bulkDocRerunStatus: 'idle', bulkDocRerunProgress: null, bulkDocRerunSummary: '' },
     adminUi: {

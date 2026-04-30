@@ -3260,6 +3260,20 @@ test('operations source constrains repair and daily operations task types by vie
   assert.match(source, /isDailyOperationsView = state\.route\?\.tab === 'dailyOperations'/);
 });
 
+test('operations source exposes create-from-template affordance only for daily operations view', () => {
+  const source = loadOperationsSource();
+  assert.match(source, /Create from template/);
+  assert.match(source, /createTemplateTaskForm/);
+  assert.match(source, /Create today’s checklist/);
+});
+
+test('admin source includes checklist template builder fields', () => {
+  const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'src', 'admin.js'), 'utf8');
+  assert.match(source, /Checklist templates/);
+  assert.match(source, /checklistTemplateForm/);
+  assert.match(source, /opening_checklist/);
+});
+
 test('operations source checklist toggle sets and clears completion metadata', () => {
   const source = loadOperationsSource();
   assert.match(source, /completedAt: completed \? nowIso : null/);
