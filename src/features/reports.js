@@ -315,6 +315,13 @@ export function renderReports(el, state, navigate = () => {}, applyFocus = () =>
       </label>
     </div>
 
+
+    <div class="item mt" data-quiz-training-reports>
+      <div class="row space"><b>Quiz & Training Results</b><button type="button" class="filter-chip" data-quiz-export>Export CSV</button></div>
+      <div class="kpi-line mt"><span>Participation by business date/location: MVP scaffold</span><span>Scores by worker: MVP scaffold</span><span>Scores by category: MVP scaffold</span></div>
+      <div class="tiny mt">Optional leaderboard intentionally deferred to keep rollout low risk.</div>
+    </div>
+
     <div class="stats-grid">
       <button class="stat-card ${pmHealth.overdue.length ? 'warn' : 'good'} report-jump" data-tab="calendar" data-focus="overdue_pm">
         <div class="tiny">Overdue PM</div>

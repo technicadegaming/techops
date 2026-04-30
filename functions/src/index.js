@@ -791,6 +791,70 @@ exports.signOffChecklistItemWithPin = onCall({}, async (request) => {
   return { ok: true, taskId, checklistItemId, workerId, signOffMethod: 'pin' };
 });
 
+
+exports.submitQuizAnswer = onCall({}, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign-in required.');
+  const companyId = normalizeCompanyId(request.data?.companyId);
+  const locationId = `${request.data?.locationId || ''}`.trim();
+  const questionId = `${request.data?.questionId || ''}`.trim();
+  const pin = normalizePin(request.data?.pin);
+  const answerChoiceIds = Array.isArray(request.data?.answerChoiceIds) ? request.data.answerChoiceIds.map((value) => `${value || ''}`.trim()).filter(Boolean) : [];
+  if (!companyId || !locationId || !questionId || !PIN_REGEX.test(pin)) {
+    throw new HttpsError('invalid-argument', 'companyId, locationId, questionId, answerChoiceIds, and a valid PIN are required.');
+  }
+  await getActiveMembershipForCompany({ db, companyId, uid: request.auth.uid });
+  const locationSnap = await db.collection('companyLocations').doc(locationId).get();
+  if (!locationSnap.exists || `${locationSnap.data()?.companyId || ''}`.trim() !== companyId) {
+    throw new HttpsError('permission-denied', 'Invalid quiz scope.');
+  }
+  const lockoutState = await getPinAttemptLockoutState({ companyId, locationId, actorUid: request.auth.uid });
+  if (lockoutState.lockedUntilMs) throw new HttpsError('permission-denied', 'Too many attempts. Try again later or ask a manager.');
+
+  const pinsSnap = await db.collection('workerLocationPins').where('companyId','==',companyId).where('locationId','==',locationId).where('enabled','==',true).get();
+  const matchingPins = pinsSnap.docs.filter((docSnap) => verifyPinHash(pin, docSnap.data()?.pinHash));
+  if (matchingPins.length !== 1) {
+    await recordPinAttemptEvent({ companyId, locationId, actorUid: request.auth.uid, result: 'failed', reasonCode: 'quiz_pin_no_match' });
+    throw new HttpsError('permission-denied', 'PIN could not be verified.');
+  }
+  const workerId = `${matchingPins[0].data()?.workerId || ''}`.trim();
+  const workerSnap = await db.collection('workers').doc(workerId).get();
+  if (!workerSnap.exists) throw new HttpsError('permission-denied', 'Invalid quiz credentials.');
+  const worker = workerSnap.data() || {};
+
+  const questionSnap = await db.collection('quizQuestions').doc(questionId).get();
+  if (!questionSnap.exists) throw new HttpsError('not-found', 'Quiz question not found.');
+  const question = questionSnap.data() || {};
+  if (`${question.companyId || ''}`.trim() !== companyId || question.active === false) throw new HttpsError('failed-precondition', 'Question unavailable.');
+  const now = Date.now();
+  const publishStartMs = normalizeTimestampMs(question.publishStartAt);
+  const publishEndMs = normalizeTimestampMs(question.publishEndAt);
+  if ((publishStartMs && now < publishStartMs) || (publishEndMs && now > publishEndMs)) throw new HttpsError('failed-precondition', 'Question unavailable.');
+  const businessDate = new Date().toISOString().slice(0,10);
+  const duplicateKey = `${companyId}_${locationId}_${workerId}_${questionId}_${businessDate}`;
+  const submissionRef = db.collection('quizSubmissions').doc(duplicateKey);
+  const correctChoiceIds = Array.isArray(question.correctChoiceIds) ? question.correctChoiceIds.map((value) => `${value || ''}`.trim()).filter(Boolean).sort() : [];
+  const normalizedAnswer = [...answerChoiceIds].sort();
+  const isCorrect = correctChoiceIds.length === normalizedAnswer.length && correctChoiceIds.every((value, index) => value === normalizedAnswer[index]);
+  const score = isCorrect ? Number(question.points || 1) : 0;
+
+  await db.runTransaction(async (txn) => {
+    const existing = await txn.get(submissionRef);
+    if (existing.exists) throw new HttpsError('already-exists', 'Quiz answer already submitted for this business date.');
+    const auditRef = db.collection('auditLogs').doc();
+    txn.set(auditRef, { companyId, category: 'quiz_submission', action: 'quiz_submission_recorded', createdAt: serverTimestamp(), createdBy: request.auth.uid, metadata: { questionId, workerId, businessDate, locationId } });
+    txn.set(submissionRef, {
+      id: submissionRef.id, companyId, locationId, businessDate, questionId,
+      questionVersion: Number(question.version || 1), workerId,
+      workerDisplayName: `${worker.displayName || worker.fullName || worker.email || workerId}`.trim(),
+      submittedByUid: request.auth.uid, answerChoiceIds: normalizedAnswer,
+      isCorrect, score, category: `${question.category || 'general'}`.trim(),
+      submittedAt: serverTimestamp(), duplicateKey, auditEventId: auditRef.id,
+    });
+  });
+  await recordPinAttemptEvent({ companyId, locationId, actorUid: request.auth.uid, result: 'success', reasonCode: 'quiz_verified' });
+  return { ok: true, questionId, isCorrect, score, businessDate };
+});
+
 exports.analyzeTaskTroubleshooting = onCall({ secrets: [OPENAI_API_KEY] }, async (request) => {
   console.log('analyzeTaskTroubleshooting:start', {
     taskId: request.data?.taskId,

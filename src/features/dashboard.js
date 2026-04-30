@@ -253,6 +253,17 @@ export function renderDashboard(el, state, navigate, applyFocus = () => {}, opti
       </div>
     </div>
 
+
+    <div class="item mt" data-daily-quiz-widget>
+      <div class="row space"><b>Daily Quiz</b><span class="tiny">Staff training accountability</span></div>
+      <div class="tiny mt">Answer today’s assigned quiz with your location PIN.</div>
+      <form class="grid grid-2 mt" data-daily-quiz-form>
+        <label>PIN<input type="password" name="pin" inputmode="numeric" autocomplete="off" /></label>
+        <label>Answer<select name="answerChoiceId"><option value="">Select answer</option></select></label>
+        <button type="button" disabled>Submit quiz answer (MVP scaffold)</button>
+      </form>
+    </div>
+
     <h3>Recent activity</h3>
     ${recentActivity.length
       ? `<div class="list">${recentActivity.map((entry) => `<div class="item tiny"><div class="row space"><span>${entry.text}</span>${statusChip(formatRelativeTime(entry.at), entry.tone)}</div></div>`).join('')}</div>`
